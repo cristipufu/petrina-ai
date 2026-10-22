@@ -292,6 +292,7 @@ export class Driver {
         if (signal.aborted) throw new Aborted();
         const current = task();
         let scope = executionFor(current);
+        if (current.reviewDecision?.accepted === false) { this.k.gate(current, "delivery"); return; }
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         if (!stage || this.k.role(stage.roleId, current)?.result !== "checks") this.preparedTesters.delete(taskId);
         // A restart can find the working copy detached by an interrupted commit hook. Put it back before

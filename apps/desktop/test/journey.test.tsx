@@ -99,6 +99,26 @@ describe('the journey in the task sheet', () => {
     await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${id}"]`)!.click());
   }
 
+  it.each(['light', 'dark'])('offers final verification without approving delivery after an exhausted review in %s', async theme => {
+    localStorage.setItem('petrina.theme', theme);
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    task.reviewDecision = { stageId: 'review', round: 3, accepted: false };
+    const item = state.inbox.find(entry => entry.taskId === task.id && entry.kind === 'delivery')!;
+    item.title = gateTitle(task, 'delivery');
+    await mount(state);
+    await openTask(task.id);
+    const request = [...host.querySelectorAll<HTMLElement>('.ask')].find(element => element.textContent?.includes(item.title))!;
+    expect(request).toBeTruthy();
+    expect(request.querySelector('.ask-actions .lead')?.textContent).toContain('Continue to final checks');
+    await act(async () => request.querySelector<HTMLButtonElement>('.ask-actions .lead')!.click());
+    const next = simulator.getState();
+    expect(taskOf(next, task.id).reviewDecision?.accepted).toBe(true);
+    expect(taskOf(next, task.id).state).toBe('needs-you');
+    expect(next.inbox.find(entry => entry.taskId === task.id && entry.kind === 'delivery')!.id).not.toBe(item.id);
+    expect([...host.querySelectorAll('.ask-actions .lead')].some(button => button.textContent?.includes('Continue to final checks'))).toBe(false);
+  });
+
   it('shows fixed, reopened and new findings for the selected review round, with an honest total', async () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');

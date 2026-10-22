@@ -46,7 +46,10 @@ export function checkProblemTitle(title: string, failing: readonly string[], unv
 }
 
 /** What a checkpoint is called in the inbox. Failing checks, then Important findings still open, say so first. */
+export const reviewDecisionPending = (task: Pick<Task, "reviewDecision">): boolean => task.reviewDecision?.accepted === false;
+
 export function gateTitle(task: Task, gate: GateKind): string {
+  if (gate === "delivery" && reviewDecisionPending(task)) return `Your call on “${task.title}”: review needs a decision before final checks`;
   if (gate === "delivery" && checkProblem(task) === "unverified") return `Your call on “${task.title}”: checks unverified`;
   const failing = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => !run.ok && !run.interruption && !run.interrupted).map((run) => run.name) ?? []) : [];
   const unverifiedChecks = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => run.interruption || run.interrupted).map((run) => run.name) ?? []) : [];
@@ -64,6 +67,7 @@ export const CHECKS_STILL_FAIL = "Checks still fail. Your call";
 export function gateStatus(task: Task, gate: GateKind): string {
   if (gate === "plan") return "Plan ready. Waiting for your OK";
   if (gate === "design") return callOn(task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check";
+  if (reviewDecisionPending(task)) return "Review needs your call before final checks";
   const open = stillBlocking(task);
   if (checkProblem(task) === "failing") return CHECKS_STILL_FAIL;
   if (checkProblem(task)) return "Checks unverified. Your call";
@@ -102,6 +106,7 @@ export function afterChangesAsked(task: DeepMutable<Task>, kind: InboxKind, note
       task.stageIndex = index;
     }
   } else if (kind === "delivery") {
+    delete task.reviewDecision;
     task.sentBack = (task.sentBack ?? 0) + 1;
     const index = lastIndexWhere(stages, (stage) => roleForTask(roles, stage.roleId, task)?.result === "build" && stage.kind === "do");
     if (index >= 0) {

@@ -20,7 +20,7 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { checkDecisionLabel, checkProblem, decisionEvidence, CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import { checkDecisionLabel, checkProblem, decisionEvidence, CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, reviewDecisionPending, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -188,7 +188,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const product = find.product(contextTask?.productId);
   // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
   const unsettled = item.kind === "delivery" && (task?.acceptanceUnverified === true || (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
-  const checkIssue = task ? checkProblem(task) : undefined;
+  const checkIssue = task && !reviewDecisionPending(task) ? checkProblem(task) : undefined;
   const kind = item.kind === "delivery" && checkIssue ? { ...KIND.delivery, label: checkDecisionLabel(task!)!, tone: "amber" as const } : unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
   const Icon = kind.icon;
   const role = find.role(item.roleId);
@@ -493,7 +493,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         <div className="ask-actions">
           <button className="btn lead" onClick={() => checkIssue ? sim.rerunChecks(item.id) : sim.approve(item.id)}>
             {checkIssue ? <RotateCw size={16} aria-hidden="true" /> : <GitPullRequest size={16} aria-hidden="true" />}
-            {checkIssue ? "Run checks again" : task ? deliveryLabel(task) : "Ship it"}
+            {task && reviewDecisionPending(task) ? "Continue to final checks" : checkIssue ? "Run checks again" : task ? deliveryLabel(task) : "Ship it"}
           </button>
           {checkIssue && task ? <a className="btn" onClick={(event) => followLink(event, () => { window.history.pushState(window.history.state, "", event.currentTarget.href); window.dispatchEvent(new PopStateEvent("popstate")); })} href={(() => { const url = new URL(window.location.href); url.pathname = `/tasks/${encodeURIComponent(task.id)}`; const source = decisionEvidence(task).find((check) => check.run?.source && check.result !== "pass")?.run?.source ?? decisionEvidence(task).find((check) => check.run?.source)?.run?.source; if (source) { url.searchParams.set("node", source.stepId); url.searchParams.set("attempt", source.attemptId); } return `${url.pathname}${url.search}`; })()}>See original checks</a> : <button className="btn" onClick={() => onOpen(item.taskId, "review")}>See the reviews</button>}
           {sendBack("Send back…")}

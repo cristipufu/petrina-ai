@@ -255,7 +255,7 @@ export type JourneyTone = "on" | "back" | "stuck";
 export type JourneyWait = GateKind | "call" | "stuck" | "shipping";
 
 /** Petrina's own work, with no agent: running the product's checks, finding main moved on, and publishing the delivery. */
-export type JourneyWork = "checks" | "check-reuse" | "update" | "delivery";
+export type JourneyWork = "checks" | "check-reuse" | "update" | "delivery" | "review-decision";
 
 /** A question or permission request asked during a step, with how the coordinator answered. */
 export interface JourneyAsk {

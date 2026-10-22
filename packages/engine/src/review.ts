@@ -938,8 +938,9 @@ export class Reviews {
         task.stageIndex = delivery;
         task.sub = 0;
         this.k.log(task, "warn", "No builder can take the remaining findings, so the decision goes to you");
-        this.k.commit();
-        return "continue";
+        task.reviewDecision = { stageId: stage.id, round, accepted: false };
+        this.k.gate(task, "delivery");
+        return "stop";
       }
       task.stageIndex = end.builder;
       task.sub = 0;
@@ -954,11 +955,9 @@ export class Reviews {
     if (end.kind === "used up") {
       this.k.log(task, "warn", `Review rounds used up: ${findingCount(open)} still open`);
       // With blocking findings left, the coordinator always looks before anything ships.
-      const next = task.plan?.stages[task.stageIndex];
-      if (next && next.kind !== "gate") {
-        this.k.gate(task, "delivery");
-        return "stop";
-      }
+      task.reviewDecision = { stageId: stage.id, round, accepted: false };
+      this.k.gate(task, "delivery");
+      return "stop";
     } else {
       this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
     }

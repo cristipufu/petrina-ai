@@ -155,6 +155,7 @@ export const YOU_STEP_NAMES: Readonly<Record<JourneyWait, string>> = {
 
 /** Petrina's own steps, by what it did. */
 export const PETRINA_STEP_NAMES: Readonly<Record<JourneyWork, string>> = {
+  "review-decision": "Your review decision",
   "check-reuse": "Previous checks reused",
   checks: "Automated checks",
   update: "Update branch",
@@ -480,6 +481,7 @@ type Named = Pick<JourneyStep, "kind" | "stageId" | "round" | "sub" | "fixing" |
  */
 export function stepName(step: Named, earlier: readonly Named[], roles: readonly Pick<Role, "id" | "name">[]): string {
   if (step.kind === "you") {
+    if (step.work === "review-decision") return "Your review decision";
     if (step.waitsFor === "delivery" && step.productChecks?.some((check) => check.result === "fail" || check.result === "did-not-finish")) return "Your call: checks still failing";
     if (step.waitsFor === "delivery" && step.productChecks?.some((check) => check.result === "stopped" || check.result === "pending" || check.result === "running")) return "Your call: checks unverified";
     return YOU_STEP_NAMES[step.waitsFor ?? "delivery"];

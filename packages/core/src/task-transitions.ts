@@ -165,6 +165,7 @@ export function cancelTaskState(task: MutableTask, execution: Execution, now: nu
   task.finishedAt = now; task.statusLine = "Cancelled";
   delete task.agent; delete task.helpers; delete execution.conversation;
   delete task.reviewSessions;
+  delete task.reviewDecision;
   delete execution.sideStep;
   stopTaskActivity(task); stopCheckProgress(task, now);
   endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, now);

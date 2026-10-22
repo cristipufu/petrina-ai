@@ -1,5 +1,5 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
-import { afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, type Id } from "@petrina/core";
+import { afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, reviewDecisionPending, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor, scopesFor } from "./repository-context.js";
 import { beginRepair } from "./repositories.js";
@@ -16,7 +16,7 @@ export class Checkpoints {
     if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
     const pending = this.k.s.inbox.find((entry) => entry.id === itemId);
     const pendingTask = pending && this.k.task(pending.taskId);
-    if (pending?.kind === "delivery" && pendingTask && checkProblem({ repositories: pendingTask.repositories, checks: executionFor(pendingTask).work.checks })) {
+    if (pending?.kind === "delivery" && pendingTask && !reviewDecisionPending(pendingTask) && checkProblem({ repositories: pendingTask.repositories, checks: executionFor(pendingTask).work.checks })) {
       throw new Error("The product's checks are failing or unverified. Run the checks again or ask for changes; delivery has not been approved.");
     }
     if (pending?.kind === "plan" && pendingTask) this.sources.confirm(pendingTask);
@@ -36,6 +36,12 @@ export class Checkpoints {
         task.stageIndex += 1;
         break;
       case "delivery":
+        if (reviewDecisionPending(task)) {
+          task.reviewDecision!.accepted = true;
+          this.k.log(task, "you", "You accepted the unresolved review for final verification; delivery is not approved");
+          endYouStep(task, { outcome: "Continue to final checks", reason: "unresolved review accepted; delivery is not approved" }, Date.now());
+          break;
+        }
         this.k.log(task, "you", "You approved the delivery");
         endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
         for (const scope of scopesFor(task)) {

@@ -243,6 +243,13 @@ export class Simulator {
           this.advance(d, task);
           break;
         case "delivery":
+          if (task.reviewDecision?.accepted === false) {
+            task.reviewDecision.accepted = true;
+            this.log(d, task, "you", "You accepted the unresolved review for final verification; delivery is not approved");
+            endYouStep(task, { outcome: "Continue to final checks", reason: "unresolved review accepted; delivery is not approved" }, d.now);
+            this.continueAfterGate(d, task, false);
+            break;
+          }
           this.log(d, task, "you", "You approved the delivery");
           endYouStep(task, { outcome: W.approved, reason: W.youApproved }, d.now);
           // After review rounds ran out, the check was raised on the delivery stage itself.
@@ -1322,11 +1329,11 @@ export class Simulator {
       this.moment(d, task, { kind: "review-end", outcome: end.kind === "used up" ? "rounds-used" : "passed" });
       this.endStage(d, task, end.kind === "used up" ? "rounds-used" : "passed");
       // With blocking findings left, the coordinator always looks before anything ships, as in the engine.
-      const next = task.plan?.stages[task.stageIndex + 1];
-      if (end.kind === "used up" && next && next.kind !== "gate") {
+      if (end.kind === "used up") {
         delete task.helpers;
         task.stageIndex += 1;
         task.sub = 0;
+        task.reviewDecision = { stageId: stage.id, round, accepted: false };
         this.gate(d, task, "delivery");
         return;
       }
@@ -1370,6 +1377,7 @@ export class Simulator {
     delete task.agent;
     delete task.helpers;
     const decision = beginYouStep(task, gate, d.now);
+    if (gate === "delivery" && task.reviewDecision?.accepted === false) decision.work = "review-decision";
     if (gate === "delivery") decision.productChecks = decisionEvidence(task);
     task.holdsSlot = false;
     task.statusLine = gateStatus(task as unknown as Task, gate);

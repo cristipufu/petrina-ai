@@ -481,13 +481,15 @@ export abstract class Kernel {
     delete task.agent;
     task.holdsSlot = false;
     const decision = beginYouStep(task, gate, Date.now());
+    const reviewCall = gate === "delivery" && library.reviewDecisionPending(task);
+    if (reviewCall) decision.work = "review-decision";
     if (gate === "delivery" && !decision.productChecks) decision.productChecks = library.decisionEvidence(taskView(task));
     const work = gate === "plan" ? task.proposedSource ?? executionFor(task).work.source : executionFor(task).work.source;
     const workLine = task.workRows || task.repositories
       ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? library.checkProblem({ checks: entry.checks }) === "unverified" ? "Product checks unverified" : entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
       : work ? workSummary(work) : "";
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
-    const explanation = [problem, checks?.body, body].filter(Boolean).join("\n\n");
+    const explanation = [problem, checks?.body, reviewCall ? "Review left Important findings open. Send the work back with a concrete repair request, or accept the unresolved review and continue to final verification. Continuing approves no delivery, fixes no finding and grants no automatic review rounds. Current product checks and required acceptance testing still run before a separate delivery approval." : undefined, body].filter(Boolean).join("\n\n");
     this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, explanation ? { body: explanation } : {});
     task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(taskView(task), gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";

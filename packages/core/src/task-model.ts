@@ -205,6 +205,8 @@ export interface TaskDesignState {
 /** Review evidence and convergence across the complete reviewer group. */
 export interface TaskReviewState {
   findings: readonly Finding[];
+  /** Accepting unresolved review permits final verification, never publishing or another automatic review round. */
+  reviewDecision?: { stageId: Id; round: number; accepted: boolean };
   /** Completed conversations belong to one stage and reviewer seat, never to voters or peers. */
   reviewSessions?: Readonly<Record<Id, Readonly<Record<Id, {
     scope: string;

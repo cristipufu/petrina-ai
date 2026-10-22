@@ -1,5 +1,5 @@
 import { messageRemovalText } from "@petrina/core";
-import { checkProblem, displayTask } from "@petrina/core";
+import { checkProblem, displayTask, reviewDecisionPending } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { finishedTask, involvesProduct, journeyView, landingOf, mainLine, nextSteps, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
@@ -135,6 +135,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           objections: task.objections,
           call: task.call,
           findings: task.findings,
+          reviewDecision: task.reviewDecision,
           repositories: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, delivery: work.delivery, checkedSha: work.checkedSha, checkedPatch: work.checkedPatch, checks: work.checks })),
           checkedSha: task.checkedSha,
           checkedPatch: task.checkedPatch,
@@ -145,7 +146,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
       : {}),
   });
 }
-const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks">) =>
+const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks" | "reviewDecision">) =>
   kind === "question"
     ? ["inbox.answer"]
     : kind === "permission"
@@ -160,7 +161,7 @@ const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks">) =
               ? ["learning.accept", "learning.decline"]
               : kind === "guide"
                 ? ["review-guide.accept", "review-guide.decline"]
-                : kind === "delivery" && task && checkProblem(task)
+                : kind === "delivery" && task && !reviewDecisionPending(task) && checkProblem(task)
                   ? ["inbox.rerun-checks", "inbox.changes"]
                 : ["plan", "design", "delivery", "disagreement"].includes(kind)
                   ? ["inbox.approve", "inbox.changes"]
@@ -506,7 +507,7 @@ export class Coordination {
         return { outcome: "missing", message: "This request's task or product is no longer available." };
       if (requestRevision(e, item as InboxItem) !== a.revision)
         return { outcome: "changed", message: "The request changed. Inspect it again before deciding." };
-      if (!decisions(item.kind, { repositories: itemTask.repositories, checks: executionFor(itemTask).work.checks }).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
+      if (!decisions(item.kind, { repositories: itemTask.repositories, checks: executionFor(itemTask).work.checks, reviewDecision: itemTask.reviewDecision }).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
       switch (name) {
         case "inbox.answer":
           e.answer(a.itemId, a.answer, { clientId: a.requestId });
