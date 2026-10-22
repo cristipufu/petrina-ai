@@ -15,6 +15,9 @@
     "tauri": "bun run --cwd apps/desktop tauri",
     "build": "bun run --cwd apps/desktop build",
     "typecheck": "bun run --parallel --workspaces typecheck",
-    "test": "bun run --sequential --workspaces test"
+    "test": "bun packages/engine/test/quality/full-run.ts",
+    "test:conventions": "bun packages/engine/test/quality/repository.ts conventions",
+    "test:impact": "bun packages/engine/test/quality/repository.ts impact",
+    "test:coverage": "bun packages/engine/test/quality/coverage.ts"
   }
 }

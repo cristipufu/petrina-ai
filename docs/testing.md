@@ -13,6 +13,8 @@ bun run test
 
 Core and desktop use Vitest; engine tests use Bun. Keep the required engine suite fully parallel. Before a full run, check whether another full suite is already running on the machine; investigate with focused runs while it finishes. An isolated timing failure passing alone does not rule out a race.
 
+`bun run test` first enforces test conventions, then runs the complete core, engine and desktop suites sequentially, with their normal parallel workers and no retries. It saves structured runner results and an affected-test observation in a unique ignored `.test-results/` folder. A failed workspace still fails the command; passing tests on inputs that changed during the run also fail the command. The report identifies failed files outside the predicted selection, or explicitly says attribution was unavailable. It never changes which tests run.
+
 UI changes also need light and dark and all three demos: `?demo`, `?demo=portfolio`, `?demo=first-run`.
 
 ## Keep checks fast without losing coverage
@@ -33,9 +35,26 @@ bun run --cwd apps/desktop test test/name.test.tsx -t 'test name'
 
 Core stops at the first failure; filter by name to investigate later cases. Core modules have no runtime dependencies: diagnostic scripts can import their source by absolute path without the whole suite. Keep those scripts, their working directory and `TMPDIR` in an uncrowded home folder on this Mac; moving just one leaves Bun's startup delay. Use the command tool's deadline; this Mac has no `timeout` program.
 
+## Affected-test observation
+
+`bun run test:impact [base-ref]` reports candidates from the current import/export graph, including changed tests and transitive dependents. The default base is the locally available `origin/main`; no network fetch or test execution occurs. Full runs use `PETRINA_TEST_BASE` when supplied. The report records the resolved base, HEAD and a content fingerprint of current inputs, including uncommitted files. Deleted or unmapped files, shared fixtures, configuration, dependencies, runner changes and unknown mappings conservatively select the full suite. Unresolved or computed imports include all their known test consumers. Invalid or unavailable Git information in the full runner falls back to the full suite.
+
+This graph is not complete runtime coverage: subprocess entrypoints, file reads, generated programs, native code and external services can create additional relationships. No passing observation authorizes skips. Keep workflow integration tests for those interactions and use direct module tests for isolated decisions; lightweight engine helpers live in `test/fixtures.ts`, so they do not implicitly import the complete Engine.
+
+Optional engine-file coverage can supplement the graph:
+
+```sh
+bun run test:coverage packages/engine/test/rejections.test.ts
+```
+
+This runs one exact test file through the isolated parallel engine runner and records executed-file LCOV edges after a pass on unchanged inputs. Collect files serially; each report belongs to its source, Bun version, platform and explicit browser-integration setting. Coverage only adds candidates. Missing coverage is labelled absent; stale coverage triggers a full selection. Coverage from spawned processes is not inferred, and a file-level map does not prove that every branch or scenario was exercised. Core and desktop retain Vitest's normal focused commands; no coverage package or selection mode is injected into them.
+
+Selection remains in observation mode until representative changes and full-run results establish its limits, including misses and unclassified failures. The final delivery gate always requires every configured full check and hook on the current integrated tree and check definition. Reusing a pass requires unchanged inputs; a changed main tree or changed commands/hooks require verification again. Local landings serialize per product and reprepare if the destination moved. This repository's regression includes two changes that pass separately but fail together: the second cannot land on its old evidence. Petrina does not merge pull requests.
+
 ## Engine fixtures
 
 - `test/support.ts` supplies `makeWorld`, local GitHub stand-ins through `EngineOptions.gh` and `remote`, scripted engines, and wait helpers. Configure agents with `Fakes.scenario`.
+- Use `test/fixtures.ts` for private repositories, waits, temporary folders and fake-agent records without the Engine. Import `test/support.ts` when a complete workflow fixture or engine process is needed. Keep new tests named `*.test.ts` or `*.test.tsx` in their workspace's test folder.
 - Import fixture `Engine` from `test/engine.ts`. It disables every provider's live account reader by default; usage tests supply their own `usageCommands`. Production defaults must not contact the developer's accounts during an unrelated test.
 - Scripted agents get no browser. A test that checks browsing, capture folders or report pictures opts in with `makeWorld(name, { browser: true })`, `EngineOptions.browser` and `browserTempRoot`, or the harness's `--browser-root`. Its short private folder comes from `testBrowserRoot()`, inside the runner's browser folder; pass the same folder to every engine, browser and recovery of the fixture, and remove it afterwards.
 - Use the fake agent's default plan for parallel reviewers. Its short plan has one reviewer. A fixture that holds agents must still let the Check finder finish.
@@ -50,6 +69,8 @@ Core stops at the first failure; filter by name to investigate later cases. Core
 - With asymmetric matchers, Bun's `toMatchObject` can overwrite checked fields. Use `toEqual`, or check a copy.
 - For rejected operations use `expectRejection` or `rejectionOf` from `test/rejections.ts`. These await ordinary Promises before asserting; Bun's `.rejects`/`.resolves` matchers re-enter the I/O dispatcher and can lose subprocess or pipe notifications ([upstream issue](https://github.com/oven-sh/bun/issues/33261)). Keep the same error, message and type assertions.
 - Derive verifier counts from the ready tools; do not assume two voters.
+
+`bun run test:conventions` parses test source and rejects direct production Engine imports, Bun promise matchers in engine tests, and exclusive test selection across all workspaces. The fixture's own production import is the single exception. The guard does not prove that arbitrary subprocesses are isolated: review test-owned commands, writable resources, cleanup and native opt-ins as part of the change. Do not bypass the guard with dynamic or generated code.
 
 ## Desktop and demo fixtures
 
