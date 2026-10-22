@@ -64,7 +64,7 @@ import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js"
 import { continuingAgentTurn, askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type WorkMoment, type WorkStageKind } from "./worklog.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
 import { pauseClock, plainTodo, resumeClock, startClock } from "./summary.js";
-import { demoHistoryPage, type HistoryQuery } from "./history.js";
+import { demoHistoryPage, historyPageUsage, type HistoryQuery } from "./history.js";
 
 type Draft = DeepMutable<State>;
 type DraftTask = DeepMutable<Task>;
@@ -134,7 +134,10 @@ export class Simulator {
     return usageView(this.work, request, { now: this.state.now, state: this.state });
   }
 
-  historyPage(query: HistoryQuery) { return demoHistoryPage(this.state, query); }
+  historyPage(query: HistoryQuery) {
+    const page = demoHistoryPage(this.state, query);
+    return query.includeUsage ? historyPageUsage(page, this.work) : page;
+  }
   taskDetails(taskId: Id): Task | undefined { return this.state.tasks.find((task) => task.id === taskId); }
   async previewImage(_taskId: Id, _path: string): Promise<{ mime: string; data: string }> {
     throw new Error("This image is unavailable in the demo.");

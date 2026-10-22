@@ -274,7 +274,9 @@ describe("The task sheet", () => {
     log.markUntracked("old", "shop");
     const s = state([task("old", "shop"), task("new", "shop", { state: "queued" })]);
     expect(usageView(log, { view: "task", taskId: "old" }, { now: NOW, state: s }).empty).toBe("untracked");
-    expect(usageView(log, { view: "task", taskId: "new" }, { now: NOW, state: s }).empty).toBe("nothing");
+    expect(usageView(log, { view: "task", taskId: "new" }, { now: NOW, state: s })).toMatchObject({
+      empty: "nothing", tokens: { atLeast: false, value: 0 }, time: { atLeast: false, value: 0 },
+    });
   });
 });
 

@@ -4,10 +4,14 @@ import type { Cleanup, Id, State, StepRecord, Task } from "./model.js";
 import type { ReviewStats } from "./reviews.js";
 import { involvesProduct, taskProductIds } from "./repositories.js";
 import { markedDoneUnconfirmed } from "./cleanup.js";
+import { taskUsageSummaries, type TaskUsageSummary } from "./analytics.js";
+import type { WorkLogReader } from "./worklog.js";
 
-export interface HistoryQuery { status?: HistoryStatus; routineId?: Id; productId?: Id; query?: string; cursor?: string; limit?: number; states?: readonly ("done" | "cancelled")[]; taskId?: Id; held?: boolean }
+export interface HistoryQuery { status?: HistoryStatus; routineId?: Id; productId?: Id; query?: string; cursor?: string; limit?: number; states?: readonly ("done" | "cancelled")[]; taskId?: Id; held?: boolean; includeUsage?: boolean }
 export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "state" | "createdAt" | "finishedAt" | "statusLine" | "delivery" | "pr" | "release" | "landed" | "localUpdate" | "combinedInto"> & {
   state: "done" | "cancelled";
+  /** Opt-in whole-task figures; never conversations or per-turn records. */
+  usage?: TaskUsageSummary;
   /** Compact scheduling evidence; older summaries are refreshed by the archive reader. */
   blocksDependents?: boolean;
   maintenance?: Pick<NonNullable<Task["maintenance"]>, "noProductChanges">;
@@ -44,6 +48,11 @@ export function historyDeliveryItem(item: HistoryItem, work: NonNullable<History
   return { ...item, productId: work.productId, delivery: work.delivery, pr: work.pr, release: work.release, landed: work.landed, localUpdate: work.localUpdate, deliveries: undefined };
 }
 export interface HistoryPage { items: readonly HistoryItem[]; nextCursor?: string; total: number }
+/** Attach just this page's whole-task totals, independent of its product filter. */
+export function historyPageUsage(page: HistoryPage, log: WorkLogReader): HistoryPage {
+  const usage = taskUsageSummaries(log, page.items.map(item => item.id));
+  return { ...page, items: page.items.map(item => ({ ...item, usage: usage.get(item.id)! })) };
+}
 export type HistoryDependency = HistoryItem & { blocksDependents: boolean };
 export interface HistoryMetadata {
   revision: number;

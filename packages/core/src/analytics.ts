@@ -85,12 +85,15 @@ export interface StageUsage {
   agents: AgentUsage[];
 }
 
-export interface TaskUsage {
-  view: "task";
+export interface TaskUsageSummary {
   /** No entries: the task ran before Petrina kept track, or nothing has run yet. */
   empty?: "untracked" | "nothing";
   tokens: Figure;
   time: Figure;
+}
+
+export interface TaskUsage extends TaskUsageSummary {
+  view: "task";
   /** Input the tools reused from their cache, as they report it. Missing: not reported. */
   cacheRead?: number;
   atLeast: string;
@@ -331,13 +334,25 @@ function settingsWords(turns: readonly WorkTurn[]): { text: string; differs: boo
 
 // ── The task sheet ─────────────────────────────────────────────────────────
 
+/** The same finished-turn accounting for task details and bounded History pages. */
+function taskSummary(tally: Tally, untracked: boolean): TaskUsageSummary {
+  if (tally.turns === 0 && !untracked) return { empty: "nothing", tokens: { atLeast: false }, time: { atLeast: false } };
+  return { ...figures(tally, untracked), ...(tally.turns === 0 ? { empty: "untracked" as const } : {}) };
+}
+
+export function taskUsageSummaries(log: WorkLogReader, taskIds: readonly Id[]): Map<Id, TaskUsageSummary> {
+  return new Map([...log.taskTallies(taskIds)].map(([id, { tally, untracked }]) => [id, taskSummary(tally, untracked)]));
+}
+
 function taskView(log: WorkLogReader, taskId: Id, ctx: UsageContext): TaskUsage {
   const turns = ended(log.turns({ taskId }));
   const lines = log.lines({ taskId });
   const untracked = log.untracked().has(taskId);
   const tally = turns.reduce(addTurn, emptyTally());
-  const { tokens, time } = figures(tally, untracked);
-  if (turns.length === 0) return { view: "task", empty: untracked ? "untracked" : "nothing", tokens, time, atLeast: "", stages: [] };
+  const summary = taskSummary(tally, untracked);
+  // Task and coordinator reads retain their existing zeroes for nothing run. History's
+  // empty summary still omits figures.
+  if (summary.empty) return { view: "task", ...summary, ...figures(tally, untracked), atLeast: "", stages: [] };
 
   const task = ctx.state.tasks.find((entry) => entry.id === taskId) ?? ctx.task?.(taskId);
   const order = new Map<Id, number>([[`${taskId}:plan`, -1]]);
@@ -384,8 +399,7 @@ function taskView(log: WorkLogReader, taskId: Id, ctx: UsageContext): TaskUsage 
 
   return {
     view: "task",
-    tokens,
-    time,
+    ...summary,
     ...(tally.hasCacheRead ? { cacheRead: tally.cacheRead } : {}),
     atLeast: reasonsOf(tally, untracked),
     stages,

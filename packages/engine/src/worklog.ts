@@ -11,6 +11,7 @@ import {
   type MomentFilter,
   type ProductRecord,
   type Tally,
+  type TaskTally,
   type TokenCounts,
   type TokenLine,
   type TurnFilter,
@@ -20,6 +21,30 @@ import {
   type WorkMoment,
   type WorkTurn,
 } from "@petrina/core";
+
+// The SQL equivalent of core's addTurn, shared by task and product totals.
+const TALLY_COLUMNS = `
+          COUNT(*) AS turns,
+          SUM(total IS NOT NULL) AS reported,
+          SUM(total IS NULL AND end_kind != 'lost') AS noTokens,
+          SUM(end_kind = 'lost') AS lost,
+          COALESCE(SUM(total), 0) AS tokens,
+          SUM(work_ms IS NOT NULL) AS timed,
+          COALESCE(SUM(work_ms), 0) AS workMs,
+          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN input END), 0) AS input,
+          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN cache_read END), 0) AS cacheRead,
+          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN cache_write END), 0) AS cacheWrite,
+          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN output END), 0) AS output,
+          SUM(total IS NOT NULL AND input IS NOT NULL) AS hasInput,
+          SUM(total IS NOT NULL AND cache_read IS NOT NULL) AS hasCacheRead,
+          SUM(total IS NOT NULL AND cache_write IS NOT NULL) AS hasCacheWrite,
+          SUM(total IS NOT NULL AND output IS NOT NULL) AS hasOutput`;
+
+function tallyOfRow(row: Record<string, unknown>): Tally {
+  const tally = emptyTally();
+  for (const key of Object.keys(tally) as (keyof Tally)[]) tally[key] = Number(row[key] ?? 0);
+  return tally;
+}
 
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS work_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -505,32 +530,29 @@ export class WorkLog implements WorkLogReader {
   productTallies(): Map<Id, Tally> {
     const rows = this.db
       .query<Record<string, number> & { product_id: string }, []>(
-        `SELECT product_id,
-          COUNT(*) AS turns,
-          SUM(total IS NOT NULL) AS reported,
-          SUM(total IS NULL AND end_kind != 'lost') AS noTokens,
-          SUM(end_kind = 'lost') AS lost,
-          COALESCE(SUM(total), 0) AS tokens,
-          SUM(work_ms IS NOT NULL) AS timed,
-          COALESCE(SUM(work_ms), 0) AS workMs,
-          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN input END), 0) AS input,
-          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN cache_read END), 0) AS cacheRead,
-          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN cache_write END), 0) AS cacheWrite,
-          COALESCE(SUM(CASE WHEN total IS NOT NULL THEN output END), 0) AS output,
-          SUM(total IS NOT NULL AND input IS NOT NULL) AS hasInput,
-          SUM(total IS NOT NULL AND cache_read IS NOT NULL) AS hasCacheRead,
-          SUM(total IS NOT NULL AND cache_write IS NOT NULL) AS hasCacheWrite,
-          SUM(total IS NOT NULL AND output IS NOT NULL) AS hasOutput
+        `SELECT product_id, ${TALLY_COLUMNS}
          FROM work_turns WHERE end_kind IS NOT NULL GROUP BY product_id`,
       )
       .all();
-    const tallies = new Map<Id, Tally>();
-    for (const row of rows) {
-      const tally = emptyTally();
-      for (const key of Object.keys(tally) as (keyof Tally)[]) tally[key] = Number(row[key] ?? 0);
-      tallies.set(row.product_id, tally);
-    }
-    return tallies;
+    return new Map(rows.map(row => [row.product_id, tallyOfRow(row)]));
+  }
+
+  taskTallies(taskIds: readonly Id[]): Map<Id, TaskTally> {
+    if (!taskIds.length) return new Map();
+    // Aggregate only the page's tasks; even a long task yields one row. The marker lookup
+    // uses the task/kind index and never reads moment data or archived task bodies.
+    const ids = [...new Set(taskIds)];
+    const rows = this.db.query<Record<string, unknown> & { id: string; untracked: number }, string[]>(`
+      WITH requested(task_id) AS (VALUES ${ids.map(() => "(?)").join(", ")}),
+      tallies AS (
+        SELECT task_id, ${TALLY_COLUMNS} FROM work_turns
+        WHERE task_id IN (SELECT task_id FROM requested) AND end_kind IS NOT NULL GROUP BY task_id
+      )
+      SELECT requested.task_id AS id, tallies.*,
+        EXISTS (SELECT 1 FROM work_moments m WHERE m.task_id = requested.task_id AND m.kind = 'untracked') AS untracked
+      FROM requested LEFT JOIN tallies USING (task_id)
+    `).all(...ids);
+    return new Map(rows.map(row => [row.id, { tally: tallyOfRow(row), untracked: !!row.untracked }]));
   }
 
   untracked(): Map<Id, Id> {

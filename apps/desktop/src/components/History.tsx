@@ -1,11 +1,12 @@
 import { Select } from "./Select";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowDownWideNarrow, Ban, CheckCircle2, CircleMinus, Search, X } from "lucide-react";
-import { HISTORY_STATUSES, historyDeliveryItem, type HistoryStatus, landingOf, type HistoryItem, type HistoryPage, type State } from "@petrina/core";
+import { HISTORY_STATUSES, historyDeliveryItem, type HistoryStatus, landingOf, type HistoryItem, type HistoryPage, type State, type TaskUsageSummary } from "@petrina/core";
 import { failureText, sim } from "../engine";
 import { type Lookup } from "../lib";
 import { followLink } from "../routes";
 import { ProductName, useFocusTrap } from "./bits";
+import { FigureText } from "./Usage";
 
 export const HISTORY_PAGE_SIZE = 24;
 export interface HistoryPosition { status?: HistoryStatus; cursor?: string; query?: string; previous?: readonly string[] }
@@ -17,7 +18,8 @@ export function TaskLoading({ error, onRetry, onClose }: { error?: string; onRet
 }
 
 /** The engine returns one indexed page. Completed task bodies are requested only when opened. */
-export function useHistoryPage(state: State, enabled: boolean, product: string, position?: HistoryPosition, routineId?: string) {
+export function useHistoryPage(state: State, enabled: boolean, product: string, position?: HistoryPosition, options?: { routineId?: string; includeUsage?: boolean }) {
+  const { routineId, includeUsage = false } = options ?? {};
   const [result, setResult] = useState<{ key: string; page?: HistoryPage; error?: string }>();
   const [retry, setRetry] = useState(0);
   const cursor = position?.cursor;
@@ -25,19 +27,29 @@ export function useHistoryPage(state: State, enabled: boolean, product: string, 
   const status = position?.status;
   // The demo keeps its small fixture in memory. The engine sends only the archive revision.
   const revision = state.history?.revision ?? state.tasks.filter((task) => task.state === "done" || task.state === "cancelled").map((task) => `${task.id}:${task.finishedAt}`).join("|");
-  const key = JSON.stringify([product, cursor, query, routineId, status]);
+  const usageVersion = includeUsage ? state.work?.version ?? 0 : 0;
+  const key = JSON.stringify([product, cursor, query, routineId, status, includeUsage]);
   const currentKey = useRef(key);
   currentKey.current = key;
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    Promise.resolve().then(() => sim.historyPage({ ...(status ? { status } : {}), ...(routineId ? { routineId } : {}), ...(product !== "all" ? { productId: product } : {}), ...(query ? { query } : {}), ...(cursor ? { cursor } : {}), limit: HISTORY_PAGE_SIZE })).then(
+    Promise.resolve().then(() => sim.historyPage({ ...(includeUsage ? { includeUsage: true } : {}), ...(status ? { status } : {}), ...(routineId ? { routineId } : {}), ...(product !== "all" ? { productId: product } : {}), ...(query ? { query } : {}), ...(cursor ? { cursor } : {}), limit: HISTORY_PAGE_SIZE })).then(
       (page) => { if (!cancelled && currentKey.current === key) setResult({ key, page }); },
       (error) => { if (!cancelled && currentKey.current === key) setResult({ key, error: failureText(error) }); },
     );
     return () => { cancelled = true; };
-  }, [enabled, product, cursor, query, routineId, status, revision, retry, key]);
+  }, [enabled, product, cursor, query, routineId, status, includeUsage, usageVersion, revision, retry, key]);
   return { page: result?.key === key ? result.page : undefined, error: result?.key === key ? result.error : undefined, reload: () => setRetry((value) => value + 1) };
+}
+
+function HistoryUsage({ usage }: { usage?: TaskUsageSummary }) {
+  if (!usage || usage.empty === "nothing") return null;
+  if (usage.empty === "untracked") return <div className="history-usage">Tokens and agent time not recorded</div>;
+  return <div className="history-usage num">
+    <span>{usage.tokens.value === undefined && "Tokens "}<span className="history-usage-figure"><FigureText figure={usage.tokens} kind="tokens" /><span className="history-usage-separator" aria-hidden="true"> · </span></span></span>
+    <span>{usage.time.value === undefined && <><span className="history-usage-label">Agent time</span>{" "}</>}<span className="history-usage-figure"><FigureText figure={usage.time} kind="time" /></span>{usage.time.value !== undefined && <>{" "}<span className="history-usage-label">agent time</span></>}</span>
+  </div>;
 }
 
 function recordedDelivery(item: HistoryItem): string | undefined {
@@ -99,6 +111,7 @@ export function History({ page, error, reload, position, onPosition, find, selec
             <div className="history-card-meta">{names?.length ? <span title={names.join(" · ")} aria-label={names.join(" · ")}>{names.slice(0, 2).join(" · ")}{names.length > 2 ? ` +${names.length - 2} products` : ""}</span> : <ProductName product={find.product(item.productId)} />}<time dateTime={new Date(date).toISOString()} title={new Date(date).toLocaleString()}>{new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</time></div>
             <h2 title={item.title}>{item.title}</h2>
             <div className={`history-outcome ${delivered ? "delivered" : "unconfirmed"}`}><Icon size={15} aria-hidden="true" /><span>{outcome(item)}</span></div>
+            <HistoryUsage usage={item.usage} />
             {drafts[item.id] && <span className="draft-note"><span className="draft-mark" aria-hidden="true" />Unsent message</span>}
           </a>;
         })}</div> : <div className="history-empty"><p>{position?.query || position?.status ? "No finished tasks match these filters." : position?.cursor ? "There are no more tasks on this page." : "Completed and cancelled tasks will appear here."}</p>{position?.cursor && <button className="btn outline" onClick={() => onPosition(newest)}>Back to the newest tasks</button>}</div>}

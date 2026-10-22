@@ -1,10 +1,10 @@
 // Live projections, bounded archive ownership and revision/persistence bookkeeping.
-import { finishedTask, involvesProduct, type HistoryDependency, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
+import { finishedTask, historyPageUsage, involvesProduct, type HistoryDependency, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
 import { settledHistoryTask } from "./store.js";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "./repository-context.js";
 
-type ProjectionHost = Pick<Kernel, "s" | "store" | "boot" | "stopped" | "activeState" | "save" | "drivers" | "settling" | "switching" | "copyCleanups" | "followsUpHeld" | "usageCoordinator" | "events">;
+type ProjectionHost = Pick<Kernel, "s" | "store" | "boot" | "stopped" | "activeState" | "save" | "drivers" | "settling" | "switching" | "copyCleanups" | "followsUpHeld" | "usageCoordinator" | "events" | "tracking">;
 export class StateProjection {
   constructor(private readonly k: ProjectionHost, private readonly normalize: (task: MTask) => void) {}
   /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */
@@ -66,7 +66,8 @@ export class StateProjection {
   historyPage = (request: HistoryQuery): HistoryPage => {
     if (this.k.stopped) throw new Error("The engine has stopped. Reconnect to open task history.");
     if (!this.k.stopped && this.k.store.history.needsUpdate(this.k.s.tasks.filter(finishedTask) as Task[])) this.k.save();
-    return this.k.store.history.page(request);
+    const page = this.k.store.history.page(request);
+    return request.includeUsage ? historyPageUsage(page, this.k.tracking.log) : page;
   };
 
   taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? { ...taskView(task), detailsRevision: this.detailRevision(id) } : undefined; };

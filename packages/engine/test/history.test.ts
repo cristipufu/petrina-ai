@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, historyItem, reviewStats, taskLanding, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
 import { Store } from "../src/store.js";
-import { serve } from "../src/server.js";
+import { dispatch, serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
 
 const folders: string[] = [];
@@ -455,6 +455,9 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
       expect(engine.getState().tasks).toHaveLength(5);
       expect(engine.getState().history).toBeUndefined();
       expect(engine.historyPage({ productId, limit: 2 }).items).toHaveLength(2);
+      const history = await dispatch(engine, { name: "historyPage", args: [{ productId, limit: 2, includeUsage: true }] }) as import("@petrina/core").HistoryPage;
+      expect(history.items.map(item => item.usage?.empty)).toEqual(["nothing", "nothing"]);
+      expect(engine.historyPage({ productId, limit: 2 }).items.every(item => !("usage" in item))).toBe(true);
       expect(engine.taskDetails(ids[0]!)?.title).toBe("Review later 0");
       expect(engine.addTask({ productId, title: "Lost reply", clientId: "request-0" })).toBe(ids[0]!);
       const following = engine.addTask({ productId, title: "After the finished work" });

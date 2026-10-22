@@ -97,9 +97,9 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   // Keep the last task as the keyboard's anchor, without painting a pointer click as selection.
   const [boardKeyboard, setBoardKeyboard] = useState(false);
   const [inboxId, setInboxId] = useState<string>();
-  const history = useHistoryPage(state, view === "history", product, route.history);
+  const history = useHistoryPage(state, view === "history", product, route.history, { includeUsage: true });
   const runs = view === "routines" ? route.routineRuns : undefined;
-  const runHistory = useHistoryPage(state, !!runs, product, runs?.history, runs?.id);
+  const runHistory = useHistoryPage(state, !!runs, product, runs?.history, { routineId: runs?.id });
   const currentRuns = useMemo(() => runs ? state.tasks.filter(task => task.maintenance?.routineId === runs.id && task.state !== "done" && task.state !== "cancelled" && (product === "all" || involvesProduct(task, product))).sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)) : [], [runs?.id, state.tasks, product]);
   const runTasks = useMemo(() => [...currentRuns, ...(runHistory.page?.items ?? [])], [currentRuns, runHistory.page]);
   const setRunPosition = (position: HistoryPosition) => navigate(previous => ({ ...previous, routineRuns: previous.routineRuns ? { ...previous.routineRuns, history: position } : undefined, sheet: undefined }));

@@ -236,12 +236,16 @@ export interface WorkLogReader {
   moments(filter: MomentFilter): WorkMoment[];
   /** All-time sums per product. */
   productTallies(): Map<Id, Tally>;
+  /** Whole-task sums and earlier-work markers, in one read limited to the requested tasks. */
+  taskTallies(taskIds: readonly Id[]): Map<Id, TaskTally>;
   /** Tasks that had started before Petrina started keeping track. */
   untracked(): Map<Id, Id>;
   products(): ProductRecord[];
   /** Readings of the tools' usage limits in a period, oldest first: the last thirty days are kept. */
   usageHistory(filter: UsageHistoryFilter): UsageReport[];
 }
+
+export interface TaskTally { tally: Tally; untracked: boolean }
 
 export function emptyTally(): Tally {
   return { turns: 0, reported: 0, noTokens: 0, lost: 0, tokens: 0, timed: 0, workMs: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, hasInput: 0, hasCacheRead: 0, hasCacheWrite: 0, hasOutput: 0 };
@@ -530,6 +534,15 @@ export class MemoryWorkLog implements WorkLogReader {
   productTallies(): Map<Id, Tally> {
     const tallies = new Map<Id, Tally>();
     for (const turn of this.turnList) addTurn(tallies.get(turn.productId) ?? tallies.set(turn.productId, emptyTally()).get(turn.productId)!, turn);
+    return tallies;
+  }
+
+  taskTallies(taskIds: readonly Id[]): Map<Id, TaskTally> {
+    const tallies = new Map(taskIds.map(id => [id, { tally: emptyTally(), untracked: this.untrackedTasks.has(id) }]));
+    for (const turn of this.turnList) {
+      const entry = tallies.get(turn.taskId);
+      if (entry) addTurn(entry.tally, turn);
+    }
     return tallies;
   }
 

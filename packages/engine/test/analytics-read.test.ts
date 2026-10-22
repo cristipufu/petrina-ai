@@ -85,6 +85,16 @@ const noReport = (result: Result) => {
 };
 
 describe("paged analytics reads", () => {
+  it("preserves exact zero figures when the coordinator reads a task that has never run", async () => {
+    const { e, c } = fixture();
+    const taskId = e.addTask({ productId: "product", title: "Not started" });
+    const result = await c().call("analytics.inspect", { taskId, limit: 32000 });
+    expect(result.outcome).toBe("completed");
+    expect(JSON.parse(String(result.text))).toMatchObject({
+      view: "task", empty: "nothing", tokens: { atLeast: false, value: 0 }, time: { atLeast: false, value: 0 },
+    });
+  });
+
   it.each(["today", "7d", "30d"] as const)("keeps a %s product read whole while the clock passes midnight and accounts refresh", async (period) => {
     const { e, c } = fixture();
     const { clock, restore } = frozen(START);
