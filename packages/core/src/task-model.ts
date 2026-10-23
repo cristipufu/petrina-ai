@@ -246,8 +246,12 @@ export interface TaskDesignState {
 /** Review evidence and convergence across the complete reviewer group. */
 export interface TaskReviewState {
   findings: readonly Finding[];
-  /** Accepting unresolved review permits final verification, never publishing or another automatic review round. */
-  reviewDecision?: { stageId: Id; round: number; accepted: boolean };
+  /**
+   * Accepting unresolved review permits final verification, never publishing or another automatic review round. `covers`:
+   * the open Important findings it was asked about, `at` when, and `versions` the task's own change per product then
+   * ("unavailable" when unreadable). Decisions saved before these were recorded cover nothing.
+   */
+  reviewDecision?: { stageId: Id; round: number; accepted: boolean; covers?: readonly Id[]; at?: number; versions?: Readonly<Record<Id, string>> };
   /** Completed conversations belong to one stage and reviewer seat, never to voters or peers. */
   reviewSessions?: Readonly<Record<Id, Readonly<Record<Id, {
     scope: string;

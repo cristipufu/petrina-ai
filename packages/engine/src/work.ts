@@ -5,7 +5,7 @@ import { openProofs, refreshProofs, restorationReason, sameVersions } from "@pet
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
+import { builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, noteReproduction, openStep, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -245,6 +245,7 @@ export class Work {
           earlier.text = text;
           if (task.repositories) earlier.productIds = check.productIds;
           earlier.status = check.result === "pass" ? "fixed" : check.result === "blocked" ? "unverified" : "open";
+          if (check.result === "fail") noteReproduction(task, earlier, Date.now());
           if (check.result === "blocked" && check.reason) earlier.evidence = check.reason;
           else if (check.result === "pass") delete earlier.evidence;
         } else if (check.result === "fail") task.findings.push({

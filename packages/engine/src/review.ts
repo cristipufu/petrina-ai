@@ -1,10 +1,10 @@
 import { executionFor, scopesFor, repositoryView, type RepositoryContext } from "./repository-context.js";
-import { beginRepair, productsFor, versionsOf } from "./repositories.js";
+import { beginRepair, changesOf, productsFor, versionsOf } from "./repositories.js";
 import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { runtimeWaitHolds, acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { runtimeWaitHolds, acceptsAnswer, authorProfile, ballotOf, choosePanel, coveredByDecision, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReproduction, noteReviewTag, noteRoundEnd, openStep, panelAnswers, passedOpenWords, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewDecisionFor, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -56,17 +56,21 @@ function needsCurrentEvidence(finding: Finding): boolean {
   return finding.raisedBy !== "petrina" && (closedFinding(finding) || finding.reopenedAt !== undefined || finding.answer?.fixed === true);
 }
 
-/** Closed findings are judged again only from current reproductions, never unexplained old ids. */
-export function checkReviewEvidence(findings: readonly Finding[], result: z.infer<typeof ReviewResult>, _task?: Task): string | undefined {
+/**
+ * Closed findings, and open ones the coordinator chose to continue with, are judged again only from current reproductions,
+ * never unexplained old ids.
+ */
+export function checkReviewEvidence(findings: readonly Finding[], result: z.infer<typeof ReviewResult>, task?: Pick<Task, "reviewDecision">): string | undefined {
   const unknown = [...result.confirms, ...result.disputes.map((entry) => entry.id), ...result.resolves.map(entry => entry.id)].filter((id) => !findings.some((finding) => finding.id === id));
   if (unknown.length) return `Confirm or dispute only finding ids provided in your saved review input. These ids were not shown: ${[...new Set(unknown)].join(", ")}. Report a new problem as a new finding instead.`;
   const invalid = result.resolves.filter(entry => !findings.some(finding => finding.id === entry.id && finding.severity === "pre-existing" && finding.raisedBy !== "petrina") || result.confirms.includes(entry.id) || result.disputes.some(dispute => dispute.id === entry.id));
   if (invalid.length) return `Use "resolves" only for a supplied pre-existing bug you proved was repaired in current code, without also confirming or disputing that id: ${invalid.map(entry => entry.id).join(", ")}. Include the original reproduction, current observed result and nearby controls in the evidence.`;
+  const continued = new Set(task?.reviewDecision?.accepted ? task.reviewDecision.covers ?? [] : []);
   const missing = new Set(result.confirms.filter((id) => {
     const finding = findings.find((entry) => entry.id === id);
-    return finding && needsCurrentEvidence(finding) && !result.confirmationEvidence[id]?.trim();
+    return finding && (needsCurrentEvidence(finding) || (finding.raisedBy !== "petrina" && continued.has(id))) && !result.confirmationEvidence[id]?.trim();
   }));
-  return missing.size ? `Current evidence is required to reopen or support a previously closed finding. For ${[...missing].join(", ")}, return "confirms": [{"id": "<finding id>", "evidence": "<exact current failing case, expected and observed result>"}]. Include a nearby passing control when it distinguishes the regression. If there is no current failing case, omit the confirmation. The old report alone is not current evidence.` : undefined;
+  return missing.size ? `Current evidence is required to reopen or support a previously closed finding, or one the coordinator chose to continue with while it stays open. For ${[...missing].join(", ")}, return "confirms": [{"id": "<finding id>", "evidence": "<exact current failing case, expected and observed result>"}]. Include a nearby passing control when it distinguishes the regression. If there is no current failing case, omit the confirmation. The old report alone is not current evidence.` : undefined;
 }
 
 /** Preserve independent current reproductions when more than one reviewer supplies evidence. */
@@ -410,6 +414,7 @@ export class Reviews {
         reopenFinding(finding, Date.now(), evidence);
         reopenings.add(id);
       } else if (finding) addEvidence(finding, evidence);
+      if (finding && evidence?.trim()) noteReproduction(task, finding, Date.now());
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
     if (task.hunt) for (const report of [...result.confirms.map(id => ({ id, resolved: false, evidence: result.confirmationEvidence[id] })), ...result.resolves.map(entry => ({ ...entry, resolved: true }))]) {
@@ -1281,6 +1286,11 @@ export class Reviews {
     }
   }
 
+  /** The task's own change per product, without main's; one that cannot be read is unavailable. */
+  private async ownChanges(task: MTask): Promise<Record<Id, string>> {
+    return changesOf(task).catch(() => ({}));
+  }
+
   /**
    * The end of a review round: back to the builder with what is Important, or on towards delivery. `outcome`: what
    * the round's last box (its reviewers', or its voters') says.
@@ -1288,7 +1298,13 @@ export class Reviews {
   private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
     const scope = executionFor(task);
     const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, this.k.s.roles);
+    // The coordinator's decision to continue still covers its findings only on the task's own change it was made on.
+    const continued = task.reviewDecision?.accepted && task.reviewDecision.covers?.length;
+    let changes = continued ? await this.ownChanges(task) : undefined;
+    const covered = changes ? coveredByDecision(task as unknown as Task, changes) : new Set<Id>();
+    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, this.k.s.roles, covered);
+    // A decision raised below records the change it is made on, read before anything else moves.
+    if (end.kind === "used up" || (end.kind === "send back" && task.repositories)) changes ??= await this.ownChanges(task);
     noteRoundEnd(task, stage.id, open.length);
     // A port review is one round: whatever it found, the rounds after it are ordinary ones.
     const port = scope.work.portReview !== undefined;
@@ -1318,12 +1334,13 @@ export class Reviews {
     }
     this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
     const pendingProofs = task.proofRequests?.filter(request => request.status !== "proved" && request.status !== "already-current").length ?? 0;
-    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: pendingProofs ? `${W.reviewPassed}; ${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing` : W.reviewPassed };
+    const passed = [W.reviewPassed, ...(end.kind === "passed" && end.covered ? [W.coveredOpen(end.covered)] : []), ...(pendingProofs ? [`${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing`] : [])].join("; ");
+    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: passed };
     endAgentStep(task, { outcome, ...reason }, Date.now());
     if (end.kind === "send back") {
       task.rounds[stage.id] = round + 1;
       if (task.repositories) {
-        if (beginRepair(this.k, task, "review", task.stageIndex)) return "continue";
+        if (beginRepair(this.k, task, "review", task.stageIndex, covered)) return "continue";
         this.releaseRoundInput(task);
         // Continue through any remaining acceptance stage after the decision, before delivery approval.
         const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
@@ -1331,7 +1348,7 @@ export class Reviews {
         task.stageIndex += 1;
         task.sub = 0;
         this.k.log(task, "warn", "No builder can take the remaining findings, so the decision goes to you");
-        task.reviewDecision = { stageId: stage.id, round, accepted: false };
+        task.reviewDecision = reviewDecisionFor(task, stage.id, round, Date.now(), changes!);
         this.k.gate(task, "delivery");
         return "stop";
       }
@@ -1348,11 +1365,11 @@ export class Reviews {
     if (end.kind === "used up") {
       this.k.log(task, "warn", `Review rounds used up: ${findingCount(open)} still open`);
       // With blocking findings left, the coordinator always looks before anything ships.
-      task.reviewDecision = { stageId: stage.id, round, accepted: false };
+      task.reviewDecision = reviewDecisionFor(task, stage.id, round, Date.now(), changes!);
       this.k.gate(task, "delivery");
       return "stop";
     } else {
-      this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
+      this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings, covered)}`);
     }
     this.k.commit();
     return "continue";

@@ -4,6 +4,7 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js
 import type { Stage, State, StepRecord, Task } from "../src/model.js";
 import { Simulator } from "../src/sim.js";
 import { reviewRoundEnd } from "../src/flow.js";
+import { simVersions } from "../src/sim-script.js";
 import { CALL_WORDS } from "../src/call.js";
 import { OTHERS_CONTINUE, TODO_MAX, clearRunningTools, leftWords, mainLine, nextLine, pauseClock, plainTodo, resumeClock, retryingWords, startClock, timeLeft, workedSoFar } from "../src/summary.js";
 import { journeyView } from "../src/journey.js";
@@ -204,6 +205,44 @@ describe("what comes next", () => {
     demo.approve(item(demo, "delivery")!.id);
     until(demo, () => taskOf(demo, id).state === "pr-open");
     expect(taskOf(demo, id).timeline.some((entry) => entry.text.startsWith("Petrina opened pull request"))).toBe(true);
+  });
+
+  it("passes a later review over findings a decision to continue covers, in the demo and its preview, until the change moves", () => {
+    const { sim, id, on } = feature();
+    until(sim, on("code-reviewer"), true);
+    const state = sim.getState();
+    const task = taskOf(sim, id);
+    const stage = task.plan!.stages[task.stageIndex]!;
+    const last = stage.maxRounds ?? 2;
+    const accepted = { id: "accepted", text: "An older problem the coordinator chose to continue past", severity: "blocking" as const, raisedBy: "sol-high", confirmedBy: ["opus-high"], status: "open" as const };
+    // Its last round, where an unchanged Important finding alone would ask the coordinator again.
+    const at = (versions: Record<string, string>): Task => ({ ...task, rounds: { ...task.rounds, [stage.id]: last }, hunt: { stageId: stage.id, round: last, reported: {}, findings: 1 }, findings: [accepted], blockingFindingsAfter: { [stage.id]: [["accepted"]] },
+      reviewDecision: { stageId: "earlier-review", round: 3, accepted: true, covers: ["accepted"], at: state.now, versions } });
+    const decided = at(simVersions(task));
+    const moved = at(Object.fromEntries(Object.keys(simVersions(task)).map((product) => [product, "an earlier change"])));
+    expect(nextLine(state, decided)).not.toMatch(/^Next: your call/);
+    expect(nextLine(state, { ...decided, reviewDecision: { stageId: "earlier-review", round: 3, accepted: true } })).toMatch(/^Next: your call/);
+    // A Builder turn or a hand change since the decision may have changed the code: the preview no longer relies on the cover.
+    const builder = task.journey!.find((step) => step.roleId === "builder")!;
+    expect(nextLine(state, { ...decided, journey: [...task.journey!, { ...builder, id: "later-build", startedAt: state.now + 1, endedAt: state.now + 1 }] })).toMatch(/^Next: your call/);
+    expect(nextLine(state, { ...decided, journey: [...task.journey!, { ...builder, id: "later-build", startedAt: state.now + 1, endedAt: state.now + 1, builderReturn: { productId: "p", changed: false, claimedFixes: 0, outcome: "Unchanged" } }] })).not.toMatch(/^Next: your call/);
+    expect(nextLine(state, { ...decided, handChanges: true })).toMatch(/^Next: your call/);
+    const run = (variant: Task) => {
+      const demo = new Simulator({ ...state, tasks: state.tasks.map((entry) => entry.id === id ? variant : entry) }, { prMergeAfter: 1_000 });
+      until(demo, () => taskOf(demo, id).stageIndex !== task.stageIndex);
+      return { demo, after: taskOf(demo, id), review: taskOf(demo, id).journey!.findLast((step) => step.stageId === stage.id && step.kind === "agent")! };
+    };
+    const passed = run(decided);
+    expect(passed.review.reason).toBe("review passed; 1 earlier important still open under your decision to continue");
+    expect(passed.after.timeline.some((entry) => entry.text === "Review passed: 1 earlier important still open under your decision to continue")).toBe(true);
+    expect(passed.after.findings.find((finding) => finding.id === "accepted")).toEqual(accepted);
+    expect(passed.after.reviewDecision).toEqual(decided.reviewDecision);
+    expect(passed.after.fixing).toBeFalsy();
+    expect(item(passed.demo, "delivery")?.title).toContain("1 blocking finding still open");
+    // A change since the decision ends its cover: the coordinator is asked again about everything open.
+    const changed = run(moved);
+    expect(changed.review.reason).toBe("1 important still open");
+    expect(changed.after.reviewDecision).toEqual(expect.objectContaining({ stageId: stage.id, accepted: false, covers: ["accepted"] }));
   });
 
   it("predicts the canonical finding-id convergence decision even when blocker counts stay at one", () => {

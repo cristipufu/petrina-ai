@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoState } from "../src/demo.js";
-import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
+import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteReproduction, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
 import { BUILT_IN_ROLES } from "../src/library.js";
 import type { Finding, Stage, Task } from "../src/model.js";
 
@@ -81,5 +81,62 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
     expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important("fixed")] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "passed" });
     expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important()] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "send back", builder: at((stage) => stage.roleId === "builder"), open: 1 });
     expect(reviewRoundEnd({ ...planned, stageIndex: chain, findings: [important()] }, review, 2, BUILT_IN_ROLES)).toEqual({ kind: "used up", open: 1 });
+  });
+
+  it("leaves findings a decision to continue covers out of a later round's end, until new evidence or a changed own change", () => {
+    const chain = at((stage) => stage.kind === "review-chain");
+    const review = { ...stages[chain]!, maxRounds: 2 };
+    const builder = at((stage) => stage.roleId === "builder");
+    const product = planned.productId;
+    const nit: Finding = { ...important(), id: "nit", severity: "suggestion" };
+    const asked = reviewDecisionFor({ findings: [important(), nit, { ...important("fixed"), id: "fixed" }] }, "earlier", 3, 100, { [product]: "v1" });
+    // Only the open Important findings, with when and on which version of the task's own change.
+    expect(asked).toEqual({ stageId: "earlier", round: 3, accepted: false, covers: ["f1"], at: 100, versions: { [product]: "v1" } });
+    const continued = (extra: Partial<Task> = {}, decision: Partial<NonNullable<Task["reviewDecision"]>> = {}): Task => ({ ...planned, stageIndex: chain, findings: [important()], reviewDecision: { ...asked, accepted: true, ...decision }, ...extra });
+    const end = (task: Task, changes: Record<string, string> = { [product]: "v1" }, round = 1) => reviewRoundEnd(task, review, round, BUILT_IN_ROLES, coveredByDecision(task, changes));
+    const back = { kind: "send back", builder, open: 1 };
+    expect(end(continued())).toEqual({ kind: "passed", covered: 1 });
+    expect(end(continued(), { [product]: "v1" }, 2)).toEqual({ kind: "passed", covered: 1 });
+    // Ordinary flows: no decision, one still waiting, or one saved before covered findings were recorded.
+    expect(end({ ...planned, stageIndex: chain, findings: [important()] })).toEqual(back);
+    expect(end(continued({}, { accepted: false }))).toEqual(back);
+    expect(end({ ...planned, stageIndex: chain, findings: [important()], reviewDecision: { stageId: "earlier", round: 3, accepted: true } })).toEqual(back);
+    // A changed or unreadable own change, on either side.
+    expect(end(continued(), { [product]: "v2" })).toEqual(back);
+    expect(end(continued(), {})).toEqual(back);
+    expect(end(continued({}, { versions: { [product]: "unavailable" } }), { [product]: "unavailable" })).toEqual(back);
+    // New evidence after the decision ends its cover; the deciding round's own evidence does not.
+    expect(end(continued({ findings: [{ ...important(), reproducedAt: 101 }] }))).toEqual(back);
+    expect(end(continued({ findings: [{ ...important(), reopenedAt: 101 }] }))).toEqual(back);
+    expect(end(continued({ findings: [{ ...important(), reproducedAt: 100, reopenedAt: 90 }] }))).toEqual({ kind: "passed", covered: 1 });
+    // A new Important finding is never covered: the round sends back, then uses its rounds up, counting everything open.
+    const fresh = continued({ findings: [important(), { ...important(), id: "new" }] });
+    expect(coveredByDecision(fresh, { [product]: "v1" })).toEqual(new Set(["f1"]));
+    expect(end(fresh)).toEqual({ ...back, open: 2 });
+    expect(end(fresh, { [product]: "v1" }, 2)).toEqual({ kind: "used up", open: 2 });
+    expect(reviewDecisionFor(fresh, review.id, 2, 200, { [product]: "v1" }).covers).toEqual(["f1", "new"]);
+    // Only a finding the decision lists records a reproduction.
+    const task = copy({ findings: [important(), { ...important(), id: "other" }], reviewDecision: { ...asked, accepted: true } });
+    for (const finding of task.findings) noteReproduction(task, finding, 150);
+    expect(task.findings.map((finding) => finding.reproducedAt)).toEqual([150, undefined]);
+    // A passed round's log line names covered findings apart, never as nothing to fix.
+    expect(passedOpenWords([important(), nit], new Set(["f1"]))).toBe("1 nit; 1 earlier important still open under your decision to continue");
+    expect(passedOpenWords([important()], new Set(["f1"]))).toBe("1 earlier important still open under your decision to continue");
+    expect(passedOpenWords([nit, important("fixed")], new Set())).toBe("1 nit");
+    expect(passedOpenWords([], new Set())).toBe("Nothing to fix");
+  });
+
+  it("judges a shared finding's cover by its own products' change", () => {
+    const chain = at((stage) => stage.kind === "review-chain");
+    const review = { ...stages[chain]!, maxRounds: 2 };
+    const repositories = ["shop", "api"].map((productId) => ({ productId, delivery: "pull-request" as const, completedStages: [] }));
+    const shop: Finding = { ...important(), id: "shop", productIds: ["shop"] };
+    const unassigned: Finding = { ...important(), id: "together", productIds: [] };
+    const task: Task = { ...planned, stageIndex: chain, repositories, findings: [shop, unassigned], reviewDecision: { stageId: "earlier", round: 3, accepted: true, covers: ["shop", "together"], at: 100, versions: { shop: "s1", api: "a1" } } };
+    expect(coveredByDecision(task, { shop: "s1", api: "a1" })).toEqual(new Set(["shop", "together"]));
+    // The API's own change moved: the shop's finding stays covered; one without valid owners depends on every product.
+    expect(coveredByDecision(task, { shop: "s1", api: "a2" })).toEqual(new Set(["shop"]));
+    expect(coveredByDecision(task, { shop: "s2", api: "a1" })).toEqual(new Set());
+    expect(reviewRoundEnd(task, review, 1, BUILT_IN_ROLES, coveredByDecision(task, { shop: "s1", api: "a2" })).kind).toBe("send back");
   });
 });

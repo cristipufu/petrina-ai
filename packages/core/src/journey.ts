@@ -86,6 +86,7 @@ export const JOURNEY_WORDS = {
   reviewPassed: "review passed",
   reviewAgain: "your changes get reviewed",
   stillOpen: (count: number) => `${count} important still open`,
+  coveredOpen: (count: number) => `${count} earlier important still open under your decision to continue`,
   conflicts: (source = "main") => (source === "main" ? "main moved on" : `${source} moved on`),
   upToDate: "up to date with main",
   changedSinceApproval: "changed since you approved",

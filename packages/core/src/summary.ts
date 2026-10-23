@@ -5,7 +5,7 @@
 
 import { requiredUnverified } from "./acceptance.js";
 import { CALL_WORDS, followingCall } from "./call.js";
-import { allowsReviewFix, reviewRoundEnd } from "./flow.js";
+import { allowsReviewFix, coveredByDecision, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey.js";
 import { reviewerAt, roleForTask } from "./roles.js";
 import type { DeliveryMode, GateKind, Id, Stage, State, StepClock, StepRecord, Task } from "./model.js";
@@ -203,10 +203,24 @@ function canFixReview(state: People, task: Task, stage: Stage, index: number): b
   return allowsReviewFix(task, stage, task.rounds[stage.id] ?? 1);
 }
 
-/** The engine requires the coordinator's check when a review would end with blocking findings open, even if shipping normally needs no approval. */
+/**
+ * The task's own change as the preview can tell it: as the coordinator's decision to continue recorded it, unless a Builder
+ * turn that did not report its code unchanged, or a hand change, came after that decision.
+ */
+function decidedChanges(state: People, task: Task): Readonly<Record<Id, string>> {
+  const decision = task.reviewDecision;
+  if (!decision?.versions || decision.at === undefined || task.handChanges) return {};
+  const built = task.journey?.some((step) => step.kind === "agent" && (step.endedAt ?? -Infinity) > decision.at! && step.builderReturn?.changed !== false && roleForTask(state.roles, step.roleId ?? "", task)?.result === "build");
+  return built ? {} : decision.versions;
+}
+
+/**
+ * The engine requires the coordinator's check when a review would end with blocking findings open, even if shipping normally
+ * needs no approval. Findings a decision to continue still covers ask for no check again.
+ */
 function needsReviewCheck(state: People, task: Task, index: number): boolean {
   const stage = task.plan?.stages[index];
-  return index === task.stageIndex && stage?.kind === "review-chain" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1, state.roles).kind === "used up";
+  return index === task.stageIndex && stage?.kind === "review-chain" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1, state.roles, coveredByDecision(task, decidedChanges(state, task))).kind === "used up";
 }
 
 /**

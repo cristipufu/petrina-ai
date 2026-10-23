@@ -38,7 +38,8 @@ for (const following of ["gate", "agent"] as const) it(`asks about exhausted rev
     const result = await engine["reviews"]["closeReviewRound"](task, review, 5, "1 important");
     expect(result).toBe("stop");
     expect(task.stageIndex).toBe(2);
-    expect(task.reviewDecision).toEqual({ stageId: "review", round: 5, accepted: false });
+    // It names the open Important findings it is about; this fixture's copy has no recorded base, so its own change is unreadable.
+    expect(task.reviewDecision).toEqual({ stageId: "review", round: 5, accepted: false, covers: ["bug"], at: expect.any(Number), versions: { [productId]: "unavailable" } });
     expect(task.state).toBe("needs-you"); expect(task.agent).toBeUndefined();
     expect(work.checkedSha).toBeUndefined(); expect(work.approvedSha).toBeUndefined();
     const decision = engine.s.inbox.find(item => item.taskId === task.id)!;

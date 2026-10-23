@@ -7,7 +7,10 @@ import { checkProblem } from "./check-evidence.js";
 import { proofGap } from "./proof-requests.js";
 import { restoredAcceptance } from "./acceptance.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
-import type { Column, GateKind, InboxKind, Role, Stage, Task } from "./model.js";
+import { assignedProducts, taskProductIds } from "./repositories.js";
+import { findingCount } from "./findings.js";
+import { JOURNEY_WORDS } from "./journey.js";
+import type { Column, Finding, GateKind, Id, InboxKind, Role, Stage, Task } from "./model.js";
 
 /** A writable copy of a read-only state type: what the engine and the simulator change in place. */
 export type DeepMutable<T> = T extends readonly (infer U)[] ? DeepMutable<U>[] : T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
@@ -134,9 +137,54 @@ export function designRoundEnd(blocking: number, round: number, stage: Stage): "
 
 /**
  * How a review round ends: back to the builder with what is Important, passed, or with rounds used up
- * and Important findings still open (then the coordinator always looks before anything ships).
+ * and Important findings still open (then the coordinator always looks before anything ships). `covered`: a pass
+ * that leaves Important findings open under the coordinator's decision to continue.
  */
-export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number } | { kind: "passed" } | { kind: "used up"; open: number };
+export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number } | { kind: "passed"; covered?: number } | { kind: "used up"; open: number };
+
+/** The coordinator's decision about an exhausted review: the open Important findings it is about, and the task's own change then. */
+export function reviewDecisionFor(task: Pick<Task, "findings">, stageId: Id, round: number, at: number, versions: Readonly<Record<Id, string>>): DeepMutable<NonNullable<Task["reviewDecision"]>> {
+  const covers = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id);
+  return { stageId, round, accepted: false, covers, at, versions: { ...versions } };
+}
+
+/**
+ * The open Important findings the coordinator's decision to continue still covers, given the task's own change per product
+ * now. A finding leaves it once there is new evidence: a reviewer confirmed or reopened it, or acceptance testing failed it
+ * again, after the decision, or its products' change differs from the decided one (unavailable on either side counts as
+ * changed). Only finding ids, versions and recorded times decide; findings raised later are never covered.
+ */
+export function coveredByDecision(task: Task, changes: Readonly<Record<Id, string>>): ReadonlySet<Id> {
+  const decision = task.reviewDecision;
+  if (!decision?.accepted || !decision.covers?.length || decision.at === undefined) return new Set();
+  const since = decision.at;
+  const unchanged = (id: Id) => {
+    const decided = decision.versions?.[id];
+    return !!decided && decided !== "unavailable" && changes[id] === decided;
+  };
+  return new Set(task.findings.filter((finding) => {
+    if (!decision.covers!.includes(finding.id) || finding.status !== "open" || finding.severity !== "blocking") return false;
+    if ((finding.reopenedAt ?? -Infinity) > since || (finding.reproducedAt ?? -Infinity) > since) return false;
+    const owners = assignedProducts(task, finding.productIds);
+    return (owners.length ? owners : taskProductIds(task)).every(unchanged);
+  }).map((finding) => finding.id));
+}
+
+/**
+ * A reviewer's confirmation with a current reproduction, or a repeated acceptance failure, of a finding a decision to continue
+ * covers is new evidence about it. A bare id is not: callers pass only reproductions.
+ */
+export function noteReproduction(task: Pick<Task, "reviewDecision">, finding: DeepMutable<Finding>, at: number): void {
+  if (task.reviewDecision?.covers?.includes(finding.id)) finding.reproducedAt = at;
+}
+
+/** What a passed review round leaves open, for its log line: findings a decision to continue covers are named apart, never as nothing to fix. */
+export function passedOpenWords(findings: readonly Finding[], covered: ReadonlySet<Id>): string {
+  const open = findings.filter((finding) => finding.status === "open");
+  const others = open.filter((finding) => !covered.has(finding.id));
+  const still = open.length - others.length;
+  return still ? [...(others.length ? [findingCount(others)] : []), JOURNEY_WORDS.coveredOpen(still)].join("; ") : findingCount(others);
+}
 
 /** The most review rounds a stage runs on its own, however well it converges: past it the coordinator decides. */
 export const MAX_REVIEW_ROUNDS = 5;
@@ -156,10 +204,13 @@ export function allowsReviewFix(task: Task, stage: Stage, round: number): boolea
  * Past its planned rounds, a review keeps sending the work back while it converges (each round resolves at least
  * one previously open Important finding), up to MAX_REVIEW_ROUNDS. Only a round that stops making progress hands
  * the decision to the coordinator. Older saved tasks without finding snapshots use the count as a fallback.
+ * Findings the coordinator's decision to continue still `covered` alone never send work back or use rounds up.
  */
-export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: readonly Role[]): ReviewRoundEnd {
-  const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").length;
+export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: readonly Role[], covered: ReadonlySet<Id> = new Set()): ReviewRoundEnd {
+  const blocking = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+  const open = blocking.length;
   if (open === 0) return { kind: "passed" };
+  if (blocking.every((finding) => covered.has(finding.id))) return { kind: "passed", covered: open };
   const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roleForTask(roles, entry.roleId, task)?.result === "build");
   if (builder < 0) return { kind: "used up", open };
   if (allowsReviewFix(task, stage, round)) return { kind: "send back", builder, open };

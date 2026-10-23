@@ -34,7 +34,7 @@ export interface Scenario {
   silent?: boolean;
   /** A real ACP internal-error wrapper with a provider diagnostic for one role. */
   failure?: { role: string; message: string; httpStatus: number };
-  /** "short": build and one reviewer. "parallel": two reviewers at once. "trio": three at once, one on each of three tools. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
+  /** "short": build and one reviewer. "parallel": two reviewers at once. "trio": three at once, one on each of three tools. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester (Petrina adds its security review when the risk is high). */
   worksOn?: WorkChoice[];
   /** An added Security specialist passes instead of blocking once. */
   addedReviewer?: "pass";
@@ -854,6 +854,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.planner === "tester-after")
         return done({
           rationale: "Build it, one reviewer, then try it out.",
+          ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },

@@ -19,11 +19,14 @@ export async function acceptanceVersion(task: MTask, versions?: Record<string, s
   return JSON.stringify(versions ?? await versionsOf(task));
 }
 
-/** A pass visits only named owners. Each owner's applicable allowance is charged once before work starts. */
-export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number): boolean {
+/**
+ * A pass visits only named owners. Each owner's applicable allowance is charged once before work starts. Findings a
+ * decision to continue still `covered` name no owner.
+ */
+export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number, covered: ReadonlySet<string> = new Set()): boolean {
   if (!task.repositories) return false;
 
-  const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+  const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking" && !covered.has(finding.id));
   // A check repair visits only products whose checks fail: their episode, and its allowance, stay open until a
   // genuine pass. Petrina's other findings, such as a deleted test, go through review with everything else.
   const affected = repairOrder(task as Task, open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : true));

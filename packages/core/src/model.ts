@@ -830,6 +830,8 @@ export interface Finding {
   unresolved?: { at: number; reason: string; heads?: Readonly<Record<Id, string>>; trees?: Readonly<Record<Id, string>> };
   /** When a review reopened a fix or dismissal. Earlier support does not judge the new reproduction. */
   reopenedAt?: number;
+  /** When a reviewer confirmed it, or acceptance testing failed it again, while a decision to continue covered it. */
+  reproducedAt?: number;
   /** Evidence from before a finding was reopened, retained as history rather than current support. */
   earlierReviews?: readonly {
     at: number;

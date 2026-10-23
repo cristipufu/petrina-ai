@@ -54,7 +54,7 @@ import type {
   Task,
 } from "./model.js";
 import { balanced, extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
-import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, noteRoundEnd, reviewRoundEnd, type DeepMutable } from "./flow.js";
+import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteRoundEnd, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
 import { reviewClaimIds } from "./workflow-events.js";
 import * as library from "./roles.js";
@@ -1325,7 +1325,9 @@ export class Simulator {
       }
 
       const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-      const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, d.roles);
+      // As in the engine: the coordinator's decision to continue covers its findings only on the version it was made on.
+      const covered = coveredByDecision(task as unknown as Task, simVersions(task));
+      const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, d.roles, covered);
       noteRoundEnd(task, stage.id, open.length);
       // The round's step says what its reviewers raised, and where the work goes.
       const raised = task.findings.slice(task.hunt?.findings ?? 0);
@@ -1339,7 +1341,7 @@ export class Simulator {
       delete task.hunt;
       endAgentStep(
         task,
-        { outcome: findingCount(raised), ...(end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" } : { reason: W.reviewPassed }) },
+        { outcome: findingCount(raised), ...(end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" } : { reason: end.covered ? `${W.reviewPassed}; ${W.coveredOpen(end.covered)}` : W.reviewPassed }) },
         d.now,
       );
       if (end.kind === "send back") {
@@ -1353,7 +1355,7 @@ export class Simulator {
         this.startAgent(d, task);
         return;
       }
-      this.log(d, task, end.kind === "used up" ? "warn" : "done", end.kind === "used up" ? `Review rounds used up: ${findingCount(open)} still open` : `Review passed: ${findingCount(task.findings.filter((finding) => finding.status === "open"))}`);
+      this.log(d, task, end.kind === "used up" ? "warn" : "done", end.kind === "used up" ? `Review rounds used up: ${findingCount(open)} still open` : `Review passed: ${passedOpenWords(task.findings, covered)}`);
       this.moment(d, task, { kind: "review-end", outcome: end.kind === "used up" ? "rounds-used" : "passed" });
       this.endStage(d, task, end.kind === "used up" ? "rounds-used" : "passed");
       // With blocking findings left, the coordinator always looks before anything ships, as in the engine.
@@ -1361,7 +1363,7 @@ export class Simulator {
         delete task.helpers;
         task.stageIndex += 1;
         task.sub = 0;
-        task.reviewDecision = { stageId: stage.id, round, accepted: false };
+        task.reviewDecision = reviewDecisionFor(task, stage.id, round, d.now, simVersions(task));
         this.gate(d, task, "delivery");
         return;
       }
