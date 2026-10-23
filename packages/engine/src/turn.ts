@@ -23,8 +23,8 @@ import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
-import type { Section } from "./context.js";
-import { holdUnconfirmed, MessageTurn, recordMessage, takeMessages } from "./messages.js";
+import { coordinatorNotes, type Section } from "./context.js";
+import { backgroundMessage, holdUnconfirmed, MessageTurn, takeMessages } from "./messages.js";
 import { preserveCaptures } from "./captures.js";
 import { builderContext } from "./builder-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
@@ -83,9 +83,6 @@ type PendingInput = { stepId: Id; input: import("@petrina/core").JourneyAgentInp
 
 /** What an agent that may not ask for the screen hears when it asks anyway: it never pauses its step or its group. */
 const NO_SCREEN_HERE = "you cannot ask for the screen in this step. Finish without it, and list any check that needs the screen in your result";
-
-/** The coordinator's messages a reopened conversation has not heard yet, after its one line. */
-const unheardMessages = (texts: readonly string[]) => texts.length ? `Messages from the coordinator you have not seen yet, in order:\n${texts.map((text) => `- ${text}`).join("\n")}` : "";
 
 export class Turns {
   readonly repositoryCopies = new Map<string, Readonly<Record<string, string>>>();
@@ -299,13 +296,13 @@ export class Turns {
   }
 
   /** Another start on this seat is another input, never a rewrite of what it heard before. Saved once the text is known. */
-  private async attachInput(scope: RepositoryContext, pending: PendingInput | undefined, text: string, additions: readonly Section[] = []): Promise<void> {
+  private async attachInput(scope: RepositoryContext, pending: PendingInput | undefined, text: string, additions: readonly Section[] = [], openingSections: readonly Section[] = []): Promise<void> {
     if (!pending) return;
     const { task } = scope;
     const step = task.journey?.find((entry) => entry.id === pending.stepId);
     if (!step) return;
     const exact = await saveExactMessage(this.k.dataDir, task.id, text);
-    const input = { ...pending.input, ...(additions.length ? { manifest: numberInputManifest([...(pending.input.manifest ?? []), ...inputManifest("", additions, [], true)]) } : {}), ...(exact ? { exact } : {}) } as NonNullable<typeof step.agentInputs>[number];
+    const input = { ...pending.input, sections: [...pending.input.sections, ...openingSections].filter(section => section.body), ...(additions.length ? { manifest: numberInputManifest([...(pending.input.manifest ?? []), ...inputManifest("", additions, [], true)]) } : {}), ...(exact ? { exact } : {}) } as NonNullable<typeof step.agentInputs>[number];
     step.agentInputs = [...(step.agentInputs ?? []), input];
     this.k.commitNow(scope);
   }
@@ -516,7 +513,12 @@ export class Turns {
       }
       // The last moment to notice a pause before the agent gets any work.
       if (signal.aborted || !live()) throw new Aborted();
-      const withBackground = async (): Promise<Section[]> => [...currentStepAssignment(task, roleId), ...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
+      let openingMessages: ReturnType<typeof takeMessages> = [];
+      const withBackground = async (): Promise<Section[]> => {
+        const sections = [...currentStepAssignment(task, roleId), ...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
+        openingMessages = this.reserveOpening(scope, sections, options.member);
+        return sections;
+      };
       // Why this conversation is fresh rather than the saved one, when Petrina recorded a reason.
       const freshReason = wentBack || picked ? undefined : back ? (notBack ?? "the tool did not reopen the earlier conversation") : !saved && offered ? options.freshReason ?? "the tool or model changed since the earlier conversation" : saved ? again : options.freshReason;
       let pending: PendingInput | undefined;
@@ -540,22 +542,13 @@ export class Turns {
           delete repository.conversation.asked;
           delete repository.conversation.handback;
         }
-        // A kept reply is processed before this conversation receives anything else.
-        const heldReply = task.maintenance?.role.id === roleId && task.maintenance.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
-        const messages = heldReply ? [] : takeMessages(task, options.member);
-        for (const message of messages) {
-          if (!message.firstDelivery) continue;
-          recordMessage(this.k, scope, message);
-        }
-        const texts = messages.map((message) => message.text);
         const capacityContinue = !!repository.conversation?.capacityContinue && !handback && !forScreen;
         if (repository.conversation?.capacityContinue) {
           delete repository.conversation.capacityContinue;
           const sessionId = repository.conversation.sessionId;
           this.forgetCapacityResume(task, (entry) => entry.sessionId === sessionId);
         }
-        const unheard = unheardMessages(texts);
-        opening = handback ? handBackPrompt(handback, texts) : forScreen ? screenPrompt(forScreen.reason, texts) : capacityContinue ? [capacityContinuePrompt(), unheard].filter(Boolean).join("\n\n") : restartPrompt(where!, { ...(answer ? { answer } : {}), messages: texts });
+        opening = handback ? handBackPrompt(handback, []) : forScreen ? screenPrompt(forScreen.reason, []) : capacityContinue ? capacityContinuePrompt() : restartPrompt(where!, { ...(answer ? { answer } : {}), messages: [] });
         const sections = [...currentStepAssignment(task, roleId), ...(repository.prBackground ? [{ title: "Refreshed pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
         pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, opening, { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
         opening += sections.map(({ title, body }) => `\n\n## ${title}\n${body}`).join("");
@@ -563,11 +556,13 @@ export class Turns {
         // Starting the step again: everything the coordinator said in it so far, in order, and after a restart, where it was.
         const files = where && !handback && head && worktree ? await git.changedSince(worktree, head) : [];
         if (signal.aborted || !live()) throw new Aborted();
-        const earlier = repository.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
-        if (earlier.length) this.k.log(scope, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
         const sections = await withBackground();
+        const earlier = repository.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]).filter(note => backgroundMessage(task, note.id, options.member)) : [];
+        if (earlier.length) this.k.log(scope, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
         if (options.copy) sections.push({ title: OWN_COPY, body: ownCopy(head ?? "") });
-        if (earlier.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
+        // A fresh replacement still needs the recovery reminder when every note is
+        // waiting for delivery in the opening's separate instruction section.
+        if (repository.stepAttempts > 1 && task.stepNotes?.length) sections.push({ title: EARLIER_ATTEMPT, body: formatStepNotes(earlier) });
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(scope, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
@@ -582,7 +577,7 @@ export class Turns {
       this.k.commitNow(scope);
       // A reopened conversation carries on after the interruption; a fresh one gets its first instructions.
       const askScreen = options.member ? (reason: string) => this.saveScreenTurn(scope, role, profile, options.member!, worktree, repository.conversation, reason) : undefined;
-      const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, beforeContinue: checkSettings, ...(askScreen ? { askScreen } : {}), pendingInput: () => pending });
+      const result = await this.converse(scope, run, agent, opening, picked && !wentBack ? "continue" : "first", role, profileId, schema, signal, { ...options, main: !options.copy, openingMessages, beforeContinue: checkSettings, ...(askScreen ? { askScreen } : {}), pendingInput: () => pending });
       await checkSettings(undefined, result);
       if (repository.conversation) options.completed?.(repository.conversation, profile, role);
       return result;
@@ -813,11 +808,8 @@ export class Turns {
     const head = await git.head(copy).catch(() => undefined);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
-      // A short continue leaves out the opening sections, so it carries the messages this member has not heard.
-      // Taken first: the opening sections would otherwise reserve them for a text that is never sent.
-      const unheard = capacityBack ? takeMessages(task, options.member) : [];
-      for (const message of unheard) if (message.firstDelivery) recordMessage(this.k, scope, message);
       const givenSections = [...currentStepAssignment(task, roleId), ...await given(), ...(wentBack ? offered?.continuedSections ?? [] : []), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
+      const openingMessages = this.reserveOpening(scope, givenSections, options.member);
       if (signal.aborted) throw new Aborted();
       if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
@@ -827,12 +819,13 @@ export class Turns {
       let pending: PendingInput | undefined;
       const freshReason = wentBack || capacityBack ? undefined : offered || held ? (opened.reopenFailure ?? "the earlier review conversation was not reopened") : options.freshReason;
       const recordJob = (job: string, supplied: readonly Section[]) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); };
-      const continued = [capacityContinuePrompt(), unheardMessages(unheard.map((message) => message.text))].filter(Boolean).join("\n\n");
+      const continued = capacityContinuePrompt();
       const opening = capacityBack ? [continued, ...currentStepAssignment(task, roleId).map(({ title, body }) => `## ${title}\n${body}`)].join("\n\n") : wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob }) : buildPrompt(promptContext, recordJob);
       if (capacityBack) pending = this.recordJourneyInput(scope, roleId, profileId, currentStepAssignment(task, roleId), "continued", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, continued, { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
       const result = await this.converse(scope, run, agent, opening, capacityBack ? "continue" : "first", role, profileId, schema, signal, {
         ...options,
         main: false,
+        openingMessages,
         reviewKey: options.key,
         askScreen: (reason) => this.saveScreenTurn(scope, role, profile, options.member, copy, note, reason),
         pendingInput: () => pending,
@@ -874,27 +867,36 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Each parallel conversation hears
    * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
    */
-  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }): Promise<T> {
+  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; openingMessages?: ReturnType<typeof takeMessages>; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }): Promise<T> {
     const messages = options.main || options.member ? new MessageTurn(this.k, scope, run, agent.profile, role.id, options.member, options.reviewerKey, signal) : undefined;
     messages?.start();
     try { return await this.conversation(scope, run, agent, opening, reason, role, profileId, schema, signal, options, messages); }
     finally { messages?.dispose(); }
   }
 
-  private async conversation<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }, messages?: MessageTurn): Promise<T> {
+  private async conversation<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; openingMessages?: ReturnType<typeof takeMessages>; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }, messages?: MessageTurn): Promise<T> {
     const { task, work: repository } = scope;
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
     let previousReply: TurnResult | undefined;
     let pendingOpening: string | undefined;
     let inputAttached = false;
-    const send = async (text: string, why: TurnReason) => {
+    const send = async (text: string, why: TurnReason, reserved?: ReturnType<typeof takeMessages>) => {
       if (signal.aborted) throw new Aborted();
       if (previousReply) await options.beforeContinue?.(previousReply);
       if (pendingOpening) { text = `${pendingOpening}\n\n${text}`; pendingOpening = undefined; }
+      // Reserve at the handoff, after context preparation. Background deduplication must
+      // never stand in for delivery, including for notes arriving while context was built.
+      const batch = reserved ?? [...(!inputAttached ? options.openingMessages ?? [] : []), ...(options.main || options.member ? takeMessages(task, options.member, inputAttached ? 12_000 : Infinity) : [])];
+      // Stop-and-send can arrive ahead of an opening reservation while its packet is saved.
+      batch.sort((a, b) => task.queued.findIndex(message => message.id === a.id) - task.queued.findIndex(message => message.id === b.id));
+      const instructions = batch.length ? { title: "Messages from the coordinator, in order", body: batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n") } : undefined;
+      if (instructions) text += `\n\n## ${instructions.title}\n${instructions.body}\n\nTake all of them into account. When you are done, end with the result block again.`;
       // The exact text goes to disk once, and the journey keeps its reference, before the agent hears it.
       if (!inputAttached) {
-        await this.attachInput(scope, options.pendingInput?.(), text, browser ? [{ title: "Browser instructions", body: browser }] : []);
+        // Same-step reopens record this send below as an update; fresh starts and
+        // returns to earlier conversations show its instructions in the opening sections.
+        await this.attachInput(scope, options.pendingInput?.(), text, [...(browser ? [{ title: "Browser instructions", body: browser }] : []), ...(instructions ? [instructions] : [])], why === "first" && instructions ? [instructions] : []);
         inputAttached = true;
       }
       if (why !== "first") {
@@ -913,6 +915,7 @@ export class Turns {
       }
       let reply: TurnResult;
       try {
+        messages?.preparePrompt(batch);
         reply = await this.k.tracking.turn(scope, agent, run, text, why, signal);
       } catch (error) {
         // The turn can stop before this conversation is marked briefed. A full model still has to be reopenable.
@@ -924,12 +927,7 @@ export class Turns {
       return reply;
     };
     const sendQueued = (batch: ReturnType<typeof takeMessages>) => {
-      for (const message of batch) if (message.firstDelivery) {
-        recordMessage(this.k, scope, message);
-      }
-      this.k.commitNow(scope);
-      const messages = batch.map((message, index) => `${index + 1}. ${message.text}`).join("\n");
-      return send(`Messages from the coordinator, in order:\n${messages}\n\nTake all of them into account. When you are done, end with the result block again.`, "message");
+      return send("Continue with the coordinator's instructions below.", "message", batch);
     };
     const mayAsk = mayAskScreen(role);
     const browser = run.browser ? (run.reopened ? `Browser capture folder for this turn: ${run.browser.directory}. Earlier pages and browser logins are gone; the same browser and output rules apply.` : browserPrompt(run.browser.directory)) : undefined;
@@ -984,13 +982,8 @@ export class Turns {
         // Given at once, in this conversation: the agent keeps its slot.
         await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
         current.screen!.heard = true;
-        const messages = takeMessages(current, options.member);
-        for (const message of messages) {
-          if (!message.firstDelivery) continue;
-          recordMessage(this.k, scope, message);
-        }
         this.k.commitNow(scope);
-        reply = await send(screenPrompt(current.screen!.reason, messages.map((message) => message.text)), "continue");
+        reply = await send(screenPrompt(current.screen!.reason, []), "continue");
         continue;
       }
       // Keeping a saved question accepts that question, even when instructions are waiting.
@@ -1237,6 +1230,15 @@ export class Turns {
     // One timeline line when a retry starts, not one per notice or change of cause.
     if (starting) this.k.log(scope, "warn", `${role.name}: ${words}`, role.id, profile.id);
     this.k.commit(scope);
+  }
+
+  /** Refresh removable notes, then reserve before an immutable packet can expose them. */
+  private reserveOpening(scope: RepositoryContext, sections: Section[], member?: string): ReturnType<typeof takeMessages> {
+    const index = sections.findIndex(section => section.title.startsWith("The coordinator's notes on this task"));
+    if (index >= 0) sections.splice(index, 1, ...coordinatorNotes(scope, member));
+    const maintenance = scope.task.maintenance;
+    if (maintenance?.pendingReply && maintenance.settingsDecision?.choice === "keep") return [];
+    return takeMessages(scope.task, member, Infinity);
   }
 
   private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,

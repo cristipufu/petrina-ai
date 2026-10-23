@@ -51,16 +51,17 @@ describe("what the coordinator says during a step survives a restart", () => {
       expect(builders[0]).not.toContain(EARLIER_ATTEMPT);
       const restarted = builders[1]!;
       expect(restarted).toContain(EARLIER_ATTEMPT);
-      // All of it, in order, each marked as earlier, the answer next to its question.
+      // Heard context stays earlier; the waiting instruction joins the actual prompt once.
       const said = [
         "(earlier attempt) The agent asked: Which colour should the greeting be? | The coordinator answered: Blue, please",
         "(earlier attempt) A message from the coordinator: Keep it short",
         "(earlier attempt) The coordinator interrupted with: Use exclamation marks",
-        "(earlier attempt) A message from the coordinator: Sign it from the team",
+        "1. Sign it from the team",
       ].map((line) => restarted.indexOf(line));
       expect(said.every((at) => at >= 0)).toBe(true);
       expect([...said].sort((a, b) => a - b)).toEqual(said);
-      expect(task.timeline.some((entry) => entry.text === "Handed on 4 things you said in an earlier attempt at this step")).toBe(true);
+      expect(restarted.split("Sign it from the team")).toHaveLength(2);
+      expect(task.timeline.some((entry) => entry.text === "Handed on 3 things you said in an earlier attempt at this step")).toBe(true);
       // The journey survived it: one builder box throughout, from when the step first started, its question answered under it.
       const builderBoxes = task.journey!.filter((step) => step.roleId === "builder");
       expect(builderBoxes).toHaveLength(1);

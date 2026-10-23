@@ -203,7 +203,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     const heard = builder.at(-1)!.text;
     expect(heard).toStartWith("The coordinator took over this step in their own terminal, on this same conversation, and has handed it back to you.");
     expect(heard).toContain(note);
-    expect(heard).toContain("Messages from the coordinator that waited for the hand back, in order:\n- Keep it short");
+    expect(heard).toContain("Messages from the coordinator, in order\n1. Keep it short");
     expect(done.session.some((line) => line.from === "agent" && line.text.includes("Terminal turns: 1."))).toBe(true);
     expect(done.timeline.some((entry) => entry.text === "Took the step back on the same conversation")).toBe(true);
     expect(done.timeline.filter((entry) => entry.text === "Reviewing your changes: the review starts again from the first reviewer")).toHaveLength(0);

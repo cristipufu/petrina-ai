@@ -38,26 +38,30 @@ it("publishes a complete packet before a second seat saving the same instruction
   try {
     const task = createDemoState(1_000_000_000).tasks[0]!;
     const role = BUILT_IN_ROLES.find(entry => entry.id === "code-reviewer")!;
-    const sections = [{ title: "Design brief", body: "A complete requirement. ".repeat(10_000) }];
+    const sections = [{ title: "Design brief", body: "A complete requirement. ".repeat(10_000) }, { title: "The coordinator's notes on this task", body: "", background: "Queued guidance delivered separately in the prompt." }];
+    const supplied = [sections[0]!];
     const pending = builderContext(root, task, role, "seat-0", sections);
     await Promise.race([hold.partial, pending]);
     expect(hold.held).toHaveLength(1);
     // The first seat's exclusive write is held halfway with its partial bytes on disk.
     const second = await builderContext(root, task, role, "seat-1", sections);
-    expect(second.sections).toEqual(sections);
+    expect(second.sections).toEqual(supplied);
     expect(second.snapshot).toBeDefined();
     expect(sha(await readFile(second.snapshot!.file, "utf8"))).toBe(second.snapshot!.digest);
+    expect(await readFile(second.snapshot!.file, "utf8")).toContain(sections[1]!.background!);
     hold.release();
     const first = await pending;
-    expect(first.sections).toEqual(sections);
+    expect(first.sections).toEqual(supplied);
     expect(first.snapshot).toMatchObject({ file: second.snapshot!.file, digest: second.snapshot!.digest });
     expect(first.snapshot!.scope).not.toBe(second.snapshot!.scope);
     expect(sha(await readFile(first.snapshot!.file, "utf8"))).toBe(first.snapshot!.digest);
     expect(await readdir(dirname(first.snapshot!.file))).toEqual([basename(first.snapshot!.file)]);
-    // Each seat continues only its own conversation from the shared packet.
+    // Each seat continues only its own conversation from the shared packet. Once
+    // delivered, the queued guidance stays background rather than another prompt copy.
+    const heard = [sections[0]!, { ...sections[1]!, body: sections[1]!.background! }];
     for (const [session, own, other] of [["seat-0", first, second], ["seat-1", second, first]] as const) {
-      expect((await builderContext(root, task, role, session, sections, own.snapshot)).sections.map(section => section.title)).toEqual(["Current authoritative task context"]);
-      expect((await builderContext(root, task, role, session, sections, other.snapshot)).sections).toEqual(sections);
+      expect((await builderContext(root, task, role, session, heard, own.snapshot)).sections.map(section => section.title)).toEqual(["Current authoritative task context"]);
+      expect((await builderContext(root, task, role, session, heard, other.snapshot)).sections).toEqual(heard);
     }
   } finally { hold.restore(); removeDir(root); }
 });
@@ -240,19 +244,23 @@ it("keeps complete instructions without a saved packet when context storage is u
   try {
     const task = createDemoState(1_000_000_000).tasks[0]!;
     const role = BUILT_IN_ROLES.find(entry => entry.id === "code-reviewer")!;
-    const sections = [{ title: "Design brief", body: "Keep the complete requirement." }];
+    const sections = [{ title: "Design brief", body: "Keep the complete requirement." }, { title: "The coordinator's notes on this task", body: "", background: "An instruction supplied separately in the prompt." }];
     // A file in place of the packet directory makes storage fail without touching other tests.
     const blocked = join(root, "contexts");
     await writeFile(blocked, "Unavailable context storage");
     const unavailable = await builderContext(root, task, role, "own-review", sections);
-    expect(unavailable.sections).toEqual(sections);
+    expect(unavailable.sections).toEqual([sections[0]!]);
     expect(unavailable.snapshot).toBeUndefined();
     await rm(blocked);
     const recovered = await builderContext(root, task, role, "own-review", sections);
-    expect(recovered.sections).toEqual(sections);
+    expect(recovered.sections).toEqual([sections[0]!]);
     expect(await readFile(recovered.snapshot!.file, "utf8")).toContain(sections[0]!.body);
-    const continued = await builderContext(root, task, role, "own-review", sections, recovered.snapshot);
+    expect(await readFile(recovered.snapshot!.file, "utf8")).toContain(sections[1]!.background!);
+    const heard = [sections[0]!, { ...sections[1]!, body: sections[1]!.background! }];
+    const continued = await builderContext(root, task, role, "own-review", heard, recovered.snapshot);
     expect(continued.sections.map(section => section.title)).toEqual(["Current authoritative task context"]);
+    expect((await builderContext(root, task, role, "replacement", heard, continued.snapshot)).sections).toEqual(heard);
+    expect((await builderContext(root, { ...task, id: "invalid/id" }, role, "fresh", sections)).sections).toEqual([sections[0]!]);
   } finally { removeDir(root); }
 });
 

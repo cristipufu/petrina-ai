@@ -979,7 +979,9 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         // "Your call" tag and the others get it. Every note is rewritten to match the updated brief.
         const ids = objectionIds(settled);
         const answers = ids.map((id, index) => (index === 0 ? { id, status: "accepted", byCall: false, answer: "Kept it in the brief after your note." } : { id, status: "accepted", byCall: true, answer: "Added it to the brief, as the call says." }));
-        return done({ ...brief, answers }, `Revising: ${ids.join(", ")}. Latest note: - ${section(text, NOTES)?.split("\n").at(-1) ?? "none"}`);
+        const messages = section(text, "Messages from the coordinator, in order") ?? "";
+        const latest = [...messages.matchAll(/^\d+\. (.+)$/gm)].at(-1)?.[1] ?? section(text, NOTES)?.split("\n").at(-1) ?? "none";
+        return done({ ...brief, answers }, `Revising: ${ids.join(", ")}. Latest note: - ${latest}`);
       }
       if (call !== undefined) {
         await say("Reading your call");

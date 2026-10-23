@@ -11,7 +11,7 @@ const reusable = (title: string) => /^(?:Current step assignment|Design brief|Fi
 
 /** Delta only a confirmed continuation; an immutable full packet remains readable after compaction. */
 export async function builderContext(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous?: BuilderContext, options: { design?: boolean; knownSections?: readonly string[]; findings?: readonly Finding[] } = {}): Promise<{ sections: Section[]; snapshot?: BuilderContext; omitted?: { title: string; digest: string }[] }> {
-  const all = sections.map((section) => ({ ...section }));
+  const all = sections.filter(section => section.body).map((section) => ({ ...section }));
   if (!/^[a-zA-Z0-9_-]+$/.test(task.id)) return { sections: all };
   const root = join(dataDir, "contexts", task.id);
   // Advancing the approved branch changes the work, not the identity of this
@@ -21,13 +21,13 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
   const keyed = sections.map((section) => {
     const occurrence = (counts.get(section.title) ?? 0) + 1;
     counts.set(section.title, occurrence);
-    return { section, key: `${section.title}#${occurrence}`, digest: hash(section.body) };
+    return { section, key: `${section.title}#${occurrence}`, digest: hash(section.background ?? section.body) };
   });
   const versions = (task.repositories ?? [task]).map((work) => `${work.productId}: base ${work.baseSha ?? "not prepared"}`).join("\n");
   const answering = (title: string) => title === "Review findings (answer every one by id; fix every Important one)";
   const findingSection = (title: string) => title === "Findings so far (confirm or dispute by id)" || answering(title);
   const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? task.findings.filter(finding => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(task.productId))) : undefined) : undefined;
-  const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(findingRecords, null, 2)}\n` : ""}`;
+  const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${sections.map((section) => `## ${section.title}\n${section.background ?? section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(findingRecords, null, 2)}\n` : ""}`;
   try {
     // Named only once complete, so a seat saving the same packet at the same moment never reads part of it.
     const { file, digest } = await saveImmutable(root, "md", packet, "The saved context packet changed.");
@@ -40,6 +40,7 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
     // Unchanged sections left out of this continuation, recognized only from the recorded comparison.
     const omitted: { title: string; digest: string }[] = [];
     const sent = keyed.flatMap(({ section, key, digest }) => {
+      if (!section.body) return [];
       if (findingSection(section.title) && findingRecords && previous.findingHashes && findingHashes) {
         const changed = findingRecords.filter((finding) => findingHashes[finding.id] !== previous.findingHashes![finding.id]);
         const removed = Object.keys(previous.findingHashes).filter((id) => !(id in findingHashes));

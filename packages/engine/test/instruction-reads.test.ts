@@ -85,11 +85,12 @@ describe("reading a product's committed files", () => {
       expect(scope.task.queued).toHaveLength(1);
       checksDone(true);
       const sections = await reading;
-      expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Keep the latest instruction");
+      expect(sections.some((section) => section.body.includes("Keep the latest instruction"))).toBe(false);
+      expect(scope.task.queued[0]?.text).toBe("Keep the latest instruction from the coordinator.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Preserve the greeting.");
       expect(sections.find((section) => section.title === "Current product checks, run by Petrina itself")?.body).toContain("Quick: passed");
       expect(started).toEqual(["guide", "checks"]);
-      expect(scope.task.queued[0]?.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
+      expect(scope.task.queued[0]?.deliveries).toBeUndefined();
     } finally { guideDone([]); checksDone(false); await reading?.catch(() => {}); await engine.shutdown(); }
   });
 
@@ -119,7 +120,7 @@ describe("reading a product's committed files", () => {
     });
   });
 
-  for (const pullRequest of [false, true]) it(`includes a coordinator note received while its review guide was being read${pullRequest ? " for a pull request task" : ""}`, async () => {
+  for (const pullRequest of [false, true]) it(`keeps a coordinator note waiting for prompt handoff while its review guide is read${pullRequest ? " for a pull request task" : ""}`, async () => {
     const root = join(folder, `context-${pullRequest}`);
     const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
@@ -144,7 +145,8 @@ describe("reading a product's committed files", () => {
       expect(task.queued).toHaveLength(1);
       finish(["Every greeting also shows on the welcome page."]);
       const sections = await reading;
-      expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Keep the existing welcome page.");
+      expect(sections.some((section) => section.body.includes("Keep the existing welcome page."))).toBe(false);
+      expect(task.queued[0]?.text).toBe("Keep the existing welcome page.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Every greeting also shows on the welcome page.");
       if (pullRequest) {
         const source = sections.find((section) => section.title === "Approved starting point and delivery")?.body;
@@ -152,7 +154,7 @@ describe("reading a product's committed files", () => {
         expect(source).toContain("Update PR #7 contributor/demo · review-work");
         expect(executionFor(task).work.source?.confirmed).toBe(true);
       }
-      expect(task.queued[0]?.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
+      expect(task.queued[0]?.deliveries).toBeUndefined();
     } finally {
       engine.shutdown();
     }
@@ -182,11 +184,12 @@ describe("reading a product's committed files", () => {
       expect(task.queued).toHaveLength(1);
       finish(["The welcome page must show who can see each greeting."]);
       const sections = await reading;
-      expect(sections.find((section) => section.title.startsWith("The coordinator's notes"))?.body).toContain("Check the welcome page too.");
+      expect(sections.some((section) => section.body.includes("Check the welcome page too."))).toBe(false);
+      expect(task.queued[0]?.text).toBe("Check the welcome page too.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("The welcome page must show who can see each greeting.");
       expect(sections.find((section) => section.title === "What earlier agents on this task handed back")?.body).toBe("Researcher, in “Research”: The welcome page is important.\n- Keep its greeting visible.");
       if (pullRequest) expect(sections.find((section) => section.title === "Approved starting point and delivery")?.body).toContain("Update PR #7 contributor/demo · review-work");
-      expect(task.queued[0]?.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
+      expect(task.queued[0]?.deliveries).toBeUndefined();
     } finally {
       engine.shutdown();
     }

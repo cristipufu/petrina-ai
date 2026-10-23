@@ -194,7 +194,7 @@ The coordinator who reads your work is a product person, not a developer: everyt
   const workspace = role.id === "planner" ? `Your planning folder is ${worktree}. No task working copy exists yet. Investigate GitHub and the registered products’ existing local copies read-only; preserve all uncommitted work.` : `Your working copy is ${worktree}, on branch ${branch}. ${task.repositories ? "You may read every copy in the approved product map below; change only the product assigned to your conversation." : "Stay inside it."}`;
   const backgroundRules = background(ctx.screen ?? (mayAskScreen(role) ? "ask" : undefined));
   const request = `# The task: ${task.title}\n${task.description || "(no further description)"}`;
-  const sections = [...productMap(ctx, false), ...ctx.sections];
+  const sections = [...productMap(ctx, false), ...ctx.sections].filter(section => section.body);
   const ending = RESULT_FOOTER(shapeFor(contract, ctx));
   recordJob?.(job, [
     { title: "Agent introduction", body: introduction }, { title: "Working copy", body: workspace },
@@ -212,7 +212,7 @@ export function continuePrompt(ctx: PromptContext, options: { refreshRole?: bool
   const contract = contractFor(ctx.role);
   const job = `${contract.instructions(ctx)}${options.refreshRole ? roleCard(ctx) : ""}`;
   const introduction = `Petrina is back with more work on this task, in the same working copy (${ctx.worktree}, on branch ${ctx.branch}).${ctx.base ? ` The current base version is ${ctx.base}.` : ""} What you learned before still holds; here is where things stand now.`;
-  const sections = [...productMap(ctx, true), ...ctx.sections];
+  const sections = [...productMap(ctx, true), ...ctx.sections].filter(section => section.body);
   const screen = screenNow(ctx.screen ?? (mayAskScreen(ctx.role) ? "ask" : undefined));
   const ending = RESULT_FOOTER(shapeFor(contract, ctx));
   options.recordJob?.(job, [
@@ -385,6 +385,7 @@ export const EARLIER_ATTEMPT = "What the coordinator said in an earlier attempt 
 
 /** Everything said during a step that started before and was cut short, in order, each marked as earlier. */
 export function formatStepNotes(notes: readonly StepNote[]): string {
+  if (!notes.length) return "This step started before and was cut short (Petrina was closed, stopped or paused). Continue from the work already in this working copy. Instructions still waiting for you are supplied separately below. Permissions allowed in the earlier attempt are not carried over.";
   const lines = notes.map((note) => {
     switch (note.kind) {
       case "changes":

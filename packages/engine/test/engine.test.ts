@@ -211,6 +211,8 @@ describe("The coordinator's call on a design disagreement", () => {
     const check = itemOf(state, taskId, "design")!;
     const checkIndex = after.stageIndex;
     engine.requestChanges(check.id, "Say where the greeting shows.");
+    const instruction = engine.task(taskId)!.queued.find(message => message.text === "Say where the greeting shows.")!;
+    expect(instruction).toBeDefined();
     state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
     const revised = taskOf(state, taskId);
     expect(revised.stageIndex).toBe(checkIndex);
@@ -221,6 +223,12 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(itemOf(state, taskId, "disagreement")).toBeUndefined();
     // It got the note and every objection the call covered, and could correct its decisions, tags and notes.
     expect(revised.session.some((line) => line.from === "agent" && line.text === `Revising: ${open.map((objection) => objection.id).join(", ")}. Latest note: - Say where the greeting shows.`)).toBe(true);
+    const revisedInput = revised.journey!.filter(step => step.roleId === "architect").at(-1)!.agentInputs!.at(-1)!;
+    const sent = readFileSync(revisedInput.exact!.file, "utf8");
+    expect(sent).toContain("## Messages from the coordinator, in order\n1. Say where the greeting shows.");
+    expect(sent.split("Say where the greeting shows.")).toHaveLength(2);
+    expect(instruction.deliveries?.main?.state).toBe("applied");
+    expect(revised.queued).toEqual([]);
     expect(revised.objections.find((objection) => objection.id === open[0]!.id)).toMatchObject({ status: "accepted", answer: "Kept it in the brief after your note." });
     expect(revised.journey!.find((step) => step.id === answeredStep.id)!.result?.objections?.find((objection) => objection.id === open[0]!.id)?.answer).toBe("Removed it from the brief, as the call says.");
     expect(revised.objections.find((objection) => objection.id === open[0]!.id)?.call).toBeUndefined();

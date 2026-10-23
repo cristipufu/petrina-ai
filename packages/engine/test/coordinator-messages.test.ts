@@ -177,6 +177,8 @@ it("keeps an explicit wait ahead of later live guidance and allows removal befor
     const text = f.fakes.received("builder")[1]!.text;
     expect(text.indexOf("First wait")).toBeLessThan(text.indexOf("Second guidance"));
     expect(text).not.toContain("Take this back");
+    const update = f.task.journey!.at(-1)!.agentInputs![0]!.updates!.find(update => update.reason === "message")!;
+    expect(readFileSync(update.exact!.file, "utf8")).toBe(text);
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
 });
@@ -211,11 +213,14 @@ it("retains possibly accepted input when a different tool takes over", async () 
   } finally { replacement.abort(); await f.dispose(); }
 });
 
-it("delivers guidance arriving during startup once the opening prompt is active", async () => {
+it("includes guidance arriving during startup in the exact opening before applying its receipt", async () => {
   const f = await fixture("injected", "codex", false, {}, "Keep the starting guidance");
   try {
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "startup guidance to join the opening prompt");
-    expect(f.liveRows().map(row => row.text)).toEqual(["Keep the starting guidance"]);
+    expect(f.task.queued[0]?.deliveries?.main?.state).toBe("applied");
+    expect(f.liveRows()).toEqual([]);
+    const opening = f.fakes.received("builder")[0]!.text;
+    expect(opening.split("Keep the starting guidance")).toHaveLength(2);
+    expect(readFileSync(f.task.journey!.at(-1)!.agentInputs![0]!.exact!.file, "utf8")).toBe(opening);
     f.release(); await f.pending;
     expect(f.fakes.received("builder")).toHaveLength(1);
     expect(f.task.queued).toEqual([]);

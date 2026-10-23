@@ -286,6 +286,29 @@ describe('the journey in the task sheet', () => {
     } finally { errors.mockRestore(); }
   });
 
+  it.each(['fresh', 'continued', 'reopened'] as const)('shows delivered coordinator guidance once in the input panel (%s)', async (mode) => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'pricing-refresh');
+    const step = task.journey!.find((step) => step.roleId === 'builder')!;
+    const text = 'Keep the original integrity requirement when checking the artifact.';
+    const messages = { title: 'Messages from the coordinator, in order', body: `1. ${text}` };
+    step.agentInputs = [{
+      roleId: 'builder', profileId: step.profileId!, taskTitle: task.title,
+      mode: mode === 'fresh' ? 'fresh' : 'continued',
+      sections: mode === 'reopened' ? [] : [messages],
+      ...(mode === 'reopened' ? { resumed: true, updates: [{ at: NOW, reason: 'continue' as const, text: `## ${messages.title}\n${messages.body}` }] } : {}),
+    }];
+    await mount(state);
+    await openTask('pricing-refresh');
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!.click());
+    const input = host.querySelector('.journey-input-record')!;
+    expect(input.textContent).toContain('Input given to Builder');
+    expect(input.textContent!.split(text)).toHaveLength(2);
+    expect(input.textContent).not.toContain("The coordinator's notes");
+    if (mode === 'reopened') expect(input.querySelector('.journey-input-updates')?.textContent).toContain(text);
+    else expect([...input.querySelectorAll('h4')].map(heading => heading.textContent)).toContain(messages.title);
+  });
+
   it('explains a Builder fix assignment and shows the exact failed Tester check', async () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');

@@ -5,6 +5,15 @@ import type { RepositoryContext } from "./repository-context.js";
 import type { AgentRun, TurnResult } from "./acp-run.js";
 
 export const messageMember = (member?: string) => member ?? "main";
+
+/** A resolved delivery decision preserves task guidance without certifying it was heard. */
+export function backgroundMessage(task: MTask, id: string | undefined, member?: string): boolean {
+  const message = task.queued.find(message => message.id === id);
+  const key = messageMember(member);
+  const state = message?.deliveries?.[key]?.state;
+  return !message || (message.recipients?.[key] === true && (state === undefined || state === "applied" || state === "skipped"));
+}
+
 const unresolved = (message: QueuedMessage, member: string) => {
   const state = message.deliveries?.[member]?.state;
   return state === "sending" || state === "accepted" || state === "unconfirmed";
@@ -194,6 +203,7 @@ export class MessageTurn {
   private pumping?: Promise<void>;
   private attempted = new Set<string>();
   private joined = new Set<string>();
+  private promptMessages = new Set<string>();
   private disposed = false;
   readonly member: string;
 
@@ -209,6 +219,7 @@ export class MessageTurn {
     this.k.messageTurns.set(this.scope.task.id, lanes);
     this.run.onPromptStarted = () => {
       for (const message of this.scope.task.queued) {
+        if (!this.promptMessages.has(message.id)) continue;
         const receipt = message.deliveries?.[this.member];
         if (receipt?.state !== "sending" || receipt.via !== "prompt") continue;
         // The prompt now contains this instruction. That participant has it; a later
@@ -218,9 +229,15 @@ export class MessageTurn {
         // The follow-up prompt now contains it, so the step record is heard too.
         this.markHeard(message);
       }
+      this.promptMessages.clear();
       this.k.commitNow(this.scope);
       void this.deliver();
     };
+  }
+
+  /** Only these reserved instructions were included in the prompt about to start. */
+  preparePrompt(messages: readonly QueuedMessage[]): void {
+    this.promptMessages = new Set(messages.map(message => message.id));
   }
 
   dispose(): void {
@@ -308,7 +325,7 @@ export class MessageTurn {
       for (const message of this.scope.task.queued) {
         const receipt = message.deliveries?.[this.member];
         // Stopping the turn counts: the tool already accepted this message into it. A queued acknowledgement did not join, so it stays open.
-        if (!receipt || !(this.joined.has(message.id) || (receipt.via === "prompt" && receipt.state === "sending"))) continue;
+        if (!receipt || !this.joined.has(message.id)) continue;
         this.markHeard(message);
       }
       removeHeard(this.scope.task);

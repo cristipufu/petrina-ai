@@ -9,7 +9,7 @@ import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
-import { takeMessages } from "./messages.js";
+import { backgroundMessage } from "./messages.js";
 import { currentSourcePointers, hintProducts } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
 import * as git from "./git.js";
@@ -20,13 +20,15 @@ import { openProofs, proofContext, type ProofRequest } from "@petrina/core";
 export interface Section {
   title: string;
   body: string;
+  /** Complete background retained in the context packet, even when instructions travel separately. */
+  background?: string;
 }
 
 const reviewFindings = ({ task }: RepositoryContext) => task.findings.filter((finding) => finding.raisedBy !== "petrina" || finding.status === "open");
 
 export class Context {
-  private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean) => Section[]> = {
-    notes: (scope) => this.notes(scope),
+  private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean, member?: string) => Section[]> = {
+    notes: (scope, _role, _points, _checks, member) => coordinatorNotes(scope, member),
     brief: (scope) => this.brief(scope),
     "design-notes": (scope) => this.designNotes(scope),
     objections: (scope, roleId) => this.objections(scope, roleId),
@@ -62,14 +64,11 @@ export class Context {
       !review && reads.includes("check-results") && !!repository.checks?.results.length ? this.currentChecks(scope) : false,
       currentSourcePointers(repositoryView(scope), references),
     ]);
-    // Gather notes after the read, so notes received while Git worked are included before reserving them for the opening prompt.
-    // Preparing context to replay an accepted reply does not deliver instructions yet.
-    const heldReply = task.maintenance?.role.id === roleId && task.maintenance.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
-    if (!heldReply) takeMessages(task, member, Infinity);
+    // Waiting instructions belong to the actual prompt handoff, not reusable background.
     const source = review ? review.source : this.approvedSource(scope);
     const rows = review ? review.products : this.productRows(scope);
     const map = rows ? [{ title: "Complete approved product map and responsibility", body: rows.map((row) => `${row.beforeCopy}${copies?.[row.productId] ?? row.copy}${row.afterCopy}`).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${repository.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
-    const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => review && part !== "notes" ? review.parts[part] ?? [] : this.parts[part](scope, roleId, points, currentChecks))];
+    const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => review && part !== "notes" ? review.parts[part] ?? [] : this.parts[part](scope, roleId, points, currentChecks, member))];
     if (task.maintenance) sections.unshift({ title: "Saved scheduled maintenance request", body: task.maintenance.input });
     if (review?.material) sections.push(review.material);
     if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
@@ -130,16 +129,6 @@ export class Context {
     return task.handedBack?.length ? [{ title: "What earlier agents on this task handed back", body: task.handedBack.map((entry) => `${entry.roleName ?? this.k.role(entry.roleId, task)?.name ?? "An earlier role"}${entry.productId ? ` · ${task.repositories?.find((work) => work.productId === entry.productId)?.source?.product.name ?? entry.productId}` : ""}, in “${entry.title ?? task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? "an earlier step"}”: ${entry.summary}\n${entry.notes.map((note) => `- ${note}`).join("\n")}`).join("\n\n") }] : [];
   }
 
-  /**
-   * Every agent on the task sees all of the coordinator's notes, reviewers included. A step started again
-   * hears what was said in its earlier attempt in a section of its own, so those are left out here.
-   */
-  private notes(scope: RepositoryContext): Section[] {
-    const { task, work: repository } = scope;
-    const fromEarlier = (repository.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
-    const notes = (task.notes ?? []).filter((note) => !fromEarlier.some((said) => (note.id !== undefined && note.id === said.id) || note.text === said.text)).map((note) => `- ${note.origin ? `Recorded during “${note.origin.stageTitle}”${note.origin.roleName ? ` (${note.origin.roleName})` : ""}${note.origin.kind === "disagreement" ? ", at the coordinator's design call" : ""}:\n` : "Earlier note (original step not recorded):\n"}${note.text}`);
-    return notes.length ? [{ title: "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)", body: `Product decisions and constraints remain authoritative; the latest wins where they conflict. An instruction about what to revise or check in an earlier step applies to that work, not a smaller scope for your current assignment. Implement the complete approved request and brief; keep later product decisions. Do not infer new requirements from an earlier agent's interpretation.\n\n${notes.join("\n\n")}` }] : [];
-  }
 
   private brief(scope: RepositoryContext): Section[] {
     const { task } = scope;
@@ -237,4 +226,23 @@ export class Context {
       : "Historical results: these have not been established to cover the current code, required commands and hooks. Do not use an older pass as proof that this version passes.";
     return [{ title: current ? "Current product checks, run by Petrina itself" : "Historical product checks, run by Petrina itself", body: [guidance, ...lines].join("\n") }];
   }
+}
+
+/**
+ * Every agent on the task sees all of the coordinator's notes, reviewers included. A step started again
+ * hears what was said in its earlier attempt in a section of its own, so those are left out here.
+ */
+export function coordinatorNotes(scope: RepositoryContext, member?: string): Section[] {
+  const { task, work: repository } = scope;
+  const fromEarlier = (repository.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
+  const replaying = task.maintenance?.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
+  const available = (task.notes ?? []).filter(note => {
+    const queued = task.queued.find(message => message.id === note.id);
+    return backgroundMessage(task, note.id, member) || !replaying && queued &&
+      (queued.recipients?.[member ?? "main"] === false || !queued.recipients && member === undefined) &&
+      !["sending", "accepted", "unconfirmed"].includes(queued.deliveries?.[member ?? "main"]?.state ?? "");
+  });
+  const render = (notes: typeof available) => notes.length ? `Product decisions and constraints remain authoritative; the latest wins where they conflict. An instruction about what to revise or check in an earlier step applies to that work, not a smaller scope for your current assignment. Implement the complete approved request and brief; keep later product decisions. Do not infer new requirements from an earlier agent's interpretation.\n\n${notes.map((note) => `- ${note.origin ? `Recorded during “${note.origin.stageTitle}”${note.origin.roleName ? ` (${note.origin.roleName})` : ""}${note.origin.kind === "disagreement" ? ", at the coordinator's design call" : ""}:\n` : "Earlier note (original step not recorded):\n"}${note.text}`).join("\n\n")}` : "";
+  const notes = available.filter(note => backgroundMessage(task, note.id, member) && !fromEarlier.some(said => (note.id !== undefined && note.id === said.id) || note.text === said.text));
+  return available.length ? [{ title: "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)", body: render(notes), background: render(available) }] : [];
 }

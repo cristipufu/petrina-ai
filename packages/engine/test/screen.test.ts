@@ -108,7 +108,7 @@ describe("an agent that needs the screen", () => {
       const line = builder[1]!.text;
       expect(line).toStartWith(screenRules(REASON));
       expect(line).toStartWith(`You may now use the screen for: ${REASON}. You may run the app on screen, take real screenshots and click through it. You are the only agent on the screen. When you are done with it, close every window and app you opened and stop everything you started.`);
-      expect(line).toContain("Messages from the coordinator you have not seen yet, in order:\n- Use the dark theme too");
+      expect(line).toContain("Messages from the coordinator, in order\n1. Use the dark theme too");
       expect(line).not.toContain("Petrina restarted");
       // Nothing heard twice.
       expect(builder.filter((entry) => entry.text.includes("Use the dark theme too"))).toHaveLength(1);
@@ -197,7 +197,7 @@ describe("an agent that needs the screen", () => {
       const builder = f.fakes.received("builder");
       expect(builder.map((entry) => entry.session)).toEqual([session, session]);
       expect(builder[1]!.text).toStartWith(screenRules(REASON));
-      expect(builder[1]!.text).toContain("Messages from the coordinator you have not seen yet, in order:\n- Use the dark theme too");
+      expect(builder[1]!.text).toContain("Messages from the coordinator, in order\n1. Use the dark theme too");
       expect(f.onScreen()).toEqual([session]);
     } finally {
       await f.close();
@@ -217,7 +217,7 @@ describe("an agent that needs the screen", () => {
       const builder = f.fakes.received("builder");
       expect(builder).toHaveLength(2);
       expect(builder[1]!.text).toStartWith(screenRules(REASON));
-      expect(builder[1]!.text).toContain("Messages from the coordinator you have not seen yet, in order:\n- Use the dark theme too");
+      expect(builder[1]!.text).toContain("Messages from the coordinator, in order\n1. Use the dark theme too");
       expect(f.onScreen()).toEqual([session]);
       expect(f.task(id).queued).toEqual([]);
     } finally {

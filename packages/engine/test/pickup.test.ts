@@ -183,7 +183,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         expect(builder.every((entry) => entry.session === session)).toBe(true);
         const line = builder.find((entry) => entry.text.startsWith("Petrina restarted"))!.text;
         expect(line).toStartWith("Petrina restarted while you were on “Build” as the Builder. The last thing you were doing: Drafting the greeting.");
-        expect(line).toContain("Messages from the coordinator you have not seen yet, in order:\n- Keep it short");
+        expect(line).toContain("Messages from the coordinator, in order\n1. Keep it short");
         expect(line).not.toContain("Use a friendly tone");
         // What load replayed is not shown again.
         expect(done.timeline.filter((entry) => entry.text === "Drafting the greeting")).toHaveLength(1);
@@ -241,6 +241,10 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     expect(openings).toHaveLength(2);
     expect(openings[1]).toContain(EARLIER_ATTEMPT);
     expect(openings[1]).not.toContain(WHERE_YOU_WERE);
+    expect(openings[1]).toContain("Continue from the work already in this working copy.");
+    expect(openings[1]).toContain("## Messages from the coordinator, in order\n1. Keep it short");
+    expect(openings[1]!.split("Keep it short")).toHaveLength(2);
+    expect(done.queued).toEqual([]);
     expect(run.fakes.opens().some((open) => open.how !== "new")).toBe(false);
     expect(done.timeline.some((entry) => entry.text === "Picked up where it left off" || entry.text.startsWith("Started this step again"))).toBe(false);
     await run.engine.quit();
@@ -298,6 +302,10 @@ describe.concurrent("a builder working when Petrina restarts", () => {
     expect(openings).toHaveLength(2);
     expect(openings[1]).toContain(EARLIER_ATTEMPT);
     expect(openings[1]).not.toContain(WHERE_YOU_WERE);
+    expect(openings[1]).toContain("Continue from the work already in this working copy.");
+    expect(openings[1]).toContain("## Messages from the coordinator, in order\n1. Keep it short");
+    expect(openings[1]!.split("Keep it short")).toHaveLength(2);
+    expect(done.queued).toEqual([]);
     expect(done.timeline.filter((entry) => entry.text === "Builder started")).toHaveLength(2);
     expect(done.timeline.some((entry) => entry.text === "Picked up where it left off" || entry.text.startsWith("Started this step again"))).toBe(false);
     await engine.quit();
