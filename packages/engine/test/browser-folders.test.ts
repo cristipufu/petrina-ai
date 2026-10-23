@@ -186,6 +186,9 @@ it("keeps parallel fixtures' browser folders apart and recovers only an engine's
   let engine: Engine | undefined;
   try {
     expect(first).not.toBe(second);
+    // Fixture folders are spelled as browser startup and recovery canonicalize them, even where the
+    // temporary folder has another name for itself (a Windows short name such as RUNNER~1).
+    expect(await Promise.all([first, second].map((root) => files.realpath(root)))).toEqual([first, second]);
     // Two fixtures start at once, each in its own folder. Both registered with this engine, then it stopped abruptly.
     browsers.push(...await Promise.all([first, second].map((root) => AgentBrowser.start(registry, process.env, undefined, root))));
     expect(browsers.map((browser) => dirname(browser.directory))).toEqual([first, second]);

@@ -214,6 +214,21 @@ it("discards a legacy directory and invalid browser registrations without follow
   expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("product work");
 });
 
+it("keeps a folder registered under another name for the browser root, removing only its marker", async () => {
+  // Sessions register their canonical folder. Another spelling of the same root (a link here, a
+  // Windows short name such as RUNNER~1) names a folder outside it, so recovery reaps nothing there.
+  const own = testBrowserRoot(), alias = join(root, "browser-root-alias"), registry = join(root, "alias-registry");
+  const session = join(own, "petrina-browser-aliased");
+  mkdirSync(session); mkdirSync(registry);
+  symlinkSync(own, alias, process.platform === "win32" ? "junction" : "dir");
+  writeFileSync(join(registry, "aliased.json"), JSON.stringify(join(alias, "petrina-browser-aliased")));
+  try {
+    await recoverBrowserTemps(registry, own);
+    expect(existsSync(session)).toBe(true);
+    expect(existsSync(registry)).toBe(false);
+  } finally { removeDir(alias); removeDir(own); }
+});
+
 const RECOVERY_HOLD_WAIT_MS = 5_000;
 
 /** Own the stand-ins and teardown even when the held point is never observed. */

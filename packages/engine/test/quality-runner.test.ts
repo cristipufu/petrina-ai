@@ -1,11 +1,31 @@
 import { afterAll, expect, it } from "bun:test";
-import { cpSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { isBuiltin } from "node:module";
+import { dirname, join } from "node:path";
 import { namedCheckFailures } from "../src/related-check-evidence.js";
 import { git, removeDir, tempDir, testGitEnv, waitForFile } from "./fixtures.js";
+import { sourceFacts } from "./quality/source.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
+
+/**
+ * The packages the copied runner imports, each declared by the engine and found where the engine's own
+ * install resolves it. The fixture links each one straight to that folder. A link to the engine's whole
+ * node_modules reached them only through the installer's own links, and on Windows the copied runner
+ * could not load its parser that way.
+ */
+const ENGINE = join(import.meta.dir, "..");
+const PACKAGES = (() => {
+  const manifest = JSON.parse(readFileSync(join(ENGINE, "package.json"), "utf8")) as Record<"dependencies" | "devDependencies", Record<string, string>>;
+  const declared = new Set(Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }));
+  const sources = [...readdirSync(join(import.meta.dir, "quality")).filter(name => name.endsWith(".ts")).map(name => join(import.meta.dir, "quality", name)), join(import.meta.dir, "test-git-env.ts")];
+  const names = new Set(sources.flatMap(file => sourceFacts(readFileSync(file, "utf8"), file).imports)
+    .filter(({ path, runtime }) => runtime && !path.startsWith(".") && !isBuiltin(path))
+    .map(({ path }) => path.split("/").slice(0, path.startsWith("@") ? 2 : 1).join("/")));
+  for (const name of names) if (!declared.has(name)) throw new Error(`The quality runner imports ${name}, which the engine package does not declare`);
+  return [...names].map(name => ({ name, folder: realpathSync.native(dirname(Bun.resolveSync(`${name}/package.json`, ENGINE))) }));
+})();
 
 type Suite = "core" | "desktop" | "engine";
 /** A controlled workspace: its exit code, structured report, printed output, and whether it edits an input or waits for a stop signal. */
@@ -19,7 +39,11 @@ function fixture(scenario: Partial<Record<Suite, StandIn>>): string {
   mkdirSync(quality, { recursive: true });
   cpSync(join(import.meta.dir, "quality"), quality, { recursive: true });
   cpSync(join(import.meta.dir, "test-git-env.ts"), join(root, "packages", "engine", "test", "test-git-env.ts"));
-  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(root, "packages", "engine", "node_modules"), process.platform === "win32" ? "junction" : "dir");
+  for (const { name, folder } of PACKAGES) {
+    const link = join(root, "packages", "engine", "node_modules", name);
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(folder, link, process.platform === "win32" ? "junction" : "dir");
+  }
   writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nstarted*\n");
   const runner = join(root, "runner.ts");
   writeFileSync(runner, `import { appendFileSync, renameSync, writeFileSync } from "node:fs";
@@ -74,6 +98,20 @@ function run(scenario: Partial<Record<Suite, StandIn>>, expected: number) {
   expect({ code: result.exitCode, output: result.exitCode === expected ? "" : `${stdout}\n${result.stderr.toString()}` }).toEqual({ code: expected, output: "" });
   return { ...recorded(root, stdout), stdout, stderr: result.stderr.toString() };
 }
+
+it("resolves the copied runner's packages from the engine's own install, never another one", () => {
+  const root = fixture({});
+  const modules = join(root, "packages", "engine", "node_modules"), copy = join(root, "packages", "engine", "test", "quality");
+  expect(PACKAGES.map(({ name }) => name)).toContain("@babel/parser");
+  // The copy's own package folder holds only those packages, each one link away from its installed folder,
+  // rather than a link to the engine's whole install that reaches them through the installer's links.
+  expect(lstatSync(modules).isSymbolicLink()).toBe(false);
+  expect(readdirSync(modules).sort()).toEqual([...new Set(PACKAGES.map(({ name }) => name.split("/")[0]!))].sort());
+  for (const { name, folder } of PACKAGES) {
+    expect(realpathSync.native(join(modules, name))).toBe(folder);
+    expect(realpathSync.native(dirname(Bun.resolveSync(`${name}/package.json`, copy)))).toBe(folder);
+  }
+});
 
 it("runs core and desktop before engine and passes only when every workspace passed", () => {
   const { ran, report, summary } = run({}, 0);
