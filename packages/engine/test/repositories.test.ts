@@ -14,7 +14,7 @@ import { beginRepair, invalidateAcceptance, versionsOf } from "../src/repositori
 import { checkReviewEvidence } from "../src/review.js";
 import { ReviewResult } from "../src/roles.js";
 import { Coordination } from "../src/coordination.js";
-import { Fakes, coordinator, finish, git, itemOf, makeWorld, removeDir, taskOf, until, type World } from "./support.js";
+import { Fakes, coordinator, finish, git, itemOf, makeWorld, removeDir, taskOf, until, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
@@ -31,6 +31,16 @@ function setup(name: string) {
   const sourceRemotes: Record<string, string> = {};
   const start = (options: Partial<EngineOptions> = {}) => shop.start({ ...options, agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${join(shop.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "fake-portfolio-gh.ts"), mapping], remotes, sourceRemotes });
   return { shop, api, start, fakes, remotes, sourceRemotes };
+}
+
+/**
+ * The pull-request poll this test asks for. The engine also polls at start and every minute, and a poll skips a task
+ * its driver or another poll still holds: wait until neither does, so this one reads every open pull request itself.
+ */
+async function pollPullRequests(engine: ReturnType<ReturnType<typeof setup>["start"]>, taskId: string) {
+  const monitor = engine["shipping"].monitor;
+  await waitFor(() => !engine.drivers.has(taskId) && !monitor["following"].has(taskId), "the task's pull requests to be free to read");
+  await monitor.pollPullRequests();
 }
 
 /** The whole task's delivery as coordinator inspection and immediate waits report it. */
@@ -711,7 +721,7 @@ describe.concurrent("one task across products", () => {
       if (!closed) merging.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
       if (closed) api.setGitHub((state) => { state.prs[0]!.state = "CLOSED"; });
       // Use the normal poll through its timer, without waiting a minute.
-      await engine["shipping"].monitor.pollPullRequests();
+      await pollPullRequests(engine, id);
       const task = taskOf(engine.getState(), id);
       expect(task.state).toBe(closed ? "needs-you" : "pr-open");
       expect(engine.blockers(engine.task(dependent)!)).toHaveLength(1);
@@ -725,11 +735,11 @@ describe.concurrent("one task across products", () => {
         expect(engine.task(id)!.state).toBe("pr-open");
         expect(engine.blockers(engine.task(dependent)!)).toHaveLength(1);
         shop.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
-        await engine["shipping"].monitor.pollPullRequests();
+        await pollPullRequests(engine, id);
         expect(engine.task(id)!.state).toBe("done");
       } else {
         other.setGitHub((state) => { state.prs[0]!.state = "MERGED"; });
-        await engine["shipping"].monitor.pollPullRequests();
+        await pollPullRequests(engine, id);
         expect(engine.task(id)!.state).toBe("done");
       }
       // Accepting the closed companion releases the dependent work too, without proving it landed.

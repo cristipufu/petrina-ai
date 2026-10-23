@@ -34,12 +34,12 @@ export interface Scenario {
   silent?: boolean;
   /** A real ACP internal-error wrapper with a provider diagnostic for one role. */
   failure?: { role: string; message: string; httpStatus: number };
-  /** "short": build and one reviewer. "parallel": two reviewers at once. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
+  /** "short": build and one reviewer. "parallel": two reviewers at once. "trio": three at once, one on each of three tools. "pair": build, then two reviewers at once, one on each tool. "tester-after": build, one reviewer, then a tester. */
   worksOn?: WorkChoice[];
   /** An added Security specialist passes instead of blocking once. */
   addedReviewer?: "pass";
   /** Retain scenarios used by source-start and screen coverage. */
-  planner?: "short" | "parallel" | "two-codex" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "grok-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
+  planner?: "short" | "parallel" | "trio" | "two-codex" | "tester-after" | "tester-first" | "tester-with-design" | "research-first" | "limits" | "claude-build" | "grok-build" | "two-opus" | "roles" | "copy" | "mixed-review" | "pair" | "build-review" | "source-roles" | "source-brief";
   notes?: "work";
   /** "writes": the architect leaves product changes for the engine to save, in rounds and after a call. "plain": it asks no question first. */
   architect?: "writes" | "plain";
@@ -941,13 +941,13 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
             { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 1 },
           ],
         });
-      if (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "two-codex")
+      if (plan.planner === "short" || plan.planner === "parallel" || plan.planner === "trio" || plan.planner === "two-codex")
         return done({
           rationale: "A small change: build it, one reviewer.",
           ...riskOf(plan),
           stages: [
             { kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
-            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : plan.planner === "two-codex" ? ["sol-high", "astra-xhigh"] : ["opus-high"], maxRounds: plan.reviewRounds ?? 1 },
+            { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: plan.planner === "parallel" ? ["opus-high", "sol-high"] : plan.planner === "trio" ? ["opus-high", "sol-high", "grok-xhigh"] : plan.planner === "two-codex" ? ["sol-high", "astra-xhigh"] : ["opus-high"], maxRounds: plan.reviewRounds ?? 1 },
           ],
         });
       return done({

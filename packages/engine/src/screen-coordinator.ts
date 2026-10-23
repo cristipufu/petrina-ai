@@ -1,13 +1,14 @@
 // Screen arbitration and the working copies retained by waiting review members.
 import { join } from "node:path";
-import { onScreen, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type Id, type State, type Task } from "@petrina/core";
+import { onScreen, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type Candidate, type Id, type State, type Task } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, executionOf, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
 import { completeAll } from "./parallel.js";
 type ScreenHost = Pick<Kernel, "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule" | "stopped">;
 export class ScreenCoordinator {
-  readonly groups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void }>();
+  /** Live review groups. `returning`: seats wanted by members whose model wait ended; `rejoin` admits one of them. */
+  readonly groups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void; returning?: () => Candidate[]; rejoin?: () => void }>();
   readonly copyCleanups = new Map<Id, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private releaseTimer: ReturnType<typeof setTimeout> | undefined;

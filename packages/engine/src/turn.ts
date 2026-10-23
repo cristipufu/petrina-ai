@@ -84,6 +84,9 @@ type PendingInput = { stepId: Id; input: import("@petrina/core").JourneyAgentInp
 /** What an agent that may not ask for the screen hears when it asks anyway: it never pauses its step or its group. */
 const NO_SCREEN_HERE = "you cannot ask for the screen in this step. Finish without it, and list any check that needs the screen in your result";
 
+/** The coordinator's messages a reopened conversation has not heard yet, after its one line. */
+const unheardMessages = (texts: readonly string[]) => texts.length ? `Messages from the coordinator you have not seen yet, in order:\n${texts.map((text) => `- ${text}`).join("\n")}` : "";
+
 export class Turns {
   readonly repositoryCopies = new Map<string, Readonly<Record<string, string>>>();
   constructor(
@@ -550,7 +553,7 @@ export class Turns {
           const sessionId = repository.conversation.sessionId;
           this.forgetCapacityResume(task, (entry) => entry.sessionId === sessionId);
         }
-        const unheard = texts.length ? `Messages from the coordinator you have not seen yet, in order:\n${texts.map((text) => `- ${text}`).join("\n")}` : "";
+        const unheard = unheardMessages(texts);
         opening = handback ? handBackPrompt(handback, texts) : forScreen ? screenPrompt(forScreen.reason, texts) : capacityContinue ? [capacityContinuePrompt(), unheard].filter(Boolean).join("\n\n") : restartPrompt(where!, { ...(answer ? { answer } : {}), messages: texts });
         const sections = [...currentStepAssignment(task, roleId), ...(repository.prBackground ? [{ title: "Refreshed pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
         pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, opening, { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
@@ -809,6 +812,10 @@ export class Turns {
     const head = await git.head(copy).catch(() => undefined);
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
+      // A short continue leaves out the opening sections, so it carries the messages this member has not heard.
+      // Taken first: the opening sections would otherwise reserve them for a text that is never sent.
+      const unheard = capacityBack ? takeMessages(task, options.member) : [];
+      for (const message of unheard) if (message.firstDelivery) recordMessage(this.k, scope, message);
       const givenSections = [...currentStepAssignment(task, roleId), ...await given(), ...(wentBack ? offered?.continuedSections ?? [] : []), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
       if (signal.aborted) throw new Aborted();
       if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
@@ -819,8 +826,9 @@ export class Turns {
       let pending: PendingInput | undefined;
       const freshReason = wentBack || capacityBack ? undefined : offered || held ? (opened.reopenFailure ?? "the earlier review conversation was not reopened") : options.freshReason;
       const recordJob = (job: string, supplied: readonly Section[]) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); };
-      const opening = capacityBack ? [capacityContinuePrompt(), ...currentStepAssignment(task, roleId).map(({ title, body }) => `## ${title}\n${body}`)].join("\n\n") : wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob }) : buildPrompt(promptContext, recordJob);
-      if (capacityBack) pending = this.recordJourneyInput(scope, roleId, profileId, currentStepAssignment(task, roleId), "continued", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, capacityContinuePrompt(), { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
+      const continued = [capacityContinuePrompt(), unheardMessages(unheard.map((message) => message.text))].filter(Boolean).join("\n\n");
+      const opening = capacityBack ? [continued, ...currentStepAssignment(task, roleId).map(({ title, body }) => `## ${title}\n${body}`)].join("\n\n") : wentBack ? continuePrompt(promptContext, { refreshRole: prepared.refreshRole, recordJob }) : buildPrompt(promptContext, recordJob);
+      if (capacityBack) pending = this.recordJourneyInput(scope, roleId, profileId, currentStepAssignment(task, roleId), "continued", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, continued, { sessionId: run.sessionId, resumed: true, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) });
       const result = await this.converse(scope, run, agent, opening, capacityBack ? "continue" : "first", role, profileId, schema, signal, {
         ...options,
         main: false,

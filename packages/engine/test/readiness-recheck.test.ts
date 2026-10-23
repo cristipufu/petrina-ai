@@ -43,7 +43,7 @@ function engineIn(root: string, checkTimeoutMs = 8_000 * SLOW) {
 }
 
 /** Real review seats and readiness checks on the fake tool, without planning, building or voting. */
-async function fixture(options: { pair?: boolean; checkTimeoutMs?: number } = {}) {
+async function fixture(options: { pair?: boolean; seats?: string[]; checkTimeoutMs?: number } = {}) {
   const root = tempDir("petrina-readiness-recheck-");
   roots.push(root);
   const { engine, fakes, checks, check, uncertain, holdCheck, inChecks, name } = engineIn(root, options.checkTimeoutMs);
@@ -57,7 +57,7 @@ async function fixture(options: { pair?: boolean; checkTimeoutMs?: number } = {}
   const task = engine.task(id)!;
   const scope = executionFor(task);
   Object.assign(scope.work, { worktree: repo, branch: "main", baseSha: base, base: "main", report: { summary: "First report", changes: [] } });
-  const stage = { id: "review", title: "Review the greeting", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: options.pair ? ["opus-high", "grok-high"] : ["opus-high"] };
+  const stage = { id: "review", title: "Review the greeting", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: options.seats ?? (options.pair ? ["opus-high", "grok-high"] : ["opus-high"]) };
   task.plan = { rationale: "Review", plannerProfileId: "sol-high", stages: [stage] }; task.stageIndex = 0;
   task.brief = { summary: "UNCHANGED-BRIEF", forUsers: [], areas: [], acceptance: [], risks: [] };
   const room = (toolId: string, profile: AgentProfile) => !slotWait(engine.activeState(), { ...profile, taskId: id, toolId });
@@ -344,6 +344,56 @@ describe.concurrent("a review group's pending readiness decision", () => {
       // It continued in that same place: never a second one, never released to queued work in between.
       expect(seen.slice(since).filter((uses) => uses.length)).not.toHaveLength(0);
       expect(seen.slice(since).every((uses) => uses.length <= 1 && uses.every((tool) => tool === "grok"))).toBe(true);
+    } finally { f.release(); await f.engine.shutdown(); }
+  });
+
+  it("rechecks a reviewer set aside by a full model while its peer works, then brings it back to its saved conversation", async () => {
+    // Two Codex seats share one planned profile; the other tools are out, so the review stays on Claude Code and Codex.
+    const f = await fixture({ seats: ["opus-high", "sol-high", "sol-high"] });
+    try {
+      for (const toolId of ["grok", "antigravity"]) {
+        Object.assign(f.check(toolId), { status: "logged-out" });
+        f.engine.s.tools.find((tool) => tool.id === toolId)!.status = "logged-out";
+      }
+      await f.round(1);
+      const saved = structuredClone(f.task.reviewSessions![f.stage.id]!);
+      expect(saved["2"]!.toolId).toBe("codex");
+      delete f.task.reviewSessions![f.stage.id]!["0"];
+      delete f.task.reviewSessions![f.stage.id]!["1"];
+      // The second Codex seat's own conversation already used its full-model stop; only the first seat's new one stops.
+      writeFileSync(join(f.fakes.dir, `capacity-${saved["2"]!.sessionId}.json`), JSON.stringify({ used: 1, armed: true }));
+      f.fakes.scenario({ reopen: "resume", controlled: true, capacity: [{ model: "gpt-6.1-sol", role: "code reviewer", times: 1 }] });
+      // Two places: the held Opus reviewer and one Codex seat.
+      f.engine.s.pool.limit = 2;
+      f.seated();
+      const before = f.fakes.received().length;
+      const round = f.round(2);
+      const opus = await waitFor(() => f.fakes.received().slice(before).find((entry) => f.fakes.settings(entry.session).includes("model=opus"))?.session, "the held Opus reviewer");
+      const group = f.engine.screenGroups.get(f.task.id)!;
+      // The first Codex seat stops on the full model; the second, next in line, waits on that model's short retry too.
+      await waitFor(() => f.task.capacityRetries?.some((entry) => entry.member === "review-1") && !group.running("review-1"), "the first Codex seat to wait out its model");
+      expect(group.running("review-2")).toBe(false);
+      const held = f.holdCheck("codex");
+      f.uncertain("codex");
+      // With Codex uncertain, the first seat comes back on another tool: give it a place of its own beside the held peer.
+      f.engine.s.pool.limit = 3;
+      for (const entry of f.task.modelCapacity ?? []) entry.until = Date.now() - 1;
+      // The scheduling pass that runs when the wait ends starts the saved seat's recheck at once, beside the working peer.
+      f.engine["driver"].schedule();
+      expect(f.task.reviewSessions![f.stage.id]!["2"]!.readinessWait).toEqual(expect.objectContaining({ check: "started" }));
+      await held.reached();
+      expect(group.running("review-2")).toBe(false);
+      held.release();
+      await waitFor(() => f.check("codex").status === "ready" && !f.engine["tools"].running("codex"), "the readiness answer");
+      // The answer's own scheduling pass brings it back, while the Opus reviewer is still held.
+      await waitFor(() => { f.engine["driver"].schedule(); return f.task.hunt?.reported["2"]; }, "the saved Codex seat to come back and report");
+      expect(f.task.hunt?.reported["0"]).toBeUndefined();
+      expect(existsSync(join(f.fakes.dir, `release-${opus}`))).toBe(false);
+      f.release();
+      const inputs = await round;
+      const second = inputs.findLast((input) => input.reviewerKey === "2")!;
+      expect(second).toEqual(expect.objectContaining({ mode: "continued", sessionId: saved["2"]!.sessionId, readiness: expect.objectContaining({ outcome: "ready" }) }));
+      expect(f.checks().filter((entry) => entry.tool === "codex")).toHaveLength(1);
     } finally { f.release(); await f.engine.shutdown(); }
   });
 

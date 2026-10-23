@@ -139,6 +139,14 @@ export class Driver {
       if (!grantedResume(task)) task.statusLine = slotWait(this.k.activeState(), candidate) ?? "Waiting for a free slot";
       continuing.push(candidate);
     }
+    // A review member whose model wait ended while its peers work is work in progress too: one seat each.
+    const rejoining = new Set<Id>();
+    for (const [taskId, group] of this.k.screenGroups) {
+      for (const candidate of group.returning?.() ?? []) {
+        continuing.push(candidate);
+        rejoining.add(taskId);
+      }
+    }
     // Work in progress first, the tool with more of its limit left ahead; then the queue in its order.
     const candidates = balanced(continuing, this.k.s.pool, now);
     for (const task of queueOf(this.k.s.tasks as Task[])) {
@@ -159,6 +167,11 @@ export class Driver {
 
     for (const taskId of pickStarts({ candidates, inUse: slotUses(this.k.activeState()), pool: this.k.s.pool, now })) {
       const task = this.k.task(taskId);
+      // The group checks the seat again as it brings the member back, so a seat taken meanwhile is never exceeded.
+      if (rejoining.has(taskId)) {
+        this.k.screenGroups.get(taskId)?.rejoin?.();
+        continue;
+      }
       const group = task?.screen?.member ? this.k.screenGroups.get(taskId) : undefined;
       // Same as above: the live group is the driver that is still settling, and it has to resume.
       if (!task || ((this.k.settling.has(taskId) || this.k.drivers.has(taskId)) && !group)) continue;

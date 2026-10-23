@@ -865,6 +865,9 @@ export class Reviews {
    * free, so the pool and every tool's cap still hold. One that cannot get a slot by the time the others
    * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
    * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
+   * A member whose model is full waits aside with its copy, conversation and retry count. When its own wait
+   * ends while peers still work, the scheduler offers it a seat like other work in progress and it rejoins;
+   * the task waits for it only once every peer has finished first.
    */
   private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string): Promise<void> {
     const scope = executionFor(task);
@@ -893,9 +896,24 @@ export class Reviews {
     // Members whose saved conversation waits for its tool's bounded readiness decision: the group stays open until
     // each settles, and later members keep their order behind it.
     const deciding = new Map<string, { need: ReadinessNeed; done: Promise<void> }>();
+    // Members waiting out a full model beside working peers. Each keeps its own wait, so one that rejoined
+    // and reported never leaves the task waiting after everyone has reported.
+    const paused = new Set<string>();
+    const waits = new Map<string, WaitingForUsage>();
+    // Members whose working copies exist: a member coming back reuses its own.
+    const made = new Set<string>();
     let failure: unknown;
-    let noOne: WaitingForUsage | undefined;
+    let closing = false;
     let wake: (() => void) | undefined;
+    const wait = (key: string, waiting: WaitingForUsage) => {
+      waits.delete(key);
+      waits.set(key, waiting);
+    };
+    // A full model's wait wins over a usage wait, as the latest one recorded.
+    const noOne = () => [...waits.values()].findLast((entry) => entry instanceof WaitingForCapacity) ?? waits.values().next().value;
+    // A member stopped by a full model waits aside, whatever its next start waits for: the model, a free seat for the
+    // model that takes over, or its account. The usual choice then decides when it can start again.
+    const asideFor = (key: string, waiting: WaitingForUsage) => waiting instanceof WaitingForCapacity || !!task.capacityRetries?.some((entry) => entry.member === key);
     const show = () => {
       if (signal.aborted) return;
       this.k.selectScreen(task);
@@ -935,8 +953,20 @@ export class Reviews {
       } else if (!running.size) uses = uses.filter((use) => use.taskId !== task.id);
       return pickStarts({ candidates: [{ ...profile, taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
     };
+    // The screen member's step ends with its result. Peers still working or waiting out a full model keep their own
+    // retry counts and conversations to continue.
+    const finishScreenStep = (key: string) => {
+      const peers = <T extends { member?: string }>(entries: T[] | undefined) => entries?.filter((entry) => entry.member !== undefined && entry.member !== key) ?? [];
+      const resume = peers(task.capacityResume), retries = peers(task.capacityRetries), waiting = peers(task.capacityPaused);
+      this.k.finishStep(task);
+      if (resume.length) task.capacityResume = resume;
+      if (retries.length) task.capacityRetries = retries;
+      if (waiting.length) task.capacityPaused = waiting;
+    };
     const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean, selection?: SeatSelection) => {
       yielded.delete(member.key);
+      paused.delete(member.key);
+      waits.delete(member.key);
       const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
       const used = (profileId: Id) => {
@@ -945,17 +975,20 @@ export class Reviews {
         show();
         this.k.commitNow();
       };
+      // A screen continuation or a member back from a full model works in the copies it already has.
+      const reuse = continuing || made.has(member.key);
       const done = Promise.resolve()
         .then(async () => {
           const copies: Record<string, string> = { [scope.work.productId]: copy };
           await completeAll([
-            continuing ? Promise.resolve() : git.addCopy(root, copy, sha),
+            reuse ? Promise.resolve() : git.addCopy(root, copy, sha),
             ...versions.filter((work) => work.productId !== scope.work.productId).map(async (work) => {
               const peer = join(copyFolder(work.productId), member.key);
-              if (!continuing) await git.addCopy(work.root, peer, work.sha);
+              if (!reuse) await git.addCopy(work.root, peer, work.sha);
               copies[work.productId] = peer;
             }),
           ]);
+          made.add(member.key);
           if (versions.length) this.turns.repositoryCopies.set(copy, copies);
           try { await member.work(copy, room, seat, used, agent, continuing, signal, selection); }
           finally {
@@ -972,9 +1005,11 @@ export class Reviews {
         })
         .catch((error: unknown) => {
           // Usage and capacity waits keep the missing seat; partners finish and keep their ballots.
-          if (error instanceof WaitingForCapacity) noOne = error;
-          else if (error instanceof WaitingForUsage) noOne ??= error;
-          else if (!(error instanceof ScreenWait)) {
+          if (error instanceof WaitingForUsage) {
+            wait(member.key, error);
+            // A full model waits aside to rejoin. A member that holds the screen keeps its own path.
+            if (asideFor(member.key, error) && !continuing && task.screen?.member !== member.key) paused.add(member.key);
+          } else if (!(error instanceof ScreenWait)) {
             failure ??= error;
             // Stop question and permission waits too, so cleanup cannot wait on a dead peer.
             stop.abort();
@@ -984,7 +1019,7 @@ export class Reviews {
           running.delete(member.key);
           // Release and expose the next peer together, after its result is saved. No other task
           // can take the screen in between while learnings or other result handling awaits I/O.
-          if ((!signal.aborted || completed) && failure === undefined && task.screen?.member === member.key && !task.hunt?.screenTurns?.[member.key]) this.k.finishStep(task);
+          if ((!signal.aborted || completed) && failure === undefined && task.screen?.member === member.key && !task.hunt?.screenTurns?.[member.key]) finishScreenStep(member.key);
           show();
           this.k.commit();
           wake?.();
@@ -1007,40 +1042,75 @@ export class Reviews {
       scope.work.conversation ??= saved.conversation;
       startMember(member, saved.copy, roomFor(member.key), task.agent?.profileId ?? saved.conversation.profileId, true);
     };
+    // Nobody starts or comes back while a peer owns or waits for the screen, or once the group is ending.
+    const mayStart = () => !closing && failure === undefined && !signal.aborted && !this.k.admissionsClosed && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length;
+    /** Who would start for this member now, by the usual choice, or why it waits and whether only its saved tool's readiness stands in the way. */
+    const admission = (member: (typeof members)[number]) => {
+      const room = roomFor(member.key);
+      const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
+      if (choice?.kind === "none") return { room, waiting: waitingFor(choice.waiting), readiness: choice.readiness };
+      const seat = choice?.profile.id ?? member.profileId;
+      const selection: SeatSelection | undefined = choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) } : undefined;
+      return { room, seat, profile: this.k.profile(seat)!, selection };
+    };
+    /**
+     * A member set aside, by the usual choice: who would start for it now, or why it still waits. Its saved tool's
+     * readiness recheck starts or is joined meanwhile, without a place and without waiting for working peers.
+     */
+    const due = (member: (typeof members)[number]) => {
+      const next = admission(member);
+      if (next.waiting) {
+        wait(member.key, next.waiting);
+        if (next.readiness) void this.k.readiness.resolve(next.readiness);
+      }
+      return next;
+    };
+    /**
+     * Members whose own wait ended come back in their stable order, each only into a free seat, at most `limit`.
+     * A member's reservation is visible before anything is saved, so a schedule during its start cannot admit it twice.
+     */
+    const rejoin = (limit = Infinity) => {
+      for (const member of members) {
+        if (limit <= 0 || !mayStart()) return;
+        if (!paused.has(member.key) || running.has(member.key)) continue;
+        const next = due(member);
+        if (next.waiting) continue;
+        if (!next.room(next.profile.toolId, next.profile)) continue;
+        startMember(member, join(folder, member.key), next.room, next.seat, false, next.selection);
+        limit -= 1;
+      }
+    };
     const start = () => {
-      while (pending.length && failure === undefined && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length) {
-        if (this.k.admissionsClosed || signal.aborted) break;
+      while (pending.length && mayStart()) {
         const member = pending[0]!;
         // Its decision is still open: no peer is moved ahead of it.
         if (deciding.has(member.key)) break;
-        const room = roomFor(member.key);
-        const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
-        if (choice?.kind === "none" && choice.readiness && this.k.readiness.open(choice.readiness)) {
+        const next = admission(member);
+        if (next.readiness && this.k.readiness.open(next.readiness)) {
           // The group owns this member's decision: the check starts or is joined now, without waiting for working
           // peers, and the member stays pending without a place of its own until the check answers or its limit passes.
           // Places are settled first: with no peer working, the group's main place moves to the saved tool.
-          const decision = { need: choice.readiness, done: Promise.resolve() };
+          const decision = { need: next.readiness, done: Promise.resolve() };
           deciding.set(member.key, decision);
           show();
-          decision.done = this.k.readiness.resolve(choice.readiness, signal).then(() => {
+          decision.done = this.k.readiness.resolve(next.readiness, signal).then(() => {
             deciding.delete(member.key);
             wake?.();
           });
           break;
         }
-        if (choice?.kind === "none") {
-          const waiting = waitingFor(choice.waiting);
-          if (waiting instanceof WaitingForCapacity) noOne = waiting;
-          else noOne ??= waiting;
+        if (next.waiting) {
           pending.shift();
+          wait(member.key, next.waiting);
+          // A full model waits aside too, and joins its peers once that wait ends.
+          if (asideFor(member.key, next.waiting)) paused.add(member.key);
           continue;
         }
-        const seat = choice?.profile.id ?? member.profileId;
-        const profile = this.k.profile(seat)!;
-        if (!room(profile.toolId, profile)) break;
+        if (!next.room(next.profile.toolId, next.profile)) break;
         pending.shift();
-        startMember(member, join(folder, member.key), room, seat, false, choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) } : undefined);
+        startMember(member, join(folder, member.key), next.room, next.seat, false, next.selection);
       }
+      rejoin();
       this.k.commit();
     };
     this.k.screenGroups.set(task.id, {
@@ -1049,6 +1119,13 @@ export class Reviews {
       yield: (key) => { yielded.add(key); show(); },
       recipients: () => members.filter((member) => !accepted.has(member.key)).map((member) => member.key),
       finished: (key) => { accepted.add(key); },
+      // The scheduler weighs a member whose wait ended against other work in progress, then brings it back.
+      returning: () => mayStart() ? members.flatMap((member) => {
+        if (!paused.has(member.key) || running.has(member.key)) return [];
+        const next = due(member);
+        return next.waiting ? [] : [{ ...next.profile, taskId: task.id, toolId: next.profile.toolId }];
+      }) : [],
+      rejoin: () => rejoin(1),
     });
     routeMessages(task, members.map((member) => member.key));
     try {
@@ -1060,20 +1137,24 @@ export class Reviews {
         if (failure !== undefined || signal.aborted) break;
         start();
       }
+      // Every peer has finished: a member still waiting stays with the task's wait, not this group.
+      closing = true;
       if (failure !== undefined) throw failure;
-      if (!signal.aborted && !(noOne instanceof WaitingForCapacity) && Object.keys(task.hunt?.screenTurns ?? {}).length) {
+      const waiting = noOne();
+      if (!signal.aborted && !(waiting instanceof WaitingForCapacity) && Object.keys(task.hunt?.screenTurns ?? {}).length) {
         show();
         this.k.commitNow();
         throw new ScreenWait();
       }
       // The rest looked at the change and reported; the ones left wait, and the driver starts them again after.
       // A required seat waits even when a partner already voted.
-      if (noOne) {
-        this.k.waitForUsage(task, noOne.words);
-        throw noOne;
+      if (waiting) {
+        this.k.waitForUsage(task, waiting.words);
+        throw waiting;
       }
       if (!signal.aborted && !this.k.draining && !pending.length) finishMessageGroup(task, members.map((member) => member.key));
     } finally {
+      closing = true;
       this.k.screenGroups.delete(task.id);
       this.k.stopHelpers(task.id);
       if (failure !== undefined || signal.aborted) this.k.runs.get(task.id)?.close();
