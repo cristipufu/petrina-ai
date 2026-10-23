@@ -1311,7 +1311,7 @@ for (const started of [false, true]) it(`records the publishing return with ${st
     await f.drive(); f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
     if (started) beginPetrinaStep(f.task, "delivery", Date.now());
     await f.advance();
-    if (started) await f.engine["shipping"]["returnForProofDecision"](f.task);
+    if (started) await f.engine["shipping"]["returnForDecision"](f.task, "proof");
     else expect(await f.engine["shipping"]["readyToShip"](f.scope, signal())).toBe("back");
     const steps = f.task.journey!.filter(step => step.kind === "petrina" && step.work === "delivery");
     expect(steps).toHaveLength(1); expect(steps[0]!.outcome).toBe("Nothing published; a new delivery decision is needed");

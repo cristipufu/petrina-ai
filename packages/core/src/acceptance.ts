@@ -1,4 +1,4 @@
-import type { AcceptanceRestoration, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
+import type { AcceptanceGap, AcceptanceRestoration, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
 
 /** Why every item and proof answer from a run whose changes Petrina undid is unverified. */
 export const ACCEPTANCE_RESTORED = "Petrina undid changes during acceptance testing. This run cannot verify the restored product.";
@@ -16,6 +16,50 @@ const savedRun = (step: JourneyStep) => !!step.acceptanceChecks?.length || (step
 /** The undone changes behind the latest saved acceptance run, while that leaves acceptance unverified. */
 export function restoredAcceptance(task: Pick<Task, "journey" | "acceptanceUnverified">) {
   return task.acceptanceUnverified ? task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && step.acceptanceChecks !== undefined)?.proofRun?.restored : undefined;
+}
+
+/** Saved checklist items the latest acceptance run could not verify. The Tester's own extra probes are observations, never requirements. */
+export function unverifiedRequirements(task: Pick<Task, "brief">) {
+  return task.brief?.acceptance.filter((item) => item.verification === "blocked") ?? [];
+}
+
+/**
+ * Required acceptance the latest run could not verify: a saved checklist item, requested proof, or the whole run when
+ * Petrina invalidated it. It is never tried again unchanged; asking for changes at the delivery check clears it.
+ */
+export function requiredUnverified(task: Pick<Task, "brief" | "journey" | "acceptanceUnverified" | "proofRequests">): boolean {
+  return task.acceptanceUnverified === true && (unverifiedRequirements(task).length > 0 || !!restoredAcceptance(task) || !!task.proofRequests?.some((request) => request.status === "unverified"));
+}
+
+/**
+ * The required acceptance gap a delivery decision must cover: the latest saved run and each checklist item it could not
+ * verify, or that Petrina invalidated that run. Undefined when every saved requirement has a result. Requested proof keeps its own decision.
+ */
+export function acceptanceGap(task: Pick<Task, "brief" | "journey" | "acceptanceUnverified">): AcceptanceGap | undefined {
+  const items = unverifiedRequirements(task), restored = restoredAcceptance(task);
+  if (!items.length && !restored) return undefined;
+  const run = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && step.acceptanceChecks !== undefined);
+  const reportIndex = run?.agentResults?.findLastIndex((report) => report.roleId === run.roleId) ?? -1;
+  return {
+    ...(run ? { stepId: run.id } : {}),
+    ...(reportIndex >= 0 ? { reportIndex } : {}),
+    items: items.map((item) => {
+      const evidence = run?.acceptanceChecks?.find((check) => check.text === item.text)?.evidence;
+      return { text: item.text, ...(item.reason ? { reason: item.reason } : {}), ...(evidence ? { evidence } : {}), ...(item.productIds ? { productIds: [...item.productIds] } : {}) };
+    }),
+    ...(restored ? { restored: true as const } : {}),
+  };
+}
+
+/** A decision covers a gap only when it was about that same run and the same unverified items. */
+export function sameAcceptanceGap(decided: AcceptanceGap | undefined, gap: AcceptanceGap): boolean {
+  return !!decided && decided.stepId === gap.stepId && !!decided.restored === !!gap.restored && decided.items.length === gap.items.length && decided.items.every((item, index) => item.text === gap.items[index]!.text);
+}
+
+/** A required acceptance gap without the coordinator's explicit decision about it: nothing is published while it lasts. */
+export function undecidedAcceptanceGap(task: Pick<Task, "brief" | "journey" | "acceptanceUnverified" | "approvedAcceptanceGap">): AcceptanceGap | undefined {
+  const gap = acceptanceGap(task);
+  return gap && !sameAcceptanceGap(task.approvedAcceptanceGap, gap) ? gap : undefined;
 }
 
 /** Select one recorded run; later unfinished attempts never replace or supplement it. */

@@ -99,6 +99,10 @@ export interface Scenario {
   tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked" | "no-evidence";
   /** Explicit proof answers for acceptance tests that exercise the real turn and read-only cleanup. */
   testerProofAnswers?: { id: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string }[];
+  /** Exact acceptance results every Tester turn reports, in place of the scripted greeting check; reread each turn. */
+  testerChecks?: { text: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; productIds?: string[] }[];
+  /** What the Tester reports instead once its copy has the builder's fix ("fixes": "change"). */
+  testerChecksFixed?: { text: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; productIds?: string[] }[];
   /**
    * Files a Tester on `model` (any, unset) writes as its turn starts, before a usage limit can stop it: in any
    * product's copy, by absolute folder. `commit` also commits the file there.
@@ -1279,6 +1283,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         }),
       });
     }
+    // An added acceptance role under its own name, recognised by Petrina from its checks result.
+    case "quality partner":
     case "tester":
       if (plan.tester === "no-evidence") return done({ summary: "It looks fine.", checks: [{ text: "A greeting file exists", result: "pass" }] });
       if (plan.tester === "omit-once" && !marked("tester-omitted")) {
@@ -1298,6 +1304,10 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         mark("tester-worked");
         await say("Trying it out");
         return hang(sessionId, "tester-working");
+      }
+      if (plan.testerChecks) {
+        const checks = plan.testerChecksFixed && existsSync(join(session.cwd, "welcome.txt")) ? plan.testerChecksFixed : plan.testerChecks;
+        return done({ summary: "Tried every acceptance item.", checks: checks.map((check) => ({ ...check })), ...(plan.testerProofAnswers ? { proofAnswers: plan.testerProofAnswers } : {}) });
       }
       // "fail-once": the second tester pass (the one on the final code) fails an acceptance item, once.
       if (plan.tester === "blocked") return done({ summary: "I could not open the live session because its account limit is exhausted.", checks: [{ text: "A greeting file exists", result: "blocked", reason: "The Claude Code weekly limit prevents opening a live session." }] });

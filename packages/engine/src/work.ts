@@ -233,6 +233,8 @@ export class Work {
       });
       const failed = result.checks.filter((check) => check.result === "fail");
       const blocked = result.checks.filter((check) => check.result === "blocked");
+      // Required: the saved checklist and requested proof. An extra probe the Tester added stays an observation.
+      const required = blocked.filter((check) => "proofRequestId" in check || task.brief?.acceptance.some((item) => item.text === check.text));
       // An invalidated run's reported failures stay in its history; earlier problems keep their own results.
       for (const check of restored ? [] : result.checks) {
         const proofRequestId = "proofRequestId" in check && typeof check.proofRequestId === "string" ? check.proofRequestId : undefined;
@@ -254,6 +256,7 @@ export class Work {
       }
       // Without checklist items or requested proof, an invalidated run is still unverified.
       const unverified = blocked.length > 0 || !!restored;
+      const requiredGap = required.length > 0 || !!restored;
       this.k.log(scope, failed.length || unverified ? "warn" : "done", restored
         ? `Acceptance could not be verified: ${invalid}`
         : unverified
@@ -275,12 +278,14 @@ export class Work {
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) testerStep.acceptancePatch = testedPatch;
       task.testedPatch = testedPatch ?? task.testedPatch;
       if (testedVersions) task.testedVersions = testedVersions;
-      task.acceptancePassed = failed.length === 0 && !unverified && !staleRun;
+      task.acceptancePassed = failed.length === 0 && !requiredGap && !staleRun;
       task.acceptanceUnverified = unverified;
-      if (!unverified) delete task.acceptanceBlocked;
-      // Even with delivery approval off, an invalidated run's work waits for the coordinator's decision.
-      if (restored && !task.plan!.stages.some((entry) => entry.kind === "gate" && entry.gate === "delivery") && addDeliveryCheck(this.k, task)) {
-        this.k.log(scope, "milestone", "Added your delivery check: this acceptance run cannot verify the product, so delivery waits for your decision");
+      if (!requiredGap) delete task.acceptanceBlocked;
+      // Even with delivery approval off, required acceptance that could not be verified waits for the coordinator's decision.
+      if (requiredGap && !task.plan!.stages.some((entry) => entry.kind === "gate" && entry.gate === "delivery") && addDeliveryCheck(this.k, task)) {
+        this.k.log(scope, "milestone", restored
+          ? "Added your delivery check: this acceptance run cannot verify the product, so delivery waits for your decision"
+          : `Added your delivery check: ${required.length === 1 ? "a required acceptance check" : `${required.length} required acceptance checks`} could not be verified, so delivery waits for your decision`);
       }
       if (task.repositories && failed.length) {
         this.k.finishStep(scope);
@@ -302,20 +307,23 @@ export class Work {
         this.k.finishStep(scope);
         const stages = task.plan?.stages ?? [];
         const builder = lastIndexWhere(stages, (entry) => this.k.role(entry.roleId, task)?.result === "build" && entry.kind === "do");
-        if (failed.length && (!unverified || task.proofRequests?.length) && builder >= 0 && (repository.acceptanceReturns ?? 0) < 2) {
+        // A reproduced failure keeps its bounded repair even while another item could not be verified; that item alone sends nothing back.
+        if (failed.length && builder >= 0 && (repository.acceptanceReturns ?? 0) < 2) {
           repository.acceptanceReturns = (repository.acceptanceReturns ?? 0) + 1;
           task.stageIndex = builder;
           task.fixing = true;
           this.k.log(scope, "warn", `Sent back to the builder: ${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed on the final code`);
         } else {
-          if (failed.length || unverified) {
+          if (failed.length || requiredGap) {
             task.acceptanceBlocked = true;
-            this.k.log(scope, "warn", unverified
-              ? "Acceptance could not be fully verified, so the decision goes to you"
-              : "Acceptance still fails: the builder returns are used up, so the decision goes to you");
+            this.k.log(scope, "warn", failed.length
+              ? "Acceptance still fails: the builder returns are used up, so the decision goes to you"
+              : "Acceptance could not be fully verified, so the decision goes to you");
           }
           const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
-          task.stageIndex = gate >= 0 ? gate : task.stageIndex + 1;
+          // A delivery check Petrina added for this decision never skips planned steps that have not run yet.
+          const skips = gate >= 0 && stages[gate]!.id === task.proofDeliveryGate && stages.slice(task.stageIndex + 1, gate).some((entry) => !task.journey?.some((step) => step.stageId === entry.id && step.endedAt !== undefined));
+          task.stageIndex = gate >= 0 && !skips ? gate : task.stageIndex + 1;
         }
         task.sub = 0;
         this.k.commit();

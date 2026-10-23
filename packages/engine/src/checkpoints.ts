@@ -1,5 +1,5 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
-import { afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, reviewDecisionPending, type Id } from "@petrina/core";
+import { acceptanceGap, afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor, scopesFor } from "./repository-context.js";
 import { beginRepair } from "./repositories.js";
@@ -44,6 +44,10 @@ export class Checkpoints {
         }
         this.k.log(task, "you", "You approved the delivery");
         if (task.proofRequests?.length) task.approvedProofDecision = structuredClone(task.checkedProofDecision);
+        // Approval covers the required acceptance gap shown here; its items stay unverified.
+        const gap = acceptanceGap(task);
+        if (gap) task.approvedAcceptanceGap = gap as DeepMutable<AcceptanceGap>;
+        else delete task.approvedAcceptanceGap;
         endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
         for (const scope of scopesFor(task)) {
           scope.work.approvedSha = scope.work.checkedSha;
@@ -102,6 +106,7 @@ export class Checkpoints {
       delete task.proofRefreshBlocked;
       delete task.approvedProofDecision;
       delete task.checkedProofDecision;
+      delete task.approvedAcceptanceGap;
       delete task.acceptanceRun;
       delete task.proofRetestReason;
       // A new coordinator request authorizes another bounded attempt at acceptance fixes.

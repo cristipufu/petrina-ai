@@ -27,6 +27,7 @@ import type { ModelAtCapacity, UsageInfo, UsageLimited } from "./usage.js";
 import { Tracking } from "./tracking.js";
 import { recoverBrowserTemps } from "./browser.js";
 import { WorkflowEvents } from "./workflow-events.js";
+import { acceptanceGapRecord } from "./checkpoint-acceptance.js";
 
 /** Repository execution fields cannot be read or written on the runtime task. */
 export type MTask = DeepMutable<library.TaskState>;
@@ -214,12 +215,32 @@ function restoredLine(task: Task): string {
   return restored ? `Acceptance could not be verified: ${library.restorationReason(restored)}` : "";
 }
 
-/** What the delivery check says beside the work: its risk, and what Petrina's own run of the checks found. */
-function deliveryLines(task: Task): string | undefined {
-  const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked") ?? [];
-  const acceptance = unverified.length
-    ? `${unverified.length} acceptance ${unverified.length === 1 ? "check could not" : "checks could not"} be verified:\n${unverified.map((item) => `• ${item.text}${item.reason ? ` — ${item.reason}` : ""}`).join("\n")}`
-    : restoredLine(task);
+/** How what would ship relates to what acceptance testing tried, per product. */
+const COVERAGE_WORDS: Record<NonNullable<library.AcceptanceGap["coverage"]>[number]["state"], string> = {
+  "same-contents": "the same contents as tested",
+  "same-change": "the same change as tested, on a newer main",
+  changed: "changed since testing",
+  unknown: "unknown whether it changed since testing",
+};
+
+/**
+ * Required acceptance the delivery check asks about: each item that could not be verified, with its affected products
+ * in a shared task, why, and what the Tester tried; then how what would ship relates to the tested version.
+ */
+function gapLines(task: Task, gap: library.AcceptanceGap, name: (productId: Id) => string): string {
+  const items = gap.items.map((item) => {
+    const products = task.repositories ? ` (${item.productIds?.length ? item.productIds.map(name).join(", ") : "no affected product was assigned"})` : "";
+    return [`• ${item.text}${products}${item.reason ? ` — ${item.reason}` : ""}`, item.evidence ? `  Tried: ${item.evidence}` : ""].filter(Boolean).join("\n");
+  });
+  const coverage = gap.coverage?.length
+    ? `What would ship: ${task.repositories ? gap.coverage.map((entry) => `${name(entry.productId)} ${COVERAGE_WORDS[entry.state]}`).join("; ") : COVERAGE_WORDS[gap.coverage[0]!.state]}.`
+    : "";
+  const heading = items.length ? `${items.length} acceptance ${items.length === 1 ? "check could not" : "checks could not"} be verified:` : restoredLine(task);
+  return [heading, ...items, coverage].filter(Boolean).join("\n");
+}
+
+/** What the delivery check says beside the work: its risk, what Petrina's own run of the checks found, and any required acceptance gap. */
+function deliveryLines(task: Task, acceptance: string): string | undefined {
   const lines = [task.risk ? `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}` : "", checksLine(task) ?? "", acceptance].filter(Boolean);
   return lines.length ? lines.join("\n") : undefined;
 }
@@ -558,11 +579,15 @@ export abstract class Kernel {
     const reviewCall = gate === "delivery" && library.reviewDecisionPending(task);
     if (reviewCall) decision.work = "review-decision";
     if (gate === "delivery" && !decision.productChecks) decision.productChecks = library.decisionEvidence(taskView(task));
+    // The decision keeps what it was asked about required acceptance that could not be verified.
+    const gap = gate === "delivery" && library.acceptanceGap(taskView(task)) ? acceptanceGapRecord(taskView(task), this.s.roles) : undefined;
+    if (gap) decision.acceptanceGap = gap;
+    const gapText = gap ? gapLines(taskView(task), gap, (productId) => this.productLabel(productId)) : "";
     const work = gate === "plan" ? task.proposedSource ?? executionFor(task).work.source : executionFor(task).work.source;
     const workLine = task.workRows || task.repositories
       ? (gate === "plan" ? task.workRows?.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error, row.addition ? `Will be added in ${row.addition.path}` : ""].filter(Boolean).join("\n")) : task.repositories?.map((entry) => [entry.source ? workSummary(entry.source) : entry.productId, entry.report?.summary, entry.checks?.results.length ? library.checkProblem({ checks: entry.checks }) === "unverified" ? "Product checks unverified" : entry.checks.results.every((run) => run.ok) ? "Product checks passed" : "Product checks failed" : "Product checks: Not run", entry.releasePreview ? `Release ${entry.releasePreview.tag}: ${entry.releasePreview.notes}\nThis includes everything waiting on the default branch since the previous release.` : ""].filter(Boolean).join("\n")))?.join("\n\n") ?? ""
       : work ? workSummary(work) : "";
-    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
+    const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? [library.companionPreview(task.repositories), gapText].filter(Boolean).join("\n") : deliveryLines(taskView(task), gapText) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
     const explanation = [problem, checks?.body, reviewCall ? "Review left Important findings open. Send the work back with a concrete repair request, or accept the unresolved review and continue to final verification. Continuing approves no delivery, fixes no finding and grants no automatic review rounds. Current product checks and required acceptance testing still run before a separate delivery approval." : undefined, body].filter(Boolean).join("\n\n");
     const proofBody = gate === "delivery" && task.proofRequests?.length ? [library.proofGap(taskView(task)), library.proofContext(task.proofRequests)].filter(Boolean).join("\n\n") : "";
     // A review decision is asked after the flow moved past its review: the check still decides that review.

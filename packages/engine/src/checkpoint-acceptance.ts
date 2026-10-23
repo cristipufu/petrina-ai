@@ -1,5 +1,5 @@
 // Compact recorded evidence only. This projection never supplies an acceptance verdict to the engine.
-import { acceptanceSummary, recordedAcceptance, restorationReason, resultSeatOf, roleForTask, seatOf, type Role, type Task } from "@petrina/core";
+import { acceptanceGap, acceptanceSummary, recordedAcceptance, restorationReason, resultSeatOf, roleForTask, seatOf, type AcceptanceGap, type Role, type Task } from "@petrina/core";
 
 const CHECK_LIMIT = 8, ATTEMPT_LIMIT = 4;
 const clip = (text: string, limit: number) => {
@@ -98,4 +98,17 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
       ...(otherRuns.length > ATTEMPT_LIMIT ? { runsRead: { operation: "journey.list", taskId: task.id } } : {}),
     },
   };
+}
+
+/**
+ * What a delivery decision saves about required acceptance that could not be verified: each item as recorded, with
+ * the exact versions tested and prepared and how they relate for each product. Undefined without such a gap.
+ */
+export function acceptanceGapRecord(task: Task, roles: readonly Role[]): AcceptanceGap | undefined {
+  const gap = acceptanceGap(task);
+  if (!gap) return undefined;
+  const { products } = checkpointAcceptance(task, roles).evidence;
+  const tested = Object.fromEntries(products.flatMap((entry) => entry.testedTree ? [[entry.productId, entry.testedTree]] : []));
+  const prepared = Object.fromEntries(products.flatMap((entry) => entry.checkedTree ? [[entry.productId, entry.checkedTree]] : []));
+  return { ...gap, tested, prepared, coverage: products.map((entry) => ({ productId: entry.productId, state: entry.state })) };
 }

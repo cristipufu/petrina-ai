@@ -3,7 +3,7 @@ import { executionFor, scopesFor, type RepositoryContext } from "./repository-co
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { changesOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
-import { openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, sameVersions } from "@petrina/core";
+import { acceptanceGap, openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, requiredUnverified, sameVersions } from "@petrina/core";
 import { join } from "node:path";
 import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
@@ -480,8 +480,10 @@ export class Driver {
             const mainOnly = hasProofs && sameVersions(current.testedChanges, changes) && !sameVersions(current.testedVersions, versions);
             const ordinaryRetest = current.testedPatch !== undefined && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch);
             const requestedRetest = hasProofs && proofTestNeeded(current, mainOnly);
-            const reproducedFailure = hasProofs && current.journey?.findLast(step => step.kind === "agent" && step.endedAt !== undefined && this.k.role(step.roleId!, current)?.result === "checks")?.acceptanceChecks?.some(check => check.result === "fail");
-            const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || (current.acceptanceUnverified === true && !reproducedFailure && !requestedRetest);
+            // One rule with or without requested proof: a reproduced failure keeps its final retest after repair, while
+            // required acceptance that could not be verified is never tried again unchanged. Extra probes decide neither.
+            const reproducedFailure = current.journey?.findLast(step => step.kind === "agent" && step.endedAt !== undefined && this.k.role(step.roleId!, current)?.result === "checks")?.acceptanceChecks?.some(check => check.result === "fail");
+            const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || (requiredUnverified(current) && !reproducedFailure && !requestedRetest);
             const bounded = hasProofs && mainOnly && (current.proofRefreshes ?? 0) >= 2;
             if (hasProofs) current.proofRefreshBlocked = bounded && (ordinaryRetest || openProofs(current).some(request => request.status === "stale"));
             if (tester >= 0 && !acceptanceExhausted && !bounded && (ordinaryRetest || requestedRetest)) {
@@ -505,7 +507,7 @@ export class Driver {
                 work.approvedPatch = work.checkedPatch;
                 work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
               }
-              this.k.log(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? `${current.proofRequests?.length ? "Requested proof is current" : "Acceptance is verified"} and checks passed: shipping without asking you, as this task's settings allow` : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
+              this.k.log(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? `${current.proofRequests?.length ? "Requested proof is current" : "Required acceptance is verified"} and checks passed: shipping without asking you, as this task's settings allow` : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;
               current.sub = 0;
               this.k.commit();
@@ -799,7 +801,8 @@ export class Driver {
     const scope = executionFor(task);
     if (task.reviewDecision) return false;
     if (proofGap(task)) return false;
-    if (task.proofDeliveryGate && !task.approveDelivery && task.acceptancePassed === true && !task.acceptanceUnverified && !task.findings.some(finding => finding.status === "open" && finding.severity === "blocking")) return true;
+    // The added check lifts on a complete, current pass of every required item, even when an extra probe could not be verified.
+    if (task.proofDeliveryGate && !task.approveDelivery && task.acceptancePassed === true && !acceptanceGap(task) && !task.findings.some(finding => finding.status === "open" && finding.severity === "blocking")) return true;
     // Shared work also needs the saved task choice and combined acceptance; single-product work keeps
     // the product's existing low-risk opt-in, even when its ordinary deliveries ask first.
     if (task.repositories && (task.approveDelivery || task.acceptancePassed !== true)) return false;

@@ -353,6 +353,8 @@ export interface JourneyStep {
   proofRun?: { versions: Readonly<Record<Id, string>>; changes: Readonly<Record<Id, string>>; requestIds: readonly Id[]; restored?: AcceptanceRestoration };
   proofChecks?: readonly { id: Id; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string }[];
   proofDecision?: import("./task-model.js").ProofDecision;
+  /** A delivery decision's record of the required acceptance it was asked about, saved as the decision is raised. */
+  acceptanceGap?: AcceptanceGap;
   /** Per seat, including finished members and usage replacements. */
   toolActivity?: Readonly<Record<string, AgentToolActivity>>;
   /** Recent calls across all seats, capped independently of lifetime action counts. */
@@ -403,6 +405,24 @@ export interface JourneyAcceptanceCheck {
 export interface AcceptanceRestoration {
   at: number;
   products: readonly { productId: Id; commits?: boolean; edits?: boolean; files?: readonly string[] }[];
+}
+
+/**
+ * Required acceptance a delivery decision covers: the latest acceptance run and each saved checklist item it could not
+ * verify, or that Petrina invalidated that run. The Tester's extra probes are observations and never part of it;
+ * requested proof keeps its own decision.
+ */
+export interface AcceptanceGap {
+  /** That acceptance run's journey step, and its original report there. */
+  stepId?: Id;
+  reportIndex?: number;
+  /** As recorded: why it could not be verified, what the Tester observed, and the products it affects. */
+  items: readonly { text: string; reason?: string; evidence?: string; productIds?: readonly Id[] }[];
+  restored?: true;
+  /** Saved with a decision: the exact versions tested and prepared, and how they relate for each product. */
+  tested?: Readonly<Record<Id, string>>;
+  prepared?: Readonly<Record<Id, string>>;
+  coverage?: readonly { productId: Id; state: "same-contents" | "same-change" | "changed" | "unknown" }[];
 }
 
 export interface JourneyProductCheck {

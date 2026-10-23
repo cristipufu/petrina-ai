@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceSummary, recordedAcceptance, restorationReason, restoredAcceptance } from "../src/acceptance.js";
+import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceGap, acceptanceSummary, recordedAcceptance, requiredUnverified, restorationReason, restoredAcceptance, sameAcceptanceGap, undecidedAcceptanceGap, unverifiedRequirements } from "../src/acceptance.js";
 import { gateStatus, gateTitle } from "../src/flow.js";
 import { createDemoState, createPortfolioDemo } from "../src/demo.js";
 import { journeyView } from "../src/journey.js";
@@ -159,6 +159,32 @@ describe("acceptance evidence attribution", () => {
     expect(recordedAcceptance(task, roleFor).step!.id).toBe("tester");
     expect(restoredAcceptance(task)).toBeUndefined();
     expect(gateTitle(task, "delivery")).toBe(`Ready to ship “${task.title}”`);
+  });
+
+  it("makes only saved checklist items and requested proof a required gap, which an explicit decision about that run covers", () => {
+    const task = fixture();
+    task.acceptanceUnverified = true;
+    // An extra probe the Tester added is an observation, never a requirement.
+    task.journey = [step({ ...task.journey![0]!, acceptanceChecks: [...task.journey![0]!.acceptanceChecks!, { text: "Works offline", result: "blocked", reason: "No network switch" }] })];
+    expect(unverifiedRequirements(task).map((item) => item.text)).toEqual(["A real account works"]);
+    const gap = acceptanceGap(task)!;
+    expect(gap).toEqual({ stepId: "tester", reportIndex: 0, items: [{ text: "A real account works", reason: "Account unavailable" }] });
+    expect(requiredUnverified(task)).toBe(true);
+    expect(undecidedAcceptanceGap(task)).toEqual(gap);
+    // A decision covers that run's items; one about another run or other items does not.
+    task.approvedAcceptanceGap = gap;
+    expect(undecidedAcceptanceGap(task)).toBeUndefined();
+    expect(sameAcceptanceGap({ ...gap, stepId: "earlier" }, gap)).toBe(false);
+    expect(sameAcceptanceGap({ ...gap, items: [...gap.items, { text: "The total is correct" }] }, gap)).toBe(false);
+    expect(sameAcceptanceGap(undefined, gap)).toBe(false);
+    // Asking for changes clears the flag, so the item is tried again rather than held back, yet still holds publishing.
+    delete task.acceptanceUnverified; delete task.approvedAcceptanceGap;
+    expect(requiredUnverified(task)).toBe(false); expect(undecidedAcceptanceGap(task)).toBeDefined();
+    // Without a written checklist, an unavailable extra probe alone is no gap; unverified requested proof still routes like one.
+    delete task.brief; task.acceptanceUnverified = true;
+    expect(acceptanceGap(task)).toBeUndefined(); expect(requiredUnverified(task)).toBe(false);
+    task.proofRequests = [{ id: "proof", text: "Run it on Linux", reason: "Needed", productIds: [task.productId], source: "s", requestedBy: { stageId: "review", round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, ownerStageId: "test", reviewedVersions: {}, status: "unverified" }];
+    expect(requiredUnverified(task)).toBe(true); expect(acceptanceGap(task)).toBeUndefined();
   });
 
   it.each(["unknown version", "running editor", "missing step evidence", "missing version", "unavailable version", "not current"])("leaves uncertain evidence unverified: %s", (variant) => {

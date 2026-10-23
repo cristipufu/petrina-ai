@@ -3,7 +3,8 @@ import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-ve
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
-import { proofDecision, refreshProofs, sameProofDecision } from "@petrina/core";
+import { proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
+import { addDeliveryCheck } from "./proof-requests.js";
 import { versionsOf } from "./repositories.js";
 import { companionText, landingState, repositoryDelivered, runtimeWaitHolds, syncRuntimeWait } from "@petrina/core";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
@@ -53,8 +54,8 @@ export const CARRIED_OVER = "This delivery was interrupted before Petrina was up
 
 /** Publishing found new source commits, after ruling out an already completed push. */
 class SourceMoved extends Error {}
-/** Local placement recovery may still owe a push; a changed decision publishes nothing further. */
-class ProofDecisionChanged extends Error {}
+/** Local placement recovery may still owe a push; a changed or missing decision publishes nothing further. */
+class DecisionNeeded extends Error {}
 
 /** A released prerequisite wait still owes the ordinary driver's source/evidence refresh. */
 class PrerequisiteRefresh extends Error {}
@@ -119,7 +120,7 @@ export class Shipping {
       }
       return await this.deliverOne(executionFor(task), stage, signal);
     } catch (error) {
-      if (error instanceof ProofDecisionChanged || error instanceof PrerequisiteRefresh) return "continue";
+      if (error instanceof DecisionNeeded || error instanceof PrerequisiteRefresh) return "continue";
       throw error;
     }
   }
@@ -270,7 +271,12 @@ export class Shipping {
     try {
       if ((await this.checkDelivery(scope, signal)) === "stop") return "stop";
       if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal, true)) {
-        await this.returnForProofDecision(task);
+        await this.returnForDecision(task, "proof");
+        return "continue";
+      }
+      // After what already went out is recorded: a prepared delivery, a retry or work from before this check still asks first.
+      if (undecidedAcceptanceGap(task)) {
+        await this.returnForDecision(task, "acceptance");
         return "continue";
       }
       return (await this.publish(scope, signal)) === "done" ? "stop" : "continue";
@@ -296,6 +302,7 @@ export class Shipping {
     const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
     const backToCheck = (line: string): "back" => {
       delete task.approvedProofDecision;
+      delete task.approvedAcceptanceGap;
       this.clearApproval(scope);
       this.clearDelivery(scope);
       task.stageIndex = check;
@@ -322,7 +329,11 @@ export class Shipping {
     }
     if (await this.checks.checksBeforeShipping(scope, signal)) return "back";
     if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal)) {
-      await this.returnForProofDecision(task);
+      await this.returnForDecision(task, "proof");
+      return "back";
+    }
+    if (undecidedAcceptanceGap(task)) {
+      await this.returnForDecision(task, "acceptance");
       return "back";
     }
     return "ready";
@@ -363,7 +374,13 @@ export class Shipping {
     return sameProofDecision(task.approvedProofDecision, proofDecision(task, versions));
   }
 
-  private async returnForProofDecision(task: MTask): Promise<void> {
+  /**
+   * Back to the delivery check for the coordinator's decision, with nothing more published: the versions or requested
+   * proof differ from it, or required acceptance that could not be verified has none. A plan without the check gains it.
+   */
+  private async returnForDecision(task: MTask, why: "proof" | "acceptance"): Promise<void> {
+    // An approval with no record covering this run's unavailable items, such as one saved before Petrina kept that record.
+    const approved = !!task.approvedAcceptanceGap || scopesFor(task).some(({ work }) => work.approvedFor?.by === "coordinator");
     for (const scope of scopesFor(task)) {
       if (scope.work.pr || scope.work.release || scope.work.landed || scope.work.shipping?.pushed) continue;
       await this.backToWork(scope);
@@ -372,11 +389,20 @@ export class Shipping {
     }
     delete task.approvedProofDecision;
     delete task.checkedProofDecision;
+    delete task.approvedAcceptanceGap;
+    if (why === "acceptance") addDeliveryCheck(this.k, task);
     task.stageIndex = task.plan!.stages.findIndex(entry => entry.kind === "gate" && entry.gate === "delivery");
-    if (task.stageIndex < 0) throw new Error("Requested proof needs a coordinator delivery check before publishing.");
+    if (task.stageIndex < 0) throw new Error(why === "proof" ? "Requested proof needs a coordinator delivery check before publishing." : "Unverified acceptance needs a coordinator delivery check before publishing.");
     task.sub = 0;
-    petrinaMoment(task, "delivery", { outcome: "Nothing published; a new delivery decision is needed", reason: "The versions or requested proof differ from your delivery decision", tone: "back" }, Date.now());
-    this.k.log(task, "warn", "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again.");
+    if (why === "proof") {
+      petrinaMoment(task, "delivery", { outcome: "Nothing published; a new delivery decision is needed", reason: "The versions or requested proof differ from your delivery decision", tone: "back" }, Date.now());
+      this.k.log(task, "warn", "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again.");
+    } else {
+      petrinaMoment(task, "delivery", { outcome: "Nothing published; your delivery decision is needed", reason: "Required acceptance could not be verified", tone: "back" }, Date.now());
+      this.k.log(task, "warn", approved
+        ? "Nothing was published: Petrina has no record that your approval covered the acceptance checks that could not be verified, so it asks you about them first."
+        : "Nothing was published: required acceptance could not be verified and has no decision from you yet. Petrina asks you first.");
+    }
     this.k.commitNow();
   }
 
@@ -472,8 +498,8 @@ export class Shipping {
     const builder = repository.report?.description?.trim() || this.fromReport(scope);
     const parts: string[] = ["## Checked by Petrina"];
     const acceptance = task.brief?.acceptance ?? [];
-    // Ticked only where a tester checked it.
-    if (acceptance.length) parts.push(`### Acceptance\n${acceptance.map((item) => (item.met === undefined ? `- ${item.text}` : `- [${item.met ? "x" : " "}] ${item.text}`)).join("\n")}`);
+    // Ticked only where a tester checked it; an item that could not be verified says so, whatever the approval.
+    if (acceptance.length) parts.push(`### Acceptance\n${acceptance.map((item) => (item.verification === "blocked" ? `- [ ] ${item.text} (Could not verify)` : item.met === undefined ? `- ${item.text}` : `- [${item.met ? "x" : " "}] ${item.text}`)).join("\n")}`);
     const runs = repository.checks?.results ?? [];
     if (runs.length) parts.push(`### Checks Petrina ran on this commit\n${runs.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} (\`${run.command}\`)`).join("\n")}`);
     const reviewers = [...new Set((task.plan?.stages ?? []).filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds.map((profileId, position) => this.k.describe(reviewerAt(stage, position), profileId))))];
@@ -537,7 +563,7 @@ export class Shipping {
   private async prepareAgain(scope: RepositoryContext, why: string): Promise<"again"> {
     const { task, work: repository } = scope;
     if (task.proofRequests?.length) {
-      await this.returnForProofDecision(task);
+      await this.returnForDecision(task, "proof");
       return "again";
     }
     const shipping = repository.shipping!;
@@ -837,8 +863,13 @@ export class Shipping {
     await checkMovement(there.value.get(ref));
     this.stopIfAsked(signal);
     if (scope.task.proofRequests?.length && !await this.proofApprovalCurrent(scope.task, signal, true)) {
-      await this.returnForProofDecision(scope.task);
-      throw new ProofDecisionChanged();
+      await this.returnForDecision(scope.task, "proof");
+      throw new DecisionNeeded();
+    }
+    // Recovery can reach this push straight from a finished local update: the completed update stays, the push waits.
+    if (undecidedAcceptanceGap(scope.task)) {
+      await this.returnForDecision(scope.task, "acceptance");
+      throw new DecisionNeeded();
     }
     const pushed = await this.publishStep(scope, signal, "push", `Publishing: pushing ${branch} to GitHub`, () => git.push(product.path!, connection.remote, [{ sha: at, ref }]));
     if (!pushed.ok) {

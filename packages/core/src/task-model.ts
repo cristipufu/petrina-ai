@@ -1,6 +1,6 @@
 // Task state is grouped by owner and lifetime. These interfaces keep one persisted shape;
 // composing them does not introduce projection copies or a second schema.
-import type { ActiveAgent, BuilderContext, CheckRun, Cleanup, Column, ConversationNote, DesignBrief, DesignCall, DeliveryMode, Driving, Finding, HandedBack, Hunt, Id, InboxKind, JourneyStep, Lesson, Objection, Plan, PullRequest, QueuedMessage, RiskLevel, RunState, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TaskKind, TimelineEntry, WorkRow } from "./model.js";
+import type { AcceptanceGap, ActiveAgent, BuilderContext, CheckRun, Cleanup, Column, ConversationNote, DesignBrief, DesignCall, DeliveryMode, Driving, Finding, HandedBack, Hunt, Id, InboxKind, JourneyStep, Lesson, Objection, Plan, PullRequest, QueuedMessage, RiskLevel, RunState, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TaskKind, TimelineEntry, WorkRow } from "./model.js";
 import type { PullRequestBackground, TaskSource, WorkChoice } from "./source.js";
 import type { ReadinessWait } from "./readiness.js";
 
@@ -294,7 +294,7 @@ export interface TaskAcceptanceState {
   proofRefreshes?: number;
   proofRefreshBlocked?: boolean;
   proofRetestReason?: "requested" | "main-moved" | "code-changed";
-  /** Added only when requested proof, or an acceptance run Petrina invalidated, needs the delivery check in a plan that omitted it. */
+  /** Added only when requested proof, or required acceptance that could not be verified, needs the delivery check in a plan that omitted it. */
   proofDeliveryGate?: Id;
   /** One in-flight Tester run, retained across pause, restart and profile handoff. */
   acceptanceRun?: NonNullable<JourneyStep["proofRun"]>;
@@ -305,10 +305,15 @@ export interface TaskAcceptanceState {
   acceptanceCleanupPending?: string;
   checkedProofDecision?: ProofDecision;
   approvedProofDecision?: ProofDecision;
+  /** The required acceptance gap the coordinator explicitly approved delivery with; automatic authorization never sets it. */
+  approvedAcceptanceGap?: AcceptanceGap;
   /** The change (its fingerprint) the tester last tried: fix rounds are reviewed, and the tester tries the final code once more before the delivery check. */
   testedPatch?: string;
   testedVersions?: Readonly<Record<Id, string>>;
-  /** Whether that acceptance run passed; a failed run can never satisfy the final acceptance check. */
+  /**
+   * Whether that acceptance run passed every required item (the saved checklist and requested proof) with nothing
+   * failing; a failed run can never satisfy the final acceptance check. An extra probe left unverified does not count.
+   */
   acceptancePassed?: boolean;
   /** Acceptance still failed after those returns: wait for a coordinator decision, including after restart. */
   acceptanceBlocked?: boolean;

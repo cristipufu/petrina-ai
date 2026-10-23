@@ -3,6 +3,7 @@
 // it, roughly how long the current step has left. The engine and the simulator keep the data;
 // these read it, so the demo and the real squad say the same things.
 
+import { requiredUnverified } from "./acceptance.js";
 import { CALL_WORDS, followingCall } from "./call.js";
 import { allowsReviewFix, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey.js";
@@ -227,7 +228,10 @@ function reviewersOf(task: Task, state: People, stage: Stage, at: number, from: 
 /** Final preparation resolves single-product patch equivalence; until then name the conditional test. */
 function finalTesting(state: People, task: Task): string | undefined {
   if (!task.retest && task.proofRequests?.some(request => request.status === "pending" || request.status === "stale") && !task.acceptanceUnverified && (task.proofRefreshes ?? 0) < 2) return "final acceptance testing for requested proof";
-  if (task.retest || task.testedPatch === undefined || task.acceptanceUnverified || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
+  if (task.retest || task.testedPatch === undefined || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
+  // Required acceptance that could not be verified is never tried again unchanged; a reproduced failure keeps its retest.
+  const reproduced = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && roleForTask(state.roles, step.roleId ?? "", task)?.result === "checks")?.acceptanceChecks?.some((check) => check.result === "fail");
+  if (requiredUnverified(task) && !reproduced) return undefined;
   const tester = task.plan?.stages.find((stage) => stage.kind === "do" && roleForTask(state.roles, stage.roleId, task)?.result === "checks");
   if (!tester) return undefined;
   const versions = task.repositories?.every((work) => work.checks?.current && work.checks.tree && task.testedVersions?.[work.productId])

@@ -343,7 +343,10 @@ describe("what comes next", () => {
     expect(nextLine(customState, reviewing)).toContain("final acceptance testing (Codex · sol) if the code changed");
     const swapped = { ...customState, profiles: customState.profiles.map((profile) => profile.id === "sol-high" ? { ...profile, model: "New model" } : profile) };
     expect(nextLine(swapped, reviewing)).toContain("Codex · New model");
-    for (const blocked of [{ acceptanceUnverified: true }, { acceptanceBlocked: true, acceptancePassed: false }]) expect(nextLine(customState, { ...reviewing, ...blocked })).not.toContain("final acceptance testing");
+    // Required acceptance that could not be verified is not tried again unchanged; an unverified extra probe alone changes nothing.
+    const required = { acceptanceUnverified: true, brief: { summary: "", forUsers: [], areas: [], risks: [], acceptance: [{ text: "A real account works", verification: "blocked" as const, reason: "Account unavailable" }] } };
+    for (const blocked of [required, { acceptanceBlocked: true, acceptancePassed: false }]) expect(nextLine(customState, { ...reviewing, ...blocked })).not.toContain("final acceptance testing");
+    expect(nextLine(customState, { ...reviewing, acceptanceUnverified: true })).toContain("final acceptance testing (Codex · sol) if the code changed");
     const shared: Task = { ...reviewing, testedVersions: { api: "a", web: "b" }, repositories: ["api", "web"].map((productId) => ({ productId, delivery: "local", completedStages: [], checks: { current: true, at: 0, tree: productId === "api" ? "a" : "b", results: [] } })) };
     expect(nextLine(customState, shared)).not.toContain("final acceptance testing");
     shared.repositories![1]!.checks!.tree = "changed";
