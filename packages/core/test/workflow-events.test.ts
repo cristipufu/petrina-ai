@@ -215,6 +215,67 @@ describe("compact facts become ordered events", () => {
     expect(events[9]).toMatchObject({ kind: "repair.returned", repairKind: "checks", cause: { nodeId: "j2" }, allowance: { checkReturns: 1, limit: 2 } });
   });
 
+  describe("names why the work went back to the Builder from the recorded step that sent it", () => {
+    const failed = { id: "check-0", attemptId: "run-0", productId: "shop", name: "Tests", result: "fail" as const, startedAt: 11, endedAt: 20, run: { name: "Tests", command: "bun test", ok: false, ms: 9, output: "1 failed", logPath: "/log" }, detail: "(fail) a case" };
+    const checks: JourneyStep = { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 10, endedAt: 20, end: "done", outcome: "1 of 1 check failed", reason: "1 check failed", tone: "back", productChecks: [failed], checkAttempts: [{ id: "run-0", productId: "shop", commands: ["bun test"], sha: "abc", tree: "tree", definition: "def", passed: false }] };
+    const fix: JourneyStep = { id: "j3", kind: "agent", roleId: "builder", profileId: "opus-high", round: 1, sub: 0, fixing: true, startedAt: 21, endedAt: 30, end: "done", outcome: "No code changes; checks still failing", reason: "ready for review", builderReturn: { productId: "shop", changed: false, claimedFixes: 1, outcome: "No code changes; checks still failing" } };
+    // The handoff of an unchanged tree's saved failure: copies of the original entry, nothing executed.
+    const reuse = (result: "fail" | "pass"): JourneyStep => ({ id: "j4", kind: "petrina", work: "check-reuse", round: 1, sub: 0, startedAt: 31, endedAt: 31, end: "done", outcome: `Previous checks reused — 1 ${result === "fail" ? "still failing" : "passing"}`, reason: `Previous checks reused — 1 ${result === "fail" ? "still failing" : "passing"}`, ...(result === "fail" ? { tone: "back" as const } : {}), productChecks: [{ ...failed, result, run: { ...failed.run, ok: result === "pass" }, reusedAt: 31 }] });
+    const reviewed: JourneyStep = { ...checks, reuses: [{ at: 31, purpose: "review", productId: "shop", attemptId: "run-0", basis: "same-tree", originalAt: 20, sha: "abc", tree: "tree", definition: "def", passed: false }] };
+    const returned = (journey: JourneyStep[], work: Partial<TaskRepository>, changes: Partial<TaskState> = {}) =>
+      diff(task({ state: "running", journey: journey.slice(0, -1) }, work), task({ state: "running", fixing: true, journey, ...changes }, work));
+    const repairOf = (events: readonly WorkflowEvent[] | ReturnType<typeof diff>) => events.find((event) => event.kind === "repair.returned");
+
+    it("reports a failed check reuse that sends unchanged work back as a check repair, keeping its cause and allowance", () => {
+      const work = { checkReturns: 2 };
+      const events = diff(task({ state: "running", journey: [checks, fix] }, work), task({ state: "running", fixing: true, journey: [reviewed, fix, reuse("fail")] }, work));
+      const repair = repairOf(events)!;
+      expect(repair).toMatchObject({ repairKind: "checks", cause: { nodeId: "j4", kind: "check-reuse", reason: "Previous checks reused — 1 still failing" }, allowance: { checkReturns: 2, acceptanceReturns: 0, limit: 2 } });
+      expect(repair.summary).toBe("Back to the builder (checks): Previous checks reused — 1 still failing");
+      expect(repair).not.toHaveProperty("products");
+      // The original run keeps the evidence reference; the handoff ran nothing.
+      expect(events.find((event) => event.kind === "check.reused")).toMatchObject({ nodeId: "j2", passed: false, refs: { checks: [{ nodeId: "j2", index: 0 }] } });
+      expect(events.filter((event) => ["check.queued", "check.started", "check.finished"].includes(event.kind))).toEqual([]);
+    });
+
+    it("keeps direct check failures, review and acceptance returns and coordinator changes on their own kinds", () => {
+      expect(repairOf(returned([checks], { checkReturns: 1 }))).toMatchObject({ repairKind: "checks", cause: { nodeId: "j2", kind: "checks" }, allowance: { checkReturns: 1, acceptanceReturns: 0 } });
+      const review: JourneyStep = { id: "j5", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 40, endedAt: 50, end: "done", outcome: "1 blocking", reason: "review found problems" };
+      expect(repairOf(returned([checks, review], { checkReturns: 1 }))).toMatchObject({ repairKind: "review", cause: { nodeId: "j5", kind: "code-reviewer" }, allowance: { checkReturns: 1, acceptanceReturns: 0 } });
+      const tester: JourneyStep = { id: "j5", kind: "agent", roleId: "tester", profileId: "opus-high", round: 1, sub: 0, startedAt: 40, endedAt: 50, end: "done", outcome: "1 failed", reason: "acceptance failed" };
+      expect(repairOf(returned([reuse("pass"), tester], { acceptanceReturns: 1 }))).toMatchObject({ repairKind: "acceptance", cause: { nodeId: "j5", kind: "tester" }, allowance: { checkReturns: 0, acceptanceReturns: 1 } });
+      const changes: JourneyStep = { id: "j5", kind: "you", waitsFor: "delivery", round: 1, sub: 0, startedAt: 40, endedAt: 50, end: "done", outcome: "Changes requested", reason: "Changes requested" };
+      expect(repairOf(returned([reuse("fail"), changes], { checkReturns: 2 }))).toMatchObject({ repairKind: "changes", cause: { nodeId: "j5", kind: "delivery" } });
+    });
+
+    it("never reports a passing reuse as a repair, and leaves an unrecorded cause unknown", () => {
+      // A passing handoff sends nothing back: no return event while the work moves on.
+      const moved = diff(task({ state: "running", journey: [checks, fix] }), task({ state: "running", journey: [checks, fix, reuse("pass")] }));
+      expect(repairOf(moved)).toBeUndefined();
+      // A return whose last step is a passing handoff, or a handoff without saved copies, names no kind it cannot know.
+      const passing = repairOf(returned([checks, fix, reuse("pass")], { checkReturns: 1 }))!;
+      expect(passing).toMatchObject({ cause: { nodeId: "j4", kind: "check-reuse" }, allowance: { checkReturns: 1 } });
+      expect(passing).not.toHaveProperty("repairKind");
+      expect(passing.summary).toBe("Back to the builder: Previous checks reused — 1 passing");
+      expect(repairOf(returned([checks, fix, { ...reuse("fail"), productChecks: undefined }], { checkReturns: 1 }))).not.toHaveProperty("repairKind");
+      // With no recorded step at all, neither the cause nor the kind is invented.
+      const unknown = diff(task({ state: "running", statusLine: "Fixing" }), task({ state: "running", statusLine: "Fixing", fixing: true }))!.find((event) => event.kind === "repair.returned")!;
+      expect(unknown).not.toHaveProperty("repairKind");
+      expect(unknown).not.toHaveProperty("cause");
+      expect(unknown.summary).toBe("Back to the builder: Fixing");
+    });
+
+    it("keeps an explicit shared repair's own kind and products, whatever step ended last", () => {
+      const works: TaskRepository[] = [{ productId: "shop", delivery: "local", completedStages: [], checkReturns: 1 }, { productId: "notes", delivery: "local", completedStages: [] }];
+      const shared = (journey: JourneyStep[], repair?: TaskState["repair"]) => task({ state: "running", repositories: works, journey, ...(repair ? { repair } : {}) });
+      const failing = diff(shared([fix, reuse("fail")]), shared([fix, reuse("fail")], { products: ["shop", "notes"], index: 0, returnStage: 1, kind: "checks" }));
+      expect(repairOf(failing)).toMatchObject({ repairKind: "checks", cause: { nodeId: "j4", kind: "check-reuse" }, products: ["shop", "notes"], allowance: { checkReturns: 1 } });
+      const review: JourneyStep = { id: "j5", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 40, endedAt: 50, end: "done", outcome: "1 blocking", reason: "review found problems" };
+      const reviewing = diff(shared([checks, review]), shared([checks, review], { products: ["notes"], index: 0, returnStage: 1, kind: "review" }));
+      expect(repairOf(reviewing)).toMatchObject({ repairKind: "review", cause: { nodeId: "j5" }, products: ["notes"], allowance: { checkReturns: 0 } });
+    });
+  });
+
   it("describes only the latest attempt when a stopped check run was resumed on the same step", () => {
     const stopped = { id: "check-0", attemptId: "run-0", productId: "shop", name: "Tests", result: "stopped" as const, startedAt: 11, endedAt: 12, run: { name: "Tests", command: "bun test", ok: false, ms: 1, output: "", interrupted: true } };
     const rerun = { id: "run-1:check-0", attemptId: "run-1", productId: "shop", name: "Tests", result: "pass" as const, startedAt: 15, endedAt: 20, run: { name: "Tests", command: "bun test", ok: true, ms: 5, output: "" } };

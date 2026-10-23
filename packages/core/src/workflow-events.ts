@@ -6,6 +6,7 @@
 
 import type { AgentProfile, CheckAttemptEvidence, Finding, Id, InboxItem, InboxKind, InputManifestEntry, JourneyAgentInput, JourneyStep, Role, RunState, Task, TaskRepository, TaskState, UsageLimit } from "./model.js";
 import { JOURNEY_WORDS, landingOf, stepName, type Landing } from "./journey.js";
+import { checkCounts } from "./check-evidence.js";
 import { copyNoLongerNeeded, markedDoneUnconfirmed } from "./cleanup.js";
 import { historyItem, historyStatus, type HistoryStatus } from "./history.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
@@ -213,6 +214,8 @@ interface NodeFacts {
   inputs: SeatInputFacts[];
   results: SeatResultFacts[];
   checks: CheckFacts[];
+  /** A check-reuse handoff: how many of the copied checks it handed on as failed. */
+  reusedFailed?: number;
   asks: AskFacts[];
   acceptance?: { pass: number; fail: number; blocked: number };
   checked: readonly (Omit<CheckAttemptEvidence, "id" | "commands"> & { attemptId: string })[];
@@ -396,7 +399,7 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
     startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}), ...(step.end ? { end: step.end } : {}),
     ...(step.outcome ? { outcome: step.outcome } : {}), ...(step.reason ? { reason: step.reason } : {}), ...(step.tone ? { tone: step.tone } : {}),
     ...(step.trigger ? { trigger: step.trigger } : {}), ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}), ...(step.legacy ? { legacy: true } : {}),
-    inputs, results, checks, asks, ...(acceptance ? { acceptance } : {}),
+    inputs, results, checks, ...(step.work === "check-reuse" && step.productChecks ? { reusedFailed: checkCounts(step.productChecks).failed } : {}), asks, ...(acceptance ? { acceptance } : {}),
     checked: (step.checkAttempts ?? []).map(({ id, commands: _commands, ...version }) => ({ attemptId: id, ...version })), reuses: step.reuses ?? [],
     ...(step.findingIds ? { findingIds: step.findingIds } : {}),
     resultFindings: (step.result?.findings ?? []).map((finding) => ({ id: finding.id, status: finding.status, severity: finding.severity })),
@@ -454,6 +457,20 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
 export interface FindingBaseline { findings: FindingFacts[]; since: "node-start" | "engine-start"; /** The Builder's claims this node examines. */ claims: Id[] }
 
 /**
+ * Why the work went back to the Builder. An explicit shared repair names its own kind; otherwise the step that ended
+ * last sent it back. A checks run, or the handoff of an unchanged tree's saved failure, is a check repair. A handoff
+ * with no recorded failure sends nothing back, and with no step at all the kind is unknown: neither is guessed.
+ */
+function repairKind(repair: WorkflowFacts["repair"], cause: NodeFacts | undefined, roles: WorkflowContext["roles"]): string | undefined {
+  if (repair) return repair.kind;
+  if (!cause) return undefined;
+  if (cause.kind === "petrina" && cause.work === "check-reuse") return cause.reusedFailed ? "checks" : undefined;
+  if (cause.kind === "petrina" && cause.work === "checks") return "checks";
+  if (cause.kind === "agent" && roles.find((role) => role.id === cause.roleId)?.result === "checks") return "acceptance";
+  return cause.kind === "you" ? "changes" : "review";
+}
+
+/**
  * A request can leave the inbox one change before its answer or decision is recorded on the journey. Such a
  * removal is carried to the next observation of the task, where the recorded decision names it; a removal
  * that nothing records by then is reported as handled.
@@ -485,8 +502,8 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
   if (prev && (!prev.fixing && next.fixing || (next.repair && !same(prev.repair, next.repair) && next.repair.index === 0))) {
     const cause = [...next.nodes].reverse().find((node) => node.endedAt !== undefined);
     const work = next.works.find((entry) => entry.productId === (next.repair?.products[0] ?? next.productIds[0]));
-    const kind = next.repair?.kind ?? (cause?.kind === "petrina" && cause.work === "checks" ? "checks" : cause?.kind === "agent" && ctx.roles.find((role) => role.id === cause.roleId)?.result === "checks" ? "acceptance" : cause?.kind === "you" ? "changes" : "review");
-    push({ at: ctx.now, kind: "repair.returned", summary: `Back to the builder (${kind}): ${cause?.reason ?? cause?.outcome ?? next.statusLine}`, repairKind: kind, ...(cause ? { cause: { nodeId: cause.id, reason: cause.reason ?? cause.outcome, kind: cause.kind === "petrina" ? cause.work : cause.roleId ?? cause.waitsFor } } : {}), allowance: { checkReturns: work?.checkReturns ?? 0, acceptanceReturns: work?.acceptanceReturns ?? 0, limit: 2 }, ...(next.repair ? { products: next.repair.products } : {}) });
+    const kind = repairKind(next.repair, cause, ctx.roles);
+    push({ at: ctx.now, kind: "repair.returned", summary: `Back to the builder${kind ? ` (${kind})` : ""}: ${cause?.reason ?? cause?.outcome ?? next.statusLine}`, ...(kind ? { repairKind: kind } : {}), ...(cause ? { cause: { nodeId: cause.id, reason: cause.reason ?? cause.outcome, kind: cause.kind === "petrina" ? cause.work : cause.roleId ?? cause.waitsFor } } : {}), allowance: { checkReturns: work?.checkReturns ?? 0, acceptanceReturns: work?.acceptanceReturns ?? 0, limit: 2 }, ...(next.repair ? { products: next.repair.products } : {}) });
   }
 
   // Journey nodes: starts, seats, checks, asks and ends.

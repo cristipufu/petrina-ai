@@ -320,6 +320,14 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(blocker.body).toContain("• Welcome failed: The welcome page is missing (captured failure)");
       expect(blocker.body).toContain("Stopped before the review.");
 
+      // Each automatic return is a check repair: the first from the run, the second from the handoff of its unchanged failure.
+      const reuses = task.journey!.filter((step) => step.work === "check-reuse");
+      const returnedEvents = (await f.engine.events.wait({ taskIds: [f.taskId], from: "oldest", timeoutMs: 0, limit: 100 })).events as WorkflowEvent[];
+      expect(returnedEvents.filter((event) => event.kind === "repair.returned").map(({ repairKind, cause, allowance }) => ({ repairKind, cause, allowance }))).toEqual([
+        { repairKind: "checks", cause: { nodeId: recordedChecks[0]!.id, kind: "checks", reason: "1 check failed" }, allowance: { checkReturns: 1, acceptanceReturns: 0, limit: 2 } },
+        { repairKind: "checks", cause: { nodeId: reuses[0]!.id, kind: "check-reuse", reason: reuses[0]!.reason }, allowance: { checkReturns: 2, acceptanceReturns: 0, limit: 2 } },
+      ]);
+
       await f.restart();
       expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(captured);
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the welcome page");
@@ -336,6 +344,10 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(checkSteps(task)[0]!.checkAttempts![0]!.passed).toBeUndefined();
       const blockedEvents = (await f.engine.events.wait({ taskIds: [f.taskId], from: "oldest", timeoutMs: 0, limit: 100 })).events as WorkflowEvent[];
       expect(blockedEvents.find((event) => event.kind === "check.reused")).toMatchObject({ nodeId: captured!.provenance!.nodeId, purpose: "review", passed: false, tree: captured!.tree, definition: captured!.definition });
+      // The coordinator's request gave the Builder its turn; the unchanged failure then came back to them, with no further return.
+      const returns = blockedEvents.filter((event) => event.kind === "repair.returned");
+      expect(returns.at(-1)).toMatchObject({ repairKind: "changes", cause: { kind: "delivery" }, allowance: { checkReturns: 2, acceptanceReturns: 0, limit: 2 } });
+      expect(returns.some((event) => event.repairKind === "review")).toBe(false);
       expect(blockedEvents.some((event) => event.kind === "seat.started" && ["code-reviewer", "tester"].includes(String(event.roleId)))).toBe(false);
       expect(blockedEvents.find((event) => event.kind === "coordinator.request" && event.requestKind === "delivery")).toMatchObject({ title: blocker.title });
       expect(journeyProblems(task)).toEqual([]);
