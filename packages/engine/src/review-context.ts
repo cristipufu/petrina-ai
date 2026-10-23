@@ -7,6 +7,7 @@ import type { ContextPart } from "./roles.js";
 import { repositoryView, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
 import { saveImmutable } from "./immutable-file.js";
+import { freezeReviewHistory, readReviewHistory, type CompactReviewHistory, type StoodThrough } from "./review-history.js";
 
 import { PREPARED_REVIEW } from "./prompts.js";
 export interface ReviewInput {
@@ -15,8 +16,11 @@ export interface ReviewInput {
   source: readonly Section[];
   products?: readonly { productId: Id; beforeCopy: string; copy: string; afterCopy: string }[];
   handedBack: readonly Section[];
-  cards: readonly { id: Id; title: string; problem: string }[];
+  cards: readonly { id: Id; title: string; problem: string; productIds?: readonly Id[] }[];
   findings: readonly Finding[];
+  /** Eligibility captured with the baseline, never reconstructed from later live state. */
+  settled?: Readonly<Record<Id, StoodThrough>>;
+  history?: CompactReviewHistory;
   material?: Section;
   artifacts?: readonly { file: string; digest: string }[];
 }
@@ -107,6 +111,7 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
   }
   input.material = { title: PREPARED_REVIEW, body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read the files appropriate to your scope; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round read the separate incremental file. When your saved base advanced, also follow the base-update section: read the complete comparison against the new base and revisit incoming changes and their interactions. Otherwise the complete change need not be reread. Security reviewers and Verifiers retain their full-change scope and use the full file. Lockfile patches are separate, linked from each comparison, never excluded from review scope. Port reviews use the full file's port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}` };
   input.artifacts = artifacts;
+  await freezeReviewHistory(folder, input);
   signal.throwIfAborted();
   const saved = await immutable(folder, "json", JSON.stringify(input));
   return { ...saved, heads, trees };
@@ -116,6 +121,7 @@ export async function readReviewInput(ref: InputRef): Promise<ReviewInput> {
   const body = await readFile(ref.file, "utf8");
   if (digest(body) !== ref.digest) throw new Error("The saved review inputs changed. Try the review again.");
   const input = JSON.parse(body) as ReviewInput;
+  if (input.history) await readReviewHistory(input.history);
   await Promise.all((input.artifacts ?? []).map(async (artifact) => {
     if (digest(await readFile(artifact.file, "utf8")) !== artifact.digest) throw new Error("The prepared review comparison changed. Start this review again.");
   }));

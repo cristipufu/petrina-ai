@@ -165,6 +165,7 @@ petrina journey result --task-id TASK --node-id NODE --seat reviewer:1 --json
 petrina journey finding --task-id TASK --node-id NODE --finding-id FINDING --result 0 --json
 petrina journey review-input --task-id TASK --node-id NODE --section versions --json
 petrina journey review-input --task-id TASK --node-id NODE --section findings --json
+petrina journey review-input --task-id TASK --node-id NODE --section history --json
 petrina watch event --event-id EVENT --limit 8000 --json
 ```
 

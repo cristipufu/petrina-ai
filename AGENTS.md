@@ -53,3 +53,4 @@ What agents learned about working in this repository, added with the coordinator
 - In Bun, node:child_process execFile goes through the global Bun.spawn, so a test that replaces or spies on Bun.spawn also intercepts Petrina's own process-list (ps) reads, such as the lost-exit watch.
 - Engine tests can pause or fail a real file write at an exact point: spying on the node:fs/promises namespace (as captures.test.ts does) also catches the source modules' own imports, so race regressions can use a pause-and-release step instead of repeated random runs.
 - Coordination tests that call the coordination layer directly skip the local client's 10-second request limit and the server's idle cutoff; test any long-waiting coordination request through the real server and client.
+- Bun's own program handle kill does not go through process.kill, so an engine test that spies on process.kill to block stop signals must also pass a start stand-in that blocks the program handle's kill.

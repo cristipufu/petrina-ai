@@ -277,6 +277,8 @@ export interface JourneyAsk {
  * A new round, send-back or retry is a new step; picking up after a restart or a pause is the same one.
  */
 export interface JourneyStep {
+  /** Complete shortened review entries, once per frozen round. Retained after working-file cleanup. */
+  reviewHistory?: { file: string; digest: string; body: string; roundId?: Id };
   /** The immutable blind-review input shared by this round, retained after temporary review state ends. */
   reviewInput?: NonNullable<Hunt["input"]>;
   /** Unique within the task. Timeline and session lines carry it. */

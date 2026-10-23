@@ -24,6 +24,7 @@ import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 import { coordinatorNotes, type Section } from "./context.js";
+import { supplyReviewHistory } from "./review-history.js";
 import { backgroundMessage, holdUnconfirmed, MessageTurn, takeMessages } from "./messages.js";
 import { preserveCaptures } from "./captures.js";
 import { builderContext } from "./builder-context.js";
@@ -557,7 +558,7 @@ export class Turns {
         // Starting the step again: everything the coordinator said in it so far, in order, and after a restart, where it was.
         const files = where && !handback && head && worktree ? await git.changedSince(worktree, head) : [];
         if (signal.aborted || !live()) throw new Aborted();
-        const sections = await withBackground();
+        let sections = await withBackground();
         const earlier = repository.stepAttempts > 1 ? ((task.stepNotes ?? []) as StepNote[]).filter(note => backgroundMessage(task, note.id, options.member)) : [];
         if (earlier.length) this.k.log(scope, "you", `Handed on ${earlier.length} thing${earlier.length === 1 ? "" : "s"} you said in an earlier attempt at this step`, roleId, profileId);
         if (options.copy) sections.push({ title: OWN_COPY, body: ownCopy(head ?? "") });
@@ -567,8 +568,8 @@ export class Turns {
         if (handback) sections.push({ title: HANDED_BACK, body: formatHandBack(handback, again ?? "") });
         else if (where && tookOver) sections.push({ title: TOOK_OVER, body: formatTakeOver({ ...where, files }, this.k.named(tookOver.id), this.lastWords(scope, roleId, tookOver.id, startedAt), refusal) });
         else if (where) sections.push({ title: forScreen ? WHERE_YOU_WERE_SCREEN : WHERE_YOU_WERE, body: formatWhereYouWere({ ...where, files }, again ?? "", forScreen ? "screen" : "restart") });
-        if ((role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
-          await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true, findings: options.reviewFindings });
+        if (role.result === "findings" || (role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
+          sections = (await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true, findings: options.reviewFindings })).sections;
         }
         opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); });
       }
@@ -815,7 +816,7 @@ export class Turns {
       if (signal.aborted) throw new Aborted();
       if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
-      const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined, findings: options.reviewFindings });
+      const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined, findings: options.reviewFindings, supplyHistory: !capacityBack });
       const sections = prepared.sections;
       const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
       let pending: PendingInput | undefined;
@@ -1244,14 +1245,15 @@ export class Turns {
   }
 
   private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,
-    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[]; findings?: readonly import("@petrina/core").Finding[] }): Promise<{ sections: Section[]; refreshRole: boolean; omitted?: readonly { title: string; digest: string }[] }> {
-    if (!options.packet) return { sections, refreshRole: true };
-    const prepared = await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections, findings: options.findings });
-    if (note) {
+    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[]; findings?: readonly import("@petrina/core").Finding[]; supplyHistory?: boolean }): Promise<{ sections: Section[]; refreshRole: boolean; omitted?: readonly { title: string; digest: string }[] }> {
+    const prepared: Awaited<ReturnType<typeof builderContext>> = options.packet ? await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections, findings: options.findings }) : { sections };
+    if (note && options.packet) {
       if (prepared.snapshot) note.context = prepared.snapshot;
       else delete note.context;
     }
-    return { sections: prepared.sections, refreshRole: !options.previous || prepared.snapshot?.scope !== options.previous.scope, ...(prepared.omitted ? { omitted: prepared.omitted } : {}) };
+    const supplied = options.supplyHistory === false ? { sections: prepared.sections } : await supplyReviewHistory(scope, prepared.sections, { continued: !!options.previous });
+    if (supplied.retained) this.k.commitNow(scope);
+    return { sections: supplied.sections, refreshRole: !options.previous || prepared.snapshot?.scope !== options.previous.scope, ...(prepared.omitted ? { omitted: prepared.omitted } : {}) };
   }
 
   private saveScreenTurn(scope: RepositoryContext, role: Role, profile: AgentProfile, member: string, copy: string, note: ConversationNote | undefined, reason: string): boolean {

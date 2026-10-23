@@ -15,6 +15,7 @@ import type { ReviewInput } from "./review-context.js";
 import * as git from "./git.js";
 import { verificationContext } from "./verification-context.js";
 import { relatedCheckEvidence } from "./related-check-evidence.js";
+import { compactCards, compactFindings, fullFollowUpCards, readReviewHistory, settledReviewFindings, type CompactReviewHistory } from "./review-history.js";
 import { openProofs, proofContext, type ProofRequest } from "@petrina/core";
 
 export interface Section {
@@ -22,6 +23,8 @@ export interface Section {
   body: string;
   /** Complete background retained in the context packet, even when instructions travel separately. */
   background?: string;
+  /** Internal reference carried only while an actual supplied section is shortened. */
+  reviewHistory?: CompactReviewHistory;
 }
 
 /** Beside the reports exactly as they were handed back: evidence to check and proposals to weigh, never extra requirements. */
@@ -58,6 +61,10 @@ export class Context {
   async sectionsFor(scope: RepositoryContext, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>, shownKey?: string, review?: ReviewInput): Promise<Section[]> {
     const { task, work: repository } = scope;
     const role = this.k.role(roleId, task);
+    // Check cached round files too. Retention waits until the actual supplied
+    // sections are known, after any warm-conversation reduction.
+    const compact = role?.result === "findings" && !!review?.history;
+    if (compact) await readReviewHistory(review!.history!);
     const reads: readonly ContextPart[] = role ? contractFor(role).reads : ["notes", "brief"];
     const fromPlanning = task.plan?.stages.some((stage) => stage.kind === "converge") ? [] : task.sourcePointers ?? [];
     const references = role?.result === "brief" ? [...(task.brief?.sourcePointers ?? []), ...(task.sourcePointers ?? [])]
@@ -71,7 +78,11 @@ export class Context {
     const source = review ? review.source : this.approvedSource(scope);
     const rows = review ? review.products : this.productRows(scope);
     const map = rows ? [{ title: "Complete approved product map and responsibility", body: rows.map((row) => `${row.beforeCopy}${copies?.[row.productId] ?? row.copy}${row.afterCopy}`).join("\n\n") + `\n\n${role?.canEdit ? `You own only product ${repository.productId}. Read the other copies when needed; change only your own product. Return your own title, report and PR description.` : "Inspect every repository and the behaviour across them together."}\nFor every acceptance result and finding, explicitly return productIds naming every affected product. Unassigned items stay under Together for the coordinator. Passing separate suites cannot prove shared acceptance. For each lesson, return {productId, text} naming its product; unassigned lessons stay under Together and are never added to a repository automatically. Shared repairs require a separate answer from every affected builder and combined verification.` }] : [];
-    const sections = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => review && part !== "notes" ? review.parts[part] ?? [] : this.parts[part](scope, roleId, points, currentChecks, member))];
+    const sections: Section[] = [...map, ...source, ...CONTEXT_PARTS.filter((part) => reads.includes(part)).flatMap((part) => review && part !== "notes" ? review.parts[part] ?? [] : this.parts[part](scope, roleId, points, currentChecks, member))];
+    if (compact && review?.history && Object.keys(review.history.findings).length) {
+      const index = sections.findIndex(section => section.title === "Findings so far (confirm or dispute by id)");
+      if (index >= 0) sections[index] = { ...sections[index]!, background: sections[index]!.body, body: compactFindings(review), reviewHistory: review.history };
+    }
     if (task.maintenance) sections.unshift({ title: "Saved scheduled maintenance request", body: task.maintenance.input });
     if (review?.material) sections.push(review.material);
     if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
@@ -84,7 +95,7 @@ export class Context {
       if (cards.length) shown[key] = cards.map((card) => card.id);
       else delete shown[key];
       task.shownFollowUps = shown;
-      if (cards.length) sections.push({ title: "Open follow-up cards", body: `${cards.map((card) => `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".` });
+      if (cards.length) sections.push({ title: "Open follow-up cards", body: compact && review?.history?.cards.length ? compactCards(review) : fullFollowUpCards(cards), ...(compact && review?.history?.cards.length ? { background: fullFollowUpCards(cards), reviewHistory: review.history } : {}) });
     }
     if (role?.result === "findings") sections.push(...(review ? review.proofs ?? [] : this.reviewProofs(scope)));
     if (!review && task.proofRequests?.length && (role?.result === "checks" || role?.result === "build")) sections.push({ title: "Required proof on the final code", body: `${role.result === "build" ? "Final acceptance testing owns these requests. Fix code findings as usual; do not repeat this proof during Builder repairs." : "Answer every open request by its id in proofAnswers with pass, fail, or blocked and evidence. A missing platform is blocked, never a pass. The engine records the actual run versions."}\n${proofContext(role.result === "checks" ? openProofs(task) : task.proofRequests)}\nCurrent versions: ${JSON.stringify(Object.fromEntries((task.repositories ?? [repository]).map(work => [work.productId, work.checks?.current ? work.checks.tree : "unavailable"])))}${task.proofRetestReason ? `\nWhy now: ${task.proofRetestReason === "main-moved" ? "main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "the task's code changed since acceptance testing" : "a reviewer asked for proof on the final code"}.` : ""}` });
@@ -105,7 +116,8 @@ export class Context {
     const parts: ReviewInput["parts"] = {};
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
     parts.report = [...(parts.report ?? []), ...evidence];
-    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope) });
+    const settled = settledReviewFindings(repositoryView(scope), this.k.s.roles);
+    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope), ...(Object.keys(settled).length ? { settled } : {}) });
   }
 
   private reviewProofs(scope: RepositoryContext): Section[] {

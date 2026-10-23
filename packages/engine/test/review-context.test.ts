@@ -10,6 +10,7 @@ import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
+import { fullFollowUpCards } from "../src/review-history.js";
 import { ReviewResult } from "../src/roles.js";
 import { WaitingForCapacity } from "../src/usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
@@ -274,7 +275,7 @@ describe("immutable review inputs", () => {
 });
 
 const originalLines = Array.from({ length: 60 }, (_, index) => `Original line ${index}\n`).join("");
-async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean; advance?: boolean } = {}) {
+async function run(reopen: Scenario["reopen"], options: { single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean; settledHistory?: boolean; advance?: boolean } = {}) {
   const root = tempDir("petrina-review-resume-"); roots.push(root);
   // Reviewers check browser instructions across reopened conversations and restarts in one browser folder.
   const browsers = testBrowserRoot(); roots.push(browsers);
@@ -310,6 +311,11 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
   const task = () => engine.task(taskId)!;
   if (options.advance) task().brief = { summary: "ORIGINAL-DESIGN-BRIEF", forUsers: [], areas: [], acceptance: [], risks: [] };
   if (options.seedFinding) task().findings.push(structuredClone(earlier));
+  if (options.settledHistory) {
+    task().findings.push({ ...structuredClone(earlier), roleId: "code-reviewer", evidence: "Original settled reproduction and evidence. ".repeat(100), votes: [{ by: "opus-high", toolId: "claude-code", verdict: "real", reason: "Original independent judgment" }] });
+    task().journey = [{ id: "prior-examination", kind: "agent", roleId: "code-reviewer", stageId: "prior-stage", round: 0, sub: 0, startedAt: 2, endedAt: 3, result: { findingsSettled: true, findings: structuredClone(task().findings), findingChanges: { raised: [], fixed: [earlier.id], dismissed: [], claimedFixed: [earlier.id] } } }];
+    engine.addTask({ productId, title: "Long original follow-up", description: "Original full follow-up evidence. ".repeat(100), kind: "bug", backlog: true });
+  }
   const released = new Set<string>();
   const tick = (allow: (role: string, session: string) => boolean = () => true) => {
     for (const entry of fakes.received()) if (allow(entry.role, entry.session) && !released.has(entry.session)) {
@@ -321,7 +327,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
       released.add(entry.session);
     }
     for (const item of engine.getState().inbox) {
-      if (item.kind === "plan") { const stage = task().plan!.stages.find((stage) => stage.kind === "review-chain")!; stage.maxRounds = 2; if (task().workRows?.some((row) => row.error)) throw new Error(JSON.stringify(task().workRows)); engine.approve(item.id); }
+      if (item.kind === "plan") { const stage = task().plan!.stages.find((stage) => stage.kind === "review-chain")!; stage.maxRounds = 2; if (options.settledHistory) stage.profileIds = ["sol-high", "opus-high", "grok-high"]; if (task().workRows?.some((row) => row.error)) throw new Error(JSON.stringify(task().workRows)); engine.approve(item.id); }
       else if (item.kind === "question") engine.answer(item.id, "Yes");
       else if (item.kind === "permission") engine.allow(item.id, "once");
     }
@@ -344,6 +350,73 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
 }
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
+  it("records compact frozen evidence for three fresh reviewers after a real conflict, restart and usage replacement", async () => {
+    const f = await run("resume", { advance: true, settledHistory: true, limit: 3 });
+    try {
+      await f.beforeFix();
+      await f.advanceMain(undefined, true);
+      const port = join(f.root, "hold-compact-port");
+      writeFileSync(port, "");
+      writeFileSync(join(f.root, "script.json"), JSON.stringify({ hold: { title: "Bring the work up to date first", file: port } }));
+      rmSync(f.hold);
+      await waitFor(() => { f.tick(); return existsSync(`${port}.reached`); }, "the compact-history conflict port");
+      expect(f.task().reviewSessions).toBeUndefined();
+      await f.restart();
+      // The conflict round needs a fresh replacement as well as fresh planned seats.
+      f.fakes.scenario({ planner: "pair", builder: "plain", reviewer: "important", fixes: "change", controlled: true, reopen: "resume", limited: [{ model: "opus", role: "code reviewer" }] });
+      rmSync(port);
+      const task = await f.done();
+      const rounds = task.journey!.filter(step => step.roleId === "code-reviewer" && step.id !== "prior-examination");
+      expect(rounds).toHaveLength(2);
+      const round = rounds[1]!;
+      expect([...new Set(round.agentInputs!.map(input => input.reviewerKey))].sort()).toEqual(["0", "1", "2"]);
+      expect(round.agentInputs).toHaveLength(4); // The refused attempt and its replacement both keep receipts.
+      const history = task.journey!.filter(step => step.round === round.round && step.reviewInput?.digest === round.reviewInput?.digest && step.reviewHistory);
+      expect(history).toHaveLength(1);
+      const copy = history[0]!.reviewHistory!;
+      expect(createHash("sha256").update(copy.body).digest("hex")).toBe(copy.digest);
+      expect(copy.body).toContain("Original settled reproduction and evidence");
+      expect(copy.body).toContain("Original independent judgment");
+      expect(copy.body).toContain("Original full follow-up evidence");
+      const supplied = round.agentInputs!.map(input => {
+        expect(input.mode).toBe("fresh");
+        if (input.profileId === ["sol-high", "opus-high", "grok-high"][Number(input.reviewerKey)]) expect(input.freshReason).toContain("Builder had to port");
+        const text = readFileSync(input.exact!.file, "utf8");
+        expect(text).toContain(copy.digest);
+        expect(text).not.toContain("Original settled reproduction and evidence");
+        expect(text).toContain("ORIGINAL-REVIEW-REQUEST");
+        expect(text).toContain("ORIGINAL-DESIGN-BRIEF");
+        expect(text).toContain("Prepared review material");
+        expect(input.manifest).toContainEqual(expect.objectContaining({ name: "Findings so far (confirm or dispute by id)", kind: "text" }));
+        expect(f.fakes.received("code reviewer").filter(entry => entry.session === input.sessionId).map(entry => entry.text)).toContain(text);
+        return input.sections.filter(section => ["Findings so far (confirm or dispute by id)", "Open follow-up cards"].includes(section.title));
+      });
+      for (const sections of supplied) expect(sections).toEqual(supplied[0]!);
+      expect(round.agentInputs!.some(input => input.profileId !== ["sol-high", "opus-high", "grok-high"][Number(input.reviewerKey)])).toBe(true);
+      const replacement = round.agentInputs!.find(input => input.profileId !== ["sol-high", "opus-high", "grok-high"][Number(input.reviewerKey)])!;
+      expect(replacement.sections.some(section => section.title === "Where the agent before you stopped")).toBe(true);
+      const frozen = await readReviewInput(round.reviewInput!);
+      expect(frozen).toMatchObject({ history: { digest: copy.digest } });
+      const complete = new Map([...(frozen.parts.findings ?? []).map(section => [section.title, section.body] as const), ["Open follow-up cards", fullFollowUpCards(frozen.cards)]]);
+      const sizes: string[] = [];
+      const previous = { ...round, reviewHistory: undefined, agentInputs: round.agentInputs!.map(input => {
+        let text = readFileSync(input.exact!.file, "utf8");
+        const sections = input.sections.map(section => {
+          const body = complete.get(section.title);
+          if (body === undefined) return section;
+          text = text.replace(section.body, body);
+          return { ...section, body };
+        });
+        sizes.push(`${text.length} -> ${input.exact!.size}`);
+        const digest = createHash("sha256").update(text).digest("hex");
+        return { ...input, sections, exact: { ...input.exact!, digest, size: text.length, file: input.exact!.file.replace(input.exact!.digest, digest) }, manifest: input.manifest!.map(entry => {
+          const body = complete.get(entry.name);
+          return body === undefined ? entry : { ...entry, size: body.length, digest: createHash("sha256").update(body).digest("hex").slice(0, 16) };
+        }) };
+      }) };
+      console.log(`History characters actual conflict/restart/replacement: openings by attempt ${sizes.join(", ")}; serialized journey round ${JSON.stringify(previous).length} -> ${JSON.stringify(round).length}; complete reference available. Tokens, cost and time unmeasured.`);
+    } finally { await f.engine().shutdown(); }
+  });
   for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`continues each own ${mode} reviewer after main advances, with current full and incremental evidence`, async () => {
     const reopen = mode === "single" ? "load" : "resume";
     const f = await run(reopen, { advance: true, single: mode === "single", shared: mode === "shared" });

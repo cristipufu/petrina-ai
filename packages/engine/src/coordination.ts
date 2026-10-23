@@ -10,6 +10,7 @@ import { checkLogRevision, readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";
 import { readExactInput } from "./exact-input.js";
 import { readReviewInput } from "./review-context.js";
+import { createHash } from "node:crypto";
 import { readAnalytics } from "./analytics-read.js";
 import { checkpointView } from "./checkpoint-read.js";
 
@@ -414,6 +415,12 @@ export class Coordination {
     if (name === "journey.review-input") {
       const node = task!.journey?.find((step) => step.id === a.nodeId);
       if (!node) return { outcome: "missing", message: "That journey node does not exist." };
+      if (a.section === "history") {
+        const saved = node.reviewHistory ?? (node.reviewInput && task!.journey?.find(step => step.stageId === node.stageId && step.round === node.round && step.reviewInput?.digest === node.reviewInput!.digest && step.reviewHistory)?.reviewHistory);
+        if (!saved) return { outcome: "unavailable", message: "This round retained no shortened history." };
+        if (createHash("sha256").update(saved.body).digest("hex") !== saved.digest) return { outcome: "changed", message: "The retained frozen review history changed. No newer evidence is substituted." };
+        return readText(saved.body, a, [name, task!.id, node.id, saved.digest, a.section], { evidence: "recorded", digest: saved.digest });
+      }
       const ref = node.reviewInput;
       if (!ref) return { outcome: "unavailable", message: "This node recorded no blind-review snapshot reference." };
       return readReviewInput(ref).then((input) => readText(a.section === "findings" ? input.findings : a.section === "versions" ? ref.heads : input, a, [name, task!.id, node.id, ref.digest, a.section], { evidence: "recorded", digest: ref.digest }), (error) => ({ outcome: /changed/.test(String(error)) ? "changed" : "unavailable", message: "The saved blind-review evidence is missing or changed. No newer evidence is substituted." }));

@@ -157,8 +157,8 @@ export const OPERATIONS = [
   ),
   op(
     "journey.review-input",
-    "Read the immutable blind-review snapshot saved on a journey node, its supplied finding baseline, or its code versions. This reference survives the review round; missing or changed files are never replaced by current evidence.",
-    { ...task, nodeId: id, section: z.enum(["snapshot", "findings", "versions"]).default("snapshot"), ...evidence },
+    "Read the immutable blind-review snapshot, supplied findings, code versions, or complete shortened history retained on the round's journey. Missing or changed files are never replaced by current evidence.",
+    { ...task, nodeId: id, section: z.enum(["snapshot", "findings", "versions", "history"]).default("snapshot"), ...evidence },
   ),
   op(
     "journey.input",
