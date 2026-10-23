@@ -1,7 +1,7 @@
 import { executionFor, restoreRepositoryState } from "../src/repository-context.js";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, createDemoState, DESIGN_OBJECTION_RULE, type State } from "@petrina/core";
+import { BUILT_IN_ROLES, createDemoState, DESIGN_OBJECTION_RULE, NOTES_HANDOFF_RULE, type State } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { type MState, renameRoles } from "../src/kernel.js";
 import type { PromptContext } from "../src/prompts.js";
@@ -62,7 +62,7 @@ describe("every role's contract", () => {
 
   it("tells a role the coordinator made its purpose, and has it hand back notes", () => {
     const contract = contractFor({ ...BUILT_IN_ROLES[1]!, id: "added-copy-editor", added: true, purpose: "Tighten the wording of every screen.", instructions: "Tighten the wording of every screen." });
-    expect(contract.instructions(ctx())).toBe("Tighten the wording of every screen.");
+    expect(contract.instructions(ctx())).toBe(`Tighten the wording of every screen.\n${NOTES_HANDOFF_RULE}`);
     expect(contract.reads).toEqual(["notes", "brief"]);
     expect(contract.result.safeParse({ summary: "Done.", notes: [] }).success).toBe(true);
   });

@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROLE_STARTS } from "@petrina/core";
-import { Context } from "../src/context.js";
+import { Context, EARLIER_REPORTS_RULE } from "../src/context.js";
 import { Engine } from "./engine.js";
 import { fileAt } from "../src/git.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
@@ -187,7 +187,7 @@ describe("reading a product's committed files", () => {
       expect(sections.some((section) => section.body.includes("Check the welcome page too."))).toBe(false);
       expect(task.queued[0]?.text).toBe("Check the welcome page too.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("The welcome page must show who can see each greeting.");
-      expect(sections.find((section) => section.title === "What earlier agents on this task handed back")?.body).toBe("Researcher, in “Research”: The welcome page is important.\n- Keep its greeting visible.");
+      expect(sections.find((section) => section.title === "What earlier agents on this task handed back")?.body).toBe(`${EARLIER_REPORTS_RULE}\n\nResearcher, in “Research”: The welcome page is important.\n- Keep its greeting visible.`);
       if (pullRequest) expect(sections.find((section) => section.title === "Approved starting point and delivery")?.body).toContain("Update PR #7 contributor/demo · review-work");
       expect(task.queued[0]?.deliveries).toBeUndefined();
     } finally {

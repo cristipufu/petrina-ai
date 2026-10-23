@@ -4,7 +4,7 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, NOTES_HANDOFF_RULE, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
@@ -324,9 +324,9 @@ Rules:
     withInstructions: ({ role }, wording) => role.canEdit ? `${wording}\nDo not commit, push or open pull requests: Petrina commits your work.` : wording,
     result: NotesResult,
     reads: ["notes", "brief"],
-    shape: `{"summary": "What you found, in plain language", "notes": ["One finding per line"]}`,
+    shape: `{"summary": "What you found, in plain language", "notes": ["One finding per line, with its evidence and limits when relevant"]}`,
     instructions: ({ role }) => {
-      return `Research what users expect from this and how good products solve it. Look at the repository to understand the current state.${role.canEdit ? "" : " Do not change any files."}`;
+      return `Research what users expect from this and how good products solve it. Look at the repository to understand the current state.${role.canEdit ? "" : " Do not change any files."}\n${NOTES_HANDOFF_RULE}`;
     },
   },
   "architect": {
@@ -358,7 +358,7 @@ If objections are listed below, answer every one by its id: accept it and change
     reads: ["notes", "brief"],
     shape: `{"summary": "The screens and words you propose", "notes": ["One note per line"]}`,
     instructions: ({ role }) => {
-      return `Shape the screens, layout and words users will see for this change, following the product's existing design.${role.canEdit ? " Describe the design in your notes." : " Do not change any files: describe the design in your notes."}`;
+      return `Shape the screens, layout and words users will see for this change, following the product's existing design.${role.canEdit ? " Describe the design in your notes." : " Do not change any files: describe the design in your notes."}\n${NOTES_HANDOFF_RULE}`;
     },
   },
   "builder": {
@@ -505,7 +505,7 @@ export function contractFor(role: Role): RoleContract {
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx) + (role.category === "maintenance" ? '\nSet "complete" to true only after completing the bounded investigation. Return false for an incomplete investigation and explain what prevented completion. Distinguish findings from missing evidence.\n' : "");
     const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

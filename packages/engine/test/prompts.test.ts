@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, REPAIR_RULE } from "@petrina/core";
+import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, MAINTENANCE_ROLES, NOTES_HANDOFF_RULE, REPAIR_RULE } from "@petrina/core";
 import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackNote, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 import { inputManifest, numberInputManifest } from "../src/exact-input.js";
@@ -303,6 +303,38 @@ describe("prompts", () => {
         expect(text).toContain("Do not commit, push or open pull requests");
       }
     }
+  });
+
+  it("tells every notes role, whatever its name, permission or wording, that only its saved report reaches later agents", () => {
+    const builtIn = (id: string) => BUILT_IN_ROLES.find((role) => role.id === id)!;
+    const copy = ROLE_STARTS.find((start) => start.id === "copywriter")!.draft;
+    const added = addRole(NO_ROLE_CHANGES, copy);
+    const editing = addRole(added.changes, { ...copy, name: "Product copywriter", canEdit: true });
+    let changes = editRole(editing.changes, "researcher", { ...draftOf(builtIn("researcher")), instructions: "Look only at the checkout page." });
+    changes = editRole(changes, "ux-designer", { ...draftOf(builtIn("ux-designer")), canEdit: true });
+    const roles = libraryRoles(changes);
+    const saved = (id: string) => roles.find((role) => role.id === id)!;
+    // A queued routine keeps the wording it was saved with; a coordinator may also keep the rule inside their own wording.
+    const routine = { ...MAINTENANCE_ROLES.find((role) => role.id === "maintenance-bug-finder")!, instructions: "Check the saved checkout routine only." };
+    const kept = { ...saved("researcher"), instructions: `Look only at the checkout page.\n${NOTES_HANDOFF_RULE}` };
+    const cases = [
+      [builtIn("researcher"), "Look at the repository to understand the current state. Do not change any files."],
+      [saved("researcher"), "Look only at the checkout page."],
+      [kept, "Look only at the checkout page."],
+      [builtIn("ux-designer"), "Do not change any files: describe the design in your notes."],
+      [saved("ux-designer"), "Describe the design in your notes."],
+      [saved(added.roleId), copy.instructions],
+      [saved(editing.roleId), copy.instructions],
+      [routine, routine.instructions],
+    ] as const;
+    for (const [role, own] of cases) for (const prompt of [buildPrompt, continuePrompt]) {
+      const text = prompt({ ...context(role), roles });
+      expect(text).toContain(own);
+      expect(text.split(NOTES_HANDOFF_RULE)).toHaveLength(2);
+      expect(text).toContain('"notes": [');
+    }
+    expect(buildPrompt({ ...context(routine), roles })).toContain('Set "complete" to true only after completing the bounded investigation.');
+    for (const role of BUILT_IN_ROLES.filter((entry) => entry.result !== "notes")) expect(promptFor(role)).not.toContain(NOTES_HANDOFF_RULE);
   });
 
   it("checks nearby cases for regressions on every product without needing a local review guide", () => {

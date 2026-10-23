@@ -13,6 +13,9 @@ export const FINDING_CONFIRMATION_RULE = `For earlier findings, confirm an id on
 /** Repair guidance also reaches a Builder whose editable wording has been replaced. */
 export const REPAIR_RULE = `When repairing a reported problem, from the first return, identify the underlying rule before changing code. Select the relevant normal, failure and recovery paths, or state and input variants, and inspect the affected callers or sibling operations. Fix the shared cause, add or update meaningful regressions for the failing variants and nearby passing controls, and run them. Keep this within the task and the observed cause: no exhaustive permutations or unrelated redesign. In your report, name the cause, the affected cases addressed and the checks you actually ran; distinguish cases inspected from cases executed.`;
 
+/** A role's result reaches later agents, never its conversation: built-in, edited, added and maintenance notes roles all get this. */
+export const NOTES_HANDOFF_RULE = `Your saved report is your result's summary and notes: later agents on this task receive it, never this conversation, so anything needed later must be there, not only in your messages. Keep the notes concise and specific: your actual findings or proposals and the facts that distinguish them, rather than a restatement of the task. Plain-language notes can still name exact sources where relevant and available: a link, a repository location, or a check you ran and what it showed, with the version or platform when the conclusion depends on it. Do not invent sources or do extra research only to add one. When relevant, say in the notes what you inspected, what you ran, what remains uncertain or open, and what you could not check. Keep suggested approaches separate from observed facts and established constraints.`;
+
 /** The same review rules apply to built-in, edited and added findings roles. Keep each once. */
 export const FINDING_REVIEW_RULES: readonly string[] = [
   `When a change fixes or alters one case, check nearby cases affected by the same code or rule: sibling operations or inputs, relevant normal, failure and recovery paths, themes and window sizes, and other ways into and out of the flow. Compare with the starting version. A confirmed regression caused by the change is Important, even when the intended case now works.`,
@@ -50,7 +53,8 @@ export const BUILT_IN_ROLES: readonly Role[] = [
     icon: "book",
     tone: "orange",
     purpose: "Finds out what users expect and how others solved it before anything is designed.",
-    instructions: "Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.",
+    instructions: `Research what users expect from this and how good products solve it. Look at the repository to understand the current state. Do not change any files.
+${NOTES_HANDOFF_RULE}`,
     canEdit: false,
     sees: "The task and the product.",
     handsBack: "Research notes with sources.",
@@ -94,7 +98,8 @@ ${DESIGN_OBJECTION_RULE}`,
     icon: "palette",
     tone: "pink",
     purpose: "Shapes the screens and the words users will see.",
-    instructions: "Shape the screens, layout and words users will see for this change, following the product's existing design. Do not change any files: describe the design in your notes.",
+    instructions: `Shape the screens, layout and words users will see for this change, following the product's existing design. Do not change any files: describe the design in your notes.
+${NOTES_HANDOFF_RULE}`,
     canEdit: false,
     sees: "The design brief and the product's current screens.",
     handsBack: "UI notes and screen sketches.",

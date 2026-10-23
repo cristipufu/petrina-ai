@@ -6,7 +6,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { childState, processList } from "../src/process-tree.js";
 import { CLEANUP_MS, CommandFailure, commitAt, git, gitWith, runCommand, runGit, type Started } from "./commands.js";
-import { defunctProcess, makeProduct, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
+import { currentSlow, defunctProcess, makeProduct, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
+import { MOST_SLOW } from "./slow.js";
 import { rejectionOf } from "./rejections.js";
 
 const root = tempDir("petrina-commands-");
@@ -22,6 +23,27 @@ async function failureOf(work: Promise<unknown>): Promise<CommandFailure> {
 
 /** A running process's state from the system's list; "unknown" where it cannot be read. */
 const alive = async (pid: number) => (await childState(pid)) === "running";
+
+/** How long one state read in `alive` may take: the last read of a watch can end this long after the watch. */
+const STATE_READ_MS = 3_000;
+/** Programs whose stop is watched run this long by themselves, far past the longest watch. */
+const WATCHED_S = 300;
+
+/**
+ * Wait for the end of a program an unconfirmed cleanup signalled. That cleanup returns once its signals are sent,
+ * without watching them take effect, so what it stopped may still be listed for a moment, longer on a busy machine;
+ * a confirmed one already saw everything end. The watch lasts `ms`, stretched by the busyness factor. It is refused
+ * unless the program, due to end by itself at `endsBy`, outlives the longest watch at the factor's ceiling, so its
+ * own end can never pass for a stop.
+ */
+async function stopped(pid: number, endsBy: number, what: string, { ms = 5_000, factor = currentSlow }: { ms?: number; factor?: () => number } = {}): Promise<void> {
+  const started = Date.now();
+  if (started + ms * MOST_SLOW + STATE_READ_MS + 1_000 >= endsBy) throw new Error(`Cannot watch for ${what}: it could end by itself while watched`);
+  while (await alive(pid)) {
+    if (Date.now() - started > ms * Math.min(MOST_SLOW, factor())) throw new Error(`Timed out waiting for ${what}`);
+    await Bun.sleep(50);
+  }
+}
 
 /** Whether a read is a complete list: one always shows this process. */
 const listsThis = (list: string | undefined) => list?.split("\n").some((line) => Number(line.trim().split(/\s+/)[0]) === process.pid) ?? false;
@@ -134,15 +156,62 @@ describe("a command that does not end normally", () => {
   });
 
   it.skipIf(!unix)("does not succeed when it exited but a program it started keeps its output open", async () => {
-    const failure = await failureOf(runCommand(["sh", "-c", "sleep 30 & echo $!; exit 0"], { timeoutMs: 500 }));
-    expect(failure.reason).toBe("timeout");
-    expect(failure.code).toBe(0);
-    expect(failure.message).toContain("It exited with 0, but its output and error output stayed open.");
-    // Its parent has exited, so only the command's own process group still finds it, and stops it. The parent was
-    // never seen running, so whatever else it may have started stays unconfirmed.
-    expect(failure.cleanup).toBe("unconfirmed");
-    expect(await alive(Number(failure.stdout.trim()))).toBe(false);
+    const born = Date.now();
+    const failure = await failureOf(runCommand(["sh", "-c", `sleep ${WATCHED_S} & echo $!; exit 0`], { timeoutMs: 500 }));
+    const background = Number(failure.stdout.trim());
+    try {
+      expect(failure.reason).toBe("timeout");
+      expect(failure.code).toBe(0);
+      expect(failure.message).toContain("It exited with 0, but its output and error output stayed open.");
+      // Its parent has exited, so only the command's own process group still finds it, and stops it. The parent was
+      // never seen running, so whatever else it may have started stays unconfirmed.
+      expect(failure.cleanup).toBe("unconfirmed");
+      await stopped(background, born + WATCHED_S * 1_000, "the program holding the output to stop");
+    } finally {
+      if (background && await alive(background)) process.kill(background, "SIGKILL");
+    }
   });
+
+  // The watch after an unconfirmed cleanup, at the busyness factor's ceiling, with real state reads. A program due to
+  // end by itself within the longest watch is refused at once, so its own end can never pass for a stop.
+  it.skipIf(!unix)("never lets a program's own end pass for a stop, at the highest busyness factor", async () => {
+    const born = Date.now();
+    const early = Bun.spawn(["sleep", "30"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    try {
+      const refused = await rejectionOf(stopped(early.pid, born + 30_000, "a program due to end by itself", { factor: () => MOST_SLOW }));
+      expect(String(refused)).toContain("Cannot watch for a program due to end by itself: it could end by itself while watched");
+      expect(await alive(early.pid)).toBe(true);
+    } finally {
+      early.kill("SIGKILL");
+      await early.exited;
+    }
+  });
+
+  // The output-holding case again, at the factor's ceiling, with cleanup's stop signals sent or withheld. Withheld, the
+  // program keeps running through a shortened watch, which fails; sent, the full watch sees it end.
+  for (const stopping of [true, false]) {
+    it.skipIf(!unix)(`${stopping ? "sees" : "fails without"} the end of an unconfirmed stop at the highest busyness factor, its stop signals ${stopping ? "sent" : "withheld"}`, async () => {
+      const send = process.kill.bind(process);
+      const signals = spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => stopping || (signal !== "SIGKILL" && signal !== "SIGSTOP") ? send(pid, signal) : true) as typeof process.kill);
+      let background = 0;
+      try {
+        const born = Date.now();
+        const failure = await failureOf(runCommand(["sh", "-c", `sleep ${WATCHED_S} & echo $!; exit 0`], { timeoutMs: 500 }));
+        background = Number(failure.stdout.trim());
+        expect(background).toBeGreaterThan(0);
+        expect(failure.cleanup).toBe("unconfirmed");
+        const watch = stopped(background, born + WATCHED_S * 1_000, "the program holding the output to stop", { ms: stopping ? 5_000 : 250, factor: () => MOST_SLOW });
+        if (stopping) await watch;
+        else {
+          expect(String(await rejectionOf(watch))).toContain("Timed out waiting for the program holding the output to stop");
+          expect(await alive(background)).toBe(true);
+        }
+      } finally {
+        signals.mockRestore();
+        if (background && await alive(background)) process.kill(background, "SIGKILL");
+      }
+    });
+  }
 
   it("does not succeed when its output closed but its exit is never reported", async () => {
     const failure = await failureOf(runCommand(["git", "--version"], {
@@ -232,7 +301,7 @@ describe("a command that does not end normally", () => {
       const record = join(dir, "background"), release = join(dir, "release");
       // The command starts a program outside its own process group, then waits to be released.
       const script = `const { existsSync, renameSync, writeFileSync } = require("node:fs");
-const background = Bun.spawn(["sleep", "300"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+const background = Bun.spawn(["sleep", "${WATCHED_S}"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 background.unref();
 writeFileSync(${JSON.stringify(`${record}.tmp`)}, String(background.pid)); renameSync(${JSON.stringify(`${record}.tmp`)}, ${JSON.stringify(record)});
 while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(10);`;
@@ -240,6 +309,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(10);`;
       let looks = 0;
       let background = 0;
       const stop = new AbortController();
+      const born = Date.now();
       const command = runCommand(bun(script), {
         signal: stop.signal,
         timeoutMs: 60_000 * SLOW,
@@ -264,7 +334,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(10);`;
         // seen paused, so it may have started more meanwhile.
         expect(failure.code).toBe(0);
         expect(failure.cleanup).toBe("unconfirmed");
-        expect(await alive(background)).toBe(false);
+        await stopped(background, born + WATCHED_S * 1_000, "the program in a session of its own to stop");
       } finally {
         if (background && await alive(background)) process.kill(background, "SIGKILL");
       }
@@ -427,8 +497,9 @@ await Bun.sleep(60_000);`;
     mkdirSync(dir);
     const record = join(dir, "background");
     const stop = new AbortController();
+    const born = Date.now();
     const command = runCommand(bun(`const { renameSync, writeFileSync } = require("node:fs");
-const background = Bun.spawn(["sleep", "300"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+const background = Bun.spawn(["sleep", "${WATCHED_S}"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 background.unref();
 writeFileSync(${JSON.stringify(`${record}.tmp`)}, String(background.pid)); renameSync(${JSON.stringify(`${record}.tmp`)}, ${JSON.stringify(record)});
 await Bun.sleep(60_000);`), { signal: stop.signal, timeoutMs: 60_000 * SLOW });
@@ -439,7 +510,7 @@ await Bun.sleep(60_000);`), { signal: stop.signal, timeoutMs: 60_000 * SLOW });
       stop.abort();
       const failure = await failureOf(command);
       expect(failure.cleanup).toBe("unconfirmed");
-      expect(await alive(background)).toBe(false);
+      await stopped(background, born + WATCHED_S * 1_000, "the program in a session of its own to stop");
     } finally {
       stop.abort();
       if (background && await alive(background)) process.kill(background, "SIGKILL");
@@ -538,7 +609,7 @@ writeFileSync(${JSON.stringify(join(dir, "background.tmp"))}, String(background.
       mkdirSync(dir);
       const record = join(dir, "background");
       // It outlives cleanup's whole allowance, so only cleanup can end it.
-      const spawnBackground = `const background = Bun.spawn(["sleep", "300"], { detached: ${leaves}, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      const spawnBackground = `const background = Bun.spawn(["sleep", "${WATCHED_S}"], { detached: ${leaves}, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 background.unref();
 require("node:fs").writeFileSync(${JSON.stringify(`${record}.tmp`)}, String(background.pid));`;
       const script = `const { renameSync } = require("node:fs");
@@ -549,6 +620,7 @@ await Bun.sleep(60_000);`;
       let looks = 0;
       let background = 0;
       const stop = new AbortController();
+      const born = Date.now();
       const command = runCommand(bun(script), {
         signal: stop.signal,
         timeoutMs: 60_000 * SLOW,
@@ -570,8 +642,9 @@ await Bun.sleep(60_000);`;
         stop.abort();
         const failure = await failureOf(command);
         expect(failure.reason).toBe("cancelled");
-        expect(await alive(background)).toBe(false);
         expect(failure.cleanup).toBe(leaves ? "unconfirmed" : "confirmed");
+        if (leaves) await stopped(background, born + WATCHED_S * 1_000, "the program that left the group to stop");
+        else expect(await alive(background)).toBe(false);
         expect(failure.message).toContain(leaves ? "Some of what it started may still be running." : "Everything found that it started has stopped.");
       } finally {
         stop.abort();

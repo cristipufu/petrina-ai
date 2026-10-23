@@ -50,6 +50,10 @@ A role that may change the product has its work committed at the end of its step
 
 ## Context and conversations
 
+### Notes reports
+
+A notes result's summary and notes are the report later agents receive; the conversation behind it is never forwarded. Every notes role, built-in, edited, added or maintenance, gets one shared rule from the notes contract in fresh and continued prompts, kept once beside its own wording: put the actual findings or proposals there with their distinguishing facts, exact sources (links, repository locations, recorded checks) when relevant and available, and versions or platforms they depend on, and say what was inspected, run, uncertain or left unchecked, with suggested approaches kept apart from observations and constraints. It asks for no extra research, headings or length; the example reply asks for each finding with its evidence and limits when relevant. The Researcher and UX designer defaults show the rule, so a reset restores it; coordinator wording stays as written. Later agents receive every saved report exactly as handed back, after a short reminder to verify what they rely on and that proposals, including proposed screens and words, guide the work but add no requirements beyond the request, an approved brief and the coordinator's notes and decisions.
+
 ### Source locations from planning
 
 Selected products provide the Planner with a bounded navigation packet from their exact local default-branch tree: top-level paths, workspace scripts and clearly partial AGENTS.md/README excerpts. Packets are shared by tree version, contain no prior agent's conclusions, and do not replace reading the actual selected source or its complete instructions.

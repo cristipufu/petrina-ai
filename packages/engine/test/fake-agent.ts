@@ -43,6 +43,8 @@ export interface Scenario {
   notes?: "work";
   /** "writes": the architect leaves product changes for the engine to save, in rounds and after a call. "plain": it asks no question first. */
   architect?: "writes" | "plain";
+  /** What a notes role hands back, by role name, after the commentary in `prose`. A role left out gives generic notes. */
+  reports?: Record<string, { summary: string; notes: string[]; prose: string }>;
   /** Optional source locations a role hands back, by role name. A role left out omits the field. */
   sourcePointers?: Record<string, unknown>;
   /** The second design brief changes a behavior so a resumed reviewer must receive it. */
@@ -1336,6 +1338,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
           await run(session.cwd, "commit", "--quiet", "-m", `${session.role} commits anyway`);
         }
       }
+      const report = plan.reports?.[session.role];
+      if (report) return done({ summary: report.summary, notes: report.notes }, report.prose);
       return done({ summary: `Notes from the ${session.role}.`, notes: [`A note from the ${session.role}`] });
     }
   }

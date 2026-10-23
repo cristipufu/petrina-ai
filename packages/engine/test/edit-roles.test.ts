@@ -3,9 +3,10 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
+import { BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, NOTES_HANDOFF_RULE, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
+import { EARLIER_REPORTS_RULE } from "../src/context.js";
 import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { findProgram } from "../src/tools.js";
@@ -335,8 +336,13 @@ describe("roles the coordinator edits and adds", () => {
     expect(analytics.squad.details.reviewers.every((reviewer) => reviewer.stages > 0 && reviewer.rounds > 0 && reviewer.time.value !== undefined)).toBe(true);
     const said = (text: string) => task.timeline.some((entry) => entry.text.startsWith(text));
 
-    // The researcher's notes reached the architect.
-    expect(fakes.openings("architect")[0]).toContain("## What earlier agents on this task handed back\nResearcher, in “Research”: Notes from the researcher.\n- A note from the researcher");
+    // The researcher's notes reached the architect, beside the reminder to verify them.
+    expect(fakes.openings("architect")[0]).toContain(`## What earlier agents on this task handed back\n${EARLIER_REPORTS_RULE}\n\nResearcher, in “Research”: Notes from the researcher.\n- A note from the researcher`);
+    // Built-in and added notes roles alike were told that only their saved report reaches later agents.
+    for (const role of ["researcher", "copywriter", "fact checker"]) {
+      expect(fakes.openings(role).length).toBeGreaterThan(0);
+      for (const opening of fakes.openings(role)) expect(opening.split(NOTES_HANDOFF_RULE)).toHaveLength(2);
+    }
 
     // The Copywriter finished its first step as it started, changing the product: Petrina committed its work with its name.
     const copy = fakes.openings("copywriter");
