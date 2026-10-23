@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { childState, processList } from "../src/process-tree.js";
+import { childState, processList, type ProcessListRead } from "../src/process-tree.js";
 import { CLEANUP_MS, CommandFailure, commitAt, git, gitWith, runCommand, runGit, type Started } from "./commands.js";
 import { currentSlow, defunctProcess, makeProduct, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
 import { MOST_SLOW } from "./slow.js";
@@ -24,7 +24,7 @@ async function failureOf(work: Promise<unknown>): Promise<CommandFailure> {
 /** A running process's state from the system's list; "unknown" where it cannot be read. */
 const alive = async (pid: number) => (await childState(pid)) === "running";
 
-/** How long one state read in `alive` may take: the last read of a watch can end this long after the watch. */
+/** How long one state read in a watch may take: the last read of a watch can end this long after the watch. */
 const STATE_READ_MS = 3_000;
 /** Programs whose stop is watched run this long by themselves, far past the longest watch. */
 const WATCHED_S = 300;
@@ -32,14 +32,15 @@ const WATCHED_S = 300;
 /**
  * Wait for the end of a program an unconfirmed cleanup signalled. That cleanup returns once its signals are sent,
  * without watching them take effect, so what it stopped may still be listed for a moment, longer on a busy machine;
- * a confirmed one already saw everything end. The watch lasts `ms`, stretched by the busyness factor. It is refused
- * unless the program, due to end by itself at `endsBy`, outlives the longest watch at the factor's ceiling, so its
- * own end can never pass for a stop.
+ * a confirmed one already saw everything end. The watch lasts `ms`, stretched by the busyness factor, and only a read
+ * showing the program ended ends it: one that cannot be read is no evidence of its end. It is refused unless the
+ * program, due to end by itself at `endsBy`, outlives the longest watch at the factor's ceiling, so its own end can
+ * never pass for a stop.
  */
-async function stopped(pid: number, endsBy: number, what: string, { ms = 5_000, factor = currentSlow }: { ms?: number; factor?: () => number } = {}): Promise<void> {
+async function stopped(pid: number, endsBy: number, what: string, { ms = 5_000, factor = currentSlow, read }: { ms?: number; factor?: () => number; read?: ProcessListRead } = {}): Promise<void> {
   const started = Date.now();
   if (started + ms * MOST_SLOW + STATE_READ_MS + 1_000 >= endsBy) throw new Error(`Cannot watch for ${what}: it could end by itself while watched`);
-  while (await alive(pid)) {
+  while ((await childState(pid, STATE_READ_MS, read)) !== "ended") {
     if (Date.now() - started > ms * Math.min(MOST_SLOW, factor())) throw new Error(`Timed out waiting for ${what}`);
     await Bun.sleep(50);
   }
@@ -187,6 +188,20 @@ describe("a command that does not end normally", () => {
     }
   });
 
+  // A state that cannot be read is no evidence of an end: a watch whose every read fails runs out instead of passing.
+  it.skipIf(!unix)("never takes an unreadable state for a program's end", async () => {
+    const born = Date.now();
+    const running = Bun.spawn(["sleep", String(WATCHED_S)], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    try {
+      const watch = stopped(running.pid, born + WATCHED_S * 1_000, "a program whose state cannot be read", { ms: 250, factor: () => 1, read: async () => undefined });
+      expect(String(await rejectionOf(watch))).toContain("Timed out waiting for a program whose state cannot be read");
+      expect(await alive(running.pid)).toBe(true);
+    } finally {
+      running.kill("SIGKILL");
+      await running.exited;
+    }
+  });
+
   // The output-holding case again, at the factor's ceiling, with cleanup's stop signals sent or withheld. Withheld, the
   // program keeps running through a shortened watch, which fails; sent, the full watch sees it end.
   for (const stopping of [true, false]) {
@@ -262,16 +277,46 @@ describe("a command that does not end normally", () => {
     } finally { sent?.mockRestore(); await defunct.release(); }
   });
 
-  // Windows confirms cleanup through taskkill, not a process list.
-  it.skipIf(!unix)("leaves cleanup unconfirmed when the process list cannot be read", async () => {
-    const failure = await failureOf(runCommand(bun("console.log(process.pid); await Bun.sleep(30_000)"), { timeoutMs: 1_000 * SLOW, processList: async () => undefined }));
-    expect(failure.reason).toBe("timeout");
-    expect(failure.cleanup).toBe("unconfirmed");
-    // Unconfirmed is not unattempted: the program itself was still stopped.
-    const pid = Number(failure.stdout.trim());
-    expect(pid).toBeGreaterThan(0);
-    await waitFor(async () => !(await alive(pid)), "the unconfirmed program to stop", 5_000);
-  });
+  // Windows confirms cleanup through taskkill, not a process list. Unconfirmed is not unattempted: the program itself
+  // is still stopped. At the busyness factor's ceiling, with cleanup's stop signals and the program's own handle sent
+  // or withheld: withheld, the program keeps running through a shortened watch, which fails; sent, the full watch sees
+  // it end.
+  for (const stopping of [true, false]) {
+    it.skipIf(!unix)(`leaves cleanup unconfirmed when the process list cannot be read, and ${stopping ? "sees" : "fails without"} the program's end at the highest busyness factor, its stop ${stopping ? "sent" : "withheld"}`, async () => {
+      let program: Started | undefined;
+      const send = process.kill.bind(process);
+      const signals = spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => stopping || Math.abs(pid) !== program?.pid || (signal !== "SIGKILL" && signal !== "SIGSTOP") ? send(pid, signal) : true) as typeof process.kill);
+      try {
+        const born = Date.now();
+        const failure = await failureOf(runCommand(bun(`console.log(process.pid); await Bun.sleep(${WATCHED_S * 1_000})`), {
+          timeoutMs: 1_000 * SLOW,
+          processList: async () => undefined,
+          // The runtime's own program, its record of the exit kept, so cleanup pauses its group first as usual.
+          start: (argv, options) => {
+            const real = program = Bun.spawn(argv, { ...options, stdout: "pipe", stderr: "pipe" }) as unknown as Started;
+            return {
+              pid: real.pid, stdout: real.stdout, stderr: real.stderr, exited: real.exited,
+              get exitCode() { return real.exitCode; }, get signalCode() { return real.signalCode; },
+              kill: (signal) => { if (stopping) real.kill(signal); },
+            };
+          },
+        }));
+        expect(failure.reason).toBe("timeout");
+        expect(failure.cleanup).toBe("unconfirmed");
+        const pid = Number(failure.stdout.trim());
+        expect(pid).toBe(program!.pid!);
+        const watch = stopped(pid, born + WATCHED_S * 1_000, "the unconfirmed program to stop", { ms: stopping ? 5_000 : 250, factor: () => MOST_SLOW });
+        if (stopping) await watch;
+        else {
+          expect(String(await rejectionOf(watch))).toContain("Timed out waiting for the unconfirmed program to stop");
+          expect(await alive(pid)).toBe(true);
+        }
+      } finally {
+        signals.mockRestore();
+        program?.kill("SIGKILL");
+      }
+    });
+  }
 
   // The group paused before the first look is stopped whatever that look answers, so nothing is left paused.
   for (const answer of ["fails", "shows only this worker"] as const) {
