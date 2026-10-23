@@ -83,7 +83,7 @@ it("leaves files for its parent to reclaim", async () => {
   mkdirSync(join(browsers, "petrina-browser-abandoned"));
   const result = await run(["git", "config", "--get", "core.hooksPath"], ${JSON.stringify(fixture)});
   if (result.code) throw new Error(result.stderr);
-  writeFileSync(${JSON.stringify(record)}, JSON.stringify({ folder: tmpdir(), helper: dirname(result.stdout.trim()), left, ordinary: tempDir("ordinary-"), browser: browserTempRoot(), browsers, owned: realpathSync(process.env.PETRINA_TEST_BROWSERS!), env: [process.env.TMPDIR, process.env.TMP, process.env.TEMP] }));
+  writeFileSync(${JSON.stringify(record)}, JSON.stringify({ folder: tmpdir(), helper: dirname(result.stdout.trim()), left, ordinary: tempDir("ordinary-"), browser: browserTempRoot(), browsers, owned: realpathSync.native(process.env.PETRINA_TEST_BROWSERS!), env: [process.env.TMPDIR, process.env.TMP, process.env.TEMP] }));
   expect(${passes}).toBe(true);
 });`);
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: { ...testGitEnv(), TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });

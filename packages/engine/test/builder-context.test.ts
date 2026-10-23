@@ -100,7 +100,9 @@ it("sends changed Builder context and every new finding while keeping full autho
     expect(next.sections.map((section) => section.body).join("").length).toBeLessThan(sections[0]!.body.length / 2);
     expect(await readFile(next.snapshot!.file, "utf8")).toContain(sections[0]!.body);
     expect(await readFile(next.snapshot!.file, "utf8")).toContain(changed[2]!.body);
-    expect((await stat(next.snapshot!.file)).mode & 0o777).toBe(0o600);
+    // macOS and Linux keep the saved context to its owner. Windows has no owner-only mode bits: its
+    // mode says only whether a file is read-only, and the saved context is an ordinary writable file.
+    expect((await stat(next.snapshot!.file)).mode & 0o777).toBe(process.platform === "win32" ? 0o666 : 0o600);
 
     const newBrief = [{ ...changed[0]!, body: "A changed authoritative requirement." }, ...changed.slice(1)];
     const revised = await builderContext(root, task, role, "own-session", newBrief, next.snapshot);

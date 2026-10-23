@@ -57,11 +57,12 @@ export function tempDir(prefix: string): string {
  * folders can be too long for macOS browser sockets, so the runner owns a short folder for these and
  * reclaims it even after an interrupted run; a standalone script gets one in the system's short
  * temporary folder. Pass it to every engine, browser and recovery of the fixture, and remove it once
- * they have stopped.
+ * they have stopped. It is spelled as browser sessions and recovery canonicalize their folders: on
+ * Windows only native resolution expands a short name such as RUNNER~1 to the full one.
  */
 export function testBrowserRoot(): string {
   const owned = process.env[TEST_BROWSERS];
-  return realpathSync(mkdtempSync(owned ? `${owned}${sep}` : join(shortTempParent(), "pb-")));
+  return realpathSync.native(mkdtempSync(owned ? `${owned}${sep}` : join(shortTempParent(), "pb-")));
 }
 
 /** Windows keeps files open a moment after a process ends: cleaning up is best effort. */
