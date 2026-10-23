@@ -363,6 +363,8 @@ export interface JourneyStep {
   outcome?: string;
   /** Acceptance criteria and their result from this Tester run. */
   acceptanceChecks?: readonly JourneyAcceptanceCheck[];
+  /** Change identity calculated for this acceptance run. Absent when unavailable or on older records. */
+  acceptancePatch?: string;
   /** Why the work moved on from here: the words on the arrow out. */
   reason?: string;
   tone?: JourneyTone;

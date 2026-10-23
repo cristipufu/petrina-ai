@@ -222,7 +222,9 @@ export class Work {
         outcome: unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
         reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : W.checksPassed,
       }, Date.now());
-      task.testedPatch = (await acceptanceVersion(task, testedVersions)) ?? (await this.updates.patch(scope)) ?? task.testedPatch;
+      const testedPatch = (await acceptanceVersion(task, testedVersions)) ?? (await this.updates.patch(scope));
+      if (testerStep?.kind === "agent" && testerStep.roleId === roleId) testerStep.acceptancePatch = testedPatch;
+      task.testedPatch = testedPatch ?? task.testedPatch;
       if (testedVersions) task.testedVersions = testedVersions;
       task.acceptancePassed = failed.length === 0 && !unverified;
       task.acceptanceUnverified = unverified;

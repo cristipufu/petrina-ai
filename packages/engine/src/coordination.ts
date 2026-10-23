@@ -1,5 +1,5 @@
 import { messageRemovalText } from "@petrina/core";
-import { checkProblem, displayTask, originalCheck, reviewDecisionPending } from "@petrina/core";
+import { checkProblem, displayTask, originalCheck, reviewDecisionPending, roleForTask } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, seatRemaining, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
@@ -152,7 +152,11 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           leadProductId: task.leadProductId,
           acceptance: { passed: task.acceptancePassed, blocked: task.acceptanceBlocked, unverified: task.acceptanceUnverified, testedPatch: task.testedPatch, testedVersions: task.testedVersions },
           diagnostics: checkLogRevision(engine.dataDir, task.id, (task.repositories ?? [task]).flatMap((work) => work.checks?.results.flatMap((run) => [run.logPath, originalCheck(task, run)?.check.run?.logPath]) ?? [])),
-          evidence: task.journey?.map(({ id, kind, roleId, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats }) => ({ id, kind, roleId, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats })),
+          evidence: task.journey?.map(({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId }) => ({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId })),
+          evidenceRoles: [...new Set([...(task.journey ?? []).map((step) => step.roleId), ...(task.plan?.stages ?? []).map((stage) => stage.roleId)])].map((id) => {
+            const role = id ? roleForTask(engine.s.roles, id, task) : undefined;
+            return role && { id: role.id, name: role.name, result: role.result, canEdit: role.canEdit };
+          }),
           plan: task.plan,
           source: task.source,
           proposedSource: task.proposedSource,

@@ -3,6 +3,7 @@ import { assignedProducts, evidenceFor, findingReportCounts, originalCheck, outs
 import type { Engine } from "./engine.js";
 import { checkCommandOutcome, readCheckLog, SAVED_RESULT_PREVIEW, unreportedCheckExit } from "./check-log-read.js";
 import { fingerprint } from "./evidence-read.js";
+import { checkpointAcceptance } from "./checkpoint-acceptance.js";
 
 export async function checkpointView(engine: Engine, task: Task, request: InboxItem) {
   const taskId = task.id;
@@ -86,7 +87,7 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
     ...(request.kind === "delivery" ? {
       approvalMeaning: reviewDecisionPending(task) ? "Accept unresolved review and continue to final verification. This does not approve delivery." : "Delivery approval remains subject to the existing checks, acceptance and publishing gates.",
       reviewDecision: task.reviewDecision ?? null,
-      acceptance: { passed: task.acceptancePassed ?? null, blocked: task.acceptanceBlocked ?? false, unverified: task.acceptanceUnverified ?? false, testedPatch: task.testedPatch ?? null, testedVersions: task.testedVersions ?? null, items: task.brief?.acceptance ?? [] },
+      acceptance: checkpointAcceptance(task, engine.s.roles),
       design: task.brief || task.objections.length || task.call ? { omitted: "Design brief, objections, responses and coordinator call", read: read("design") } : { unavailable: "No design recorded." },
     } : { brief: task.brief, objections: task.objections, call: task.call, designRead: read("design") }),
     findings: {

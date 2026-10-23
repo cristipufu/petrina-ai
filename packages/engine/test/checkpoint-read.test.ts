@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckRun, DeepMutable, Finding, InboxKind, TaskSource } from "@petrina/core";
+import type { CheckRun, DeepMutable, Finding, InboxKind, JourneyStep, TaskSource } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { executionFor } from "../src/repository-context.js";
@@ -11,6 +11,13 @@ import { CHECK_EXIT_UNREPORTED, tidyOutput } from "../src/checks.js";
 import { CLEANUP_INCOMPLETE } from "../src/process-tree.js";
 import { checkCommandOutcome } from "../src/check-log-read.js";
 import { removeDir, tempDir } from "./fixtures.js";
+import { saveExactMessage } from "../src/exact-input.js";
+import { Work } from "../src/work.js";
+import type { Turns } from "../src/turn.js";
+import type { Context } from "../src/context.js";
+import type { GuideKeeper } from "../src/guide-keeper.js";
+import type { Updates } from "../src/update.js";
+import type { Learnings } from "../src/learnings.js";
 
 const roots: string[] = [], engines: Engine[] = [];
 afterAll(async () => {
@@ -56,6 +63,276 @@ async function complete(c: Coordination, name: string, args: Record<string, unkn
   }
   return { pages, value: JSON.parse(text), text, size: pages.reduce((size, page) => size + JSON.stringify(page).length, 0) };
 }
+
+const linuxReason = "This machine is a Mac; Linux verification could not be run here.";
+function acceptanceRun(roleId = "tester", id = "actual-testing"): DeepMutable<JourneyStep> {
+  const checks = [...Array.from({ length: 7 }, (_, index) => ({ text: `Recorded scenario ${index + 1}`, result: "pass" as const, evidence: `Observed scenario ${index + 1}` })), { text: "Linux verification", result: "blocked" as const, reason: linuxReason }];
+  return { id, kind: "agent", roleId, stageId: "test", profileId: "sol-high", round: 1, sub: 0, startedAt: 20, endedAt: 30, end: "done", acceptanceChecks: checks, agentResults: [{ roleId, profileId: "sol-high", at: 30, versions: { product: "tested-tree" }, value: { summary: "Seven checks passed; Linux unavailable", checks } }] };
+}
+function recordAcceptance(f: ReturnType<typeof fixture>, roleId = "tester") {
+  f.task.journey = [acceptanceRun(roleId)];
+  f.work.checks = { at: 35, current: true, tree: "tested-tree", sha: "tested-head", results: [] };
+  f.work.checkedSha = "tested-head";
+  f.work.checkedPatch = "tested-change";
+  f.task.testedPatch = "tested-change";
+  f.task.journey[0]!.acceptancePatch = "tested-change";
+  f.task.testedVersions = { product: "tested-tree" };
+  f.task.acceptancePassed = false;
+  f.task.acceptanceUnverified = true;
+  f.task.plan = { rationale: "Test the change", plannerProfileId: "sol-high", stages: [{ id: "test", title: "Try the finished work", kind: "do", roleId, profileIds: ["sol-high"] }] };
+  return f.task.journey[0]!;
+}
+
+it("links a no-brief delivery to its actual seven passes, unavailable Linux check, original report and exact input", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  f.task.description = "Keep full Linux validation in its separate task.";
+  const exact = await saveExactMessage(f.home, f.taskId, "Try the acceptance scenarios. Keep full Linux validation separate.");
+  node.agentInputs = [
+    { roleId: "builder", profileId: "sol-high", taskTitle: f.task.title, mode: "fresh", sections: [] },
+    { roleId: "tester", profileId: "sol-high", taskTitle: f.task.title, mode: "fresh", at: 20, sections: [], exact },
+  ];
+  node.agentResults!.unshift({ roleId: "builder", profileId: "sol-high", at: 18, value: { summary: "Unrelated original response" } });
+  node.agentResults![1]!.inputIndex = 1;
+  const itemId = f.offer("delivery");
+  const { value, pages } = await complete(f.c, "inbox.inspect", { itemId, limit: 700 });
+  expect(pages.length).toBeGreaterThan(1);
+  const a = value.acceptance;
+  expect(a).toMatchObject({ passed: false, unverified: true, items: [], requirements: { state: "no-brief", message: expect.stringContaining("No design brief recorded") } });
+  expect(a.evidence.counts).toEqual({ passed: 7, failed: 0, couldNotVerify: 1 });
+  expect(a.evidence.checks[0]).toEqual({ index: 7, text: "Linux verification", result: "blocked", kind: "additional", reason: linuxReason, evidenceRecorded: false, shortened: false });
+  expect(a.evidence.products[0].state).toBe("same-contents");
+  expect(a.evidence.report).toEqual({ operation: "journey.result", taskId: f.taskId, nodeId: node.id, index: 1, seat: "tester" });
+  expect(a.evidence.inputs).toEqual({ operation: "journey.input", taskId: f.taskId, nodeId: node.id, seat: "tester", index: 0 });
+  const { operation: nr, ...na } = a.evidence.read;
+  expect((await complete(f.c, nr, na)).value.acceptanceChecks).toEqual(node.acceptanceChecks);
+  const { operation: rr, ...ra } = a.evidence.report;
+  expect((await complete(f.c, rr, ra)).value).toEqual(node.agentResults![1]!.value);
+  const { operation: ir, ...ia } = a.evidence.inputs;
+  expect((await f.c.call(ir, ia)).text).toBe("Try the acceptance scenarios. Keep full Linux validation separate.");
+  const { operation: tr, ...ta } = value.task.request.read;
+  expect(String((await f.c.call(tr, ta)).text)).toContain("Keep full Linux validation in its separate task.");
+  expect((await f.c.call("inbox.inspect", { itemId })).revision).toBe(pages[0]!.revision);
+});
+
+it("leaves acceptance coverage unknown after only the product's check commands change", async () => {
+  const f = fixture(); recordAcceptance(f);
+  const itemId = f.offer("delivery");
+  const before = await complete(f.c, "inbox.inspect", { itemId });
+  expect(before.value.acceptance.evidence.products[0].state).toBe("same-contents");
+  f.e.setProductChecks("product", [{ name: "New check", command: "new-check" }]);
+  expect(f.work.checks!.current).toBe(false);
+  const after = await complete(f.c, "inbox.inspect", { itemId });
+  expect(after.value.acceptance.evidence.products[0]).toMatchObject({ state: "unknown", testedTree: "tested-tree", checkedTree: "tested-tree" });
+  expect(after.value.acceptance.evidence.counts).toEqual(before.value.acceptance.evidence.counts);
+  expect(after.value.acceptance.passed).toBe(false);
+  expect(after.value.acceptance.unverified).toBe(true);
+  expect((await f.c.call("inbox.approve", { itemId, revision: before.pages[0]!.revision, requestId: "check-commands-changed" })).outcome).toBe("changed");
+  // A subsequent current record on the tested contents restores the coverage answer.
+  f.work.checks!.current = true;
+  expect((await complete(f.c, "inbox.inspect", { itemId })).value.acceptance.evidence.products[0].state).toBe("same-contents");
+});
+
+it("keeps uncertain check status separate from a known later edit for each product", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  node.agentResults![0]!.versions = { product: "tested-tree", api: "tested-api" };
+  f.work.checks!.current = false;
+  f.task.repositories = [{ ...f.work, completedStages: [] }, { productId: "api", delivery: "local", completedStages: [], checks: { at: 40, tree: "tested-api", current: true, results: [] } }];
+  delete f.task.repository;
+  const itemId = f.offer("delivery");
+  let a = (await complete(f.c, "inbox.inspect", { itemId })).value.acceptance;
+  expect(a.evidence.products.map((product: any) => [product.productId, product.state])).toEqual([["product", "unknown"], ["api", "same-contents"]]);
+  delete f.task.repositories[0]!.checks!.current;
+  a = (await complete(f.c, "inbox.inspect", { itemId })).value.acceptance;
+  expect(a.evidence.products.map((product: any) => [product.productId, product.state])).toEqual([["product", "unknown"], ["api", "same-contents"]]);
+  f.task.repositories[0]!.checks!.current = false;
+  f.task.journey!.push({ ...acceptanceRun("builder", "changed-product"), acceptanceChecks: undefined, agentResults: undefined, buildVersions: { product: "new-tree" }, endedAt: 40 });
+  a = (await complete(f.c, "inbox.inspect", { itemId })).value.acceptance;
+  expect(a.evidence.products.map((product: any) => [product.productId, product.state])).toEqual([["product", "changed"], ["api", "same-contents"]]);
+});
+
+for (const retainInputs of [false, true]) it(`opens retained acceptance checks without a participant report (${retainInputs ? "with" : "without"} instructions)`, async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  delete node.agentResults;
+  if (retainInputs) node.agentInputs = [{ roleId: "tester", profileId: "sol-high", at: 20, taskTitle: f.task.title, mode: "fresh", instructions: "Try the recorded scenarios", sections: [] }];
+  const a = (await complete(f.c, "inbox.inspect", { itemId: f.offer("delivery") })).value.acceptance;
+  expect(a.evidence.counts).toEqual({ passed: 7, failed: 0, couldNotVerify: 1 });
+  expect(a.evidence.report).toBeUndefined();
+  expect(a.evidence.reportUnavailable).toBe("No original participant report was retained on this step.");
+  expect(a.evidence.inputs).toBeUndefined();
+  expect(a.evidence.inputsUnavailable).toContain("No exact input reference");
+  expect(a.evidence.products[0].state).toBe("unknown");
+  const { operation, ...args } = a.evidence.read;
+  const saved = (await complete(f.c, operation, args)).value;
+  expect(saved.acceptanceChecks).toEqual(node.acceptanceChecks);
+  if (retainInputs) expect(saved.agentInputs[0].instructions).toBe("Try the recorded scenarios");
+});
+
+for (const variant of ["no testing planned", "not run", "no results", "empty results", "name only"]) it(`explains unavailable acceptance evidence: ${variant}`, async () => {
+  const f = fixture();
+  const node = recordAcceptance(f);
+  if (variant === "no testing planned") { f.task.journey = []; delete f.task.plan; }
+  if (variant === "not run") f.task.journey = [];
+  if (variant === "no results") { delete node.acceptanceChecks; delete node.agentResults; }
+  if (variant === "empty results") node.acceptanceChecks = [];
+  if (variant === "name only") {
+    f.e.s.roles = f.e.s.roles.map((role) => role.id === "tester" ? { ...role, result: "notes" } : role);
+  }
+  const evidence = (await complete(f.c, "inbox.inspect", { itemId: f.offer("delivery") })).value.acceptance.evidence;
+  expect(evidence.state).toBe("unavailable");
+  expect(evidence.reason).toBe(variant === "not run" ? "Testing has not run yet." : ["no results", "empty results"].includes(variant) ? "Testing ran but recorded no completed check results." : "No testing step is planned or recorded.");
+  expect(evidence.counts).toEqual({ passed: 0, failed: 0, couldNotVerify: 0 });
+  if (variant !== "empty results") { expect(evidence.report).toBeUndefined(); expect(evidence.read).toBeUndefined(); }
+});
+
+for (const owned of [false, true]) it(`recognizes ${owned ? "task-owned" : "custom"} testing roles by their checks result`, async () => {
+  const f = fixture();
+  const role = { ...f.e.s.roles.find((role) => role.result === "checks")!, id: "quality-partner", name: "Quality partner" };
+  if (owned) f.task.maintenance = { routineId: "routine", routineName: "Routine", scheduledAt: 1, queuedAt: 1, zone: "UTC", focus: "Try it", input: "Try it", role, profile: f.e.s.profiles[0]!, product: f.e.s.products[0]! };
+  else f.e.s.roles.push(role);
+  recordAcceptance(f, role.id);
+  const a = (await complete(f.c, "inbox.inspect", { itemId: f.offer("delivery") })).value.acceptance;
+  expect(a.evidence.counts).toEqual({ passed: 7, failed: 0, couldNotVerify: 1 });
+  expect(a.evidence.report.seat).toBe(role.id);
+  const { operation, ...args } = a.evidence.report;
+  expect((await complete(f.c, operation, args)).value.checks).toHaveLength(8);
+});
+
+for (const variant of ["later edit", "later edit without checks", "later edit with unverified checks", "same change", "different change", "unbound test", "unbound checks", "missing run change", "different run change", "later empty test", "missing tested version", "running edit", "restored contents"]) it(`reports acceptance version coverage honestly: ${variant}`, async () => {
+  const f = fixture(); recordAcceptance(f);
+  if (variant !== "restored contents") f.work.checks!.tree = "new-tree";
+  if (variant.startsWith("later edit") || ["same change", "different change", "running edit", "restored contents"].includes(variant)) {
+    f.task.journey!.push({ ...acceptanceRun("builder", "later-edit"), acceptanceChecks: undefined, agentResults: undefined, buildVersions: { product: variant === "restored contents" ? "tested-tree" : "new-tree" }, endedAt: variant === "running edit" ? undefined : 40 });
+  }
+  if (variant === "later edit") f.work.checkedPatch = "different-change";
+  if (variant === "later edit without checks") delete f.work.checks;
+  if (variant === "later edit with unverified checks") delete f.work.checks!.current;
+  if (variant === "different change") f.work.checkedPatch = "different-change";
+  if (variant === "unbound test") f.task.testedVersions = { product: "other-run" };
+  if (variant === "unbound checks") f.work.checkedSha = "other-checks";
+  if (variant === "missing run change") delete f.task.journey![0]!.acceptancePatch;
+  if (variant === "different run change") f.task.journey![0]!.acceptancePatch = "other-change";
+  if (variant === "later empty test") f.task.journey!.push({ ...acceptanceRun("tester", "later-empty"), acceptanceChecks: [] });
+  if (variant === "missing tested version") delete f.task.journey![0]!.agentResults![0]!.versions;
+  const a = (await complete(f.c, "inbox.inspect", { itemId: f.offer("delivery") })).value.acceptance;
+  const expected = variant === "restored contents" ? "same-contents" : variant === "same change" ? "same-change" : variant.startsWith("later edit") || variant === "different change" ? "changed" : "unknown";
+  expect(a.evidence.products[0].state).toBe(expected);
+  expect(a.evidence.products[0].reason.length).toBeGreaterThan(0);
+  expect(a.evidence.counts).toEqual({ passed: 7, failed: 0, couldNotVerify: 1 });
+  expect(a.passed).toBe(false);
+});
+
+for (const patch of ["newly-tested-change", undefined]) it(`binds only this acceptance run's calculated change (${patch ? "available" : "unavailable"})`, async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  node.endedAt = undefined;
+  node.end = undefined;
+  delete node.acceptancePatch;
+  const stage = f.task.plan!.stages[0]!;
+  const turns = { turn: async () => ({ summary: "Tried it", checks: [{ text: "Try it", result: "pass", evidence: "Observed the expected result" }], learnings: [] }) } as unknown as Turns;
+  const work = new Work(f.e, turns, {} as Context, {} as GuideKeeper, { patch: async () => patch } as unknown as Updates, { note: async () => {} } as unknown as Learnings, f.e["checks"]);
+  expect(await work.runDo(executionFor(f.task), stage, new AbortController().signal)).toBe("continue");
+  const recorded = f.task.journey!.find((step) => step.id === node.id)!;
+  expect(recorded.acceptancePatch).toBe(patch);
+  expect(f.task.testedPatch).toBe(patch ?? "tested-change");
+  expect(f.task.acceptancePassed).toBe(true);
+});
+
+it("uses each shared product's saved version and keeps brief results separate from extra checks", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  node.agentResults![0]!.versions = { product: "tested-tree", api: "old-api" };
+  f.task.repositories = [{ ...f.work, completedStages: [] }, { productId: "api", delivery: "local", completedStages: [], checks: { at: 40, tree: "new-api", current: true, results: [] } }];
+  delete f.task.repository;
+  f.task.brief = { summary: "Brief", forUsers: [], areas: [], risks: [], acceptance: [
+    { text: "Recorded scenario 1", productIds: ["product"], versions: { product: "tested-tree" }, met: true, verification: "passed" },
+    { text: "Recorded scenario 2", productIds: ["api"], versions: { api: "old-api" }, met: true, verification: "passed" },
+    { text: "Not in the latest report", verification: "passed", met: true },
+  ] };
+  f.task.journey!.push({ ...acceptanceRun("builder", "api-change"), acceptanceChecks: undefined, agentResults: undefined, buildVersions: { api: "new-api" }, endedAt: 40 });
+  const a = (await complete(f.c, "inbox.inspect", { itemId: f.offer("delivery") })).value.acceptance;
+  expect(a.items).toEqual(f.task.brief.acceptance);
+  expect(a.requirements.results).toEqual([{ index: 0, result: "pass", current: true }, { index: 1, result: "pass", current: false }, { index: 2, result: "not-reported", current: false }]);
+  expect(a.evidence.products.map((product: any) => [product.productId, product.state])).toEqual([["product", "same-contents"], ["api", "changed"]]);
+  expect(a.evidence.checks.filter((check: any) => check.kind === "requirement")).toHaveLength(2);
+  f.task.brief.acceptance[0]!.versions = { product: "unrelated-run" };
+  const next = (await complete(f.c, "inbox.inspect", { itemId: "request-delivery" })).value.acceptance;
+  expect(next.requirements.results[0].current).toBe(false);
+});
+
+it("summarizes only the latest finished testing run, with bounded named links to other attempts", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  f.task.journey = [
+    ...Array.from({ length: 6 }, (_, index) => ({ ...acceptanceRun("tester", `earlier-${index}`), acceptanceChecks: [{ text: "Contradictory old failure", result: "fail" as const, evidence: "Old failure" }] })), node,
+    { ...acceptanceRun("tester", "later-running"), endedAt: undefined, acceptanceChecks: undefined, agentResults: undefined },
+    { ...acceptanceRun("tester", "later-empty"), acceptanceChecks: [], agentResults: undefined },
+    { id: "commands", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 50, endedAt: 60, productChecks: [{ name: "Automated", result: "pass" }] },
+  ];
+  const itemId = f.offer("delivery");
+  const a = (await complete(f.c, "inbox.inspect", { itemId })).value.acceptance;
+  expect(a.evidence.nodeId).toBe(node.id);
+  expect(a.evidence.counts).toEqual({ passed: 7, failed: 0, couldNotVerify: 1 });
+  expect(a.evidence.otherRuns).toHaveLength(4);
+  expect(a.evidence.omittedRuns).toBe(4);
+  expect(a.evidence.otherRuns.slice(0, 2).map((entry: any) => [entry.nodeId, entry.name, entry.state, entry.position])).toEqual([["later-empty", "Try the finished work", "no-results", "later"], ["later-running", "Try the finished work", "unfinished", "later"]]);
+  expect(a.evidence.runsRead).toEqual({ operation: "journey.list", taskId: f.taskId });
+  const { operation, ...args } = a.evidence.otherRuns[0].read;
+  expect((await complete(f.c, operation, args)).value.id).toBe("later-empty");
+  const commands = await complete(f.c, "journey.node", { taskId: f.taskId, nodeId: "commands" });
+  expect(commands.value.acceptanceChecks).toBeUndefined();
+  expect(commands.value.productChecks).toEqual([{ name: "Automated", result: "pass" }]);
+});
+
+it("lists result-free testing attempts without comparing them to a nonexistent summary", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  node.acceptanceChecks = [];
+  f.task.journey!.push({ ...acceptanceRun("tester", "second-empty"), acceptanceChecks: [] });
+  const evidence = (await complete(f.c, "inbox.inspect", { itemId: f.offer("delivery") })).value.acceptance.evidence;
+  expect(evidence.state).toBe("unavailable");
+  expect(evidence.nodeId).toBeUndefined();
+  expect(evidence.otherRuns.map((run: any) => [run.nodeId, run.state, run.position])).toEqual([["second-empty", "no-results", undefined], [node.id, "no-results", undefined]]);
+  for (const run of evidence.otherRuns) {
+    const { operation, ...args } = run.read;
+    expect((await complete(f.c, operation, args)).value.acceptanceChecks).toEqual([]);
+  }
+});
+
+it("caps check previews and invalidates decisions for changes to omitted acceptance and version evidence", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  node.acceptanceChecks!.push(...Array.from({ length: 15 }, (_, index) => ({ text: `Extra ${index}`, result: "fail" as const, reason: "Long reason ".repeat(1000), evidence: "Long evidence ".repeat(1000) })));
+  const itemId = f.offer("delivery");
+  const before = await complete(f.c, "inbox.inspect", { itemId });
+  expect(before.value.acceptance.evidence).toMatchObject({ shortened: true, omittedChecks: 15, counts: { passed: 7, failed: 15, couldNotVerify: 1 } });
+  expect(before.value.acceptance.evidence.checks).toHaveLength(8);
+  expect(before.value.acceptance.evidence.checks.every((check: any) => check.result !== "pass")).toBe(true);
+  expect(before.text).not.toContain("Long evidence");
+  node.acceptanceChecks![8]!.reason += "Even longer ".repeat(1000);
+  const longer = await complete(f.c, "inbox.inspect", { itemId });
+  expect(longer.text.length).toBe(before.text.length);
+  expect(longer.pages[0]!.revision).not.toBe(before.pages[0]!.revision);
+  let first = await f.c.call("inbox.inspect", { itemId, limit: 500 });
+  node.acceptanceChecks![0]!.evidence += " Changed recorded probe";
+  expect((await f.c.call("inbox.inspect", { itemId, cursor: first.next })).outcome).toBe("changed");
+  expect((await f.c.call("inbox.approve", { itemId, revision: first.revision, requestId: "acceptance-changed" })).outcome).toBe("changed");
+  for (const change of [() => { f.work.checkedSha = "different-head"; }, () => { node.agentResults![0]!.versions!.product = "different-version"; }, () => { f.task.journey!.push({ ...acceptanceRun("builder", "later-edit"), acceptanceChecks: undefined, buildVersions: { product: "new-version" } }); }]) {
+    first = await f.c.call("inbox.inspect", { itemId, limit: 500 });
+    change();
+    expect((await f.c.call("inbox.approve", { itemId, revision: first.revision, requestId: `version-changed-${first.revision}` })).outcome).toBe("changed");
+  }
+});
+
+it("shows a failed check's recorded observation when no separate reason was supplied", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  const observation = "The saved choice disappeared after reopening the task.";
+  node.acceptanceChecks!.push({ text: "Retain the choice", result: "fail", evidence: observation });
+  const itemId = f.offer("delivery");
+  let a = (await complete(f.c, "inbox.inspect", { itemId })).value.acceptance;
+  expect(a.evidence.checks[1]).toMatchObject({ text: "Retain the choice", result: "fail", evidence: observation, evidenceRecorded: true, shortened: false });
+  expect(a.evidence.checks[1].reason).toBeUndefined();
+  node.acceptanceChecks!.at(-1)!.evidence = observation.repeat(100);
+  a = (await complete(f.c, "inbox.inspect", { itemId })).value.acceptance;
+  expect(a.evidence.checks[1].evidence).toBe(observation.repeat(100).slice(0, 400));
+  expect(a.evidence.checks[1].shortened).toBe(true);
+  const { operation, ...args } = a.evidence.read;
+  expect((await complete(f.c, operation, args)).value.acceptanceChecks.at(-1).evidence).toBe(observation.repeat(100));
+});
 
 it("fits a representative four-check delivery on one page regardless of successful log length", async () => {
   const { c, task, taskId, work, offer } = fixture();

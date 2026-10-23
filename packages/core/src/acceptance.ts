@@ -1,20 +1,28 @@
 import type { JourneyAcceptanceCheck, Role, Task } from "./model.js";
 
-/** Saved acceptance results and whether their recorded versions still describe the work. */
-export function acceptanceSummary(task: Task, roleFor: (id?: string) => Role | undefined) {
+/** Select one recorded run; later unfinished attempts never replace or supplement it. */
+export function recordedAcceptance(task: Task, roleFor: (id?: string) => Role | undefined) {
   const journey = task.journey ?? [];
-  const index = journey.findLastIndex((step) => step.kind === "agent" && step.endedAt !== undefined && step.acceptanceChecks !== undefined && roleFor(step.roleId)?.result === "checks");
+  const index = journey.findLastIndex((step) => step.kind === "agent" && step.endedAt !== undefined && !!step.acceptanceChecks?.length && roleFor(step.roleId)?.result === "checks");
   const step = journey[index];
-  const tested = step?.agentResults?.findLast((report) => report.roleId === step.roleId)?.versions;
-  const work = task.repositories ?? (task.repository ? [task.repository] : [{ productId: task.productId, checks: task.checks }]);
+  const reportIndex = step?.agentResults?.findLastIndex((report) => report.roleId === step.roleId) ?? -1;
+  const report = step?.agentResults?.[reportIndex];
   const testers = journey.filter((entry) => entry.kind === "agent" && roleFor(entry.roleId)?.result === "checks");
-  const running = testers.some((entry) => entry.endedAt === undefined) && !["done", "cancelled", "pr-open"].includes(task.state);
-  // Use each product's final recorded edit. A running editor or a missing snapshot
-  // leaves freshness unknown, while restoring the tested contents can retain verification.
   const edits = journey.slice(index + 1).filter((later) => {
     const role = roleFor(later.roleId);
     return later.kind === "agent" && (!role || role.canEdit || role.result === "build");
   }).reverse();
+  return { index, step, reportIndex, report, testers, edits };
+}
+
+/** Saved acceptance results and whether their recorded versions still describe the work. */
+export function acceptanceSummary(task: Task, roleFor: (id?: string) => Role | undefined) {
+  const { step, report, testers, edits } = recordedAcceptance(task, roleFor);
+  const tested = report?.versions;
+  const work = task.repositories ?? (task.repository ? [task.repository] : [{ productId: task.productId, checks: task.checks }]);
+  const running = testers.some((entry) => entry.endedAt === undefined) && !["done", "cancelled", "pr-open"].includes(task.state);
+  // Use each product's final recorded edit. A running editor or a missing snapshot
+  // leaves freshness unknown, while restoring the tested contents can retain verification.
   const items = (task.brief?.acceptance ?? []).map((item) => {
     const check = step?.acceptanceChecks?.find((check) => check.text === item.text);
     // Item versions are saved by the engine for its assigned products. They can narrow

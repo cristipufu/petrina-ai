@@ -132,6 +132,12 @@ describe("acceptance evidence attribution", () => {
     expect(acceptanceSummary(task, roleFor).items.map((item) => [item.check?.result, item.current])).toEqual([["pass", false], ["fail", false], ["blocked", false]]);
   });
 
+  it("keeps the recorded summary when a later finished Tester records an empty list", () => {
+    const task = fixture();
+    task.journey = [...task.journey!, step({ id: "empty-later-run", roleId: "custom-test", acceptanceChecks: [] })];
+    expect(acceptanceSummary(task, roleFor).items.map((item) => [item.check?.result, item.current])).toEqual([["pass", true], ["fail", true], ["blocked", false]]);
+  });
+
   it.each(["unknown version", "running editor", "missing step evidence", "missing version", "unavailable version", "not current"])("leaves uncertain evidence unverified: %s", (variant) => {
     const task = fixture();
     if (variant === "unknown version") task.journey = [...task.journey!, step({ roleId: "custom-build" })];
