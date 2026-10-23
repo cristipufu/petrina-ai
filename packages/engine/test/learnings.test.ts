@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { addLearnings, Learnings } from "../src/learnings.js";
+import { addedLessons, addLearnings, Learnings, withLearnings } from "../src/learnings.js";
 import { hasPoint } from "../src/points.js";
 import * as gitOps from "../src/git.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
@@ -36,6 +36,27 @@ describe("the Learnings section of AGENTS.md", () => {
     const root = at("middle", "# Agents\n\n## Learnings\n\nIntro.\n\n- First\n\n## Checks\n\nRun them.\n");
     addLearnings(root, ["Second", "Third\nwith a break"]);
     expect(read(root)).toBe("# Agents\n\n## Learnings\n\nIntro.\n\n- First\n- Second\n- Third with a break\n\n## Checks\n\nRun them.\n");
+  });
+
+  it("names exactly the lessons the writer added, and nothing for any other change", () => {
+    const base = "# Agents\n\n## Learnings\n\nIntro.\n\n- First\n\n\n## Checks\n\nRun them.";
+    const root = at("added", base);
+    addLearnings(root, ["Second", "Third."]);
+    const written = read(root);
+    expect(withLearnings(base, ["Second", "Third."])).toBe(written);
+    expect(addedLessons(base, written)).toEqual(["Second", "Third."]);
+    expect(addedLessons(base, withLearnings(base, []))).toEqual([]);
+    for (const changed of [
+      written.replace("- First", "- First!"),
+      written.replace("Intro.", "Intro"),
+      written.replace("- Second\n", "- Second\n\n"),
+      written.replace("- Third.", "* Third."),
+      written.replace("- Second", "-  Second"),
+      written.replace("- First\n- Second", "- Second\n- First"),
+      written.slice(0, -1),
+      `${written}\n`,
+    ]) expect(addedLessons(base, changed)).toBeUndefined();
+    expect(addedLessons("# Agents\n", withLearnings("# Agents\n", ["First"]))).toBeUndefined();
   });
 });
 

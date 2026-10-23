@@ -442,7 +442,7 @@ const scriptPath = process.argv.find((arg) => arg.startsWith("--script="))?.slic
 /** What the fake agents do for one test, read before every run. */
 export interface AgentScript {
   /** For the task with this title, the builder (or `role`) waits while `file` exists (`file`.reached once waiting). */
-  hold?: { title: string; file: string; role?: "builder" | "release manager" };
+  hold?: { title: string; file: string; role?: "builder" | "release manager" | "code reviewer" };
   /** The builder points this submodule at this commit, in its work. */
   gitlink?: { path: string; sha: string };
   /** Each task's builder also adds a file named after the task, so no two tasks make the same change. */
@@ -495,7 +495,7 @@ const readScript = (): AgentScript => (scriptPath && existsSync(scriptPath) ? (J
 const saveScript = (script: AgentScript) => scriptPath && writeFileSync(scriptPath, JSON.stringify(script, null, 2));
 
 /** Wait while the test holds this role on this task. */
-async function held(role: "builder" | "release manager", text: string): Promise<void> {
+async function held(role: "builder" | "release manager" | "code reviewer", text: string): Promise<void> {
   const held = readScript().hold;
   if (!held || (held.role ?? "builder") !== role || !text.includes(held.title) || !existsSync(held.file)) return;
   writeFileSync(`${held.file}.reached`, "");
@@ -1171,6 +1171,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       return done({ ...(title ? { title } : {}), ...(description ? { description } : {}), summary: "Added a greeting.", changes: ["People see a greeting"], tests: "1 passed", answers: answersTo(text, plan.answer) });
     }
     case "code reviewer":
+      await held("code reviewer", text);
       if (plan.reviewer === "confirm-dismissed") {
         const original = session.history.find((entry) => entry.sessionUpdate === "user_message_chunk" && entry.content.type === "text");
         const opening = original?.sessionUpdate === "user_message_chunk" && original.content.type === "text" ? original.content.text : text;

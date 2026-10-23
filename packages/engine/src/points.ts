@@ -65,26 +65,39 @@ export function appendPoints(root: string, file: PointsFile, points: readonly st
 }
 
 /**
- * Lines added at the end of a section of AGENTS.md (a "## " heading), starting the section, after its intro,
- * when there is none, and the file when there is none. Replaces the file in one step.
+ * Where lines join a section of AGENTS.md (a "## " heading): the lines up to its last one that is not blank, and
+ * what follows, before the next heading of the same or a higher level. Undefined when there is no such section.
  */
-export function addToSection(root: string, heading: string, intro: string, lines: readonly string[]): void {
-  const text = localPoints(root, AGENTS_FILE).replace(/\s*$/, "");
-  const all = text ? text.split("\n") : [];
+export function sectionEnd(text: string, heading: string): { before: string[]; after: string[] } | undefined {
+  const trimmed = text.replace(/\s*$/, "");
+  const all = trimmed ? trimmed.split("\n") : [];
   const start = all.findIndex((line) => line.trim() === heading);
-  let next: string[];
-  if (start < 0) {
-    next = [...(all.length ? [...all, ""] : []), heading, "", intro, ...(lines.length ? ["", ...lines] : [])];
-  } else {
-    // At the end of the section: before the next heading of the same or a higher level, or at the end of the file.
-    let end = all.findIndex((line, index) => index > start && /^#{1,2} /.test(line));
-    if (end < 0) end = all.length;
-    let last = end;
-    while (last > start + 1 && all[last - 1]!.trim() === "") last -= 1;
-    next = [...all.slice(0, last), ...lines, ...(end < all.length ? ["", ...all.slice(end)] : [])];
-  }
+  if (start < 0) return undefined;
+  // At the end of the section: before the next heading of the same or a higher level, or at the end of the file.
+  let end = all.findIndex((line, index) => index > start && /^#{1,2} /.test(line));
+  if (end < 0) end = all.length;
+  let last = end;
+  while (last > start + 1 && all[last - 1]!.trim() === "") last -= 1;
+  return { before: all.slice(0, last), after: end < all.length ? ["", ...all.slice(end)] : [] };
+}
+
+/**
+ * AGENTS.md's text with lines added at the end of a section, starting the section, after its intro, when there
+ * is none, and the file when there is none.
+ */
+export function withSection(text: string, heading: string, intro: string, lines: readonly string[]): string {
+  const at = sectionEnd(text, heading);
+  if (at) return `${[...at.before, ...lines, ...at.after].join("\n")}\n`;
+  const trimmed = text.replace(/\s*$/, "");
+  const all = trimmed ? trimmed.split("\n") : [];
+  return `${[...(all.length ? [...all, ""] : []), heading, "", intro, ...(lines.length ? ["", ...lines] : [])].join("\n")}\n`;
+}
+
+/** Lines added at the end of a section of AGENTS.md, as `withSection` writes them. Replaces the file in one step. */
+export function addToSection(root: string, heading: string, intro: string, lines: readonly string[]): void {
+  const next = withSection(localPoints(root, AGENTS_FILE), heading, intro, lines);
   const path = join(root, AGENTS_FILE);
   const draft = `${path}.petrina-${process.pid}`;
-  writeFileSync(draft, `${next.join("\n")}\n`, { flag: "wx" });
+  writeFileSync(draft, next, { flag: "wx" });
   renameSync(draft, path);
 }

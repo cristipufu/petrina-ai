@@ -5,9 +5,9 @@ import { type RepositoryContext } from "./repository-context.js";
 // Agents pass lessons on with their results, the coordinator accepts or declines them at the delivery check,
 // and accepted ones reach AGENTS.md with a delivery.
 
-import type { DeepMutable, GuideLine, Id } from "@petrina/core";
+import type { DeepMutable, GuideLine, Id, Product } from "@petrina/core";
 import * as git from "./git.js";
-import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints } from "./points.js";
+import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints, sectionEnd, withSection } from "./points.js";
 import type { Kernel } from "./kernel.js";
 
 const SECTION = "## Learnings";
@@ -176,4 +176,82 @@ export class Learnings {
 /** Lessons added at the end of AGENTS.md's Learnings section, starting the section (or the file) when there is none. */
 export function addLearnings(root: string, lessons: readonly string[]): void {
   addToSection(root, SECTION, INTRO, lessons.map((lesson) => `- ${cleanPoint(lesson)}`));
+}
+
+/** AGENTS.md's text as `addLearnings` leaves it. */
+export function withLearnings(text: string, lessons: readonly string[]): string {
+  return withSection(text, SECTION, INTRO, lessons.map((lesson) => `- ${cleanPoint(lesson)}`));
+}
+
+/**
+ * The exact lessons Petrina's writer added at the end of `base`'s Learnings section to make `file`, in order:
+ * writing them again gives `file` byte for byte. Undefined when `file` is anything else, or `base` has no
+ * Learnings section yet.
+ */
+export function addedLessons(base: string, file: string): string[] | undefined {
+  const at = sectionEnd(base, SECTION);
+  if (!at || !file.endsWith("\n")) return undefined;
+  const lines = file.slice(0, -1).split("\n");
+  const middle = lines.slice(at.before.length, lines.length - at.after.length);
+  if (lines.length < at.before.length + at.after.length || !middle.every((line) => line.startsWith("- "))) return undefined;
+  const lessons = middle.map((line) => line.slice(2));
+  return withLearnings(base, lessons) === file ? lessons : undefined;
+}
+
+/** An update's AGENTS.md when both sides only added approved lessons, in the merge's otherwise clean tree. */
+export interface KeptLearnings {
+  tree: string;
+  /** The task's lessons, added after main's. */
+  added: string[];
+  /** The task's lessons main already has word for word, kept once. */
+  present: string[];
+}
+
+/**
+ * A task brought onto main, where AGENTS.md is the only conflict and both sides did nothing to it but add lessons
+ * the coordinator accepted, at the end of a Learnings section the shared starting version already had. Each side's
+ * whole file is exactly what Petrina's writer makes from the starting version and its lessons; each of the task's
+ * lessons, by its exact text in the waiting list or a receipt, one Petrina wrote for this task, and each of
+ * main's one it wrote for another. The same lesson is only what `hasPoint` already says it is. Kept: main's file,
+ * with the task's lessons it lacks added by the same writer. Undefined (the builder brings the work up to date)
+ * for anything else or unproven, including a lesson main had since the starting point, or took in, and removed,
+ * and any part of that history Git cannot read. `ref`: the task's version merged onto `onto`.
+ */
+export async function keptLearnings(product: Pick<Product, "learnings" | "learningReceipts"> | undefined, taskId: Id, worktree: string, fork: string, onto: string, merged: { tree: string; conflicts: readonly string[] }, ref = "HEAD"): Promise<KeptLearnings | undefined> {
+  if (!product || merged.conflicts.length !== 1 || merged.conflicts[0] !== AGENTS_FILE) return undefined;
+  try {
+    const [base, main, own] = await Promise.all([fork, onto, ref].map((version) => git.plainFileAt(worktree, version, AGENTS_FILE)));
+    if (!base || !main || !own || main.mode !== base.mode || own.mode !== base.mode) return undefined;
+    // A version that does not read back as it is (not UTF-8) could not be kept exactly.
+    if ([base, main, own].some((file) => file.text.includes("\uFFFD"))) return undefined;
+    const theirs = addedLessons(base.text, main.text), ours = addedLessons(base.text, own.text);
+    if (!theirs?.length || !ours?.length) return undefined;
+    // The starting point and main's history as the commits record them, whatever Git's commit index says.
+    if ((await git.mergeBase(worktree, ref, onto, true)) !== fork) return undefined;
+    const versions = await git.versionsBetween(worktree, fork, onto, AGENTS_FILE);
+    // Read in one go after Git answers: the tidy-up turns a waiting lesson into a receipt in one step.
+    const receipts = [...(product.learningReceipts ?? [])];
+    const records = [...(product.learnings ?? []), ...receipts];
+    const wrote = (text: string, here: boolean) => records.some((line) => line.text === text && line.writtenOn !== undefined && (line.writtenOn === taskId) === here);
+    if (!theirs.every((text) => wrote(text, false)) || !ours.every((text) => wrote(text, true))) return undefined;
+    const added: string[] = [];
+    const present: string[] = [];
+    for (const [index, text] of ours.entries()) {
+      if (hasPoint(base.text, text) || ours.some((other, at) => at !== index && hasPoint(other, text))) return undefined;
+      const same = theirs.filter((line) => hasPoint(line, text));
+      if (same.some((line) => line !== text)) return undefined;
+      if (same.length) present.push(text);
+      // Nothing main removed comes back: a version of the file since the starting point had it.
+      else if (versions.some((version) => hasPoint(version, text))) return undefined;
+      else added.push(text);
+    }
+    // Or a receipt says main took it in, at a version latest main includes.
+    const taken = new Set(receipts.filter((receipt) => added.some((text) => hasPoint(receipt.text, text))).map((receipt) => receipt.foundOn));
+    for (const sha of taken) if (await git.contains(worktree, onto, sha, true)) return undefined;
+    const text = withLearnings(main.text, added);
+    if (text !== withLearnings(base.text, [...theirs, ...added])) return undefined;
+    return { tree: await git.withRootFile(worktree, merged.tree, AGENTS_FILE, main.mode, text), added, present };
+  } catch {
+    return undefined;
+  }
 }

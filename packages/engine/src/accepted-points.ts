@@ -1,8 +1,12 @@
 // Accepted instructions wait for delivery. Once the default branch contains one, it is no longer
-// pending: a later correction or removal in that branch must not be undone by the old queue.
+// pending: a later correction or removal in that branch must not be undone by the old queue. A lesson
+// leaving the queue keeps a short receipt, so an update can still prove where main's line came from.
 import * as git from "./git.js";
 import { AGENTS_FILE, GUIDE_FILE, hasPoint } from "./points.js";
 import type { Kernel } from "./kernel.js";
+
+/** How many receipts a product keeps. */
+const RECEIPTS = 100;
 
 export class AcceptedPoints {
   private sweeping = false;
@@ -41,9 +45,11 @@ export class AcceptedPoints {
               changed = true;
             }
           } else {
-            const pending = current.filter((line) => !hasPoint(file, line.text));
-            if (pending.length !== current.length) {
-              product.learnings = pending;
+            const found = current.filter((line) => hasPoint(file, line.text));
+            if (found.length) {
+              product.learnings = current.filter((line) => !found.includes(line));
+              const receipts = found.map((line) => ({ text: line.text, fromTask: line.fromTask, ...(line.writtenOn ? { writtenOn: line.writtenOn } : {}), foundOn: sha }));
+              product.learningReceipts = [...(product.learningReceipts ?? []), ...receipts].slice(-RECEIPTS);
               changed = true;
             }
           }

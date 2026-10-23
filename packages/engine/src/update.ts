@@ -2,10 +2,13 @@ import { type RepositoryContext } from "./repository-context.js";
 // Keeping a task's work one commit on top of the latest default branch. Petrina folds the branch into one
 // commit after every build, and right before the delivery check, and again right before shipping, puts it
 // on top of the latest main itself, with git plumbing that never leaves a working copy halfway through a
-// rebase. When main's changes and the task's overlap, the builder brings the work up to date.
+// rebase. When main's changes and the task's overlap, the builder brings the work up to date, unless both
+// only added lessons the coordinator approved to AGENTS.md: Petrina keeps those itself.
 
 import { JOURNEY_WORDS as W, lastIndexWhere, petrinaMoment } from "@petrina/core";
 import * as git from "./git.js";
+import { keptLearnings } from "./learnings.js";
+import { AGENTS_FILE } from "./points.js";
 import type { Sources } from "./sources.js";
 import type { Connections } from "./connection.js";
 import type { Kernel } from "./kernel.js";
@@ -58,10 +61,13 @@ export class Updates {
       ? await git.revParse(product.path, `refs/petrina/sources/${task.id}`)
       : (repository.delivery !== "local" || repository.localUpdate?.pushed === false ? await git.revParse(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await git.revParse(product.path, `refs/heads/${branch}`));
     if (!main) return { base };
-    const met = await git.mergeBase(worktree, "HEAD", main);
+    if ((await git.mergeBase(worktree, "HEAD", main)) === base) return { base, fork: base };
+    // Moving where the work starts rests on the commits themselves, not on Git's commit index: an edited one could
+    // move it past a lesson main removed, which the learnings kept on an update would then bring back.
+    const met = await git.mergeBase(worktree, "HEAD", main, true);
     if (!met) return { base };
     if (met === base) return { base, fork: base };
-    const [forward, baseInBranch] = await Promise.all([git.contains(worktree, met, base), git.contains(worktree, "HEAD", base)]);
+    const [forward, baseInBranch] = await Promise.all([git.contains(worktree, met, base, true), git.contains(worktree, "HEAD", base, true)]);
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
     if (!forward && baseInBranch) return { base, fork: base };
     repository.baseSha = met;
@@ -88,8 +94,9 @@ export class Updates {
 
   /**
    * The task's work as one commit on top of the latest main. "current": it already was. "moved": Petrina put
-   * it on top, and says so. "conflict": main's changes and this one overlap, so the task is back on its
-   * builder step, with the working copy on main and the change applied, conflict markers and all.
+   * it on top, and says so, keeping both sides' approved learnings when only they overlap. "conflict": main's
+   * changes and this one overlap, so the task is back on its builder step, with the working copy on main and the
+   * change applied, conflict markers and all.
    * `fresh`: right before shipping, where only main freshly fetched from GitHub counts for a GitHub delivery.
    */
   async upToDate(scope: RepositoryContext, signal: AbortSignal, fresh = false): Promise<"current" | "moved" | "conflict"> {
@@ -117,15 +124,23 @@ export class Updates {
     if (!merged) throw new Error(`Petrina could not bring the work up to date with ${sourceName}`);
     const commits = `${gained} new commit${gained === 1 ? "" : "s"}`;
     const reviewed = !!repository.reviewedTree && repository.reviewedTree === tree;
-    if (!merged.conflicts.length) {
-      await git.moveTo(worktree, await git.commitTree(worktree, merged.tree, latest.sha, this.message(scope)));
-      if (reviewed) repository.reviewedTree = merged.tree;
-      if (repository.checks) repository.checks.current = repository.checks.tree === merged.tree;
+    const kept = merged.conflicts.length ? await this.keptLearnings(scope, fork, latest.sha, merged) : undefined;
+    if (!merged.conflicts.length || kept) {
+      const result = kept?.tree ?? merged.tree;
+      await git.moveTo(worktree, await git.commitTree(worktree, result, latest.sha, this.message(scope)));
+      if (reviewed) repository.reviewedTree = result;
+      if (repository.checks) repository.checks.current = repository.checks.tree === result;
       repository.baseSha = latest.sha;
       repository.base = latest.ref;
       // The version the last round reviewed, carried onto the new base too, so the next round still sees only what changed since.
       await this.carryReviewed(scope);
-      this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
+      if (kept) {
+        // Not a send-back: told apart from a conflict on the journey, with the lines it kept in the log.
+        petrinaMoment(task, "update", { outcome: W.keptLearnings, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` }, Date.now());
+        const added = kept.added.length ? `kept ${sourceName}'s and added this work's: ${kept.added.join("; ")}` : `kept ${sourceName}'s, which already has this work's`;
+        const present = kept.present.length ? `${kept.added.length ? `; already on ${sourceName}, kept once` : ""}: ${kept.present.join("; ")}` : "";
+        this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there): ${sourceName} and this work only added approved learnings to ${AGENTS_FILE}, so Petrina ${added}${present}`);
+      } else this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
       this.k.commit();
       return "moved";
     }
@@ -165,9 +180,18 @@ export class Updates {
     return "conflict";
   }
 
+  /** Both sides' approved learnings kept, when `ref` and main overlap in nothing else. Only onto the product's own main. */
+  private async keptLearnings(scope: RepositoryContext, fork: string, onto: string, merged: { tree: string; conflicts: readonly string[] }, ref = "HEAD") {
+    const { task, work: repository } = scope;
+    // A starting branch or pull request is not where approved learnings land.
+    if (!repository.worktree || (repository.source?.start.kind ?? "default") !== "default") return undefined;
+    return keptLearnings(this.k.productOf(scope), task.id, repository.worktree, fork, onto, merged, ref);
+  }
+
   /**
-   * A reviewed version of the change carried onto the current base unchanged: a commit of its merge with the
-   * base, on no branch, kept only as a reference for "what changed since". Undefined when the two overlap.
+   * A reviewed version of the change carried onto the current base unchanged, or with both sides' approved learnings
+   * kept as an update keeps them: a commit of its merge with the base, on no branch, kept only as a reference for
+   * "what changed since". Undefined when the two overlap otherwise.
    */
   private async carry(scope: RepositoryContext, sha: string): Promise<string | undefined> {
     const { work: repository } = scope;
@@ -175,8 +199,11 @@ export class Updates {
     const base = repository.baseSha;
     if (!worktree || !base) return undefined;
     const merged = await git.mergeTree(worktree, base, sha);
-    if (!merged || merged.conflicts.length) return undefined;
-    return git.commitTree(worktree, merged.tree, base, "The version the last review round saw, carried onto the latest main (Petrina's reference, on no branch)");
+    if (!merged) return undefined;
+    const fork = merged.conflicts.length ? await git.mergeBase(worktree, sha, base) : undefined;
+    const tree = merged.conflicts.length ? fork && (await this.keptLearnings(scope, fork, base, merged, sha))?.tree : merged.tree;
+    if (!tree) return undefined;
+    return git.commitTree(worktree, tree, base, "The version the last review round saw, carried onto the latest main (Petrina's reference, on no branch)");
   }
 
   /** Keep the incremental comparison task-only, whoever advanced the execution base. */

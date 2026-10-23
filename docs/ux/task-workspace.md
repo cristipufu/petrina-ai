@@ -78,7 +78,7 @@ Pausing or restarting unfinished release notes keeps the same Release Manager bo
 
 Each agent step is a box with its role (icon and colour), tool and model, elapsed time and outcome, and a check once finished. Times are elapsed from the step's start to its end, pauses and waiting included, and say so. Every round, send-back and retry is a new box. Its footer uses small round squares and symbols for a fix, retry, update, call or port review; titles keep the plain role or work name.
 
-Reviewers working together share a box for that round, naming all their tools and models in its details; fresh voters have their own box. Automated checks, Update branch and Publish delivery describe Petrina's own steps by what they do. Only a release has a Release Manager, who writes its notes before Petrina publishes. A stuck step is red; a step stopped by cancelling says so.
+Reviewers working together share a box for that round, naming all their tools and models in its details; fresh voters have their own box. Automated checks, Update branch and Publish delivery describe Petrina's own steps by what they do. An Update branch box that kept both sides' approved learnings says so and is not a send-back; any other conflict sends the work back to the Builder. Only a release has a Release Manager, who writes its notes before Petrina publishes. A stuck step is red; a step stopped by cancelling says so.
 
 ### Coordinator steps
 

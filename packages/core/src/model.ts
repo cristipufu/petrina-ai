@@ -825,6 +825,17 @@ export interface GuideLine {
   incorporatedOn?: string;
 }
 
+/** An accepted lesson the once-a-minute tidy-up found on the default branch as it left the waiting list. */
+export interface LearningReceipt {
+  text: string;
+  /** The task it came from. */
+  fromTask: Id;
+  /** The task whose branch wrote it, when one did. */
+  writtenOn?: Id;
+  /** The default-branch commit where it was found. */
+  foundOn: string;
+}
+
 /** Something an agent learned about working in the repository, waiting for the coordinator at the delivery check. */
 export interface Lesson {
   text: string;
@@ -1058,6 +1069,8 @@ export interface Product {
   reviewGuide?: readonly GuideLine[];
   /** Lessons accepted for AGENTS.md, until their incorporation in the default branch is confirmed. */
   learnings?: readonly GuideLine[];
+  /** The last 100 accepted lessons found on the default branch: read only when an update conflicts in AGENTS.md alone. */
+  learningReceipts?: readonly LearningReceipt[];
   /** Lessons the coordinator said no to (declined or left unticked): never offered again. */
   learningsDeclined?: readonly string[];
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */

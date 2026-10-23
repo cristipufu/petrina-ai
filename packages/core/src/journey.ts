@@ -44,6 +44,7 @@ export const JOURNEY_WORDS = {
   noGuidePoint: "Nothing for the review guide",
   mainMoved: (files: number, source = "main") => `${plural(files, "file")} conflict${files === 1 ? "s" : ""} with ${source}`,
   broughtUpToDate: "Brought it up to date",
+  keptLearnings: "Kept both sets of approved learnings",
   askAgain: "Needs your OK again",
   mainMovedOn: "Main moved on",
   notReady: "Not ready to publish",

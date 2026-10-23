@@ -64,8 +64,8 @@ export const isBranchName = (value: string): boolean => NAME.test(value) && !val
 export const isSha = (value: string): boolean => FULL_SHA.test(value);
 
 let empty: string | undefined;
-/** Empty folders for "no hooks" and "no gh login", made once per engine. */
-function emptyDir(name: "hooks" | "gh"): string {
+/** Empty folders for "no hooks", "no gh login" and "no grafts", made once per engine. */
+function emptyDir(name: "hooks" | "gh" | "grafts"): string {
   if (!empty) {
     // Test engines already have their own disposable home. Keep their helpers there too, so
     // the parent fixture removes them after a forced stop instead of filling the shared temp folder.
@@ -103,8 +103,9 @@ function gitEnv(credentials: boolean, options: { local?: boolean; ownHooks?: boo
   // `ownHooks` only for finding the repository's own hooks: never with credentials, never running a git step.
   const hooks = options.ownHooks && !credentials ? [] : [["core.hooksPath", emptyDir("hooks")] as const];
   const settings = [...hooks, ["core.fsmonitor", "false"] as const, ...transport];
-  // Replace objects could make a commit Petrina pinned show different content.
-  return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1", ...(credentials ? { GH_PROMPT_DISABLED: "1" } : {}) };
+  // Replace objects could make a commit Petrina pinned show different content, and a grafts file (info/grafts,
+  // read in place of one that never exists) different parents, hiding commits from history Petrina checks.
+  return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: join(emptyDir("grafts"), "none"), ...(credentials ? { GH_PROMPT_DISABLED: "1" } : {}) };
 }
 
 /** The hooks git runs when it commits, in the order it runs them. */
@@ -529,9 +530,15 @@ export async function squash(path: string, base: string, message: string, resolv
   return count;
 }
 
+/**
+ * Parents as the commits themselves record them, for reads a decision about history rests on. Git's commit index
+ * (commit-graph) is an optional cache of each commit's parents, and an edited one can report others.
+ */
+const FROM_COMMITS = ["-c", "core.commitGraph=false"] as const;
+
 /** Where two commits' histories meet. */
-export async function mergeBase(path: string, a: string, b: string): Promise<string | undefined> {
-  const result = await run(["git", "merge-base", a, b], path);
+export async function mergeBase(path: string, a: string, b: string, fromCommits = false): Promise<string | undefined> {
+  const result = await run(["git", ...(fromCommits ? FROM_COMMITS : []), "merge-base", a, b], path);
   return result.code === 0 && SHA.test(result.stdout) ? result.stdout : undefined;
 }
 
@@ -572,6 +579,57 @@ export async function mergeTree(path: string, onto: string, ref = "HEAD"): Promi
     index += count + 3;
   }
   return { tree, conflicts: [...new Set(conflicts)], notes: notes.filter((note) => note.startsWith("CONFLICT")) };
+}
+
+/** A file at the root of `ref`'s tree, with its mode, when it is a plain file there (not a link, folder or submodule). */
+export async function plainFileAt(path: string, ref: string, name: string): Promise<{ mode: string; text: string } | undefined> {
+  if (ref.startsWith("-") || name.startsWith("-") || name.includes("/")) return undefined;
+  const listed = await run(["git", "ls-tree", "-z", ref, "--", name], path, undefined, { rawOutput: true });
+  const entry = /^(100644|100755) blob [0-9a-f]+\t([^\0]*)\0$/.exec(listed.stdout);
+  if (listed.code !== 0 || !entry || entry[2] !== name) return undefined;
+  const text = await fileAt(path, ref, name);
+  return text === undefined ? undefined : { mode: entry[1]!, text };
+}
+
+/**
+ * Every version of the root file `name` in the commits `to` has and `from` has not, merged branches included, with
+ * the versions they changed it from. Each commit is compared with every parent, from the trees and the commits
+ * themselves, so a version whose saved copy is unavailable fails the read rather than passing for a commit without
+ * the file. A shallow copy may lack some of those commits, so it fails too.
+ */
+export async function versionsBetween(path: string, from: string, to: string, name: string): Promise<string[]> {
+  if (!SHA.test(from) || !SHA.test(to) || name.startsWith("-") || name.includes("/")) throw new Error("Not a commit or a root file");
+  if ((await must(["git", "rev-parse", "--is-shallow-repository"], path)) !== "false") throw new Error("Part of the history is not in this copy");
+  const commits = await must(["git", ...FROM_COMMITS, "rev-list", `${from}..${to}`], path);
+  if (!commits) return [];
+  const changes = await must(["git", ...FROM_COMMITS, "diff-tree", "--stdin", "-m", "--root", "--no-renames", "--raw", "--", name], path, `${commits}\n`);
+  const blobs = new Set(changes.split("\n").flatMap((line) => /^:\d{6} \d{6} ([0-9a-f]+) ([0-9a-f]+) /.exec(line)?.slice(1) ?? []).filter((oid) => !/^0+$/.test(oid)));
+  const versions: string[] = [];
+  // One at a time: a file changed many times should not start a burst of processes.
+  for (const blob of blobs) {
+    const read = await run(["git", "cat-file", "blob", blob], path, undefined, { rawOutput: true });
+    if (read.code !== 0) throw new Error(`git cat-file failed: ${read.stderr}`);
+    versions.push(read.stdout);
+  }
+  return versions;
+}
+
+/** `tree` with the root file `name` holding `text`, written without touching any working copy or its staging area. */
+export async function withRootFile(path: string, tree: string, name: string, mode: string, text: string): Promise<string> {
+  if (!SHA.test(tree) || !/^100(644|755)$/.test(mode) || name.includes("/")) throw new Error("Not a tree or a plain file");
+  const blob = await must(["git", "hash-object", "-w", "--stdin"], path, text);
+  if (!SHA.test(blob)) throw new Error("git hash-object did not return a file");
+  const folder = mkdtempSync(join(tmpdir(), "petrina-file-tree-"));
+  const options = { index: join(folder, "index") };
+  try {
+    for (const cmd of [["git", "read-tree", tree], ["git", "update-index", "--add", "--cacheinfo", `${mode},${blob},${name}`]]) {
+      const result = await run(cmd, path, undefined, options);
+      if (result.code !== 0) throw new Error(`${cmd.slice(0, 2).join(" ")} failed: ${result.stderr || result.stdout}`);
+    }
+    const written = await run(["git", "write-tree"], path, undefined, options);
+    if (written.code !== 0 || !SHA.test(written.stdout)) throw new Error(`git write-tree failed: ${written.stderr || written.stdout}`);
+    return written.stdout;
+  } finally { rmSync(folder, { recursive: true, force: true }); }
 }
 
 /** A commit of `tree` on top of `parent`, made without hooks and without touching any working copy. */
@@ -636,9 +694,9 @@ export async function revParse(path: string, ref: string): Promise<string | unde
 }
 
 /** Does `descendant` contain `ancestor`? */
-export async function contains(path: string, descendant: string, ancestor: string): Promise<boolean> {
+export async function contains(path: string, descendant: string, ancestor: string, fromCommits = false): Promise<boolean> {
   if ((descendant !== "HEAD" && !SHA.test(descendant)) || !SHA.test(ancestor)) return false;
-  return (await run(["git", "merge-base", "--is-ancestor", ancestor, descendant], path)).code === 0;
+  return (await run(["git", ...(fromCommits ? FROM_COMMITS : []), "merge-base", "--is-ancestor", ancestor, descendant], path)).code === 0;
 }
 
 export async function parents(path: string, sha: string): Promise<string[]> {
