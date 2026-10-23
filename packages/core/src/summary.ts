@@ -226,6 +226,7 @@ function reviewersOf(task: Task, state: People, stage: Stage, at: number, from: 
 
 /** Final preparation resolves single-product patch equivalence; until then name the conditional test. */
 function finalTesting(state: People, task: Task): string | undefined {
+  if (!task.retest && task.proofRequests?.some(request => request.status === "pending" || request.status === "stale") && !task.acceptanceUnverified && (task.proofRefreshes ?? 0) < 2) return "final acceptance testing for requested proof";
   if (task.retest || task.testedPatch === undefined || task.acceptanceUnverified || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
   const tester = task.plan?.stages.find((stage) => stage.kind === "do" && roleForTask(state.roles, stage.roleId, task)?.result === "checks");
   if (!tester) return undefined;

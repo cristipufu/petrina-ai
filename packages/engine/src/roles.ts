@@ -133,12 +133,14 @@ export const TestResult = z.object({
   images: ReportImages,
   summary: z.string().min(3),
   checks: z.array(AcceptanceCheckResult).default([]),
+  proofAnswers: z.array(z.object({ id: z.string(), result: z.enum(["pass", "fail", "blocked"]), evidence: z.string().trim().min(3).max(1200).optional(), reason: z.string().trim().optional() })).default([]),
   learnings: LEARNED,
 });
 
 export const ReviewResult = z.object({
   images: ReportImages,
   verdict: z.enum(["pass", "fail"]),
+  proofRequests: z.array(z.object({ text: z.string().trim().min(3), reason: z.string().trim().min(3), productIds: z.array(z.string()).min(1), checklistText: z.string().optional() })).default([]),
   findings: z
     .array(
       z.object({
@@ -493,7 +495,7 @@ export function plannerRoles(roles: readonly Role[]): string {
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
-  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "build" ? "builder" : role.result === "findings" ? "code-reviewer" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
+  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "build" ? "builder" : role.result === "checks" ? "tester" : role.result === "findings" ? "code-reviewer" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
   if (role.id === "release-manager") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);
@@ -511,6 +513,8 @@ export function contractFor(role: Role): RoleContract {
 
 export function shapeFor(contract: RoleContract, ctx: PromptContext): string {
   let shape = typeof contract.shape === "function" ? contract.shape(ctx) : contract.shape;
+  if (ctx.role.result === "findings" && ctx.task.plan?.stages.some(stage => stage.kind === "do" && ctx.roles?.find(role => role.id === stage.roleId)?.result === "checks")) shape = shape.replace(/}\s*$/, ', "proofRequests": [{"text": "What must be proved on the final version", "productIds": ["<affected product id>"], "reason": "Why this proof is required", "checklistText": "<optional exact saved checklist text>"}]}');
+  if (ctx.role.result === "checks" && ctx.task.proofRequests?.length) shape = shape.replace(/}\s*$/, ', "proofAnswers": [{"id": "<proof request id>", "result": "pass", "evidence": "The scenario and observed result", "reason": "What prevented verification when blocked"}]}');
   if (ctx.role.category === "maintenance") shape = shape.replace(/}\s*$/, ', "complete": true}');
   return ["notes", "objections", "build", "checks", "findings"].includes(ctx.role.result)
     ? shape.replace(/}\s*$/, ', "images": [{"path": "A chosen browser capture", "caption": "What the picture demonstrates, in plain language"}]}')

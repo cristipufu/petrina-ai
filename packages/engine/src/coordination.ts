@@ -150,7 +150,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           workValidating: task.workValidating,
           approvalExplanation: task.approvalExplanation,
           leadProductId: task.leadProductId,
-          acceptance: { passed: task.acceptancePassed, blocked: task.acceptanceBlocked, unverified: task.acceptanceUnverified, testedPatch: task.testedPatch, testedVersions: task.testedVersions },
+          acceptance: { passed: task.acceptancePassed, blocked: task.acceptanceBlocked, unverified: task.acceptanceUnverified, testedPatch: task.testedPatch, testedVersions: task.testedVersions, proofRequests: task.proofRequests, proofRefreshes: task.proofRefreshes },
           diagnostics: checkLogRevision(engine.dataDir, task.id, (task.repositories ?? [task]).flatMap((work) => work.checks?.results.flatMap((run) => [run.logPath, originalCheck(task, run)?.check.run?.logPath]) ?? [])),
           evidence: task.journey?.map(({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId }) => ({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId })),
           evidenceRoles: [...new Set([...(task.journey ?? []).map((step) => step.roleId), ...(task.plan?.stages ?? []).map((stage) => stage.roleId)])].map((id) => {

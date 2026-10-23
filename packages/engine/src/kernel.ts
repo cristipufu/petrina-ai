@@ -487,6 +487,7 @@ export abstract class Kernel {
     delete task.agent;
     task.holdsSlot = false;
     const decision = beginYouStep(task, gate, Date.now());
+    if (gate === "delivery" && task.proofRequests?.length) decision.proofDecision = structuredClone(task.checkedProofDecision);
     const reviewCall = gate === "delivery" && library.reviewDecisionPending(task);
     if (reviewCall) decision.work = "review-decision";
     if (gate === "delivery" && !decision.productChecks) decision.productChecks = library.decisionEvidence(taskView(task));
@@ -496,7 +497,8 @@ export abstract class Kernel {
       : work ? workSummary(work) : "";
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
     const explanation = [problem, checks?.body, reviewCall ? "Review left Important findings open. Send the work back with a concrete repair request, or accept the unresolved review and continue to final verification. Continuing approves no delivery, fixes no finding and grants no automatic review rounds. Current product checks and required acceptance testing still run before a separate delivery approval." : undefined, body].filter(Boolean).join("\n\n");
-    this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, explanation ? { body: explanation } : {});
+    const proofBody = gate === "delivery" && task.proofRequests?.length ? [library.proofGap(taskView(task)), library.proofContext(task.proofRequests)].filter(Boolean).join("\n\n") : "";
+    this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, explanation || proofBody ? { body: [explanation, proofBody].filter(Boolean).join("\n\n") } : {});
     task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(taskView(task), gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.

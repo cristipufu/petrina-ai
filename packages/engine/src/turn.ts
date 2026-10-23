@@ -396,8 +396,9 @@ export class Turns {
     const journeyStep = beginAgentStep(task, journeyRole, profileId, Date.now(), this.k.s.roles, options.copy ? [...new Set([...team, profileId])] : undefined, repository);
     if (options.seats) journeyStep.seats = [...options.seats];
     if (role.result === "build") journeyStep.buildProductId = repository.productId;
+    if (role.result === "checks" && task.acceptanceRun) journeyStep.proofRun = structuredClone(task.acceptanceRun);
     if (["findings", "votes"].includes(role.result) && task.hunt?.input) journeyStep.reviewInput = structuredClone(task.hunt.input);
-    if (role.result === "checks" && task.retest && !journeyStep.agentInputs?.length) journeyStep.trigger = { ...journeyStep.trigger, reason: "Final acceptance testing after review: the final code needs current acceptance evidence" };
+    if (role.result === "checks" && task.retest && !journeyStep.agentInputs?.length) journeyStep.trigger = { ...journeyStep.trigger, reason: task.proofRetestReason === "requested" ? "A reviewer asked for proof on the final code" : task.proofRetestReason === "main-moved" ? "Main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "The task's code changed since acceptance testing" : "Final acceptance testing after review: the final code needs current acceptance evidence" };
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {

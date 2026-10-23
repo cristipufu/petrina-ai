@@ -43,6 +43,7 @@ export class Checkpoints {
           break;
         }
         this.k.log(task, "you", "You approved the delivery");
+        if (task.proofRequests?.length) task.approvedProofDecision = structuredClone(task.checkedProofDecision);
         endYouStep(task, { outcome: W.approved, reason: W.youApproved }, Date.now());
         for (const scope of scopesFor(task)) {
           scope.work.approvedSha = scope.work.checkedSha;
@@ -94,6 +95,12 @@ export class Checkpoints {
     const fromCheck = task.stageIndex;
     afterChangesAsked(task, item.kind, note, Date.now(), this.k.s.roles);
     if (item.kind === "delivery") {
+      delete task.proofRefreshes;
+      delete task.proofRefreshBlocked;
+      delete task.approvedProofDecision;
+      delete task.checkedProofDecision;
+      delete task.acceptanceRun;
+      delete task.proofRetestReason;
       // A new coordinator request authorizes another bounded attempt at acceptance fixes.
       delete scope!.work.acceptanceReturns;
       delete task.acceptanceBlocked;

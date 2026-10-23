@@ -18,6 +18,7 @@ import type { Context } from "../src/context.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import type { Updates } from "../src/update.js";
 import type { Learnings } from "../src/learnings.js";
+import { TestResult } from "../src/roles.js";
 
 const roots: string[] = [], engines: Engine[] = [];
 afterAll(async () => {
@@ -227,7 +228,7 @@ for (const patch of ["newly-tested-change", undefined]) it(`binds only this acce
   node.end = undefined;
   delete node.acceptancePatch;
   const stage = f.task.plan!.stages[0]!;
-  const turns = { turn: async () => ({ summary: "Tried it", checks: [{ text: "Try it", result: "pass", evidence: "Observed the expected result" }], learnings: [] }) } as unknown as Turns;
+  const turns = { turn: async () => TestResult.parse({ summary: "Tried it", checks: [{ text: "Try it", result: "pass", evidence: "Observed the expected result" }], learnings: [] }) } as unknown as Turns;
   const work = new Work(f.e, turns, {} as Context, {} as GuideKeeper, { patch: async () => patch } as unknown as Updates, { note: async () => {} } as unknown as Learnings, f.e["checks"]);
   expect(await work.runDo(executionFor(f.task), stage, new AbortController().signal)).toBe("continue");
   const recorded = f.task.journey!.find((step) => step.id === node.id)!;

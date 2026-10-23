@@ -1,5 +1,6 @@
 import { type RepositoryContext } from "./repository-context.js";
-import { beginRepair, productsFor, versionsOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
+import { beginRepair, productsFor, versionsOf, changesOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
+import { openProofs, refreshProofs, sameVersions } from "@petrina/core";
 // "do" stages: one role on one profile. The builder answers findings, brings work up to date and writes a pull
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
@@ -8,7 +9,7 @@ import { builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastI
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
-import { Kernel, type MStage } from "./kernel.js";
+import { Kernel, stepKey, type MStage } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import type { GuideKeeper } from "./guide-keeper.js";
@@ -110,6 +111,7 @@ export class Work {
       } else delete repository.reviewedTree;
       await this.updates.fold(scope);
       const builtTree = await git.treeOf(repository.worktree!);
+      if (task.proofRequests?.length) refreshProofs(task, await versionsOf(task));
       const changed = startingTree && builtTree ? startingTree !== builtTree : undefined;
       if (repository.checks) repository.checks.current = repository.checks.tree === builtTree;
       const buildReport = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
@@ -160,10 +162,20 @@ export class Work {
         Date.now(),
       );
     } else if (role?.result === "checks") {
-      testedVersions = await versionsOf(task);
+      const continuing = repository.conversation?.roleId === roleId && repository.conversation.step === stepKey(task);
+      if (!task.acceptanceRun || !continuing) {
+        const versions = await versionsOf(task);
+        refreshProofs(task, versions);
+        task.acceptanceRun = { versions, changes: await changesOf(task), requestIds: openProofs(task).map(request => request.id) };
+        this.k.commitNow();
+      }
+      const run = task.acceptanceRun;
+      testedVersions = { ...run.versions };
       const rawResult = await this.turns.turn(scope, roleId, profileId, sections, TestResult, signal, {
         used,
         check: (value) => {
+          const ids = value.proofAnswers.map(answer => answer.id);
+          if (new Set(ids).size !== ids.length || ids.some(id => !run.requestIds.includes(id)) || run.requestIds.some(id => !ids.includes(id))) return `Answer every open proof request exactly once by id in proofAnswers, with pass, fail, or blocked and evidence. Required ids: ${run.requestIds.join(", ") || "none"}.`;
           const missing = task.brief?.acceptance.filter((item) => !value.checks.some((check) => check.text === item.text));
           return missing?.length ? `Report pass, fail, or blocked for every acceptance item, using its exact text. For blocked checks, include a reason naming what prevented verification. These are missing:\n${missing.map((item) => `- ${item.text}`).join("\n")}` : undefined;
         },
@@ -172,7 +184,15 @@ export class Work {
         await this.k.saveRoleEdits(scope, roleId, by);
         testedVersions = await versionsOf(task);
       }
-      const result = { ...rawResult, checks: rawResult.checks.map((check) => {
+      // Reuse the run's snapshot for ordinary acceptance and the post-save snapshot for editors.
+      // Explicit proof also needs one finishing observation when a read-only Tester returns.
+      const currentVersions = role.canEdit || !task.proofRequests?.length ? testedVersions : await versionsOf(task);
+      const staleRun = !!task.proofRequests?.length && !sameVersions(run.versions, currentVersions);
+      // Preserve observed failures and unavailable probes. Freshness belongs to each request's
+      // affected products, independently of the outcome recorded on the run's starting versions.
+      const proofAnswers = rawResult.proofAnswers.map(answer => answer.evidence?.trim() ? answer : { ...answer, result: "blocked" as const, reason: answer.reason?.trim() || "The agent did not record how it verified this request." });
+      const proofChecks = proofAnswers.map(answer => ({ ...answer, proofRequestId: answer.id, text: task.proofRequests!.find(request => request.id === answer.id)!.text, productIds: [...task.proofRequests!.find(request => request.id === answer.id)!.productIds] }));
+      const result = { ...rawResult, checks: [...rawResult.checks, ...proofChecks].map((check) => {
         const productIds = productsFor(task, "productIds" in check ? check.productIds : undefined);
         if (task.repositories && !productIds.length) return { ...check, productIds: [], result: "blocked" as const, reason: "Together: no valid affected products were assigned. The coordinator must resolve ownership." };
         if (check.result !== "blocked" && !check.evidence) return { ...check, productIds, result: "blocked" as const, reason: "The agent did not record how it verified this item." };
@@ -182,6 +202,7 @@ export class Work {
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) {
         const report = testerStep.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
         if (report) report.versions = testedVersions;
+        testerStep.proofChecks = proofAnswers;
         testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...(check.evidence ? { evidence: check.evidence } : {}), ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
       }
       await this.learnings.note(scope, result.learnings, roleId, by);
@@ -199,9 +220,10 @@ export class Work {
       const failed = result.checks.filter((check) => check.result === "fail");
       const blocked = result.checks.filter((check) => check.result === "blocked");
       for (const check of result.checks) {
+        const proofRequestId = "proofRequestId" in check && typeof check.proofRequestId === "string" ? check.proofRequestId : undefined;
         const text = check.result === "blocked" ? `Could not verify acceptance check: ${check.text}` : `Failed acceptance check: ${check.text}`;
         const alternate = check.result === "blocked" ? `Failed acceptance check: ${check.text}` : `Could not verify acceptance check: ${check.text}`;
-        const earlier = task.findings.find((finding) => finding.text === text || finding.text === alternate);
+        const earlier = task.findings.find((finding) => proofRequestId ? finding.proofRequestId === proofRequestId : !finding.proofRequestId && (finding.text === text || finding.text === alternate));
         if (earlier) {
           earlier.text = text;
           if (task.repositories) earlier.productIds = check.productIds;
@@ -209,6 +231,7 @@ export class Work {
           if (check.result === "blocked" && check.reason) earlier.evidence = check.reason;
           else if (check.result === "pass") delete earlier.evidence;
         } else if (check.result === "fail") task.findings.push({
+          ...(proofRequestId ? { proofRequestId } : {}),
           ...(task.repositories ? { productIds: check.productIds } : {}),
           id: this.k.id(task.id), text,
           severity: "blocking", raisedBy: by, confirmedBy: [], status: "open",
@@ -217,16 +240,24 @@ export class Work {
       const unverified = blocked.length > 0;
       this.k.log(scope, failed.length || unverified ? "warn" : "done", unverified
         ? `${blocked.length} acceptance check${blocked.length === 1 ? "" : "s"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}`
-        : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : result.summary, roleId, by);
+        : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : staleRun ? "Acceptance passed on an earlier version; the final code still needs acceptance testing" : result.summary, roleId, by);
       endAgentStep(task, {
         outcome: unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
-        reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : W.checksPassed,
+        reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : staleRun ? "the code changed during acceptance testing; final acceptance is still pending" : W.checksPassed,
       }, Date.now());
+      for (const answer of proofAnswers) {
+        const request = task.proofRequests!.find(request => request.id === answer.id)!;
+        request.proof = { stepId: testerStep!.id, versions: { ...run.versions }, result: answer.result, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
+      }
+      refreshProofs(task, currentVersions);
+      task.testedChanges = { ...run.changes };
+      delete task.acceptanceRun;
+      delete task.proofRetestReason;
       const testedPatch = (await acceptanceVersion(task, testedVersions)) ?? (await this.updates.patch(scope));
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) testerStep.acceptancePatch = testedPatch;
       task.testedPatch = testedPatch ?? task.testedPatch;
       if (testedVersions) task.testedVersions = testedVersions;
-      task.acceptancePassed = failed.length === 0 && !unverified;
+      task.acceptancePassed = failed.length === 0 && !unverified && !staleRun;
       task.acceptanceUnverified = unverified;
       if (!unverified) delete task.acceptanceBlocked;
       if (task.repositories && failed.length) {
@@ -249,7 +280,7 @@ export class Work {
         this.k.finishStep(scope);
         const stages = task.plan?.stages ?? [];
         const builder = lastIndexWhere(stages, (entry) => this.k.role(entry.roleId, task)?.result === "build" && entry.kind === "do");
-        if (failed.length && !unverified && builder >= 0 && (repository.acceptanceReturns ?? 0) < 2) {
+        if (failed.length && (!unverified || task.proofRequests?.length) && builder >= 0 && (repository.acceptanceReturns ?? 0) < 2) {
           repository.acceptanceReturns = (repository.acceptanceReturns ?? 0) + 1;
           task.stageIndex = builder;
           task.fixing = true;

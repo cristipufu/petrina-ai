@@ -9,6 +9,7 @@ import * as git from "./git.js";
 
 import { PREPARED_REVIEW } from "./prompts.js";
 export interface ReviewInput {
+  proofs?: readonly Section[];
   parts: Partial<Record<ContextPart, readonly Section[]>>;
   source: readonly Section[];
   products?: readonly { productId: Id; beforeCopy: string; copy: string; afterCopy: string }[];

@@ -345,6 +345,10 @@ export interface JourneyStep {
   buildProductId?: Id;
   /** Passed applicable review rounds, without any reviewer conclusions. */
   checkReviews?: readonly { productId: Id; tree: string; at: number; stageId: Id; round: number }[];
+  /** Frozen before a Tester starts; retained when its conversation resumes. */
+  proofRun?: { versions: Readonly<Record<Id, string>>; changes: Readonly<Record<Id, string>>; requestIds: readonly Id[] };
+  proofChecks?: readonly { id: Id; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string }[];
+  proofDecision?: import("./task-model.js").ProofDecision;
   /** Per seat, including finished members and usage replacements. */
   toolActivity?: Readonly<Record<string, AgentToolActivity>>;
   /** Recent calls across all seats, capped independently of lifetime action counts. */
@@ -754,6 +758,8 @@ export interface DesignCall {
  * as Nit, and `pre-existing` is an old problem the change did not cause: a follow-up, never blocking.
  */
 export interface Finding {
+  /** Reproduced failure of one explicit proof request; text is not its identity. */
+  proofRequestId?: Id;
   id: Id;
   text: string;
   productIds?: readonly Id[];
@@ -848,6 +854,8 @@ export interface Lesson {
 
 /** One review round's parallel work: each reviewer's findings as they arrive, then each voter's verdicts. */
 export interface Hunt {
+  /** This review execution, retained across restart even when its allowance round is reused. */
+  id?: Id;
   /** Current-round explicit resolution/confirmation reports; settled only after all reviewer seats finish. */
   findingChecks?: Readonly<Record<Id, Readonly<Record<Id, { by: Id; resolved: boolean; evidence?: string }>>>>;
   stageId: Id;
@@ -1002,6 +1010,7 @@ export interface WorkRow {
 }
 
 export { REPOSITORY_FIELDS } from "./task-model.js";
+export type { ProofRequest, ProofDecision } from "./task-model.js";
 export type { RepositoryState, RepositoryField, TaskRepository, TaskRequest, TaskScopeState, TaskProgress, TaskDesignState, TaskReviewState, TaskAcceptanceState, TaskActivity, TaskHistoryState, TaskState, Task } from "./task-model.js";
 
 

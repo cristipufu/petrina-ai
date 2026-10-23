@@ -2,7 +2,9 @@ import { CompanionLinks } from "./companion-links.js";
 import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-verifier.js";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
-import { executionFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
+import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
+import { proofDecision, refreshProofs, sameProofDecision } from "@petrina/core";
+import { versionsOf } from "./repositories.js";
 import { companionText, landingState, repositoryDelivered } from "@petrina/core";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
 // top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
@@ -51,6 +53,8 @@ export const CARRIED_OVER = "This delivery was interrupted before Petrina was up
 
 /** Publishing found new source commits, after ruling out an already completed push. */
 class SourceMoved extends Error {}
+/** Local placement recovery may still owe a push; a changed decision publishes nothing further. */
+class ProofDecisionChanged extends Error {}
 
 /** Where a delivery goes. Approval is for this destination only. */
 export function destination(task: { delivery: DeliveryMode; source?: TaskSource }, product: Pick<Product, "path" | "repo" | "defaultBranch"> | undefined): string {
@@ -103,13 +107,18 @@ export class Shipping {
    * moved and it gets ready again).
    */
   async deliver(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    if (task.repositories) {
-      try { return await this.deliverMany(task, stage, signal); }
-      finally {
-        if (!this.k.stopped && ["needs-you", "paused", "failed"].includes(task.state)) await this.clearUnpublishedPreparations(task);
+    try {
+      if (task.repositories) {
+        try { return await this.deliverMany(task, stage, signal); }
+        finally {
+          if (!this.k.stopped && ["needs-you", "paused", "failed"].includes(task.state)) await this.clearUnpublishedPreparations(task);
+        }
       }
+      return await this.deliverOne(executionFor(task), stage, signal);
+    } catch (error) {
+      if (error instanceof ProofDecisionChanged) return "continue";
+      throw error;
     }
-    return this.deliverOne(executionFor(task), stage, signal);
   }
 
   private async clearUnpublishedPreparations(task: MTask): Promise<void> {
@@ -236,6 +245,10 @@ export class Shipping {
     // Looked up before publishing, and first after an interruption: what is already there is recorded, not made again.
     try {
       if ((await this.checkDelivery(scope, signal)) === "stop") return "stop";
+      if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal, true)) {
+        await this.returnForProofDecision(task);
+        return "continue";
+      }
       return (await this.publish(scope, signal)) === "done" ? "stop" : "continue";
     } catch (error) {
       if (!(error instanceof SourceMoved)) throw error;
@@ -258,6 +271,7 @@ export class Shipping {
     await this.backToWork(scope);
     const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
     const backToCheck = (line: string): "back" => {
+      delete task.approvedProofDecision;
       this.clearApproval(scope);
       this.clearDelivery(scope);
       task.stageIndex = check;
@@ -283,7 +297,63 @@ export class Shipping {
       return backToCheck(update === "moved" ? `${sourceName === "main" ? "Main" : sourceName} moved on, and on top of it this change reads differently from what you approved, so Petrina asks you again` : "The work changed after you approved the delivery, so Petrina asks you again");
     }
     if (await this.checks.checksBeforeShipping(scope, signal)) return "back";
+    if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal)) {
+      await this.returnForProofDecision(task);
+      return "back";
+    }
     return "ready";
+  }
+
+  /** A decision covers the full prepared versions and every proof status the coordinator saw. */
+  private async proofApprovalCurrent(task: MTask, signal: AbortSignal, prepared = false): Promise<boolean> {
+    const versions = await versionsOf(task);
+    for (const scope of scopesFor(task)) {
+      const { work } = scope;
+      const delivered = !!(work.pr || work.release || work.landed);
+      if (delivered && work.delivery !== "release") continue;
+      if (!work.worktree) return false;
+      const head = await git.head(work.worktree);
+      if (!(await git.isClean(work.worktree))) return false;
+      const shipping = work.shipping;
+      if (prepared && shipping?.prepared && head !== shipping.prepared.tested) return false;
+      // This exception is only for the exact version commit created and verified by ReleasePrep.
+      if (work.delivery === "release") {
+        if (work.approvedFor?.by !== "coordinator") return false;
+        const version = work.proofRelease;
+        if (version && head !== version.start) {
+          if (head !== version.tested || !await this.releases.isVersionCommit(work.worktree, head, version.start)) return false;
+          if (versions[work.productId] !== task.approvedProofDecision?.versions[work.productId]) versions[work.productId] = await git.treeOf(work.worktree, version.start) ?? "unavailable";
+        }
+      }
+      if (!delivered && prepared && shipping?.base && !shipping.pushed) {
+        if (work.delivery === "local") {
+          const product = this.k.repositoryOf(scope)!;
+          const branch = work.source?.start.branch ?? product.defaultBranch ?? "main";
+          const current = await git.revParse(product.path!, `refs/heads/${branch}`);
+          const ownUpdate = current === shipping.localUpdated && current === shipping.prepared?.tested;
+          if (current && !ownUpdate && current !== shipping.base && !await git.contains(product.path!, shipping.base, current)) return false;
+        } else if (work.source?.start.kind !== "pull-request" && !await this.verifier.sourceCurrent(scope, signal)) return false;
+      }
+    }
+    refreshProofs(task, versions);
+    return sameProofDecision(task.approvedProofDecision, proofDecision(task, versions));
+  }
+
+  private async returnForProofDecision(task: MTask): Promise<void> {
+    for (const scope of scopesFor(task)) {
+      if (scope.work.pr || scope.work.release || scope.work.landed || scope.work.shipping?.pushed) continue;
+      await this.backToWork(scope);
+      this.clearApproval(scope);
+      delete scope.work.shipping;
+    }
+    delete task.approvedProofDecision;
+    delete task.checkedProofDecision;
+    task.stageIndex = task.plan!.stages.findIndex(entry => entry.kind === "gate" && entry.gate === "delivery");
+    if (task.stageIndex < 0) throw new Error("Requested proof needs a coordinator delivery check before publishing.");
+    task.sub = 0;
+    petrinaMoment(task, "delivery", { outcome: "Nothing published; a new delivery decision is needed", reason: "The versions or requested proof differ from your delivery decision", tone: "back" }, Date.now());
+    this.k.log(task, "warn", "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again.");
+    this.k.commitNow();
   }
 
   /**
@@ -317,6 +387,7 @@ export class Shipping {
     this.k.log(scope, "status", `Getting the release ready: Petrina sets the version to ${shipping.version}`);
     this.k.commitNow();
     const tested = await this.releases.setVersion(scope, declared);
+    if (task.proofRequests?.length) repository.proofRelease = { start, tested };
     // A version commit changes what ships: the checks run on it too.
     if (tested !== start && (await this.checks.failing(scope, signal, undefined, "publishing"))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
@@ -438,6 +509,10 @@ export class Shipping {
   /** The default branch moved before a release or local delivery went out: Petrina gets it ready again. */
   private async prepareAgain(scope: RepositoryContext, why: string): Promise<"again"> {
     const { task, work: repository } = scope;
+    if (task.proofRequests?.length) {
+      await this.returnForProofDecision(task);
+      return "again";
+    }
     const shipping = repository.shipping!;
     const branch = repository.source?.start.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main";
     if (shipping.moves >= MAX_MOVES) {
@@ -471,6 +546,7 @@ export class Shipping {
     const start = repository.shipping?.start;
     const tip = await this.branchTip(scope);
     if (start && tip && tip !== start && (await this.releases.isVersionCommit(worktree, tip, start))) await git.resetTo(worktree, start);
+    if (!repository.release && !repository.shipping?.pushed) delete repository.proofRelease;
   }
 
   /** Where the task branch itself points: never just what a working copy has open. */
@@ -732,6 +808,10 @@ export class Shipping {
     };
     await checkMovement(there.value.get(ref));
     this.stopIfAsked(signal);
+    if (scope.task.proofRequests?.length && !await this.proofApprovalCurrent(scope.task, signal, true)) {
+      await this.returnForProofDecision(scope.task);
+      throw new ProofDecisionChanged();
+    }
     const pushed = await this.publishStep(scope, signal, "push", `Publishing: pushing ${branch} to GitHub`, () => git.push(product.path!, connection.remote, [{ sha: at, ref }]));
     if (!pushed.ok) {
       const tip = await this.verifier.remoteTip(scope, connection.remote, branch);

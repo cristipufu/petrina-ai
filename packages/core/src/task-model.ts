@@ -91,6 +91,8 @@ export interface RepositoryState {
   /** Set while the task is being shipped. */
   shipping?: ShippingRecord;
   releasePreview?: { start: string; base?: string; version: string; tag: string; after: string; notes: string; summary: string };
+  /** Exact version-only commit verified by Petrina, retained through shared release completion. */
+  proofRelease?: { start: string; tested: string };
 }
 
 /** These fields belong to one repository, never to a whole shared task. */
@@ -99,7 +101,7 @@ export const REPOSITORY_FIELDS = [
   "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
   "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
-  "cleanup", "conversation", "sideStep", "stepAttempts", "acceptanceReturns", "releasePreview", "confirmedDelivery"
+  "cleanup", "conversation", "sideStep", "stepAttempts", "acceptanceReturns", "releasePreview", "confirmedDelivery", "proofRelease"
 ] as const;
 export type RepositoryField = typeof REPOSITORY_FIELDS[number];
 export type TaskRepository = RepositoryState & {
@@ -246,6 +248,20 @@ export interface TaskReviewState {
 
 /** Acceptance of the tested versions. Unavailable probes remain distinct from reproduced failures. */
 export interface TaskAcceptanceState {
+  /** Explicit reviewer requests, owned by final acceptance, separate from defect findings. */
+  proofRequests?: readonly ProofRequest[];
+  /** Each product's own patch at the latest completed acceptance run. */
+  testedChanges?: Readonly<Record<Id, string>>;
+  /** Main-only final acceptance refreshes in this delivery attempt. */
+  proofRefreshes?: number;
+  proofRefreshBlocked?: boolean;
+  proofRetestReason?: "requested" | "main-moved" | "code-changed";
+  /** Added only when requested proof needs preparation in a plan that omitted the delivery check. */
+  proofDeliveryGate?: Id;
+  /** One in-flight Tester run, retained across pause, restart and profile handoff. */
+  acceptanceRun?: NonNullable<JourneyStep["proofRun"]>;
+  checkedProofDecision?: ProofDecision;
+  approvedProofDecision?: ProofDecision;
   /** The change (its fingerprint) the tester last tried: fix rounds are reviewed, and the tester tries the final code once more before the delivery check. */
   testedPatch?: string;
   testedVersions?: Readonly<Record<Id, string>>;
@@ -257,6 +273,27 @@ export interface TaskAcceptanceState {
   acceptanceUnverified?: boolean;
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
+}
+
+export interface ProofDecision {
+  versions: Readonly<Record<Id, string>>;
+  statuses: Readonly<Record<Id, ProofRequest["status"]>>;
+  refreshBlocked?: boolean;
+}
+
+export interface ProofRequest {
+  id: Id;
+  text: string;
+  reason: string;
+  productIds: readonly Id[];
+  checklistText?: string;
+  requestedBy: { stageId: Id; round: number; seat: string; roleId: Id; profileId: Id; reviewId?: Id };
+  reviewedVersions: Readonly<Record<Id, string>>;
+  ownerStageId: Id;
+  status: "pending" | "already-current" | "proved" | "failed" | "unverified" | "stale";
+  /** Position in one accepted reviewer result: replay never creates another request. */
+  source: string;
+  proof?: { stepId: Id; versions: Readonly<Record<Id, string>>; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; checklist?: boolean };
 }
 
 /** The current step, its agent seats, public activity and coordinator interaction. */

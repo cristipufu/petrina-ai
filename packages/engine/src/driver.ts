@@ -2,7 +2,8 @@ import { executionFor, scopesFor, type RepositoryContext } from "./repository-co
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 
-import { designWorkKey, invalidateAcceptance } from "./repositories.js";
+import { changesOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
+import { openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, sameVersions } from "@petrina/core";
 import { join } from "node:path";
 import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
@@ -439,26 +440,42 @@ export class Driver {
 
             }
             if (sentBack) continue;
-            const versions = await invalidateAcceptance(current);
+            const versions = await invalidateAcceptance(current) ?? await versionsOf(current);
+            refreshProofs(current, versions);
             // The tester tried an earlier version of the change: the final code gets one more pass first.
             const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId, current)?.result === "checks");
             const acceptanceFailed = current.acceptancePassed === false;
-            const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || current.acceptanceUnverified === true;
-            if (tester >= 0 && current.testedPatch !== undefined && !acceptanceExhausted && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch)) {
+            const hasProofs = !!current.proofRequests?.length;
+            const changes = hasProofs ? await changesOf(current) : undefined;
+            const mainOnly = hasProofs && sameVersions(current.testedChanges, changes) && !sameVersions(current.testedVersions, versions);
+            const ordinaryRetest = current.testedPatch !== undefined && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch);
+            const requestedRetest = hasProofs && proofTestNeeded(current, mainOnly);
+            const reproducedFailure = hasProofs && current.journey?.findLast(step => step.kind === "agent" && step.endedAt !== undefined && this.k.role(step.roleId!, current)?.result === "checks")?.acceptanceChecks?.some(check => check.result === "fail");
+            const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || (current.acceptanceUnverified === true && !reproducedFailure && !requestedRetest);
+            const bounded = hasProofs && mainOnly && (current.proofRefreshes ?? 0) >= 2;
+            if (hasProofs) current.proofRefreshBlocked = bounded && (ordinaryRetest || openProofs(current).some(request => request.status === "stale"));
+            if (tester >= 0 && !acceptanceExhausted && !bounded && (ordinaryRetest || requestedRetest)) {
+              if (hasProofs) {
+                delete current.proofRefreshBlocked;
+                if (mainOnly) current.proofRefreshes = (current.proofRefreshes ?? 0) + 1;
+                current.proofRetestReason = openProofs(current).some(request => request.status === "pending") ? "requested" : mainOnly ? "main-moved" : current.testedChanges && !sameVersions(current.testedChanges, changes) ? "code-changed" : "requested";
+              }
               current.retest = true;
               current.stageIndex = tester;
               current.sub = 0;
-              this.k.log(current, "milestone", "Trying the acceptance list once more on the final code");
+              this.k.log(current, "milestone", hasProofs ? current.proofRetestReason === "main-moved" ? "Final acceptance testing: main moved since the proof was recorded" : current.proofRetestReason === "code-changed" ? "Final acceptance testing: the task's code changed since acceptance testing" : "Final acceptance testing: a reviewer asked for proof on the final code" : "Trying the acceptance list once more on the final code");
               this.k.commit();
               continue;
             }
+            if (hasProofs) current.checkedProofDecision = proofDecision(current, versions);
             if (this.shipsUnasked(current)) {
+              if (hasProofs) current.approvedProofDecision = structuredClone(current.checkedProofDecision);
               for (const { work } of scopesFor(current)) {
                 work.approvedSha = work.checkedSha;
                 work.approvedPatch = work.checkedPatch;
                 work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
               }
-              this.k.log(current, "milestone", "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
+              this.k.log(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? "Requested proof is current and checks passed: shipping without asking you, as this task's settings allow" : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;
               current.sub = 0;
               this.k.commit();
@@ -695,6 +712,8 @@ export class Driver {
   private shipsUnasked(task: MTask): boolean {
     const scope = executionFor(task);
     if (task.reviewDecision) return false;
+    if (proofGap(task)) return false;
+    if (task.proofDeliveryGate && !task.approveDelivery && task.acceptancePassed === true && !task.acceptanceUnverified && !task.findings.some(finding => finding.status === "open" && finding.severity === "blocking")) return true;
     // Shared work also needs the saved task choice and combined acceptance; single-product work keeps
     // the product's existing low-risk opt-in, even when its ordinary deliveries ask first.
     if (task.repositories && (task.approveDelivery || task.acceptancePassed !== true)) return false;

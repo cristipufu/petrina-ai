@@ -15,6 +15,7 @@ import type { ReviewInput } from "./review-context.js";
 import * as git from "./git.js";
 import { verificationContext } from "./verification-context.js";
 import { relatedCheckEvidence } from "./related-check-evidence.js";
+import { openProofs, proofContext, type ProofRequest } from "@petrina/core";
 
 export interface Section {
   title: string;
@@ -83,6 +84,8 @@ export class Context {
       task.shownFollowUps = shown;
       if (cards.length) sections.push({ title: "Open follow-up cards", body: `${cards.map((card) => `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".` });
     }
+    if (role?.result === "findings") sections.push(...(review ? review.proofs ?? [] : this.reviewProofs(scope)));
+    if (!review && task.proofRequests?.length && (role?.result === "checks" || role?.result === "build")) sections.push({ title: "Required proof on the final code", body: `${role.result === "build" ? "Final acceptance testing owns these requests. Fix code findings as usual; do not repeat this proof during Builder repairs." : "Answer every open request by its id in proofAnswers with pass, fail, or blocked and evidence. A missing platform is blocked, never a pass. The engine records the actual run versions."}\n${proofContext(role.result === "checks" ? openProofs(task) : task.proofRequests)}\nCurrent versions: ${JSON.stringify(Object.fromEntries((task.repositories ?? [repository]).map(work => [work.productId, work.checks?.current ? work.checks.tree : "unavailable"])))}${task.proofRetestReason ? `\nWhy now: ${task.proofRetestReason === "main-moved" ? "main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "the task's code changed since acceptance testing" : "a reviewer asked for proof on the final code"}.` : ""}` });
     sections.push(...(review ? review.handedBack : this.handedBack(scope)));
     if (!review && reads.includes("report")) sections.push(...await verificationContext(this.k.dataDir, repositoryView(scope), role?.result === "checks" ? Object.fromEntries(await Promise.all((task.repositories ?? [repository]).map(async (work) => [work.productId, work.checks?.current && work.checks.tree ? work.checks.tree : work.worktree ? await git.treeOf(work.worktree) : undefined]))) : undefined));
     // Optional navigation must never prevent the task's ordinary repair handoff.
@@ -100,7 +103,13 @@ export class Context {
     const parts: ReviewInput["parts"] = {};
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
     parts.report = [...(parts.report ?? []), ...evidence];
-    return structuredClone({ parts, source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope) });
+    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope) });
+  }
+
+  private reviewProofs(scope: RepositoryContext): Section[] {
+    const task = scope.task;
+    if (!task.plan?.stages.some(stage => stage.kind === "do" && this.k.role(stage.roleId, task)?.result === "checks")) return [];
+    return [{ title: "Proof requests for final acceptance testing", body: `Missing required proof on this version belongs in proofRequests, separate from defect findings: give text, productIds and reason, and optionally checklistText matching a saved item exactly. This option is available because the plan has acceptance testing. Do not raise, reopen or confirm a finding solely for missing validation; request proof or refer to an earlier request by id. Confirmations of reproduced code defects keep their usual effect. Proof requests do not waive any platform, final-version or configured-check requirement. Earlier rounds' requests (frozen before this round):\n${proofContext((task.proofRequests ?? []) as ProofRequest[]) || "None."}\nValid product ids: ${(task.repositories ?? [scope.work]).map(work => work.productId).join(", ")}.` }];
   }
 
   private approvedSource(scope: RepositoryContext): Section[] {

@@ -95,6 +95,8 @@ export interface Scenario {
   correctPartialVerification?: "real" | "not-a-bug";
   /** "work": the first tester works until the coordinator takes over and hands back; later ones pass. */
   tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked" | "no-evidence";
+  /** Explicit proof answers for acceptance tests that exercise the real turn and read-only cleanup. */
+  testerProofAnswers?: { id: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string }[];
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -1287,7 +1289,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         return done({ summary: "Tried it: the greeting is missing on the welcome page.", checks: [{ text: "A greeting file exists", pass: false, evidence: "The scripted guest welcome page has no greeting; expected the greeting to be visible." }] });
       }
       mark("tester-passed-once");
-      return done({ summary: "Tried it: it works.", checks: [{ text: "A greeting file exists", pass: true, evidence: "The scripted greeting check returned the expected result." }] });
+      return done({ summary: "Tried it: it works.", checks: [{ text: "A greeting file exists", pass: true, evidence: "The scripted greeting check returned the expected result." }], ...(plan.testerProofAnswers ? { proofAnswers: plan.testerProofAnswers } : {}) });
     case "release manager": {
       if (plan.releaseManager === "hang" && !marked("release-manager-started")) return hang(sessionId, "release-manager-started");
       await say("Writing the release notes");

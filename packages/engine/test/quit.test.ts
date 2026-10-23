@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { Engine } from "./engine.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
+import { readProcessList } from "../src/process-tree.js";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor, waitForFile } from "./support.js";
 
 // Conversations started here keep their browsers, in this file's own browser folder.
@@ -121,43 +122,112 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     }
   });
 
-  for (const stubborn of [false, true]) it.skipIf(process.platform === "win32")(`waits for a slow process lookup before removing a cancelled build's copy, and still quits on time${stubborn ? " with an agent that ignores stopping" : ""}`, async () => {
+  for (const { stubborn, killFirst, native } of [
+    { stubborn: false, killFirst: false, native: false },
+    { stubborn: true, killFirst: false, native: false },
+    { stubborn: true, killFirst: true, native: false },
+    { stubborn: true, killFirst: false, native: true },
+  ]) it.skipIf(process.platform === "win32")(`waits for a ${native ? "native" : "slow"} process lookup before removing a cancelled build's copy, and still quits on time${stubborn ? " with an agent that ignores stopping" : ""}${killFirst ? " when the first lookup is killed" : ""}`, async () => {
     const dir = tempDir("petrina-slow-agent-stop-");
     const home = join(dir, "data");
     const fakes = new Fakes(join(dir, "fake"));
     const hold = join(dir, "hold");
     const slow = join(dir, "slow");
     const scanned = join(dir, "scanned"), recover = join(dir, "recover");
+    const killed = join(dir, "killed");
     const buildPids = join(dir, "build-pids");
+    const snapshot = join(dir, "process-list");
+    const stops = join(dir, "stops");
     const bin = join(dir, "bin");
     mkdirSync(bin);
-    // Only this engine gets the delayed process-list stand-in, only once its background build is running.
+    // Delay delivery of a controlled list, not native ps startup with only ~100ms left.
+    // The separate native case covers real discovery, pausing and stopping with no injected delay.
+    // Recovery belongs to the next invocation, even if the first helper never runs its TERM trap.
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     writeFileSync(join(bin, "ps"), `#!/bin/sh
 if [ -f ${quote(slow)} ]; then
+  listed=$(while IFS= read -r row; do printf '%s\n' "$row"; done < ${quote(snapshot)}) || exit 1
   first=0
-  recovery=${quote(recover)}
-  if [ ! -f ${quote(scanned)} ]; then : > ${quote(scanned)}; first=1; fi
-  delay=${stubborn ? "3.9" : "1.1"}
-  if [ -f ${quote(recover)} ]; then delay=0.1; fi
+  if (set -C; : > ${quote(scanned)}) 2>/dev/null; then first=1; fi
+  delay=0.1
+  if [ "$first" = 1 ]; then delay=${stubborn ? "3.9" : "1.1"}; else : > ${quote(recover)}; fi
+  ${killFirst ? `if [ "$first" = 1 ]; then
+    /bin/sleep 3
+    : > ${quote(killed)}
+    kill -KILL $$
+  fi` : ""}
   /bin/sleep "$delay" &
   sleeper=$!
-  trap 'if [ "$first" = 1 ]; then : > "$recovery"; fi; kill "$sleeper" 2>/dev/null; wait "$sleeper"; exit 143' TERM INT
+  trap 'kill "$sleeper" 2>/dev/null; wait "$sleeper"; exit 143' TERM INT
   wait "$sleeper"
-  /bin/ps "$@" &
-  sleeper=$!
-  wait "$sleeper"
-  exit $?
+  printf '%s\n' "$listed"
+  exit 0
 fi
 exec /bin/ps "$@"
 `);
     chmodSync(join(bin, "ps"), 0o755);
-    // Complete the Mac's first run of this fresh stand-in before measuring the
-    // production stop deadline. The delayed scan itself must still run for real.
+    // Complete the Mac's first run of this fresh stand-in before measuring the stop deadline.
     const ready = Bun.spawn([join(bin, "ps"), "-A", "-o", "pid=,ppid="], { stdout: "ignore", stderr: "pipe" });
     expect(await ready.exited, await new Response(ready.stderr).text()).toBe(0);
+    if (!native) {
+      // Unavailable scripted data is a failed read, never a successful empty process list.
+      writeFileSync(slow, "");
+      const absent = Bun.spawn([join(bin, "ps"), "-A", "-o", "pid=,ppid=,stat="], { stdout: "pipe", stderr: "ignore" });
+      expect(await absent.exited).toBe(1);
+      expect(await new Response(absent.stdout).text()).toBe("");
+      expect(existsSync(scanned)).toBe(false);
+      rmSync(slow);
+    }
     const launcher = join(dir, "engine.ts");
-    writeFileSync(launcher, `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH; await import(${JSON.stringify(HARNESS)});`);
+    writeFileSync(launcher, `import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+${native ? "" : `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH;
+const kill = process.kill.bind(process), paused = new Set(), owners = new Map(), agents = new Set();
+const live = pid => { try { kill(pid, 0); return true; } catch { return false; } };
+const publish = () => {
+  const listed = [...owners].filter(([pid]) => live(pid)).map(([pid, parent]) =>
+    pid + " " + parent + " " + (paused.has(pid) ? "T" : "S")).join("\\n") + "\\n";
+  writeFileSync(${JSON.stringify(snapshot + ".tmp")}, listed);
+  renameSync(${JSON.stringify(snapshot + ".tmp")}, ${JSON.stringify(snapshot)});
+};
+// Scripted states follow successful real signals to this fixture's known processes.
+// Native late-fork tests and the native case below check the actual OS pause barrier.
+process.kill = function(pid, signal) {
+  const result = kill(pid, signal);
+  if (signal === "SIGSTOP" && agents.has(Math.abs(pid)) && existsSync(${JSON.stringify(slow)}) && existsSync(${JSON.stringify(buildPids)})) {
+    const workers = readFileSync(${JSON.stringify(buildPids)}, "utf8").split("\\n").map(Number).filter(pid => pid > 0 && live(pid));
+    for (const worker of workers) owners.set(worker, Math.abs(pid));
+  }
+  if (signal === "SIGSTOP") paused.add(Math.abs(pid));
+  if (signal === "SIGCONT") paused.delete(Math.abs(pid));
+  if (signal === "SIGSTOP" || signal === "SIGCONT") publish();
+  return result;
+};`}
+const { AgentRun } = await import(${JSON.stringify(join(import.meta.dir, "../src/acp-run.ts"))});
+${native ? "" : `const start = AgentRun.start;
+AgentRun.start = function(options) {
+  return start.call(this, { ...options, onProcess(child) {
+    agents.add(child.pid); owners.set(child.pid, process.pid); publish();
+    options.onProcess?.(child);
+  } });
+};`}
+const stop = AgentRun.prototype.stop;
+const observed = new WeakSet();
+AgentRun.prototype.stop = function(...args) {
+  const started = Date.now(), pending = stop.apply(this, args);
+  if (!observed.has(this)) {
+    observed.add(this);
+    void pending.then(
+      complete => {
+        const evidence = { pid: this.child.pid, elapsed: Date.now() - started, complete };
+        appendFileSync(${JSON.stringify(stops)}, JSON.stringify(evidence) + "\\n");
+        console.info("Agent stop evidence:", JSON.stringify(evidence));
+      },
+      error => console.error("Agent stop error:", JSON.stringify({ pid: this.child.pid, elapsed: Date.now() - started, error: String(error) })),
+    );
+  }
+  return pending;
+};
+await import(${JSON.stringify(HARNESS)});`);
     writeFileSync(hold, "");
     writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Long build", file: hold }, background: { title: "Long build", pids: buildPids } }));
     let engine: EngineProcess | undefined;
@@ -167,7 +237,7 @@ exec /bin/ps "$@"
       for (const end of ["cancel", "quit"] as const) {
         // A first lookup near its limit may time out under contention. Recovery must then
         // be available; forcing every lookup past its deadline cannot prove child cleanup.
-        for (const file of [slow, scanned, recover]) rmSync(file, { force: true });
+        for (const file of [slow, scanned, recover, killed]) rmSync(file, { force: true });
         rmSync(`${hold}.reached`, { force: true });
         const id = await engine.act("addTask", { productId, title: "Long build", description: "[quick]", delivery: "local" }) as string;
         await waitFor(async () => {
@@ -182,22 +252,35 @@ exec /bin/ps "$@"
         await waitForFile(join(copy, "target", "background", "out.bin"));
         const pids = pidsIn(buildPids).filter(alive);
         expect(pids.length).toBeGreaterThan(0);
-        writeFileSync(slow, "");
+        const agents = pidsIn(join(fakes.dir, "processes")).filter(alive);
+        expect(agents.length).toBeGreaterThan(0);
+        if (!native) writeFileSync(slow, "");
         if (end === "cancel") {
           await engine.act("cancel", id);
           const state = await engine.until((state) => !!state.tasks.find((task) => task.id === id)?.cleanup, "the first cleanup attempt after the build stopped");
-          expect(pids.filter(alive)).toEqual([]);
+          const remaining = pids.filter(alive);
+          const listed = remaining.length ? await readProcessList(4_000) : undefined;
+          const task = state.tasks.find((task) => task.id === id)!;
+          if (remaining.length) console.error("Cancelled build cleanup evidence:", JSON.stringify({ native, stubborn, killFirst, cleanup: task.cleanup, timeline: task.timeline.slice(-8), processes: listed?.split("\n").filter(line => remaining.includes(Number(line.trim().split(/\s+/)[0]))), log: readFileSync(join(home, "engine.log"), "utf8").split("\n").slice(-40) }));
+          expect(remaining).toEqual([]);
           expect(state.tasks.find((task) => task.id === id)?.cleanup?.removedAt).toBeDefined();
           expect(existsSync(copy)).toBe(false);
         } else {
-          const agents = pidsIn(join(fakes.dir, "processes")).filter(alive);
-          expect(agents.length).toBeGreaterThan(0);
-          expect(await engine.quit()).toBeLessThan(10_000);
-          expect([...pids, ...agents].filter(alive)).toEqual([]);
+          const elapsed = await engine.quit();
+          const remaining = [...pids, ...agents].filter(alive);
+          if (remaining.length) {
+            const listed = await readProcessList(4_000);
+            console.error("Engine quit evidence:", JSON.stringify({ elapsed, buildPids: pids, agents, processes: listed?.split("\n").filter(line => remaining.includes(Number(line.trim().split(/\s+/)[0]))), log: readFileSync(join(home, "engine.log"), "utf8").split("\n").slice(-40) }));
+          }
+          expect(elapsed).toBeLessThan(10_000);
+          expect(remaining).toEqual([]);
           expect(readFileSync(join(home, "engine.log"), "utf8")).toContain("Petrina engine stopped");
           expect(existsSync(copy)).toBe(true);
         }
-        if (existsSync(recover)) console.info(`Recovered a timed-out first process scan during ${end}.`);
+        const recorded = readFileSync(stops, "utf8").trim().split("\n").map(line => JSON.parse(line) as { pid: number; complete: boolean });
+        for (const pid of agents) expect(recorded.find(stop => stop.pid === pid)?.complete).toBe(true);
+        if (killFirst) expect(existsSync(killed)).toBe(true);
+        if (existsSync(recover)) console.info(`Used the recovery process lookup during ${end} (stubborn: ${stubborn}, first killed: ${killFirst}).`);
       }
     } finally {
       if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());

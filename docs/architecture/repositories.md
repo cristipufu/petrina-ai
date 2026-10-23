@@ -65,6 +65,8 @@ Nothing at delivery rebases, merges or changes code; for a release Petrina adds 
 
 ## Shipping is never repeated blindly
 
+Tasks with explicit reviewer proof requests also bind delivery decisions to every prepared product tree and the proof statuses shown. Changed versions or statuses clear approval and return to the delivery checkpoint for a new decision, without resetting the main-only refresh limit. Releases require an explicit decision about the proof gap; only Petrina’s exact verified version-number commit may extend that decision. Proof provenance and final acceptance scheduling are defined in [Workflow and review](workflow.md#acceptance-evidence).
+
 Petrina publishes, and saves each publishing step before it starts. One check runs before Petrina publishes, and again after any interruption (a quit, a crash, a pause, a failed step and its Retry, a cancel): it checks whether the tested commit reached the approved PR or branch, the release on the saved tag at that commit, or both the local destination and its push. A completed local update is recorded separately from its push; newer destination commits do not hide completed delivery.
 
 Releases published before this delivery started never count. It asks GitHub about the product's own repository, from outside the working copy, so a remote an agent rewrote cannot fake a delivery, and it first makes sure the login can see that repository: GitHub answers "not found" alike for a missing release and a repository the login cannot see. Found: it is recorded.

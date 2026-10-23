@@ -1,5 +1,6 @@
 import { executionFor, scopesFor, repositoryView, type RepositoryContext } from "./repository-context.js";
-import { beginRepair, productsFor } from "./repositories.js";
+import { beginRepair, productsFor, versionsOf } from "./repositories.js";
+import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
@@ -21,6 +22,7 @@ import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
 import { completeAll } from "./parallel.js";
+import { checkProofRequests, recordReviewProofs } from "./proof-requests.js";
 import type { ReadinessNeed } from "./readiness.js";
 
 /**
@@ -190,12 +192,13 @@ export class Reviews {
       }
       if (task.repositories) task.activeProductId = task.leadProductId ?? task.repositories[0]!.productId;
       task.statusLine = "Preparing the review";
+      refreshProofs(task, await versionsOf(task));
       this.k.commit();
       const snapshot = await this.context.captureReview(executionFor(task));
       const input = await prepareReviewInput(this.k.dataDir, executionFor(task), snapshot, signal);
       this.inputs.set(task, { digest: input.digest, input: snapshot });
       signal.throwIfAborted();
-      task.hunt = { stageId: stage.id, round, reported: {}, findings: task.findings.length, input };
+      task.hunt = { id: this.k.id(task.id), stageId: stage.id, round, reported: {}, findings: task.findings.length, input };
       this.k.commit();
       // Checks use their own bounded lane. Re-enter the driver to admit the first real reviewer.
       return "continue";
@@ -345,7 +348,7 @@ export class Reviews {
   private async hunt(task: MTask, stage: MStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const input = await this.input(task, signal);
-    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(input.findings, result, task);
+    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(input.findings, result, task) ?? checkProofRequests(this.k, task, result.proofRequests);
     const reported = (key: string) => {
       task.hunt = { ...task.hunt!, reported: { ...task.hunt!.reported, [key]: true } };
       this.k.commitNow();
@@ -394,6 +397,7 @@ export class Reviews {
 
   /** What one reviewer reported: its confirmations and disputes of earlier findings, and its own. */
   private async applyReview(scope: RepositoryContext, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id, reviewerKey: string): Promise<void> {
+    recordReviewProofs(this.k, scope.task, stage, result.proofRequests, profileId, roleId, reviewerKey);
     const { task } = scope;
     await this.learnings.note(scope, result.learnings, roleId, profileId);
     const reopenings = new Set<Id>();
@@ -1294,7 +1298,8 @@ export class Reviews {
       }
     }
     this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
-    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: W.reviewPassed };
+    const pendingProofs = task.proofRequests?.filter(request => request.status !== "proved" && request.status !== "already-current").length ?? 0;
+    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: pendingProofs ? `${W.reviewPassed}; ${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing` : W.reviewPassed };
     endAgentStep(task, { outcome, ...reason }, Date.now());
     if (end.kind === "send back") {
       task.rounds[stage.id] = round + 1;

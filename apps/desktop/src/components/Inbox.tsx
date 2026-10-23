@@ -20,7 +20,7 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { checkDecisionLabel, checkProblem, decisionEvidence, CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, reviewDecisionPending, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import { proofGap, checkDecisionLabel, checkProblem, decisionEvidence, CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, reviewDecisionPending, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -187,7 +187,7 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   const contextTask = task ?? find.finishedTask(item.taskId);
   const product = find.product(contextTask?.productId);
   // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
-  const unsettled = item.kind === "delivery" && (task?.acceptanceUnverified === true || (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
+  const unsettled = item.kind === "delivery" && ((task && !!proofGap(task)) || task?.acceptanceUnverified === true || (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
   const checkIssue = task && !reviewDecisionPending(task) ? checkProblem(task) : undefined;
   const kind = item.kind === "delivery" && checkIssue ? { ...KIND.delivery, label: checkDecisionLabel(task!)!, tone: "amber" as const } : unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
   const Icon = kind.icon;

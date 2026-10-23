@@ -1,5 +1,6 @@
 import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { beginAgentStep } from "@petrina/core";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as github from "../src/github.js";
@@ -100,8 +101,8 @@ describe("explicit repository execution contexts", () => {
     } finally { gates.forEach(gate => gate.resolve()); cleanup.mockRestore(); await engine.shutdown(); }
   });
 
-  for (const canEdit of [false, true]) it(`uses one acceptance snapshot per product${canEdit ? " after saving tester edits once" : " for a read-only tester"}`, async () => {
-    const { engine, task } = await fixture(`tester-versions-${canEdit}`);
+  for (const proof of [false, true]) for (const canEdit of [false, true]) it(`uses one acceptance snapshot per product${canEdit ? " after saving tester edits once" : " for a read-only tester"}${proof ? " with required proof" : ""}`, async () => {
+    const { engine, task } = await fixture(`tester-versions-${canEdit}-${proof}`);
     const role = { ...engine.role("tester")!, id: "acceptance-specialist", name: "Acceptance specialist", canEdit };
     engine.s.roles.push(role);
     const stage = { id: "test", title: "Acceptance", kind: "do" as const, roleId: role.id, profileIds: ["sol-high"] };
@@ -110,23 +111,34 @@ describe("explicit repository execution contexts", () => {
     task.brief = { summary: "Together", forUsers: [], areas: [], risks: [], acceptance: [{ text: "Both products work" }] };
     const scope = executionFor(task);
     const before = await versionsOf(task);
+    if (proof) task.proofRequests = [{ id: "required-proof", source: "review:1:0:0", text: "Prove both products on the final code", reason: "Both versions must match", productIds: task.repositories!.map(work => work.productId), requestedBy: { stageId: "review", round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, reviewedVersions: before, ownerStageId: stage.id, status: "pending" }];
     const turn = spyOn(engine["turns"], "turn").mockImplementation(async (_scope, _role, _profile, _given, schema, _signal, options) => {
       options?.used?.("opus-high");
       if (canEdit) writeFileSync(join(scope.work.worktree!, "tester-fix.txt"), "A focused tester repair\n");
-      return schema.parse({ summary: "Verified", checks: [{ text: "Both products work", result: "pass", productIds: task.repositories!.map(work => work.productId), evidence: "Exercised both products" }], learnings: [] });
+      const value = schema.parse({ summary: "Verified", checks: [{ text: "Both products work", result: "pass", productIds: task.repositories!.map(work => work.productId), evidence: "Exercised both products" }], proofAnswers: proof ? [{ id: "required-proof", result: "pass", evidence: "Exercised both prepared product versions" }] : [], learnings: [] });
+      const step = beginAgentStep(task, role.id, "opus-high", Date.now(), engine.s.roles, undefined, scope.work);
+      step.agentResults = [{ roleId: role.id, profileId: "opus-high", at: Date.now(), value }];
+      return value;
     });
     const tree = spyOn(gitOps, "treeOf"), save = spyOn(engine, "saveRoleEdits");
     try {
       expect(await engine["work"].runDo(scope, stage, new AbortController().signal)).toBe("continue");
-      expect(tree).toHaveBeenCalledTimes(canEdit ? 4 : 2);
+      expect(tree).toHaveBeenCalledTimes(canEdit || proof ? 4 : 2);
+      for (const work of task.repositories!) expect(tree.mock.calls.filter(([path]) => path === work.worktree)).toHaveLength(canEdit || proof ? 2 : 1);
       expect(save).toHaveBeenCalledTimes(canEdit ? 1 : 0);
       if (canEdit) expect(save).toHaveBeenCalledWith(scope, role.id, "opus-high");
-      expect(task.acceptancePassed).toBe(true);
+      expect(task.acceptancePassed).toBe(!(proof && canEdit));
       expect(task.testedPatch).toBe(JSON.stringify(task.testedVersions));
       expect(task.brief.acceptance[0]!.versions).toEqual(task.testedVersions);
       expect(task.brief.acceptance[0]!.verification).toBe("passed");
       if (canEdit) expect(task.testedVersions![scope.work.productId]).not.toBe(before[scope.work.productId]);
       else expect(task.testedVersions).toEqual(before);
+      if (proof) {
+        expect(task.proofRequests![0]!.proof!.versions).toEqual(before);
+        expect(task.proofRequests![0]!.proof!.result).toBe("pass");
+        expect(task.proofRequests![0]!.status).toBe(canEdit ? "stale" : "proved");
+        expect(task.acceptanceUnverified).toBe(false);
+      }
       const reads = tree.mock.calls.length;
       expect(await invalidateAcceptance(task, task.testedVersions)).toEqual(task.testedVersions);
       expect(await acceptanceVersion(task, task.testedVersions)).toBe(task.testedPatch);

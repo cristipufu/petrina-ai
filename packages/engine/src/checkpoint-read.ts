@@ -87,6 +87,10 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
     ...(request.kind === "delivery" ? {
       approvalMeaning: reviewDecisionPending(task) ? "Accept unresolved review and continue to final verification. This does not approve delivery." : "Delivery approval remains subject to the existing checks, acceptance and publishing gates.",
       reviewDecision: task.reviewDecision ?? null,
+      proofRequests: task.proofRequests ?? [],
+      proofRefreshes: task.proofRefreshes ?? 0,
+      proofRefreshBlocked: task.proofRefreshBlocked ?? false,
+      proofDecision: task.checkedProofDecision ?? null,
       acceptance: checkpointAcceptance(task, engine.s.roles),
       design: task.brief || task.objections.length || task.call ? { omitted: "Design brief, objections, responses and coordinator call", read: read("design") } : { unavailable: "No design recorded." },
     } : { brief: task.brief, objections: task.objections, call: task.call, designRead: read("design") }),

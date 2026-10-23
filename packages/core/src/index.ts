@@ -3,6 +3,7 @@ export * from "./message-delivery.js";
 export * from "./call.js";
 export * from "./journey.js";
 export * from "./acceptance.js";
+export * from "./proof-requests.js";
 export * from "./cleanup.js";
 export * from "./library.js";
 export * from "./roles.js";

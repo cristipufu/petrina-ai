@@ -4,6 +4,7 @@
 
 import { roleForTask } from "./roles.js";
 import { checkProblem } from "./check-evidence.js";
+import { proofGap } from "./proof-requests.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
 import type { Column, GateKind, InboxKind, Role, Stage, Task } from "./model.js";
 
@@ -56,6 +57,8 @@ export function gateTitle(task: Task, gate: GateKind): string {
   if (failing.length) return checkProblemTitle(task.title, failing, unverifiedChecks);
   const open = gate === "delivery" ? stillBlocking(task) : 0;
   if (open) return `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open`;
+  const gap = gate === "delivery" && proofGap(task);
+  if (gap) return `Your call on “${task.title}”: ${gap[0]!.toLowerCase()}${gap.slice(1)}`;
   const unverified = gate === "delivery" ? task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0 : 0;
   return unverified ? `Your call on “${task.title}”: ${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}` : GATE_TITLE[gate](task.title);
 }
@@ -73,6 +76,8 @@ export function gateStatus(task: Task, gate: GateKind): string {
   if (checkProblem(task)) return "Checks unverified. Your call";
   // Never "done" while Important findings are open: the rounds ran out and the coordinator decides.
   if (open) return `Review rounds ran out with ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} open. Your call`;
+  const gap = proofGap(task);
+  if (gap) return `${gap}. Your call`;
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;
   if (unverified) return `${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}. Your call`;
   return "Reviews done. Waiting for your OK to ship";
