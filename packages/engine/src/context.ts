@@ -10,7 +10,7 @@ import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import { takeMessages } from "./messages.js";
-import { currentSourcePointers } from "./source-pointers.js";
+import { currentSourcePointers, hintProducts } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
 import * as git from "./git.js";
 import { verificationContext } from "./verification-context.js";
@@ -27,6 +27,7 @@ export class Context {
   private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean) => Section[]> = {
     notes: (scope) => this.notes(scope),
     brief: (scope) => this.brief(scope),
+    "design-notes": (scope) => this.designNotes(scope),
     objections: (scope, roleId) => this.objections(scope, roleId),
     checks: (scope) => this.checks(scope),
     "findings-to-answer": (scope) => this.findingsToAnswer(scope),
@@ -141,6 +142,28 @@ export class Context {
         body: [brief.summary, brief.forUsers.length ? `What changes for users:\n${brief.forUsers.map((line) => `- ${line}`).join("\n")}` : "", brief.areas.length ? `Product behavior and affected areas:\n${brief.areas.map((line) => `- ${line}`).join("\n")}` : "", `Acceptance checklist:\n${brief.acceptance.map((item) => `- ${item.text}`).join("\n")}`, brief.risks.length ? `Risks:\n${brief.risks.map((line) => `- ${line}`).join("\n")}` : ""].filter(Boolean).join("\n\n"),
       },
     ];
+  }
+
+  /**
+   * The final design review's non-blocking points, handed on as advice. They come from the latest design step only when
+   * it is a review that settled the design: an author step after it (changes asked at the design check, or following the
+   * coordinator's call) rewrote the brief, so earlier points are out of date. Only points that review raised and nobody
+   * answered since count; records that cannot show this give none.
+   */
+  private designNotes(scope: RepositoryContext): Section[] {
+    const { task } = scope;
+    const kind = (roleId: Id | undefined) => roleId === undefined ? undefined : this.k.role(roleId, task)?.result;
+    const last = task.journey?.findLast((step) => step.kind === "agent" && (kind(step.roleId) === "brief" || kind(step.roleId) === "objections"));
+    const raised = last && kind(last.roleId) === "objections" ? last.result?.objections : undefined;
+    if (!last || !raised || raised.some((objection) => objection.blocking)) return [];
+    const notes = task.objections.filter((objection) => objection.status === "noted" && !objection.blocking && objection.round === last.round && raised.some((entry) => entry.id === objection.id));
+    if (!notes.length) return [];
+    const step = task.plan?.stages.find((stage) => stage.id === last.stageId)?.title ?? "an earlier design step";
+    const reviewer = this.k.role(last.roleId!, task)!.name;
+    return [{
+      title: "Final design-review notes (advice only)",
+      body: `From “${step}”, round ${last.round}, by ${reviewer}: the design settled with these non-blocking points noted. They are advice only, not requirements, acceptance items or blockers. Check each one against the current code before relying on it. The approved brief, the coordinator's notes and any design call win wherever they differ. Do not add scope because of a note, and you need not answer them.${hintProducts(task).length > 1 ? " This task has several products, so some notes may concern another product." : ""}\n${notes.map((note) => `- ${note.text}`).join("\n")}`,
+    }];
   }
 
   /** The design's objections; for the architect following the coordinator's call, the call and what it must answer. */

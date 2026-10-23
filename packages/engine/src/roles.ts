@@ -170,7 +170,7 @@ export const VerifyResult = z.object({
 });
 
 /** The parts of what an agent is shown besides its instructions, in the order they appear. */
-export const CONTEXT_PARTS = ["notes", "brief", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings"] as const;
+export const CONTEXT_PARTS = ["notes", "brief", "design-notes", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings"] as const;
 export type ContextPart = (typeof CONTEXT_PARTS)[number];
 
 export interface RoleContract {
@@ -361,7 +361,7 @@ If objections are listed below, answer every one by its id: accept it and change
   },
   "builder": {
     result: BuildResult,
-    reads: ["notes", "brief", "checks", "findings-to-answer", "report"],
+    reads: ["notes", "brief", "design-notes", "checks", "findings-to-answer", "report"],
     shape: ({ task }) => buildShape(task),
     instructions: ctx => ROLE_CONTRACTS["builder"]!.withInstructions!(ctx, ctx.role.instructions),
     withInstructions: ({ task, defaultBranch }, wording) => {

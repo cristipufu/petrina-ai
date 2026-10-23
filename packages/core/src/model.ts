@@ -718,7 +718,10 @@ export interface Objection {
   text: string;
   blocking: boolean;
   raisedBy: Id;
-  /** `noted`: a non-blocking point nobody decided on, kept as a follow-up. Never a default "rejected". */
+  /**
+   * `noted`: a non-blocking point nobody decided on, kept as a follow-up. Never a default "rejected". While the review
+   * that raised it is the latest design step, builders receive it as advice only.
+   */
   status: "open" | "accepted" | "rejected" | "noted";
   answer?: string;
   /** Settled by the coordinator's own decision (siding with the architect), not by an answer. */

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
@@ -158,6 +158,9 @@ describe("The coordinator's call on a design disagreement", () => {
   const waitFor = (taskId: string, kind: InboxKind) => until(engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
   const reviewerRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "design-reviewer" && entry.tone === "milestone").length;
   const architectRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "architect" && entry.tone === "milestone").length;
+  /** What the first Builder was actually sent, once it is on the journey. */
+  const builderInput = (state: State, taskId: string) => taskOf(state, taskId).journey?.find((step) => step.roleId === "builder")?.agentInputs?.[0];
+  const designNotes = (state: State, taskId: string) => builderInput(state, taskId)!.sections.find((section) => section.title === "Final design-review notes (advice only)");
   let productId = "";
 
   it("settles the design: the architect follows the call once, then a design check, with no review round", async () => {
@@ -226,8 +229,11 @@ describe("The coordinator's call on a design disagreement", () => {
 
     // Approving moves on to the build. The call stays, so nothing later can reopen the design it settled.
     engine.approve(itemOf(state, taskId, "design")!.id);
-    state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
+    state = await until(engine, (current) => !!builderInput(current, taskId), coordinator);
     expect(taskOf(state, taskId).call?.text).toBe(CALL);
+    // The Builder gets the brief that follows the call and the call among the coordinator's notes, and no review's points.
+    expect(builderInput(state, taskId)!.sections.find((section) => section.title.startsWith("The coordinator's notes"))!.body).toContain(CALL);
+    expect(designNotes(state, taskId)).toBeUndefined();
     engine.cancel(taskId);
   });
 
@@ -313,13 +319,32 @@ describe("The coordinator's call on a design disagreement", () => {
     engine.cancel(taskId);
   });
 
-  it("keeps a non-blocking point raised as the design settles as an undecided follow-up, never rejected", async () => {
+  it("keeps a non-blocking point raised as the design settles as an undecided follow-up, never rejected, and hands it to the first Builder as advice", async () => {
     const taskId = engine.addTask({ productId, title: "Pick a colour", description: "A colour file. [follow-up]" });
-    const state = await waitFor(taskId, "design");
-    const objections = taskOf(state, taskId).objections;
+    let state = await waitFor(taskId, "design");
+    // The engine's state is live: keep what it was when the design settled.
+    const settled = structuredClone(taskOf(state, taskId));
+    const objections = settled.objections;
     expect(objections).toHaveLength(1);
     expect(objections[0]!.status).toBe("noted");
     expect(objections[0]!.answer).toBeUndefined();
+
+    engine.approve(itemOf(state, taskId, "design")!.id);
+    state = await until(engine, (current) => !!builderInput(current, taskId), coordinator);
+    const after = taskOf(state, taskId);
+    // No extra design round, and the point, the brief and its acceptance list stay as they were.
+    expect([architectRuns(after), reviewerRuns(after)]).toEqual([architectRuns(settled), reviewerRuns(settled)]);
+    expect(after.objections).toEqual(objections);
+    expect(after.brief).toEqual(settled.brief);
+    const input = builderInput(state, taskId)!;
+    const notes = designNotes(state, taskId)!;
+    const titles = input.sections.map((section) => section.title);
+    expect(titles.indexOf(notes.title)).toBe(titles.indexOf("Design brief") + 1);
+    expect(notes.body).toStartWith("From “Design”, round 1, by Design reviewer:");
+    expect(notes.body).toContain("advice only");
+    expect(notes.body.split("\n").filter((line) => line.startsWith("- "))).toEqual([`- ${objections[0]!.text}`]);
+    expect(input.manifest).toContainEqual(expect.objectContaining({ name: notes.title, kind: "text", size: notes.body.length }));
+    expect(readFileSync(input.exact!.file, "utf8")).toContain(`## ${notes.title}\n${notes.body}`);
     engine.cancel(taskId);
   });
 
@@ -343,7 +368,7 @@ describe("The coordinator's call on a design disagreement", () => {
   });
 
   it("sends the design back for a full round when changes are asked for at a check with no call", async () => {
-    const taskId = engine.addTask({ productId, title: "Pick a motto", description: "A motto file." });
+    const taskId = engine.addTask({ productId, title: "Pick a motto", description: "A motto file. [follow-up]" });
     let state = await waitFor(taskId, "design");
     const check = itemOf(state, taskId, "design")!;
     // The engine's state is live: keep what it was before asking for changes.
@@ -358,6 +383,15 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(reviewerRuns(after)).toBe(reviews + 1);
     expect(after.rounds[design.id]).toBe(rounds + 1);
     expect(after.timeline.map((entry) => entry.text)).toContain("You asked for changes: Make it shorter.");
+
+    // The revised design settled with its own point: the Builder gets only that one, not the first review's.
+    const [stale, current] = after.objections;
+    expect([stale, current].map((objection) => [objection!.round, objection!.status])).toEqual([[rounds, "noted"], [rounds + 1, "noted"]]);
+    engine.approve(itemOf(state, taskId, "design")!.id);
+    state = await until(engine, (current) => !!builderInput(current, taskId), coordinator);
+    const notes = designNotes(state, taskId)!.body;
+    expect(notes).toStartWith(`From “Design”, round ${rounds + 1}, by Design reviewer:`);
+    expect(notes.split("\n").filter((line) => line.startsWith("- "))).toEqual([`- ${current!.text}`]);
     engine.cancel(taskId);
   });
 
