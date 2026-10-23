@@ -202,7 +202,7 @@ it("settles an incidental older-bug repair only from current explicit proof, ret
   } finally { await world.engine.shutdown(); }
 });
 
-it("does not attach reports to a manual bug that was queued while matching", async () => {
+it("keeps a manual bug queued while matching as the destination, without changing its request", async () => {
   let queue = () => {};
   const world = await open(prompt => { queue(); return groupByBug(prompt); });
   try {
@@ -211,12 +211,294 @@ it("does not attach reports to a manual bug that was queued while matching", asy
     queue = () => { queue = () => {}; engine.queueTask(id); };
     const source = taskOf(engine, world.shop, "New sighting", [older("race", "bug-race: The same underlying bug")]);
     await finish(engine, source);
-    expect(engine.task(id)!.state).toBe("queued");
-    expect(engine.task(id)!.followUp).toBeUndefined();
-    expect(engine.task(id)!.description).toBe("Do not change this queued request");
-    expect(source.findings[0]!.tracking).toHaveProperty("taskId");
-    expect(source.findings[0]!.tracking).not.toEqual({ taskId: id });
-    expect(cards(engine)).toHaveLength(1);
+    const manual = engine.task(id)!;
+    expect(manual.state).toBe("queued");
+    expect(manual.followUp).toMatchObject({ preserveRequest: true, reports: [{ taskId: source.id, findingId: "race" }] });
+    expect(manual.description).toBe("Do not change this queued request");
+    expect(source.findings[0]!.tracking).toEqual({ taskId: id });
+    expect(cards(engine).map(task => task.id)).toEqual([id]);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("reuses an already queued manual bug and a running one held mid-turn, leaving their live work and other requests alone", async () => {
+  let mode: "down" | "same" = "down";
+  const world = await open(prompt => mode === "down" ? "unavailable" : groupByBug(prompt), true);
+  const { engine } = world;
+  const fakes = new Fakes(join(world.root, "agents"));
+  fakes.scenario({ controlled: true });
+  try {
+    // Requests with the same words that are not candidates: another product, a feature, finished and cancelled work.
+    const controls = [
+      engine.addTask({ productId: world.notes, kind: "bug", title: "bug-running: The same words on Notes", backlog: true }),
+      engine.addTask({ productId: world.shop, title: "bug-running: A feature with the same words", backlog: true }),
+      engine.addTask({ productId: world.shop, kind: "bug", title: "bug-queued: A finished earlier fix", backlog: true }),
+      engine.addTask({ productId: world.shop, kind: "bug", title: "bug-queued: A cancelled request", backlog: true }),
+    ];
+    const holds = controls.slice(2).map(id => engine.holdFollowUp(id));
+    Object.assign(engine.task(controls[2]!)!, { state: "done", column: "done", finishedAt: Date.now() });
+    engine.cancel(controls[3]!);
+    const runningId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-running: Keep the publication check", description: "The coordinator's running request", backlog: true });
+    engine.queueTask(runningId);
+    engine.setPoolPaused(false);
+    await waitFor(() => fakes.received().length === 1 && engine.task(runningId)!.state === "running" && engine.task(runningId)!.agent?.roleId === "planner", "the coordinator's fix to hold its first agent mid-turn");
+    engine.setPoolPaused(true);
+    const queuedId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-queued: Keep planned reviews", description: "The coordinator's queued request", backlog: true });
+    engine.queueTask(queuedId);
+    const running = engine.task(runningId)!;
+    const queued = engine.task(queuedId)!;
+    const live = (task: typeof running) => structuredClone({ title: task.title, description: task.description, state: task.state, products: task.selectedProducts, plan: task.plan, stage: task.stageIndex, agent: task.agent, approvals: [task.approvePlan, task.approveDelivery], priority: task.priority, journey: task.journey?.map(step => step.id), rounds: task.rounds, timeline: task.timeline.length, session: task.session.map(line => line.id) });
+    const before = { running: live(running), queued: live(queued), driver: engine.drivers.get(runningId), prompts: fakes.received().length };
+    const source = taskOf(engine, world.shop, "A later finished task", [
+      older("queued", "bug-queued: Publication skips the planned review"),
+      older("running", "bug-running: The publication check is skipped after repairs run out"),
+      older("fresh", "bug-fresh: An unrelated older bug"),
+      older("unsure", "Possibly the same publication problem"),
+    ]);
+    plant(engine, source.id, source.findings[1]!.text);
+    await finish(engine, source);
+    // Matching needs a free agent slot. Until it can run, nothing is linked, even though the fix is already active.
+    const findings = () => engine.task(source.id)!.findings;
+    expect(findings().map(finding => finding.tracking)).toEqual(Array(4).fill({ reason: "unavailable", retry: true }));
+    expect([running.followUp, queued.followUp, cards(engine)]).toEqual([undefined, undefined, []]);
+    mode = "same";
+    await engine["followUps"].catchUp();
+    const fresh = cardFor(engine, "fresh");
+    expect(findings().map(finding => finding.tracking)).toEqual([{ taskId: queuedId }, { taskId: runningId }, { taskId: fresh[0]!.id }, { reason: "unmatched" }]);
+    expect(cards(engine).map(task => task.id).sort()).toEqual([queuedId, runningId, fresh[0]!.id].sort());
+    for (const control of controls) {
+      expect(engine.task(control)!.followUp).toBeUndefined();
+      expect(world.prompts.some(prompt => prompt.includes(`Card [${control}]`))).toBe(false);
+    }
+    expect(world.prompts.at(-1)).toContain("The coordinator's running request");
+    // Only the report credit and its picture are added. The request, plan, stage, agent and queue place stay.
+    expect(running.followUp).toMatchObject({ preserveRequest: true, reports: [{ taskId: source.id, findingId: "running", text: source.findings[1]!.text, steps: STEPS, evidence: EVIDENCE }] });
+    expect(queued.followUp).toMatchObject({ preserveRequest: true, reports: [{ taskId: source.id, findingId: "queued" }] });
+    const added = running.session.filter(line => !before.running.session.includes(line.id));
+    expect(added.map(line => [line.from, line.text, line.images?.map(image => image.from)])).toEqual([["system", "Kept from the original report", [{ taskId: source.id, imageId: "pic" }]]]);
+    expect(live(running)).toEqual({ ...before.running, session: running.session.map(line => line.id) });
+    expect(live(queued)).toEqual(before.queued);
+    expect(engine.drivers.get(runningId)).toBe(before.driver);
+    expect(fakes.received()).toHaveLength(before.prompts);
+    expect(fakes.marked(`release-${fakes.received()[0]!.session}`)).toBe(false);
+    // Matching again finds every link already saved: no extra credit, picture or question.
+    const asked = world.prompts.length;
+    await engine["followUps"].catchUp();
+    expect([world.prompts.length, running.followUp!.reports.length, queued.followUp!.reports.length, running.session.length, cards(engine).length]).toEqual([asked, 1, 1, before.running.session.length + 1, 3]);
+    holds.forEach(release => release());
+  } finally { await world.engine.shutdown(); }
+});
+
+it("leaves a manual fix untouched and opens a card when it finishes, is cancelled, changes products or leaves the board during matching", async () => {
+  let during = () => {};
+  const world = await open(prompt => { during(); during = () => {}; return groupByBug(prompt); }, true);
+  const { engine } = world;
+  try {
+    for (const variant of ["finish", "cancel", "scope", "gone"] as const) {
+      const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: `bug-${variant}: The coordinator's fix`, description: "The unchanged request", backlog: true });
+      engine.queueTask(fixId);
+      const fix = engine.task(fixId)!;
+      const release = variant === "gone" ? () => {} : engine.holdFollowUp(fixId);
+      during = () => {
+        if (variant === "finish" || variant === "gone") Object.assign(fix, { state: "done", column: "done", finishedAt: Date.now() });
+        if (variant === "gone") engine.save();
+        if (variant === "cancel") engine.cancel(fixId);
+        if (variant === "scope") fix.selectedProducts = [...fix.selectedProducts!, { productId: world.notes, startFrom: { kind: "default" }, delivery: "pull-request" }];
+      };
+      const before = structuredClone({ title: fix.title, description: fix.description, products: fix.selectedProducts });
+      const source = taskOf(engine, world.shop, `Matched while the fix ${variant}`, [older("old", `bug-${variant}: A later sighting`)]);
+      await finish(engine, source);
+      expect(world.prompts.at(-1), variant).toContain(`Card [${fixId}]`);
+      expect(engine.s.tasks.some(task => task.id === fixId), variant).toBe(variant !== "gone");
+      const after = engine.task(fixId)!;
+      expect([after.followUp, after.title, after.description], variant).toEqual([undefined, before.title, before.description]);
+      const opened = cardFor(engine, variant).filter(task => task.id !== fixId);
+      expect(opened.map(task => task.followUp!.reports.map(report => report.findingId)), variant).toEqual([["old"]]);
+      expect(opened[0]!.state, variant).toBe("backlog");
+      expect(source.findings[0]!.tracking, variant).toEqual({ taskId: opened[0]!.id });
+      release();
+    }
+  } finally { await world.engine.shutdown(); }
+});
+
+it("leaves an unfinished task's report waiting when the fix it matched finishes during matching, then places it once that task is done", async () => {
+  let during = () => {};
+  const world = await open(prompt => { during(); during = () => {}; return groupByBug(prompt); });
+  const { engine } = world;
+  try {
+    const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-early: The coordinator's fix", backlog: true });
+    engine.queueTask(fixId);
+    const fix = engine.task(fixId)!;
+    const release = engine.holdFollowUp(fixId);
+    const running = taskOf(engine, world.shop, "Still running", [older("early", "bug-early: Seen before its task finished")]);
+    running.state = "running";
+    const done = taskOf(engine, world.shop, "Finished first", [older("other", "bug-other: A different bug")]);
+    during = () => Object.assign(fix, { state: "done", column: "done", finishedAt: Date.now() });
+    await finish(engine, done);
+    expect(world.prompts[0]).toContain(`Card [${fixId}]`);
+    expect([fix.followUp, running.findings[0]!.tracking, cardFor(engine, "early")]).toEqual([undefined, undefined, []]);
+    expect(engine.s.followUpPending?.some(group => group.keys.includes(followUpKey(running.id, "early")))).toBe(false);
+    expect(cardFor(engine, "other")).toHaveLength(1);
+    release();
+    await finish(engine, running);
+    const card = cardFor(engine, "early");
+    expect(card.map(task => task.followUp!.reports.map(report => report.findingId))).toEqual([["early"]]);
+    expect(engine.task(running.id)!.findings[0]!.tracking).toEqual({ taskId: card[0]!.id });
+  } finally { await world.engine.shutdown(); }
+});
+
+it("finishes a credited report's picture copy on a manual fix whose products changed, adding no product or card", async () => {
+  const world = await open(groupByBug, true);
+  const { engine } = world;
+  try {
+    const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-moved: The coordinator's fix", backlog: true });
+    engine.queueTask(fixId);
+    const fix = engine.task(fixId)!;
+    const source = taskOf(engine, world.shop, "A pictured sighting", [older("old", "bug-moved: A later sighting")]);
+    plant(engine, source.id, source.findings[0]!.text);
+    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    try { await finish(engine, source); } finally { copy.mockRestore(); }
+    expect(fix.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+    fix.selectedProducts = [{ productId: world.notes, startFrom: { kind: "default" }, delivery: "pull-request" }];
+    const products = structuredClone(fix.selectedProducts);
+    await engine["followUps"].catchUp();
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: fixId });
+    expect(fix.session.flatMap(line => line.images ?? []).map(image => image.from)).toEqual([{ taskId: source.id, imageId: "pic" }]);
+    expect([fix.selectedProducts, fix.followUp!.alsoReported, fix.followUp!.reports.length, cards(engine).length]).toEqual([products, undefined, 1, 1]);
+    expect(world.prompts).toHaveLength(1);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("keeps an unfinished source's picture while its report's link is copied, even when that task is cancelled", async () => {
+  const world = await open();
+  const { engine } = world;
+  try {
+    const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-held: The coordinator's fix", backlog: true });
+    engine.queueTask(fixId);
+    const running = taskOf(engine, world.shop, "Still running", [older("early", "bug-held: Seen while its task runs")]);
+    running.state = "running";
+    plant(engine, running.id, running.findings[0]!.text);
+    const original = join(engine.dataDir, "captures", running.id, "pic.png");
+    const done = taskOf(engine, world.shop, "Finished", [older("late", "bug-held: The same bug, finished")]);
+    const originalCopy = fileIO.copyFile;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let copying!: () => void;
+    const started = new Promise<void>(resolve => { copying = resolve; });
+    const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
+    try {
+      const finishing = finish(engine, done);
+      await started;
+      engine.cancel(running.id);
+      await engine["cleanup"].removeCaptures(running.id);
+      expect(existsSync(original)).toBe(true);
+      release();
+      await finishing;
+    } finally { release(); copy.mockRestore(); }
+    const fix = engine.task(fixId)!;
+    expect(fix.followUp!.reports.map(report => report.findingId).sort()).toEqual(["early", "late"]);
+    expect(fix.session.flatMap(line => line.images ?? []).map(image => image.from)).toEqual([{ taskId: running.id, imageId: "pic" }]);
+    expect(engine.task(running.id)!.findings[0]!.tracking).toEqual({ taskId: fixId });
+    await engine["cleanup"].removeCaptures(running.id);
+    expect(existsSync(original)).toBe(false);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("keeps a saved link and its picture when the manual fix finishes or is cancelled during the copy, then follows the closed-target rules", async () => {
+  const world = await open();
+  const { engine } = world;
+  try {
+    for (const [end, copied] of [["finish", true], ["cancel", true], ["finish", false]] as const) {
+      const label = `${end}${copied ? "copied" : "refused"}`;
+      const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: `bug-${label}: The coordinator's fix`, description: "The unchanged request", backlog: true });
+      engine.queueTask(fixId);
+      const fix = engine.task(fixId)!;
+      const source = taskOf(engine, world.shop, `Copying while the fix ends: ${end}`, [older("old", `bug-${label}: A later sighting`)]);
+      plant(engine, source.id, source.findings[0]!.text);
+      const key = followUpKey(source.id, "old");
+      const original = join(engine.dataDir, "captures", source.id, "pic.png");
+      const originalCopy = fileIO.copyFile;
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let copying!: () => void;
+      const started = new Promise<void>(resolve => { copying = resolve; });
+      const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => {
+        copying();
+        await held;
+        if (!copied) throw new Error("Copy refused");
+        return originalCopy(...args);
+      });
+      try {
+        const finishing = finish(engine, source);
+        await started;
+        // The destination and the report were saved before copying began.
+        expect(fix.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+        expect(engine.s.followUpPending).toContainEqual({ keys: [key], cardId: fixId });
+        if (end === "finish") Object.assign(fix, { state: "done", column: "done", finishedAt: Date.now() });
+        else engine.cancel(fixId);
+        fix.session.push({ id: `during-${label}`, from: "agent", text: "Activity while the copy runs", at: Date.now() });
+        // Both tasks stay on the board, with their pictures, while the link is saved.
+        engine.save();
+        expect([engine.s.tasks.includes(fix), engine.s.tasks.includes(source)]).toEqual([true, true]);
+        await engine["cleanup"].removeCaptures(source.id);
+        await engine["cleanup"].removeCaptures(fixId);
+        expect(existsSync(original)).toBe(true);
+        expect(existsSync(join(engine.dataDir, "captures", fixId))).toBe(true);
+        release();
+        await finishing;
+      } finally { release(); copy.mockRestore(); }
+      const after = engine.task(fixId)!;
+      expect(after.state).toBe(end === "finish" ? "done" : "cancelled");
+      expect(after.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+      expect(after.session.some(line => line.id === `during-${label}`)).toBe(true);
+      expect(after.session.flatMap(line => line.images ?? [])).toHaveLength(copied ? 1 : 0);
+      expect(engine.task(source.id)!.findings[0]!.tracking).toEqual(copied ? { taskId: fixId } : { reason: "pictures", retry: true });
+      expect(engine.s.followUpPending).toEqual(copied ? [] : [{ keys: [key], cardId: fixId }]);
+      // Released, the closed fix leaves the board. Recovery neither reopens it nor opens another card, and
+      // the original picture goes with the source's cleanup, as for any finished or cancelled destination.
+      engine.save();
+      expect(engine.s.tasks.some(task => task.id === fixId)).toBe(false);
+      await engine["followUps"].catchUp();
+      expect(cardFor(engine, label)).toEqual([]);
+      expect(engine.task(fixId)!.state).toBe(after.state);
+      expect(engine.task(fixId)!.followUp!.reports).toHaveLength(1);
+      await engine["cleanup"].removeCaptures(source.id);
+      await engine["cleanup"].removeCaptures(fixId);
+      expect([existsSync(original), existsSync(join(engine.dataDir, "captures", fixId))]).toEqual([false, false]);
+    }
+    expect(world.prompts).toHaveLength(3);
+  } finally { await world.engine.shutdown(); }
+});
+
+it("retries a queued manual fix's picture across source retirement and restart, adding only the missing copy and one credit", async () => {
+  const world = await open();
+  try {
+    const { engine } = world;
+    const fixId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-retry: The coordinator's fix", description: "The unchanged request", backlog: true });
+    engine.queueTask(fixId);
+    const source = taskOf(engine, world.shop, "A pictured sighting", [older("old", "bug-retry: A later sighting")]);
+    plant(engine, source.id, source.findings[0]!.text);
+    const original = join(engine.dataDir, "captures", source.id, "pic.png");
+    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    try {
+      await finish(engine, source);
+      expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
+      expect(engine.task(fixId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+      engine.save();
+      expect(engine.s.tasks.some(task => task.id === source.id)).toBe(false);
+      await engine["cleanup"].removeCaptures(source.id);
+      expect(existsSync(original)).toBe(true);
+    } finally { copy.mockRestore(); }
+    await reopen(world);
+    const fix = world.engine.task(fixId)!;
+    expect([fix.state, fix.description]).toEqual(["queued", "The unchanged request"]);
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: fixId });
+    expect(fix.followUp!.reports).toHaveLength(1);
+    await world.engine["followUps"].catchUp();
+    expect(fix.session.flatMap(line => line.images ?? []).map(image => image.from)).toEqual([{ taskId: source.id, imageId: "pic" }]);
+    await world.engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(original)).toBe(false);
+    expect(cards(world.engine).map(task => task.id)).toEqual([fixId]);
+    expect(world.prompts).toHaveLength(1);
   } finally { await world.engine.shutdown(); }
 });
 

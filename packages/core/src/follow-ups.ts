@@ -144,6 +144,35 @@ function fitsCard(card: OpenFollowUp, report: Pick<FollowUpCandidate, "productId
   return !card.fixedProducts || (card.productIds.length === report.productIds.length && card.productIds.every(id => report.productIds.includes(id)));
 }
 
+/** A report already credited on the card keeps it, so its copies and tracking can finish. Only a new report must fit. */
+function accepts(card: OpenFollowUp, report: Pick<FollowUpCandidate, "taskId" | "findingId" | "productIds">): boolean {
+  return card.reportKeys.includes(followUpKey(report.taskId, report.findingId)) || fitsCard(card, report);
+}
+
+/**
+ * The card a task offers later reports, or nothing. A task already carrying reports keeps its own rules, whatever its kind.
+ * A coordinator-created bug with products joins while unfinished, at the boundary automatic cards use, so queueing or
+ * starting it keeps it. Listing candidates, checking a returned match and saving a link all use this one decision.
+ */
+export function followUpCard(task: Task): OpenFollowUp | undefined {
+  if (!task.followUp && !(task.kind === "bug" && cardPhase(task.state) !== "closed" && productsOn(task).length)) return undefined;
+  return {
+    id: task.id,
+    phase: cardPhase(task.state),
+    productIds: [...new Set([...productsOn(task), ...(!task.followUp || task.followUp.preserveRequest ? [] : task.followUp.reports.flatMap((report) => report.productIds))])],
+    title: task.title,
+    problem: task.description.trim() || task.title,
+    reportKeys: task.followUp?.reports.map((report) => followUpKey(report.taskId, report.findingId)) ?? [],
+    ...(!task.followUp || task.followUp.preserveRequest ? { fixedProducts: true } : {}),
+  };
+}
+
+/** The task, as it is now, can take these reports: still open, and a coordinator's request only for exactly its products. */
+export function takesFollowUps(task: Task, reports: readonly Pick<FollowUpCandidate, "taskId" | "findingId" | "productIds">[]): boolean {
+  const card = followUpCard(task);
+  return !!card && card.phase !== "closed" && reports.every((report) => accepts(card, report));
+}
+
 /** Evidence that the change left the bug as it was. Checker reasons count once a vote settles it as older. */
 export function olderEvidence(finding: Pick<Finding, "evidence" | "verification" | "votes">): string {
   if (finding.verification?.verdict === "pre-existing") {
@@ -201,16 +230,9 @@ export function followUpSnapshot(tasks: readonly Task[], pending: readonly { key
   const keptImages: { cardId: Id; sourceTaskId: Id; sourceImageId: string }[] = [];
   const releases: { taskId: Id; findingId: Id; cardId: Id }[] = [];
   for (const task of tasks) {
-    if (task.followUp || (task.state === "backlog" && task.kind === "bug" && productsOn(task).length)) {
-      cards.push({
-        id: task.id,
-        phase: cardPhase(task.state),
-        productIds: [...new Set([...productsOn(task), ...(!task.followUp || task.followUp.preserveRequest ? [] : task.followUp.reports.flatMap((report) => report.productIds))])],
-        title: task.title,
-        problem: task.description.trim() || task.title,
-        reportKeys: task.followUp?.reports.map((report) => followUpKey(report.taskId, report.findingId)) ?? [],
-        ...(!task.followUp || task.followUp.preserveRequest ? { fixedProducts: true } : {}),
-      });
+    const card = followUpCard(task);
+    if (card) {
+      cards.push(card);
       for (const line of task.session) for (const image of line.images ?? []) {
         if (image.from) keptImages.push({ cardId: task.id, sourceTaskId: image.from.taskId, sourceImageId: image.from.imageId });
       }
@@ -251,10 +273,11 @@ export function followUpSnapshot(tasks: readonly Task[], pending: readonly { key
   return { reports, cards, pending, keptImages, ...(releases.length ? { releases } : {}) };
 }
 
-/** Open follow-up cards a reviewer of these products can point at. Bounded, and only cards still open. */
-export function openFollowUpCards(tasks: readonly Task[], productIds: readonly Id[]): { id: Id; title: string; problem: string; productIds: readonly Id[] }[] {
-  return followUpSnapshot(tasks).cards
-    .filter((card) => card.phase !== "closed" && fitsCard(card, { productIds }) && overlaps(card.productIds, productIds))
+/** Open follow-up cards a reviewer of this task can point at. Bounded, only cards still open, and never the task itself. */
+export function openFollowUpCards(tasks: readonly Task[], reviewed: Task): { id: Id; title: string; problem: string; productIds: readonly Id[] }[] {
+  const productIds = productsOn(reviewed);
+  return tasks.flatMap((task) => followUpCard(task) ?? [])
+    .filter((card) => card.id !== reviewed.id && card.phase !== "closed" && fitsCard(card, { productIds }) && overlaps(card.productIds, productIds))
     .slice(0, 20)
     .map((card) => ({ id: card.id, title: card.title, problem: card.problem, productIds: card.productIds }));
 }
@@ -319,7 +342,7 @@ function pictureKey(image: { sourceTaskId: string; sourceImageId: string }): str
 
 function remember(working: Working, cardId: Id, reports: readonly FollowUpCandidate[], snapshot: FollowUpSnapshot, phase: OpenFollowUp["phase"]): void {
   const card = snapshot.cards.find((entry) => entry.id === cardId);
-  reports = reports.filter(report => !card || fitsCard(card, report));
+  reports = reports.filter(report => !card || accepts(card, report));
   const already = new Set(card?.reportKeys ?? []);
   const keptIds = new Set(snapshot.keptImages.filter((image) => image.cardId === cardId).map(pictureKey));
   const pictureMissing = (report: FollowUpCandidate) => report.images.some((image) => !keptIds.has(pictureKey(image)));
@@ -398,7 +421,7 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
       if (card && card.phase !== "closed" && !report.block) remember(working, card.id, [report], snapshot, card.phase);
       return false;
     }
-    const missingChoice = report.tracking && "reason" in report.tracking && report.tracking.reason === "no-choice" && !report.sameBug;
+    const missingChoice = report.tracking && "reason" in report.tracking && report.tracking.reason === "no-choice" && (!report.sameBug || report.sameBug === report.taskId);
     if (report.tracking && !report.tracking.retry && report.tracking.reason !== "unavailable" && !missingChoice) return false;
     const listed = snapshot.cards.find((card) => card.phase !== "closed" && card.reportKeys.includes(report.key));
     if (listed) {
@@ -426,11 +449,13 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
       continue;
     }
     if (report.block === "skip") continue;
-    const shown = report.cardsShown ?? [];
-    const named = report.sameBug && report.sameBug !== "none" ? snapshot.cards.find((card) => card.id === report.sameBug) : undefined;
+    // A report's own task is never its destination. Naming it, as an older review could, supplies no hint.
+    const shown = (report.cardsShown ?? []).filter((id) => id !== report.taskId);
+    const sameBug = report.sameBug === report.taskId ? undefined : report.sameBug;
+    const named = sameBug && sameBug !== "none" ? snapshot.cards.find((card) => card.id === sameBug) : undefined;
     const pointed = named && named.phase !== "closed" && shown.includes(named.id) && fitsCard(named, report) ? named : undefined;
     // Preserve an explicit pointer that cannot be used. Silence supplies no hint to the matcher.
-    if (shown.length && report.sameBug && !pointed && report.sameBug !== "none" && !(named && named.phase === "closed")) {
+    if (shown.length && sameBug && !pointed && sameBug !== "none" && !(named && named.phase === "closed")) {
       if (report.sourceDone) track(working, report, { reason: "no-choice" });
       continue;
     }
@@ -438,7 +463,7 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
       remember(working, pointed.id, [report], snapshot, pointed.phase);
       continue;
     }
-    if (report.sameBug === "none") excluded.set(report.key, shown);
+    excluded.set(report.key, [report.taskId, ...(sameBug === "none" ? shown : [])]);
     free.push(report);
   }
 

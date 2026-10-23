@@ -15,7 +15,7 @@ They do not read code. Code lives in the pull request on GitHub, one click away 
 
 What success feels like: many pull requests a day, little time spent being the thing everyone waits on.
 
-Confirmed unrelated review bugs appear in Backlog for coordinator review. Their source finding says “Tracked in” with a link to the follow-up; the follow-up links back to the original finding and keeps its reproduction and evidence. A report that cannot yet be matched says why it is not tracked. Opening either link stays within the task view, and nothing queues the follow-up automatically.
+Confirmed unrelated review bugs appear in Backlog for coordinator review, unless they are the same bug as an unfinished follow-up or a bug task the coordinator created; then they are added to that task, even when it is already queued or running, without changing its request or work. Their source finding says “Tracked in” with a link to the follow-up; the follow-up links back to the original finding and keeps its reproduction and evidence. A report that cannot yet be matched says why it is not tracked. Opening either link stays within the task view, and nothing queues the follow-up automatically.
 
 ## Principles
 

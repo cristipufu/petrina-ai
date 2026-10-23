@@ -2,7 +2,7 @@ import { repositoryView, type RepositoryContext } from "./repository-context.js"
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
-import { dueAnswers, followingCall, openFollowUpCards, productsOn, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
+import { dueAnswers, followingCall, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -100,7 +100,8 @@ export class Context {
     if (review?.material) sections.push(review.material);
     if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
     if (role?.result === "findings") {
-      const cards = review ? review.cards : openFollowUpCards(this.k.s.tasks as Task[], productsOn(task as Task));
+      // A task is never offered for its own reports. A frozen list from before that rule loses only that card; nothing replaces it.
+      const cards = review ? review.cards.filter((card) => card.id !== task.id) : openFollowUpCards(this.k.s.tasks as Task[], task as Task);
       // shownKey records which cards this reviewer was shown. It is not a message seat:
       // using it as one leaves the coordinator's note queued and sends it as a second turn.
       const key = shownKey ?? member ?? roleId;
@@ -108,7 +109,9 @@ export class Context {
       if (cards.length) shown[key] = cards.map((card) => card.id);
       else delete shown[key];
       task.shownFollowUps = shown;
-      if (cards.length) sections.push({ title: "Open follow-up cards", body: compact && review?.history?.cards.length ? compactCards(review) : fullFollowUpCards(cards), ...(compact && review?.history?.cards.length ? { background: fullFollowUpCards(cards), reviewHistory: review.history } : {}) });
+      // Shorten only cards still shown; a frozen entry for the task's own card is never pointed at.
+      const shortened = compact && review!.history!.cards.some((id) => cards.some((card) => card.id === id));
+      if (cards.length) sections.push({ title: "Open follow-up cards", body: shortened ? compactCards({ ...review!, cards }) : fullFollowUpCards(cards), ...(shortened ? { background: fullFollowUpCards(cards), reviewHistory: review!.history } : {}) });
     }
     if (role?.result === "findings") sections.push(...(review ? review.proofs ?? [] : this.reviewProofs(scope)));
     if (!review && task.proofRequests?.length && (role?.result === "checks" || role?.result === "build")) sections.push({ title: "Required proof on the final code", body: `${role.result === "build" ? "Final acceptance testing owns these requests. Fix code findings as usual; do not repeat this proof during Builder repairs." : "Answer every open request by its id in proofAnswers with pass, fail, or blocked and evidence. A missing platform is blocked, never a pass. The engine records the actual run versions."}\n${proofContext(role.result === "checks" ? openProofs(task) : task.proofRequests)}\nCurrent versions: ${JSON.stringify(Object.fromEntries((task.repositories ?? [repository]).map(work => [work.productId, work.checks?.current ? work.checks.tree : "unavailable"])))}${task.proofRetestReason ? `\nWhy now: ${task.proofRetestReason === "main-moved" ? "main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "the task's code changed since acceptance testing" : "a reviewer asked for proof on the final code"}.` : ""}` });
@@ -130,7 +133,7 @@ export class Context {
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
     parts.report = [...(parts.report ?? []), ...evidence];
     const settled = settledReviewFindings(repositoryView(scope), this.k.s.roles);
-    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], productsOn(scope.task as Task)), findings: reviewFindings(scope), ...(Object.keys(settled).length ? { settled } : {}) });
+    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], scope.task as Task), findings: reviewFindings(scope), ...(Object.keys(settled).length ? { settled } : {}) });
   }
 
   private reviewProofs(scope: RepositoryContext): Section[] {

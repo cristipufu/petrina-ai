@@ -150,6 +150,33 @@ it("keeps first-round short cards and legacy snapshots exactly complete with not
   } finally { await f.engine.shutdown(); }
 });
 
+it("never shows a task its own follow-up card, in a live capture or a resumed frozen review", async () => {
+  const f = await fixture(0);
+  try {
+    f.task.kind = "bug";
+    const peer = f.engine.task(f.engine.addTask({ productId: "p", kind: "bug", title: "Peer bug", description: "A peer's request", backlog: true }))!;
+    expect((await f.context.captureReview(f.scope)).cards.map(card => card.id)).toEqual([peer.id]);
+    // A review frozen before this rule listed the task itself. Resuming drops only that card and adds nothing.
+    const own = { ...longCard, id: f.task.id, problem: "Own request. ".repeat(100) };
+    const other = { ...longCard, id: peer.id };
+    const { input } = await freeze(f, [own, other]);
+    expect(input.history?.cards).toEqual([f.task.id, peer.id]);
+    const body = (await supplied(f, input)).find(section => section.title === "Open follow-up cards")!.body;
+    expect(body).toContain(`- ${peer.id}: ${longCard.title}`);
+    expect(body).not.toContain(`- ${f.task.id}:`);
+    expect(body).not.toContain("Own request.");
+    expect(f.task.shownFollowUps!["review-0"]).toEqual([peer.id]);
+    expect((await readReviewInput(f.task.hunt!.input!)).cards.map(card => card.id)).toEqual([f.task.id, peer.id]);
+    // When only the task's own card was long, the shown card is complete and nothing points at the frozen copy.
+    const short = { ...other, problem: "A short peer problem." };
+    const alone = await freeze(f, [own, short]);
+    expect(alone.input.history?.cards).toEqual([f.task.id]);
+    const sections = await supplied(f, alone.input);
+    expect(sections.find(section => section.title === "Open follow-up cards")!.body).toBe(`- ${peer.id}: ${short.title}\n  ${short.problem}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".`);
+    expect(opening(f, sections)).not.toContain(alone.input.history!.digest);
+  } finally { await f.engine.shutdown(); }
+});
+
 it("freezes simultaneous fresh conflict reviewers, replacement and recovery without live peers or card edits", async () => {
   const f = await fixture(23);
   try {

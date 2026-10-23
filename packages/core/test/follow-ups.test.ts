@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDemo, createPortfolioDemo } from "../src/demo.js";
-import { followUpBlock, followUpKey, followUpSnapshot, noteReviewTag, planFollowUps, trackingWords, type FollowUpCandidate, type FollowUpSnapshot, type MatchAnswer, type MatchAsk, type OpenFollowUp } from "../src/follow-ups.js";
+import { followUpBlock, followUpKey, followUpSnapshot, noteReviewTag, openFollowUpCards, planFollowUps, takesFollowUps, trackingWords, type FollowUpCandidate, type FollowUpSnapshot, type MatchAnswer, type MatchAsk, type OpenFollowUp } from "../src/follow-ups.js";
+import type { Finding, RunState, Task } from "../src/model.js";
 
 function report(partial: Partial<FollowUpCandidate> & Pick<FollowUpCandidate, "taskId" | "findingId" | "text">): FollowUpCandidate {
   return {
@@ -23,6 +24,16 @@ function card(partial: Partial<OpenFollowUp> & Pick<OpenFollowUp, "id">): OpenFo
 
 function snap(reports: FollowUpCandidate[], extra: Partial<FollowUpSnapshot> = {}): FollowUpSnapshot {
   return { reports, cards: extra.cards ?? [], pending: extra.pending ?? [], keptImages: extra.keptImages ?? [] };
+}
+
+/** A board task in its saved form, with only what follow-ups read. */
+function boardTask(id: string, extra: Partial<Task> = {}): Task {
+  const base = JSON.parse(JSON.stringify(createDemo(1_000_000_000).state.tasks[0]!)) as Task;
+  return { ...base, id, title: id, description: `The coordinator's request for ${id}`, kind: "bug", state: "backlog", productId: "shop", repositories: undefined, selectedProducts: [{ productId: "shop", startFrom: { kind: "default" }, delivery: "pull-request" }], findings: [], session: [], journey: [], followUp: undefined, ...extra };
+}
+
+function confirmed(id: string, text: string, extra: Partial<Finding> = {}): Finding {
+  return { id, text, severity: "pre-existing", status: "open", raisedBy: "opus-high", confirmedBy: [], steps: "Open the page and use the old control.", evidence: "The same control failed on the previous version.", ...extra };
 }
 
 async function plan(snapshot: FollowUpSnapshot, answer: MatchAnswer | ((asked: readonly string[]) => MatchAnswer) = { groups: [], uncertain: [] }) {
@@ -51,6 +62,107 @@ describe("confirmed older bugs", async () => {
     expect(result.linked).toEqual([]);
     expect(result.created).toHaveLength(1);
   });
+
+  it("lists unfinished coordinator bugs in every open state, keeping features, closed work and report-bearing cards to their own rules", () => {
+    const states: RunState[] = ["backlog", "queued", "waiting", "running", "needs-you", "paused", "failed", "pr-open"];
+    const open = states.map(state => boardTask(`manual-${state}`, { state }));
+    const closed = (["done", "cancelled"] as const).map(state => boardTask(`closed-${state}`, { state }));
+    const feature = boardTask("feature", { kind: "feature", state: "running" });
+    const scopeless = boardTask("scopeless", { productId: "", selectedProducts: [], state: "queued" });
+    const credit = { taskId: "older", findingId: "1", sourceTitle: "Older", text: "An older bug", steps: "Look", evidence: "Old", raisedBy: "opus-high", productIds: ["notes"], at: 1 };
+    const automatic = boardTask("automatic", { state: "running", followUp: { reports: [credit] } });
+    const combined = boardTask("combined", { kind: "feature", followUp: { reports: [credit] } });
+    const cards = followUpSnapshot([...open, ...closed, feature, scopeless, automatic, combined]).cards;
+    expect(cards.map(card => card.id)).toEqual([...open.map(task => task.id), "automatic", "combined"]);
+    expect(cards.filter(card => card.id.startsWith("manual-")).every(card => card.fixedProducts && card.productIds.join() === "shop")).toBe(true);
+    expect(cards.map(card => card.phase)).toEqual(["backlog", ...states.slice(1).map(() => "started"), "started", "backlog"]);
+    expect(cards.find(card => card.id === "manual-running")!.problem).toBe("The coordinator's request for manual-running");
+    expect(cards.find(card => card.id === "combined")).toMatchObject({ productIds: ["shop", "notes"], reportKeys: ["older::1"] });
+    // One decision for saving a link: open, and exactly the products of a coordinator's request.
+    const later = (productIds: string[]) => [{ taskId: "later", findingId: "1", productIds }];
+    for (const task of open) {
+      expect(takesFollowUps(task, later(["shop"]))).toBe(true);
+      expect(takesFollowUps(task, later(["shop", "notes"]))).toBe(false);
+      expect(takesFollowUps(task, later([]))).toBe(false);
+    }
+    for (const task of [...closed, feature, scopeless]) expect(takesFollowUps(task, later(["shop"]))).toBe(false);
+    expect(takesFollowUps(combined, later(["notes", "site"]))).toBe(true);
+    expect(takesFollowUps({ ...automatic, state: "done" }, later(["shop"]))).toBe(false);
+    // A report already credited on a coordinator's request keeps it after the request's products change.
+    const credited = boardTask("credited", { state: "queued", productId: "notes", selectedProducts: [{ productId: "notes", startFrom: { kind: "default" }, delivery: "pull-request" }], followUp: { preserveRequest: true, reports: [{ ...credit, taskId: "later", productIds: ["shop"] }] } });
+    expect([takesFollowUps(credited, later(["shop"])), takesFollowUps(credited, [{ taskId: "other", findingId: "1", productIds: ["shop"] }])]).toEqual([true, false]);
+  });
+
+  it("links a later confirmed report to a running coordinator fix only when the same-bug check places it there", async () => {
+    const fix = boardTask("fix", { state: "running", title: "Keep planned reviews", description: "Keep the planned review after shared acceptance repairs." });
+    const other = boardTask("other", { state: "queued", productId: "notes", selectedProducts: [{ productId: "notes", startFrom: { kind: "default" }, delivery: "pull-request" }], description: "A Notes bug" });
+    const source = boardTask("source", { state: "done", kind: "feature", findings: [confirmed("old", "Publication skips the planned review after repairs run out.")] });
+    const asked: MatchAsk[] = [];
+    const snapshot = followUpSnapshot([fix, other, source]);
+    const same = await planFollowUps(snapshot, ask => { asked.push(ask); return { groups: [{ keys: ["source::old"], cardId: "fix" }] }; });
+    expect(asked.map(ask => ask.cards.map(card => card.id))).toEqual([["fix"]]);
+    expect(asked[0]!.cards[0]!.problem).toBe("Keep the planned review after shared acceptance repairs.");
+    expect(same.created).toEqual([]);
+    expect(same.linked).toEqual([expect.objectContaining({ cardId: "fix", keys: ["source::old"], addProducts: [], alsoReported: [] })]);
+    expect(same.tracks).toEqual([{ taskId: "source", findingId: "old", tracking: { taskId: "fix" } }]);
+    // A tentative overlap is not identity: an uncertain answer stays untracked, and a different bug opens its own card.
+    const uncertain = await plan(snapshot, { groups: [], uncertain: ["source::old"] });
+    expect([uncertain.linked, uncertain.created, uncertain.tracks]).toEqual([[], [], [{ taskId: "source", findingId: "old", tracking: { reason: "unmatched" } }]]);
+    const different = await plan(snapshot, { groups: [{ keys: ["source::old"] }] });
+    expect(different.linked).toEqual([]);
+    expect(different.created).toHaveLength(1);
+    expect((await plan(snapshot, "unavailable")).tracks[0]!.tracking).toEqual({ reason: "unavailable", retry: true });
+    // A report for both products is never offered to the Shop-only request.
+    const wider = followUpSnapshot([fix, boardTask("wide", { state: "done", findings: [confirmed("both", "Both products fail", { productIds: ["shop", "notes"] })] })]);
+    const widened = await plan(wider, { groups: [{ keys: ["wide::both"], cardId: "fix" }] });
+    expect(widened.asked).toEqual([]);
+    expect(widened.linked).toEqual([]);
+    expect(widened.created).toHaveLength(1);
+  });
+
+  it("never offers a task for its own reports, to its reviewers or the matcher, and reads naming itself as no choice", async () => {
+    const fix = boardTask("fix", { state: "running" });
+    const peer = boardTask("peer", { state: "running", kind: "feature" });
+    expect(openFollowUpCards([fix, peer], fix)).toEqual([]);
+    expect(openFollowUpCards([fix, peer], peer).map(card => card.id)).toEqual(["fix"]);
+    const automatic = boardTask("automatic", { state: "running", followUp: { reports: [{ taskId: "older", findingId: "1", sourceTitle: "Older", text: "Older", steps: "Look", evidence: "Old", raisedBy: "opus-high", productIds: ["shop"], at: 1 }] } });
+    expect(openFollowUpCards([automatic], automatic)).toEqual([]);
+    expect(openFollowUpCards([automatic], peer).map(card => card.id)).toEqual(["automatic"]);
+
+    // The running fix's own unfinished report waits; the done peer's report is placed there.
+    const own = report({ taskId: "fix", findingId: "1", text: "The fix's own older report", sourceDone: false });
+    const later = report({ taskId: "peer", findingId: "1", text: "The same bug again" });
+    const asked: MatchAsk[] = [];
+    const placed = await planFollowUps(snap([own, later], { cards: [card({ id: "fix", phase: "started", fixedProducts: true })] }), ask => {
+      asked.push(ask);
+      return { groups: [{ keys: [own.key, later.key], cardId: "fix" }] };
+    });
+    expect(asked[0]!.cards.map(entry => entry.id)).toEqual(["fix"]);
+    expect(placed.linked.map(entry => [entry.cardId, entry.keys])).toEqual([["fix", [later.key]]]);
+    expect(placed.tracks.map(entry => entry.taskId)).toEqual(["peer"]);
+    expect(placed.created).toEqual([]);
+    const alone = await plan(snap([{ ...own, sourceDone: true }], { cards: [card({ id: "fix", phase: "started" })] }));
+    expect(alone.asked).toEqual([]);
+    expect(alone.linked).toEqual([]);
+    expect(alone.created).toHaveLength(1);
+
+    // An older review showed a task its own card. Its pointer is no hint, so the report is matched as usual,
+    // including one left at "No card was chosen" for that pointer, while other choices and refusals keep their meaning.
+    const named = report({ taskId: "done-fix", findingId: "1", text: "Different words", cardsShown: ["done-fix", "shown"], sameBug: "done-fix" });
+    const cards = [card({ id: "shown" })];
+    for (const saved of [named, { ...named, tracking: { reason: "no-choice" as const } }]) {
+      const result = await plan(snap([saved], { cards }), { groups: [{ keys: [named.key], cardId: "shown" }] });
+      expect(result.asked).toEqual([[named.key]]);
+      expect(result.linked.map(entry => entry.cardId)).toEqual(["shown"]);
+    }
+    const chosen = await plan(snap([{ ...named, sameBug: "shown" }], { cards }));
+    expect([chosen.asked, chosen.linked.map(entry => entry.cardId)]).toEqual([[], ["shown"]]);
+    const refused = await plan(snap([{ ...named, sameBug: "none" }], { cards }));
+    expect([refused.asked, refused.linked, refused.created.length]).toEqual([[], [], 1]);
+    const missing = await plan(snap([{ ...named, sameBug: "archived" }], { cards }));
+    expect(missing.tracks[0]!.tracking).toEqual({ reason: "no-choice" });
+  });
+
   it("opens one backlog card for one confirmed report and skips nits, checks and unfinished work", async () => {
     expect(followUpBlock({ text: "Old", status: "open", severity: "pre-existing", raisedBy: "opus-high", steps: "Look", evidence: "It was already wrong." })).toBeUndefined();
     expect(followUpBlock({ text: "Old", status: "open", severity: "pre-existing", raisedBy: "opus-high", evidence: "It was already wrong." })).toBe("missing-steps");
@@ -148,6 +260,9 @@ describe("confirmed older bugs", async () => {
     expect(resume.asked).toEqual([]);
     expect(resume.created).toEqual([]);
     expect(resume.linked[0]!.cardId).toBe("assigned");
+    // A coordinator's request whose products changed after the credit was saved still finishes that report's copy.
+    const moved = await plan(snap([one], { cards: [card({ id: "assigned", fixedProducts: true, productIds: ["notes"], reportKeys: [one.key] })], pending }));
+    expect([moved.asked, moved.created, moved.linked.map(entry => [entry.cardId, entry.keys, entry.addProducts, entry.alsoReported])]).toEqual([[], [], [["assigned", [one.key], [], []]]]);
     expect(trackingWords({ reason: "pictures", retry: true })).toEqual({ label: "Not tracked", reason: "The pictures could not be copied" });
   });
 

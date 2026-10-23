@@ -6,7 +6,7 @@ import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
-import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, productsOn, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
+import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, productsOn, takesFollowUps, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
 import { completeAll } from "./parallel.js";
 import { AgentRun } from "./acp-run.js";
 import type { Kernel, MTask } from "./kernel.js";
@@ -210,7 +210,8 @@ export class FollowUps {
       this.k.s.followUpPending = mergePending(previous, pending);
       this.save();
       for (const release of plan.released) this.releaseReport(release);
-      const picturesPending = new Set<string>();
+      // Reports whose link did not finish in this pass. Their tracking waits.
+      const untracked = new Set<string>();
       for (const create of plan.created) {
         // A judgment that arrived while the match was running can withdraw a report before the card is written.
         const reports = create.reports.filter((report) => this.stillOlder(followUpKey(report.taskId, report.findingId)));
@@ -218,10 +219,13 @@ export class FollowUps {
         if (!reports.length) continue;
         const ready = { ...create, reports, keys, productIds: [...new Set(reports.flatMap((report) => report.productIds))] };
         const card = this.cardFor(ready);
-        this.assign(keys, card.id);
-        this.save();
-        await this.copyThenTrack(card, reports, keys, card.id, picturesPending);
-        this.save();
+        const release = this.retain(card.id, reports);
+        try {
+          this.assign(keys, card.id);
+          this.save();
+          await this.copyThenTrack(card, reports, keys, card.id, untracked);
+          this.save();
+        } finally { release(); }
       }
       for (const link of plan.linked) {
         const cardId = this.destination(link.cardId);
@@ -229,22 +233,31 @@ export class FollowUps {
         const reports = link.reports.filter((report) => this.stillOlder(followUpKey(report.taskId, report.findingId)));
         const keys = link.keys.filter((key) => reports.some((report) => followUpKey(report.taskId, report.findingId) === key));
         if (!reports.length) continue;
-        if ((!live || live.state === "done" || live.state === "cancelled") && assigned.some(group => group.cardId && group.keys.some(key => keys.includes(key)))) {
-          for (const key of keys) picturesPending.add(key);
+        // Read the card as it is now, with the rule that listed it: queueing or starting it keeps it.
+        const open = !!live && takesFollowUps(live as Task, reports);
+        // A destination saved by an earlier pass is never swapped for another card, even when it cannot take the link yet.
+        if (!open && assigned.some(group => group.cardId && group.keys.some(key => keys.includes(key)))) {
+          for (const key of keys) untracked.add(key);
           continue;
         }
-        const scope = live ? productsOn(live) : [];
-        const sameScope = live && (!live.followUp || live.followUp.preserveRequest) ? reports.every(report => report.productIds.length === scope.length && scope.every(id => report.productIds.includes(id))) : true;
-        const open = sameScope && !!live && (live.followUp || (live.state === "backlog" && live.kind === "bug")) && live.state !== "done" && live.state !== "cancelled";
+        // The reports are fresh again. Without a finished task's report, they cannot open a card: a later pass places them.
+        if (!open && !reports.some((report) => this.k.task(report.taskId)?.state === "done")) {
+          this.unassign(keys);
+          for (const key of keys) untracked.add(key);
+          continue;
+        }
         const card = open ? live! : this.cardAfterClose({ ...link, cardId, reports, keys });
-        if (open) this.applyLink(card, { ...link, reports, keys });
-        this.assign(keys, card.id);
-        this.save();
-        await this.copyThenTrack(card, reports, keys, card.id, picturesPending);
-        this.save();
+        const release = this.retain(card.id, reports);
+        try {
+          if (open) this.applyLink(card, { ...link, reports, keys });
+          this.assign(keys, card.id);
+          this.save();
+          await this.copyThenTrack(card, reports, keys, card.id, untracked);
+          this.save();
+        } finally { release(); }
       }
       for (const track of plan.tracks) {
-        if ("taskId" in track.tracking && picturesPending.has(followUpKey(track.taskId, track.findingId))) continue;
+        if ("taskId" in track.tracking && untracked.has(followUpKey(track.taskId, track.findingId))) continue;
         this.writeTracking(track.taskId, track.findingId, "taskId" in track.tracking ? { taskId: this.destination(track.tracking.taskId) } : track.tracking);
       }
       this.k.s.followUpPending = (this.k.s.followUpPending ?? []).filter((group) => group.keys.some((key) => !this.linkedKey(key)));
@@ -389,11 +402,22 @@ export class FollowUps {
     return (this.k.s.followUpPending ?? []).map(group => group.cardId ? { ...group, cardId: this.destination(group.cardId) } : group);
   }
 
+  /**
+   * Keep the card and every report's own task on the board, and their pictures in place, until the link and its copies
+   * are saved. Finishing or cancelling either still happens; only retirement and picture cleanup wait.
+   */
+  private retain(cardId: Id, reports: readonly FollowUpCredit[]): () => void {
+    const releases = [...new Set([cardId, ...reports.map((report) => report.taskId)])].map((id) => this.k.holdFollowUp(id));
+    return () => { for (const release of releases) release(); };
+  }
+
   private assign(keys: readonly string[], cardId: Id): void {
-    this.k.s.followUpPending = [
-      ...(this.k.s.followUpPending ?? []).map(group => ({ ...group, keys: group.keys.filter(key => !keys.includes(key)) })).filter(group => group.keys.length),
-      { keys: [...keys], cardId },
-    ];
+    this.unassign(keys);
+    this.k.s.followUpPending = [...(this.k.s.followUpPending ?? []), { keys: [...keys], cardId }];
+  }
+
+  private unassign(keys: readonly string[]): void {
+    this.k.s.followUpPending = (this.k.s.followUpPending ?? []).map(group => ({ ...group, keys: group.keys.filter(key => !keys.includes(key)) })).filter(group => group.keys.length);
   }
 
   /** Live tasks, plus any archived task a saved link still names. History is not scanned. */
@@ -514,12 +538,10 @@ export class FollowUps {
     });
   }
 
+  /** Only report credits change: the request, products, plan, stage and agents of a coordinator's fix stay as they are. */
   private applyLink(card: MTask, link: FollowUpLink): void {
-    if (card.state === "done" || card.state === "cancelled") return;
-    if (!card.followUp) {
-      if (card.state !== "backlog" || card.kind !== "bug") return;
-      card.followUp = { reports: [], preserveRequest: true };
-    }
+    if (!takesFollowUps(card as Task, link.reports)) return;
+    card.followUp ??= { reports: [], preserveRequest: true };
     const reports = [...card.followUp.reports];
     for (const report of link.reports) {
       if (!reports.some((entry) => entry.taskId === report.taskId && entry.findingId === report.findingId)) reports.push(stored(report));
@@ -551,13 +573,13 @@ export class FollowUps {
   }
 
   /** Copy every picture, then mark the finding tracked. A refused copy stays pending and is not tracked. */
-  private async copyThenTrack(card: MTask, reports: readonly FollowUpCredit[], keys: readonly string[], cardId: Id, picturesPending: Set<string>): Promise<void> {
+  private async copyThenTrack(card: MTask, reports: readonly FollowUpCredit[], keys: readonly string[], cardId: Id, untracked: Set<string>): Promise<void> {
     const copied = await this.keepImages(card, reports);
     const blocked = new Set<string>();
     if (!copied) for (const report of reports) if (report.images.length) {
       const key = followUpKey(report.taskId, report.findingId);
       blocked.add(key);
-      picturesPending.add(key);
+      untracked.add(key);
       this.writeTracking(report.taskId, report.findingId, { reason: "pictures", retry: true });
     }
     this.trackKeys(keys.filter((key) => !blocked.has(key)), cardId);
