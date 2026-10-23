@@ -10,6 +10,7 @@ import type { Section } from "./context.js";
 import type { Result } from "./coordination.js";
 import { readText } from "./evidence-read.js";
 import { saveImmutable } from "./immutable-file.js";
+import type { ContextOmission } from "./coordinator-note-context.js";
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const short = (text: string) => digest(text).slice(0, 16);
@@ -32,13 +33,13 @@ export async function saveExactMessage(dataDir: string, taskId: Id, text: string
 }
 
 /** Which sections the message actually supplied, by name, size and identity, with duplicate names told apart. */
-export function inputManifest(instructions: string, sections: readonly Section[], omitted: readonly { title: string; digest: string }[] = [], complete = false): InputManifestEntry[] {
+export function inputManifest(instructions: string, sections: readonly Section[], omitted: readonly ContextOmission[] = [], complete = false): InputManifestEntry[] {
   const entries: InputManifestEntry[] = complete ? [] : [{ name: "Role instructions", size: instructions.length, digest: short(instructions), kind: "instructions" }];
   for (const section of sections) {
     const reference = section.title === "Current authoritative task context" ? /saved at (.+?) \(reference ([a-f0-9]+)\)/.exec(section.body) : undefined;
     entries.push({ name: section.title, size: section.body.length, digest: short(section.body), kind: reference ? "reference" : section.title === "Role instructions" ? "instructions" : "text", ...(reference ? { file: reference[1]!, reference: reference[2]! } : {}) });
   }
-  for (const entry of omitted) entries.push({ name: entry.title, size: 0, digest: entry.digest.slice(0, 16), kind: "omitted" });
+  for (const entry of omitted) entries.push({ name: entry.title, size: 0, digest: entry.noteId ? entry.digest : entry.digest.slice(0, 16), kind: "omitted", ...(entry.noteId ? { noteId: entry.noteId } : {}) });
   return numberInputManifest(entries);
 }
 

@@ -487,6 +487,8 @@ export interface InputManifestEntry {
   kind: "text" | "instructions" | "reference" | "omitted";
   file?: string;
   reference?: string;
+  /** A recorded coordinator note left out, without asserting message delivery. */
+  noteId?: Id;
 }
 
 /** The job and task context actually handed to one agent, captured before sending. */
@@ -582,6 +584,8 @@ export interface BuilderContext {
   hashes: Readonly<Record<string, string>>;
   /** Exact records already supplied to this native reviewer conversation. */
   findingHashes?: Readonly<Record<Id, string>>;
+  /** Exact text and original-step fingerprints available to this conversation. */
+  noteHashes?: Readonly<Record<Id, string>>;
 }
 
 export interface ConversationNote {

@@ -25,7 +25,20 @@ export interface Section {
   background?: string;
   /** Internal reference carried only while an actual supplied section is shortened. */
   reviewHistory?: CompactReviewHistory;
+  /** Recorded notes, in authoritative order; never inferred from their rendered prose. */
+  coordinatorNotes?: readonly (NonNullable<Task["notes"]>[number] & { background: boolean; earlierCarried?: boolean })[];
+  /** Still-current notes outside this seat's background (including live delivery). */
+  deferredCoordinatorNoteIds?: readonly string[];
+  ambiguousCoordinatorNotes?: boolean;
 }
+
+export const COORDINATOR_NOTES_RULE = "Product decisions and constraints remain authoritative; the latest wins where they conflict. An instruction about what to revise or check in an earlier step applies to that work, not a smaller scope for your current assignment. Implement the complete approved request and brief; keep later product decisions. Do not infer new requirements from an earlier agent's interpretation.";
+
+export function coordinatorNoteStep(note: NonNullable<Task["notes"]>[number]): string {
+  return note.origin ? `Recorded during “${note.origin.stageTitle}”${note.origin.roleName ? ` (${note.origin.roleName})` : ""}${note.origin.kind === "disagreement" ? ", at the coordinator's design call" : ""}` : "Earlier note (original step not recorded)";
+}
+
+export const renderCoordinatorNote = (note: NonNullable<Task["notes"]>[number]) => `- ${coordinatorNoteStep(note)}:\n${note.text}`;
 
 /** Beside the reports exactly as they were handed back: evidence to check and proposals to weigh, never extra requirements. */
 export const EARLIER_REPORTS_RULE = `These are the reports earlier agents saved, not their conversations. Check the facts and sources your work relies on yourself: they may be out of date or hold only for a particular version or platform. Proposals, such as suggested approaches or proposed screens and words, can guide your work but add no requirements: the task request, any approved brief and the coordinator's notes and decisions remain authoritative.`;
@@ -258,7 +271,16 @@ export function coordinatorNotes(scope: RepositoryContext, member?: string, earl
       (queued.recipients?.[member ?? "main"] === false || !queued.recipients && member === undefined) &&
       !["sending", "accepted", "unconfirmed"].includes(queued.deliveries?.[member ?? "main"]?.state ?? "");
   });
-  const render = (notes: typeof available) => notes.length ? `Product decisions and constraints remain authoritative; the latest wins where they conflict. An instruction about what to revise or check in an earlier step applies to that work, not a smaller scope for your current assignment. Implement the complete approved request and brief; keep later product decisions. Do not infer new requirements from an earlier agent's interpretation.\n\n${notes.map((note) => `- ${note.origin ? `Recorded during “${note.origin.stageTitle}”${note.origin.roleName ? ` (${note.origin.roleName})` : ""}${note.origin.kind === "disagreement" ? ", at the coordinator's design call" : ""}:\n` : "Earlier note (original step not recorded):\n"}${note.text}`).join("\n\n")}` : "";
-  const notes = available.filter(note => backgroundMessage(task, note.id, member) && !fromEarlier.some(said => (note.id !== undefined && note.id === said.id) || note.text === said.text));
-  return available.length ? [{ title: "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)", body: render(notes), background: render(available) }] : [];
+  const render = (notes: typeof available) => notes.length ? `${COORDINATOR_NOTES_RULE}\n\n${notes.map(renderCoordinatorNote).join("\n\n")}` : "";
+  const notes = available.filter(note => backgroundMessage(task, note.id, member) && !fromEarlier.some(said => note.id !== undefined && note.id === said.id && note.text === said.text));
+  const ids = (task.notes ?? []).map(note => note.id);
+  // Keep an empty metadata carrier so a continuation can name the last withdrawn note.
+  return [{ title: "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)", body: render(notes), background: render(available),
+    coordinatorNotes: available.map(note => {
+      const background = backgroundMessage(task, note.id, member);
+      return { ...note, background, ...(background && !notes.includes(note) ? { earlierCarried: true } : {}) };
+    }),
+    deferredCoordinatorNoteIds: (task.notes ?? []).filter(note => !available.includes(note) && note.id !== undefined).map(note => note.id!),
+    ambiguousCoordinatorNotes: ids.some(id => !id) || new Set(ids).size !== ids.length,
+  }];
 }

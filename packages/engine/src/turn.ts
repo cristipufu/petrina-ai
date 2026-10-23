@@ -28,6 +28,7 @@ import { supplyReviewHistory } from "./review-history.js";
 import { backgroundMessage, holdUnconfirmed, MessageTurn, takeMessages } from "./messages.js";
 import { preserveCaptures } from "./captures.js";
 import { builderContext } from "./builder-context.js";
+import type { ContextOmission } from "./coordinator-note-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
 import { discardParticipant, ParticipantUnavailable } from "./participant-conversation.js";
 import type { ToolActivityEvent } from "./tool-invocations.js";
@@ -254,7 +255,7 @@ export class Turns {
    * The role-specific context at the moment it is handed to an agent, not reconstructed later. The record is
    * returned, and joins the journey when the exact text goes out, so its saved message reference is part of it.
    */
-  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: { model?: string; modelName?: string; effort?: string }, instructions: string, extra: { omitted?: readonly { title: string; digest: string }[]; freshReason?: string; sessionId?: string; resumed?: boolean; supplied?: readonly Section[]; place?: string; readiness?: ReadinessRecheck } = {}): PendingInput | undefined {
+  private recordJourneyInput(scope: RepositoryContext, roleId: Id, profileId: Id, sections: readonly Section[], mode: "fresh" | "continued", plannedId: Id, selectionReason: string | undefined, reviewerKey: string | undefined, confirmedSettings: { model?: string; modelName?: string; effort?: string }, instructions: string, extra: { omitted?: readonly ContextOmission[]; freshReason?: string; sessionId?: string; resumed?: boolean; supplied?: readonly Section[]; place?: string; readiness?: ReadinessRecheck } = {}): PendingInput | undefined {
     const { task, work } = scope;
     const step = openStep(task);
     if (step?.kind !== "agent") return undefined;
@@ -1266,7 +1267,7 @@ export class Turns {
   }
 
   private async prepareTurnPrompt(scope: RepositoryContext, role: Role, sessionId: string, sections: Section[], note: ConversationNote | undefined,
-    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[]; findings?: readonly import("@petrina/core").Finding[]; supplyHistory?: boolean }): Promise<{ sections: Section[]; refreshRole: boolean; omitted?: readonly { title: string; digest: string }[] }> {
+    options: { packet?: boolean; previous?: BuilderContext; design?: boolean; knownSections?: readonly string[]; findings?: readonly import("@petrina/core").Finding[]; supplyHistory?: boolean }): Promise<{ sections: Section[]; refreshRole: boolean; omitted?: readonly ContextOmission[] }> {
     const prepared: Awaited<ReturnType<typeof builderContext>> = options.packet ? await builderContext(this.k.dataDir, repositoryView(scope), role, sessionId, sections, options.previous, { design: options.design, knownSections: options.knownSections, findings: options.findings }) : { sections };
     if (note && options.packet) {
       if (prepared.snapshot) note.context = prepared.snapshot;

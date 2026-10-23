@@ -252,14 +252,16 @@ it("resends a changed warm card complete without retaining unused history", asyn
   try {
     const { input, step } = await freeze(f, [longCard]);
     const sections = await f.context.sectionsFor(f.scope, role.id, "review-0", undefined, undefined, input);
-    const before = sections.map(section => ({ title: section.title, body: section.title === "Open follow-up cards" ? "Earlier complete card text" : section.background ?? section.body }));
+    // Compare supplied text only; empty note metadata adds no saved heading.
+    const complete = sections.filter(section => section.background ?? section.body);
+    const before = complete.map(section => ({ title: section.title, body: section.title === "Open follow-up cards" ? "Earlier complete card text" : section.background ?? section.body }));
     const first = await builderContext(f.data, repositoryView(f.scope), role, "warm-card", before, undefined, { findings: input.findings });
     const warm = await f.engine["turns"]["prepareTurnPrompt"](f.scope, role, "warm-card", sections, undefined, { packet: true, previous: first.snapshot, findings: input.findings });
     expect(warm.sections.some(section => section.title === "Current finding status index")).toBe(true);
     expect(warm.sections.find(section => section.title === "Open follow-up cards")!.body).toContain(longCard.problem);
     expect(opening(f, warm.sections)).not.toContain(historyGuidance(input.history!));
     expect(step.reviewHistory).toBeUndefined();
-    const full = sections.map(section => ({ title: section.title, body: section.background ?? section.body }));
+    const full = complete.map(section => ({ title: section.title, body: section.background ?? section.body }));
     const expected = await builderContext(f.data, repositoryView(f.scope), role, "warm-card", full, first.snapshot, { findings: input.findings });
     expect(warm.sections).toEqual(expected.sections);
     const packet = readFileSync(expected.snapshot!.file, "utf8");
