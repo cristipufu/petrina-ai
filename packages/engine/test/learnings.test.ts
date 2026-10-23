@@ -65,10 +65,10 @@ describe("lessons agents pass on", () => {
     const root = tempDir(`petrina-learning-source-${state}-`); roots.push(root);
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
-    const repo = makeProduct(root), lesson = "Use the repository's focused greeting checks before the full suite.";
+    const repo = await makeProduct(root), lesson = "Use the repository's focused greeting checks before the full suite.";
     writeFileSync(join(repo, "AGENTS.md"), `## Learnings\n\n- ${lesson}\n`);
-    git(repo, "add", "."); git(repo, "commit", "-qm", "Record the original instruction");
-    const base = git(repo, "rev-parse", "HEAD");
+    await git(repo, "add", "."); await git(repo, "commit", "-qm", "Record the original instruction");
+    const base = await git(repo, "rev-parse", "HEAD");
     const productId = await engine.addProduct(repo);
     const scope = executionFor(engine.task(engine.addTask({ productId, title: "Learn from the current instructions", backlog: true }))!);
     scope.work.baseSha = base;
@@ -76,7 +76,7 @@ describe("lessons agents pass on", () => {
       scope.work.worktree = repo;
       if (state === "deleted") rmSync(join(repo, "AGENTS.md"));
       else writeFileSync(join(repo, "AGENTS.md"), "");
-      git(repo, "add", "."); git(repo, "commit", "-qm", "Remove the old instruction");
+      await git(repo, "add", "."); await git(repo, "commit", "-qm", "Remove the old instruction");
     }
     const read = spyOn(gitOps, "fileAt");
     try {
@@ -93,7 +93,7 @@ describe("lessons agents pass on", () => {
     const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
-      const repo = makeProduct(root);
+      const repo = await makeProduct(root);
       const productId = await engine.addProduct(repo);
       const task = engine.task(engine.addTask({ productId, title: "Keep a complete instruction" }))!;
       executionFor(task).work.worktree = repo;
@@ -105,7 +105,7 @@ describe("lessons agents pass on", () => {
       expect(offer.body).toBe(`- ${lesson}`);
       engine.addLessons(offer.id, [0]);
       await learnings.write(executionFor(task));
-      expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(`- ${lesson}`);
+      expect(await git(repo, "show", "HEAD:AGENTS.md")).toContain(`- ${lesson}`);
       await learnings.note(executionFor(task), [lesson], "builder", "sol-xhigh");
       await learnings.offer(executionFor(task));
       expect(engine.getState().inbox.filter((item) => item.kind === "learnings")).toEqual([]);
@@ -121,7 +121,7 @@ describe("lessons agents pass on", () => {
     fakes.scenario({ learnings: true });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
-      const repo = makeProduct(root);
+      const repo = await makeProduct(root);
       const productId = await engine.addProduct(repo);
       engine.setProductDelivery(productId, "local", true);
       const offers: { body?: string; detail?: string }[] = [];
@@ -151,12 +151,12 @@ describe("lessons agents pass on", () => {
       expect(offers[0]!.body).toBe("- Run the tests with bun test: they take a second.\n- Greetings live at the repository root.");
       expect(offers[0]!.detail).toContain("Claude Code and Codex both read that file by themselves");
       expect(first.timeline.map((entry) => entry.text)).toContain("You added a lesson to AGENTS.md");
-      expect(git(repo, "ls-tree", "--name-only", "main")).not.toContain("AGENTS.md");
+      expect(await git(repo, "ls-tree", "--name-only", "main")).not.toContain("AGENTS.md");
 
       // The next delivery carries them, in its one commit, and lessons AGENTS.md has are not offered again.
       await ship("Add a farewell");
-      expect(git(repo, "show", "main:AGENTS.md")).toBe("## Learnings\n\nWhat agents learned about working in this repository, added with the coordinator's OK.\n\n- Greetings live at the repository root.");
-      expect(git(repo, "log", "-1", "--format=%s", "main")).toBe("Add a farewell");
+      expect(await git(repo, "show", "main:AGENTS.md")).toBe("## Learnings\n\nWhat agents learned about working in this repository, added with the coordinator's OK.\n\n- Greetings live at the repository root.");
+      expect(await git(repo, "log", "-1", "--format=%s", "main")).toBe("Add a farewell");
       expect(offers).toHaveLength(1);
     } finally {
       engine.shutdown();
@@ -172,21 +172,24 @@ describe("a lesson AGENTS.md gained in the meantime", () => {
     fakes.scenario({ learnings: true });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
-      const repo = makeProduct(root);
+      const repo = await makeProduct(root);
       const productId = await engine.addProduct(repo);
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
       let written = false;
       const offers: { body?: string }[] = [];
-      const task = await waitFor(() => {
-        const state = engine.getState();
-        const found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
+      const task = await waitFor(async () => {
+        let state = engine.getState();
+        let found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
         // While the builder works on its branch, main gains the second lesson by the coordinator's own hand.
         if (!written && found?.timeline.some((entry) => entry.text === "Builder started")) {
           writeFileSync(join(repo, "AGENTS.md"), "## Learnings\n\n- Greetings live at the repository root.\n");
-          git(repo, "add", "AGENTS.md");
-          git(repo, "commit", "-q", "-m", "Note where greetings live");
+          await git(repo, "add", "AGENTS.md");
+          await git(repo, "commit", "-q", "-m", "Note where greetings live");
           written = true;
+          // Answer what the engine shows now, not what it showed before the commit.
+          state = engine.getState();
+          found = state.tasks.find((entry) => entry.id === taskId) as Task | undefined;
         }
         for (const item of state.inbox) {
           if (item.taskId !== taskId) continue;
@@ -228,11 +231,11 @@ describe("repeated lessons", () => {
     const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
-      const repo = makeProduct(root);
+      const repo = await makeProduct(root);
       const productId = await engine.addProduct(repo);
       writeFileSync(join(repo, "AGENTS.md"), "- Run engine tests with bun test --parallel.\n");
-      git(repo, "add", "AGENTS.md");
-      git(repo, "commit", "-q", "-m", "Existing guidance");
+      await git(repo, "add", "AGENTS.md");
+      await git(repo, "commit", "-q", "-m", "Existing guidance");
       const task = engine.task(engine.addTask({ productId, title: "Keep distinct instructions" }))!;
       executionFor(task).work.worktree = repo;
       const product = engine.productOf(task)!;
@@ -253,9 +256,9 @@ describe("repeated lessons", () => {
       expect(offer.body).toBe(instructions.map((line) => `- ${line}`).join("\n"));
       engine.addLessons(offer.id, [0, 1, 2, 3]);
       await learnings.write(executionFor(task));
-      expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[0]!);
-      expect(git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[1]!);
-      expect(git(repo, "show", "HEAD:AGENTS.md")).not.toContain(`- ${instructions[4]}`);
+      expect(await git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[0]!);
+      expect(await git(repo, "show", "HEAD:AGENTS.md")).toContain(instructions[1]!);
+      expect(await git(repo, "show", "HEAD:AGENTS.md")).not.toContain(`- ${instructions[4]}`);
     } finally { await engine.shutdown(); }
   });
 });

@@ -62,7 +62,7 @@ async function fixture(live: Scenario["live"], toolId = "codex", ackHeld = false
   const engine = new Engine(join(root, "data"), { agentCommand: () => command, usageCommands: { codex: null, grok: null, antigravity: null } });
   engine.setPoolPaused(true);
   const scheduling = spyOn(engine, "schedule").mockImplementation(() => {});
-  const product = makeProduct(root);
+  const product = await makeProduct(root);
   const productId = await engine.addProduct(product);
   const task = engine.task(engine.addTask({ productId, title: "Add a greeting", backlog: true }))!;
   const profile = engine.s.profiles.find(profile => profile.toolId === toolId)!;

@@ -15,7 +15,7 @@ const ITEM = "Drafting the greeting file";
 async function start(reopen?: "load", clock = false, activity?: "grok") {
   const root = tempDir("petrina-todo-");
   roots.push(root);
-  const product = makeProduct(root);
+  const product = await makeProduct(root);
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "todo", ...(reopen ? { reopen } : {}), ...(activity ? { activity } : {}) });
@@ -82,7 +82,7 @@ describe("the agent's to-do item", () => {
         ["planner", false],
         ["code-reviewer", false],
       ]);
-      expect(git(run.product, "show", "main:greeting.txt")).toBe("Hello");
+      expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello");
       await engine.quit();
       const saved = new Store(join(run.home, "petrina.db"));
       expect(run.find(saved.load()!).steps).toEqual(done.steps);
@@ -185,7 +185,7 @@ describe("the record each finished step leaves", () => {
   it("names the role and the pass, and leaves out the time spent waiting for the coordinator", async () => {
     const root = tempDir("petrina-steps-");
     roots.push(root);
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts")] });
     try {
       const productId = await engine.addProduct(repo);
@@ -238,7 +238,7 @@ it("names and enforces the check for unresolved review issues when shipping norm
   fakes.scenario({ planner: "short", builder: "plain", reviewer: "important", verifier: "hold" });
   const engine = await EngineProcess.harness(join(root, "home"), fakes.dir);
   try {
-    const product = makeProduct(root);
+    const product = await makeProduct(root);
     const productId = await engine.act("addProduct", product);
     await engine.act("setProductDelivery", productId, "local", false);
     const taskId = await engine.act("addTask", { productId, title: "Check the greeting" });
@@ -254,6 +254,6 @@ it("names and enforces the check for unresolved review issues when shipping norm
     const done = await engine.until((state) => ["done", "failed"].includes(task(state).state), "shipping after approval");
     expect(task(done).error).toBeUndefined();
     expect(task(done).state).toBe("done");
-    expect(git(product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+    expect(await git(product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
   } finally { await engine.quit(); }
 });

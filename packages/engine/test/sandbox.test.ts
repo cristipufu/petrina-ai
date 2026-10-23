@@ -21,7 +21,7 @@ const REFUSED = "Running without Claude Code's sandbox: this computer lacks what
 async function start(scenario: Scenario, description = "", approvePlan = false) {
   const root = tempDir("petrina-sandbox-");
   roots.push(root);
-  const product = makeProduct(root);
+  const product = await makeProduct(root);
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
@@ -103,7 +103,7 @@ describe("Claude Code's own sandbox", () => {
       ];
       expect(engine.onUsable("opus-high")).toBe("sol-high");
       expect(engine.s.pool.limited ?? []).toEqual([]);
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       engine.setProductDelivery(productId, "local", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting" });
       const seated = await waitFor(() => {

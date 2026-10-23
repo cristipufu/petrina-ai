@@ -25,7 +25,7 @@ describe("a tool that never answers when it starts", () => {
     };
     const engine = new Engine(join(root, "data"), options);
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
       const task = () => engine.getState().tasks.find((entry) => entry.id === taskId) as Task | undefined;
       // Generous: CI runners start a fake agent slowly, and the step fails only after the start limit.

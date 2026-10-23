@@ -28,7 +28,7 @@ async function fixture(scenario: Scenario = {}) {
   };
   let engine = new Engine(join(root, "data"), options);
   engine.setPoolPaused(true);
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   const productId = await engine.addProduct(repo);
   engine.setProductDelivery(productId, "local", true);
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
@@ -104,8 +104,8 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
       expect(original.toolId).toBe("codex");
       roomierAlternative(f.engine);
       writeFileSync(join(f.repo, "greeting.txt"), "Hello from main\n");
-      git(f.repo, "add", "greeting.txt");
-      git(f.repo, "commit", "-q", "-m", "A greeting on main");
+      await git(f.repo, "add", "greeting.txt");
+      await git(f.repo, "commit", "-q", "-m", "A greeting on main");
       f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
       await f.advance(() => f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");
       const port = f.fakes.received("code reviewer").find((entry) => entry.text.includes("Review only the port"))!;

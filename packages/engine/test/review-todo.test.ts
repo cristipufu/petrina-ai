@@ -32,7 +32,7 @@ async function setup(role: "code-reviewer" | "security-reviewer" = "code-reviewe
   };
   const engine = await launch();
   await engine.act("setPoolLimit", Object.keys(ADAPTERS).length);
-  const productId = await engine.act("addProduct", makeProduct(root));
+  const productId = await engine.act("addProduct", await makeProduct(root));
   await engine.act("setProductDelivery", productId, "local", true);
   const taskId = await engine.act("addTask", { productId, title: "Check the greeting", approvePlan: true });
   const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
@@ -231,7 +231,7 @@ describe("real grouped review summaries", () => {
         const state = store.load()!;
         const task = run.find(state);
         const product = state.products.find((entry) => entry.id === task.productId)!;
-        const baseSha = task.baseSha ?? git(product.path!, "rev-parse", "HEAD").trim();
+        const baseSha = task.baseSha ?? (await git(product.path!, "rev-parse", "HEAD")).trim();
         // This test starts at the review boundary: seed a valid working copy and already-approved checks,
         // so it measures the one port reviewer rather than setup, checkout or Check finder work.
         store.save({

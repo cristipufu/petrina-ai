@@ -89,7 +89,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     let engine: EngineProcess | undefined;
     try {
       engine = await EngineProcess.harness(home, fakes.dir);
-      const productId = await engine.act("addProduct", makeProduct(dir));
+      const productId = await engine.act("addProduct", await makeProduct(dir));
       await engine.act("addTask", { productId, title: "Work through a quit", description: "[no-check]" });
       await waitFor(async () => {
         if (when === "starting") return pids().some(alive);
@@ -233,7 +233,7 @@ await import(${JSON.stringify(HARNESS)});`);
     let engine: EngineProcess | undefined;
     try {
       engine = await EngineProcess.start(home, [launcher, home, fakes.dir, ...(stubborn ? ["--stubborn"] : [])]);
-      const productId = await engine.act("addProduct", makeProduct(dir));
+      const productId = await engine.act("addProduct", await makeProduct(dir));
       for (const end of ["cancel", "quit"] as const) {
         // A first lookup near its limit may time out under contention. Recovery must then
         // be available; forcing every lookup past its deadline cannot prove child cleanup.

@@ -8,11 +8,11 @@ const worlds: World[] = [];
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
 
 for (const archived of [false, true]) for (const first of ["one", "two"] as const) it(`preserves shared report metadata while removing ${first} first (${archived ? "archived" : "live"} task)`, async () => {
-  const world = makeWorld(`shared-image-history-${archived}-${first}`);
+  const world = await makeWorld(`shared-image-history-${archived}-${first}`);
   worlds.push(world);
   const secondClone = join(world.dir, "second-clone");
-  git(world.dir, "clone", "-q", world.clone, secondClone);
-  git(secondClone, "remote", "set-url", "origin", "https://github.com/acme/second.git");
+  await git(world.dir, "clone", "-q", world.clone, secondClone);
+  await git(secondClone, "remote", "set-url", "origin", "https://github.com/acme/second.git");
   const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
   let engine = world.start(options);
   try {

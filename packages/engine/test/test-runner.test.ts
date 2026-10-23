@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
-import { removeDir, tempDir, testGitEnv, waitFor } from "./fixtures.js";
+import { removeDir, runCommand, tempDir, testGitEnv, waitFor } from "./fixtures.js";
 import { testTempParent } from "./temp-parent.js";
 
 const fixture = tempDir("petrina-test-runner-");
@@ -28,9 +28,9 @@ it.skipIf(process.platform === "win32")("recognizes a link to the system parent 
 });
 
 it.skipIf(process.platform !== "darwin")("uses an isolated home folder even when the normal macOS parent is already in the environment", async () => {
-  const session = Bun.spawnSync(["getconf", "DARWIN_USER_TEMP_DIR"]);
-  expect(session.exitCode).toBe(0);
-  const normal = session.stdout.toString().trim();
+  const session = await runCommand(["getconf", "DARWIN_USER_TEMP_DIR"]);
+  expect(session.code).toBe(0);
+  const normal = session.stdout.trim();
   const record = join(fixture, "normal-parent.json"), test = join(fixture, "normal-parent.test.ts");
   writeFileSync(test, `import { it } from "bun:test";
 import { writeFileSync } from "node:fs";
@@ -118,7 +118,7 @@ import { makeProduct, testBrowserRoot } from ${JSON.stringify(join(import.meta.d
 it("owns only this run's repositories, database and captures", async () => {
   const label = process.env.PETRINA_FIXTURE_RUN!;
   const folder = tmpdir(), home = process.env.PETRINA_HOME!;
-  const repo = makeProduct(join(folder, "product"));
+  const repo = await makeProduct(join(folder, "product"));
   const browser = testBrowserRoot(); mkdirSync(join(browser, "captures"));
   const db = new Database(join(home, "petrina.db"));
   db.exec("CREATE TABLE own (value TEXT)"); db.query("INSERT INTO own VALUES (?)").run(label);

@@ -7,12 +7,12 @@ import { git, makeWorld, removeDir, type World } from "./support.js";
 
 const worlds: World[] = [];
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
-function fixture() {
-  const first = makeWorld("review-settle-first"), second = makeWorld("review-settle-second");
+async function fixture() {
+  const first = await makeWorld("review-settle-first"), second = await makeWorld("review-settle-second");
   worlds.push(first, second);
   writeFileSync(join(second.clone, "SECOND.md"), "Only the second repository has this file.\n");
-  git(second.clone, "add", "SECOND.md");
-  git(second.clone, "commit", "-q", "-m", "Give the second repository distinct review evidence");
+  await git(second.clone, "add", "SECOND.md");
+  await git(second.clone, "commit", "-q", "-m", "Give the second repository distinct review evidence");
   const engine = first.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   engine.setPoolPaused(true);
   engine.schedule = () => {};
@@ -32,12 +32,12 @@ function fixture() {
 
 describe("shared review settlement interleavings", () => {
   for (const active of ["first", "second"]) for (const security of [false, true]) it(`keeps repository anchors through state reads while a ${security ? "security" : "code"} round closes with ${active} active`, async () => {
-    const { first, second, engine, task, stage } = fixture();
+    const { first, second, engine, task, stage } = await fixture();
     task.activeProductId = active;
     stage.roleId = security ? "security-reviewer" : "code-reviewer";
     const readVersion = steps.commitVersion, readTree = steps.treeOf;
-    const heads = [first, second].map((world) => git(world.clone, "rev-parse", "HEAD"));
-    const trees = [first, second].map((world) => git(world.clone, "rev-parse", "HEAD^{tree}"));
+    const heads = await Promise.all([first, second].map((world) => git(world.clone, "rev-parse", "HEAD")));
+    const trees = await Promise.all([first, second].map((world) => git(world.clone, "rev-parse", "HEAD^{tree}")));
     expect(heads[0]).not.toBe(heads[1]);
     expect(trees[0]).not.toBe(trees[1]);
     const version = spyOn(steps, "commitVersion").mockImplementation(async (path) => { const result = await readVersion(path); engine.activeState(); return result; });
@@ -60,7 +60,7 @@ describe("shared review settlement interleavings", () => {
   });
 
   it("preserves the existing code-review anchors when a single-product security round passes", async () => {
-    const { engine, task, stage } = fixture();
+    const { engine, task, stage } = await fixture();
     const owner = task.repositories![0]!;
     delete task.repositories;
     task.repository = owner;
@@ -76,7 +76,7 @@ describe("shared review settlement interleavings", () => {
   });
 
   for (const workFails of [false, true]) it(`keeps ${workFails ? "the original review failure" : "the saved review"} when removing a secondary snapshot fails`, async () => {
-    const { second, engine, task } = fixture();
+    const { second, engine, task } = await fixture();
     const remove = steps.removeCopies;
     let failedCleanup = false, reported = false, started = false;
     const cleanup = spyOn(steps, "removeCopies").mockImplementation(async (root, path, kept) => {

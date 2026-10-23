@@ -24,9 +24,9 @@ async function fixture(scenario: Scenario, count = 1, options: EngineOptions = {
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "plain", ...scenario });
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   // Parallel worktree creation need not write upstream tracking settings to the shared config.
-  git(repo, "config", "branch.autoSetupMerge", "false");
+  await git(repo, "config", "branch.autoSetupMerge", "false");
   const data = join(root, "data");
   const engineOptions: EngineOptions = { agentCommand: () => [process.execPath, fake, fakes.dir], ...options };
   let engine = new Engine(data, engineOptions);
@@ -736,7 +736,7 @@ describe("screen requests when a tool runs out of usage", () => {
 
 describe("a Release Manager that asks for the screen", () => {
   it("gets its result handed back as unusable, and the release goes out without the screen", async () => {
-    const w = makeWorld("screen-release-manager");
+    const w = await makeWorld("screen-release-manager");
     roots.push(w.dir);
     w.setScript((script) => (script.releaseManagerScreen = true));
     const engine = w.start();

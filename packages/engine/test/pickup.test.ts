@@ -35,7 +35,7 @@ const heardWorking = (task: Task | undefined) => !!task?.conversation?.briefed &
 async function start(scenario: Scenario, description = "", holdBuilder = false) {
   const root = tempDir("petrina-pickup-");
   roots.push(root);
-  const product = makeProduct(root);
+  const product = await makeProduct(root);
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
@@ -160,7 +160,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       // Noted the moment the conversation opened: the step, the role, the tool and model, the conversation and the commit.
       const before = run.find(await engine.state());
       const session = run.fakes.received("builder")[0]!.session;
-      const note = { step: `${run.taskId}:s0 round 1 position 0`, roleId: "builder", profileId: "sol-xhigh", toolId: "codex", model: "gpt-6.1-sol", sessionId: session, head: git(before.worktree!, "rev-parse", "HEAD") };
+      const note = { step: `${run.taskId}:s0 round 1 position 0`, roleId: "builder", profileId: "sol-xhigh", toolId: "codex", model: "gpt-6.1-sol", sessionId: session, head: await git(before.worktree!, "rev-parse", "HEAD") };
       expect(before.conversation).toMatchObject(note);
       if (stop === "kill") {
         await engine.kill();
@@ -206,9 +206,9 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         expect(fresh).toContain(EARLIER_ATTEMPT);
         expect(done.timeline.some((entry) => entry.text === "Started this step again: Codex cannot reopen conversations")).toBe(true);
         // The new conversation's note replaced the old one, and the build built on the draft.
-        expect(git(run.product, "show", "main:notes.txt")).toBe("A first draft");
+        expect(await git(run.product, "show", "main:notes.txt")).toBe("A first draft");
       }
-      expect(git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+      expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
       await engine.quit();
     });
   }
@@ -346,7 +346,7 @@ describe.concurrent("a permission request open when Petrina restarts", () => {
       await engine.act("allow", again.inbox[0]!.id, "once");
       const done = await run.finished(engine);
       expect(done.timeline.filter((entry) => entry.text.startsWith("You allowed"))).toHaveLength(1);
-      expect(git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+      expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
       await engine.quit();
     });
   }
@@ -358,13 +358,13 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
       const run = await start({ planner: "short", builder: "plain", reviewer: "commit", ...(reopen ? { reopen } : {}) });
       await waitFor(() => run.fakes.marked("reviewer-committed"), "the reviewer to commit");
       const before = run.find(await run.engine.state());
-      const built = git(before.worktree!, "rev-parse", "HEAD~1");
+      const built = await git(before.worktree!, "rev-parse", "HEAD~1");
       expect(before.conversation?.head).toBe(built);
       // Killed: nothing is cleaned up on the way out.
       const engine = await run.restart(run.engine, "kill");
       const done = await run.finished(engine);
       expect(done.timeline.some((entry) => entry.text === "Undid commits from Code reviewer, which is read-only")).toBe(true);
-      expect(git(run.product, "log", "--format=%s", "main")).not.toContain("A stray commit");
+      expect(await git(run.product, "log", "--format=%s", "main")).not.toContain("A stray commit");
       if (!reopen) expect(run.fakes.openings("code reviewer")[1]).toContain("- added: stray.txt");
       await engine.quit();
     });
@@ -374,7 +374,7 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
 describe.concurrent("a Release Manager interrupted by a restart", () => {
   it("never reopens its conversation, even on a tool that can: it gets the release ready again from the start", async () => {
     // Only a release has a Release Manager: this product publishes releases.
-    const w = makeWorld("pickup-release-manager");
+    const w = await makeWorld("pickup-release-manager");
     roots.push(w.dir);
     const home = join(w.dir, "home");
     const fakes = new Fakes(w.dir);
@@ -390,7 +390,7 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
     engine = await harness(home, w.dir, w.remote);
     const done = find(await engine.until((state) => find(state).state === "done", "the release", 60_000));
     expect(done.release?.tag).toBe("v0.1.0");
-    expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(git(w.clone, "rev-parse", done.branch!));
+    expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(await git(w.clone, "rev-parse", done.branch!));
     expect(fakes.openings("release manager")).toHaveLength(2);
     expect(fakes.opens().some((open) => open.how !== "new")).toBe(false);
     await engine.quit();
@@ -412,7 +412,7 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
     it(`starts the step again when there is ${trouble === "no answer" ? "no answer in time" : trouble === "no answer at all" ? "no answer even to the first handshake" : "no such conversation any more"}`, async () => {
       const root = tempDir("petrina-pickup-");
       roots.push(root);
-      const product = makeProduct(root);
+      const product = await makeProduct(root);
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "short", builder: "work", reopen: "resume" });
       // "no answer at all": the reopen process never answers its handshake, whenever it is killed.

@@ -17,11 +17,11 @@ afterAll(() => {
 
 /** A product delivering in `mode` without asking, a task on its way there, and an engine running it. `hold`: a gh command that waits after doing its work. */
 async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string; notes?: "hang" } = {}) {
-  const w = makeWorld(`shipping-${mode}`, options.notes ? { version: "1.0.0" } : {});
+  const w = await makeWorld(`shipping-${mode}`, options.notes ? { version: "1.0.0" } : {});
   worlds.push(w);
   if (options.notes) {
     // An existing version and release make preparation change the version, so its checks rerun on resume.
-    git(w.remote, "update-ref", "refs/tags/v1.0.0", w.initial);
+    await git(w.remote, "update-ref", "refs/tags/v1.0.0", w.initial);
     w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The previous release." }));
   }
   const home = join(w.dir, "home");
@@ -88,7 +88,7 @@ describe.concurrent("shipping is never repeated blindly", () => {
     const run = await shipping("local");
     // Simulate a lost delivery save after cleanup completes, rather than interrupting the removal itself.
     const done = run.find(await run.engine.until((state) => delivered(run.find(state)) && run.find(state).cleanup?.removedAt !== undefined, "the local delivery and cleanup"));
-    const tested = git(run.w.clone, "rev-parse", "main");
+    const tested = await git(run.w.clone, "rev-parse", "main");
     await run.engine.kill();
     // As if Petrina was killed right after git moved main, before it saved that.
     const store = new Store(join(run.home, "petrina.db"));
@@ -109,7 +109,7 @@ describe.concurrent("shipping is never repeated blindly", () => {
     const task = run.find(await engine.until((current) => delivered(run.find(current)), "the delivery to be recorded"));
     expect(task.landed?.sha).toBe(done.landed!.sha);
     expect(task.timeline.some((entry) => entry.text === `Found after a restart that it had already gone out: main has the work (${tested.slice(0, 7)})`)).toBe(true);
-    expect(git(run.w.clone, "rev-parse", "main")).toBe(tested);
+    expect(await git(run.w.clone, "rev-parse", "main")).toBe(tested);
     // A commit to main needs no agent.
     expect(run.fakes.openings("release manager")).toHaveLength(0);
     await engine.quit();
@@ -120,12 +120,12 @@ describe.concurrent("shipping is never repeated blindly", () => {
     let engine: Awaited<ReturnType<typeof run.restart>> | undefined;
     try {
       const done = run.find(await run.engine.until((state) => delivered(run.find(state)) && !!run.find(state).cleanup?.removedAt, "the local delivery and cleanup"));
-      const tested = git(run.w.clone, "rev-parse", "main");
+      const tested = await git(run.w.clone, "rev-parse", "main");
       expect(done.landed?.sha).toBe(tested.slice(0, 7));
       await run.engine.kill();
 
       // Simulate cancellation after local main advanced but before the push step began.
-      git(run.w.remote, "update-ref", "refs/heads/main", run.w.initial);
+      await git(run.w.remote, "update-ref", "refs/heads/main", run.w.initial);
       const store = new Store(join(run.home, "petrina.db"));
       const state = store.load()!;
       const saved = state.tasks.find((task) => task.id === run.taskId) as unknown as Record<string, unknown>;
@@ -144,7 +144,7 @@ describe.concurrent("shipping is never repeated blindly", () => {
       const task = run.find(await engine.until((current) => run.find(current).shipping === undefined, "cancelled delivery settlement"));
       expect(task.state).toBe("cancelled");
       expect(task.landed?.sha).toBe(tested.slice(0, 7));
-      expect(remoteRef(run.w.remote, "refs/heads/main")).toBe(run.w.initial);
+      expect(await remoteRef(run.w.remote, "refs/heads/main")).toBe(run.w.initial);
     } finally {
       if (engine) await engine.quit();
     }
@@ -248,10 +248,10 @@ describe.concurrent("shipping is never repeated blindly", () => {
     // Someone replaced the task branch with different work: the tested commit is absent.
     const branch = run.w.github().prs[0]!.headRefName;
     const clone = join(run.w.dir, "teammate");
-    git(run.w.dir, "clone", "-q", "--branch", branch, run.w.remote, clone);
-    const other = git(clone, "-c", "user.email=t@example.com", "-c", "user.name=Teammate", "commit-tree", `${run.w.initial}^{tree}`, "-p", run.w.initial, "-m", "Different work");
-    git(run.w.remote, "fetch", "-q", clone, other);
-    git(run.w.remote, "update-ref", `refs/heads/${branch}`, other);
+    await git(run.w.dir, "clone", "-q", "--branch", branch, run.w.remote, clone);
+    const other = await git(clone, "-c", "user.email=t@example.com", "-c", "user.name=Teammate", "commit-tree", `${run.w.initial}^{tree}`, "-p", run.w.initial, "-m", "Different work");
+    await git(run.w.remote, "fetch", "-q", clone, other);
+    await git(run.w.remote, "update-ref", `refs/heads/${branch}`, other);
 
     const engine = await run.restart();
     const state = await engine.until((current) => shippingItem(current, run.taskId) !== undefined, "the interrupted-shipping item");

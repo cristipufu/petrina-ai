@@ -19,7 +19,7 @@ async function start(scenario: Scenario, options: { description?: string; before
   fakes.scenario(scenario);
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
   options.before?.(engine);
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: options.description ?? "[no-check]" });
   const find = () => engine.getState().tasks.find((task) => task.id === taskId) as Task;
@@ -290,7 +290,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       const returned = task.journey!.find((step) => step.builderReturn)!;
       expect(task.timeline.find((entry) => entry.step === returned.id && entry.text.startsWith(returned.builderReturn!.outcome))!.profileId).toBe(actual);
       expect(task.lessons!.filter((lesson) => lesson.roleId === "builder").map((lesson) => lesson.profileId)).toEqual([actual, actual]);
-      expect(git(run.engine.getState().products[0]!.path!, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina: Builder on Codex");
+      expect(await git(run.engine.getState().products[0]!.path!, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina: Builder on Codex");
       const details = run.engine.usage({ view: "analytics", period: "today" }).squad.details;
       expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
       expect(details.retries).toBe(1);

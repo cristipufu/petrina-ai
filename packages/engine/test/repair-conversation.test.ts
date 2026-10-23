@@ -14,7 +14,7 @@ it("starts one late rethink, then continues that Builder for unchanged and reope
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));
     engine.s.tools.forEach(tool => { tool.status = "ready"; });
-    const repo = makeProduct(root), base = git(repo, "rev-parse", "HEAD");
+    const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
     engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
     const id = engine.addTask({ productId: "p", title: "Repair once", description: "Original repair request", backlog: true });
     const task = engine.task(id)!, scope = executionFor(task);

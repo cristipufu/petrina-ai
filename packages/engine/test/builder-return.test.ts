@@ -20,12 +20,12 @@ for (const [change, updating] of [["committed", false], ["empty-commit", false],
   const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null } });
   engine.setPoolPaused(true);
   try {
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     const productId = await engine.addProduct(repo);
     const task = engine.task(engine.addTask({ productId, title: "Investigate a failed check", backlog: true }))!;
     const scope = executionFor(task);
     scope.work.worktree = repo;
-    scope.work.checks = { at: Date.now(), tree: git(repo, "rev-parse", "HEAD^{tree}"), results: [{ name: "Tests", command: "tests", ok: false, ms: 1, output: "Original failure" }] };
+    scope.work.checks = { at: Date.now(), tree: await git(repo, "rev-parse", "HEAD^{tree}"), results: [{ name: "Tests", command: "tests", ok: false, ms: 1, output: "Original failure" }] };
     task.findings = [{ id: "check", text: "Check failed: Tests (tests)", raisedBy: "petrina", confirmedBy: [], severity: "blocking", status: "open" }];
     // A renamed build-result role must receive exactly the same contract.
     const role = engine.role("builder")!;
@@ -33,19 +33,19 @@ for (const [change, updating] of [["committed", false], ["empty-commit", false],
     const stage: DeepMutable<Stage> = { id: "build", title: "Build", kind: "do", roleId: "repairer", profileIds: ["sol-high"] };
     task.plan = { rationale: "Focused repair", plannerProfileId: "sol-high", stages: [stage] };
     task.stageIndex = 0; task.fixing = true;
-    if (updating) scope.work.updating = { from: "main", onto: git(repo, "rev-parse", "HEAD"), files: [] };
+    if (updating) scope.work.updating = { from: "main", onto: await git(repo, "rev-parse", "HEAD"), files: [] };
     beginAgentStep(task, stage.roleId, "sol-high", Date.now(), engine.s.roles, undefined, scope.work);
     if (change === "existing") {
       writeFileSync(join(repo, "repair.txt"), "Existing task change\n");
-      const staged = git(repo, "write-tree"), status = git(repo, "status", "--porcelain");
+      const staged = await git(repo, "write-tree"), status = await git(repo, "status", "--porcelain");
       expect(await contentTree(repo)).not.toBe(staged);
-      expect(git(repo, "write-tree")).toBe(staged);
-      expect(git(repo, "status", "--porcelain")).toBe(status);
+      expect(await git(repo, "write-tree")).toBe(staged);
+      expect(await git(repo, "status", "--porcelain")).toBe(status);
     }
     const turns = { turn: async () => {
       if (change === "committed" || change === "uncommitted") writeFileSync(join(repo, "repair.txt"), "Actual repair\n");
-      if (change === "committed") { git(repo, "add", "repair.txt"); git(repo, "commit", "-q", "-m", "Repair"); }
-      if (change === "empty-commit") git(repo, "commit", "-q", "--allow-empty", "-m", "Investigation only");
+      if (change === "committed") { await git(repo, "add", "repair.txt"); await git(repo, "commit", "-q", "-m", "Repair"); }
+      if (change === "empty-commit") await git(repo, "commit", "-q", "--allow-empty", "-m", "Investigation only");
       return { summary: "Builder explanation", changes: [], answers: [{ id: "check", fixed: change !== "empty-commit", text: "Recorded Builder claim" }], learnings: [] };
     } } as unknown as Turns;
     const work = new Work(engine, turns, {} as Context, {} as GuideKeeper, { message: () => "Return", fold: async () => undefined, reopen: async () => undefined } as unknown as Updates, { note: async () => {} } as unknown as Learnings, engine["checks"]);

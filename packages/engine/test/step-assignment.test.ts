@@ -57,7 +57,7 @@ describe("current planned contribution", () => {
 /** Exercise native prompts directly; planning, design and check discovery are unrelated to this contract. */
 async function fixture() {
   const root = tempDir("petrina-step-assignment-");
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume" });
   const engine = new Engine(join(root, "data"), {
@@ -70,7 +70,7 @@ async function fixture() {
   engine.s.products.push({ id: "product", name: "Product", repo: "local/product", path: repo, defaultBranch: "main", tone: "blue" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Improve long waits", description: REQUEST, backlog: true }))!;
   const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: git(repo, "rev-parse", "HEAD") });
+  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
   task.plan = { stages: [structuredClone(stage)], rationale: "PRIVATE-PLAN-RATIONALE", plannerProfileId: "opus-high" };
   task.stageIndex = 0;
   engine.s.pool.paused = false;

@@ -2,14 +2,13 @@
 // published with a GitHub login: after the update Petrina never acts on it by itself. It asks the
 // coordinator to check GitHub and choose, and nothing happens until they do.
 import { afterAll, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
 import type { DeliveryMode, State, Task } from "@petrina/core";
 import type { Engine } from "./engine.js";
-import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
+import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World } from "./support.js";
 
 const worlds: World[] = [];
-const world = (name: string) => {
-  const made = makeWorld(name);
+const world = async (name: string) => {
+  const made = await makeWorld(name);
   worlds.push(made);
   return made;
 };
@@ -28,7 +27,7 @@ const asks = (state: State, taskId: string) => itemOf(state, taskId, "shipping")
 async function interruptedBeforeUpdate(
   w: World,
   mode: DeliveryMode,
-  options: { oldAgent?: (task: Task, head: string) => void; state?: Task["state"]; oldItem?: boolean } = {},
+  options: { oldAgent?: (task: Task, head: string) => unknown; state?: Task["state"]; oldItem?: boolean } = {},
 ): Promise<{ engine: Engine; taskId: string; head: string; calls: number }> {
   const first = w.start();
   const productId = await first.addProduct(w.clone);
@@ -36,8 +35,8 @@ async function interruptedBeforeUpdate(
   const taskId = first.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
   const task = taskOf(await until(first, (state) => itemOf(state, taskId, "delivery") !== undefined, coordinator(["plan", "design"])), taskId);
   first.shutdown();
-  const head = git(task.worktree!, "rev-parse", "HEAD");
-  options.oldAgent?.(task, head);
+  const head = await git(task.worktree!, "rev-parse", "HEAD");
+  await options.oldAgent?.(task, head);
   w.editSaved((state) => {
     // The old version's own question about an interrupted delivery, from before the update.
     const oldItem = { id: "old-item", taskId, kind: "shipping", title: "Shipping was interrupted", at: Date.now(), blocking: false, body: "Petrina could not confirm it went out." } as const;
@@ -57,10 +56,10 @@ async function interruptedBeforeUpdate(
 }
 
 /** What the old delivery agent ran: plain git in the task's working copy, straight to GitHub. */
-const pushToGitHub = (w: World, cwd: string, ...refspecs: string[]) => execFileSync("git", ["push", "-q", w.remote, ...refspecs], { cwd, env: testGitEnv() });
+const pushToGitHub = (w: World, cwd: string, ...refspecs: string[]) => git(cwd, "push", "-q", w.remote, ...refspecs);
 
-function versionCommit(cwd: string): string {
-  git(cwd, "commit", "-q", "--allow-empty", "-m", "Version 0.1.0");
+async function versionCommit(cwd: string): Promise<string> {
+  await git(cwd, "commit", "-q", "--allow-empty", "-m", "Version 0.1.0");
   return git(cwd, "rev-parse", "HEAD");
 }
 
@@ -79,13 +78,13 @@ function untouched(w: World, state: State, taskId: string, calls: number): void 
 
 describe.concurrent("A delivery interrupted before Petrina was updated", () => {
   it("does nothing on its own until the coordinator chooses, across restarts", async () => {
-    const w = world("upgrade-waits");
+    const w = await world("upgrade-waits");
     let bumped = "";
     const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "release", {
       oldItem: true,
-      oldAgent: (task) => {
-        bumped = versionCommit(task.worktree!);
-        pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
+      oldAgent: async (task) => {
+        bumped = await versionCommit(task.worktree!);
+        await pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
         w.setGitHub((github) => github.releases.push({ tagName: "v0.1.0", url: "https://github.com/acme/demo/releases/tag/v0.1.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v0.1.0", body: "A greeting." }));
       },
     });
@@ -119,7 +118,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
         expect(followUp.some((call) => call[0] === "pr" && call[1] === "list")).toBe(true);
         expect(followUp.every((call) => call[0] === "pr" && call[1] === "list" || call[0] === "repo" && call[1] === "view")).toBe(true);
         expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v0.1.0"]);
-        expect(remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
+        expect(await remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
       } finally {
         again.shutdown();
       }
@@ -129,7 +128,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
   });
 
   it("asks for the delivery approval again after “Ship it again”, then ships it with the usual checks", async () => {
-    const w = world("upgrade-ship-again");
+    const w = await world("upgrade-ship-again");
     const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "pull-request");
     try {
       let state = await until(engine, (current) => asks(current, taskId));
@@ -156,12 +155,12 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
   });
 
   it("never releases twice after “Ship it again” when the old delivery agent already pushed the version's tag", async () => {
-    const w = world("upgrade-pushed");
+    const w = await world("upgrade-pushed");
     let bumped = "";
     const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "release", {
-      oldAgent: (task) => {
-        bumped = versionCommit(task.worktree!);
-        pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
+      oldAgent: async (task) => {
+        bumped = await versionCommit(task.worktree!);
+        await pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
       },
     });
     try {
@@ -172,15 +171,15 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(task.state).toBe("failed");
       expect(task.error).toContain("The tag v0.1.0 already exists on GitHub");
       expect(w.github().releases).toEqual([]);
-      expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(bumped);
-      expect(remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
+      expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(bumped);
+      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
     } finally {
       engine.shutdown();
     }
   });
 
   it("keeps the note on the task when the coordinator cancels it, and still looks nothing up", async () => {
-    const w = world("upgrade-cancel");
+    const w = await world("upgrade-cancel");
     const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "local");
     const note = "Cancelled. This delivery was interrupted before Petrina was updated: check GitHub for what went out";
     try {
@@ -193,7 +192,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(task.statusLine).toBe(note);
       expect(task.shipping?.carriedOver).toBe(true);
       expect(engine.getState().inbox.filter((item) => item.taskId === taskId)).toEqual([]);
-      expect(git(w.clone, "rev-parse", "main")).toBe(w.initial);
+      expect(await git(w.clone, "rev-parse", "main")).toBe(w.initial);
     } finally {
       engine.shutdown();
     }
@@ -211,7 +210,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
   });
 
   it("keeps the note on a task that was already cancelled, and waits on a paused one until it is resumed", async () => {
-    const cancelled = world("upgrade-was-cancelled");
+    const cancelled = await world("upgrade-was-cancelled");
     const before = await interruptedBeforeUpdate(cancelled, "pull-request", { state: "cancelled" });
     try {
       await Bun.sleep(300);
@@ -224,7 +223,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       before.engine.shutdown();
     }
 
-    const paused = world("upgrade-paused");
+    const paused = await world("upgrade-paused");
     const { engine, taskId, calls } = await interruptedBeforeUpdate(paused, "pull-request", { state: "paused" });
     try {
       await Bun.sleep(300);

@@ -1,25 +1,25 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { journeyProblems } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { removeDir, testGitEnv, waitFor } from "./fixtures.js";
+import { git, removeDir, waitFor } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-after-"));
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
 
 describe("Tasks that start after others land", () => {
   const repo = join(temp, "repo");
-  mkdirSync(repo, { recursive: true });
-  git(repo, "init", "-q", "-b", "main");
-  git(repo, "config", "user.email", "test@example.com");
-  git(repo, "config", "user.name", "Test");
-  writeFileSync(join(repo, "README.md"), "# Demo\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-q", "-m", "init");
+  beforeAll(async () => {
+    mkdirSync(repo, { recursive: true });
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "# Demo\n");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "init");
+  });
   const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake] });
 
   afterAll(() => {

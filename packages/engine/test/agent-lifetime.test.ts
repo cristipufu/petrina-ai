@@ -5,10 +5,10 @@ import * as processes from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgentRun } from "../src/acp-run.js";
-import { AgentBrowser } from "../src/browser.js";
+import { AGENT_CLEANUP_NOTE, AgentRun, presentStates, stopAll } from "../src/acp-run.js";
+import { AgentBrowser, type ObservedProcess } from "../src/browser.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { parseChildState } from "../src/process-tree.js";
+import { childState, parseChildState, processList } from "../src/process-tree.js";
 import { finishedHelper, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-agent-lifetime-");
@@ -334,13 +334,87 @@ for (const failure of ["unavailable", "timeout", "unpaused"] as const) it.skipIf
   let run: AgentRun | undefined;
   const signals = spyOn(process, "kill");
   try {
-    run = await AgentRun.start({ profile, cwd: root, command: [...command, "--stubborn"], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: new AbortController().signal, browser: false, onProcess: process => { child = process; } });
+    const logged: string[] = [];
+    run = await AgentRun.start({ profile, cwd: root, command: [...command, "--stubborn"], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; }, onLog: (text) => { logged.push(text); } }, signal: new AbortController().signal, browser: false, onProcess: process => { child = process; } });
     const from = Date.now();
     expect(await run.stop()).toBe(false);
     expect(Date.now() - from).toBeLessThan(7_000);
     expect(await run.stop()).toBe(false);
     expect(incomplete).toBe(1);
+    // One private line in the task's log says why: neither look could show the agent's programs.
+    const notes = logged.join("").split("\n").filter((line) => line.startsWith(AGENT_CLEANUP_NOTE));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(new RegExp(`^${AGENT_CLEANUP_NOTE} stage=forced elapsed=\\d+ms lists=unreadable,unreadable processes=0 shown=0 omitted=0$`));
     expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
     expectPausesReclaimed(signals);
   } finally { await run?.stop(); signals.mockRestore(); scan.mockRestore(); }
+});
+
+/**
+ * An agent that has exited but whose exit its parent never collects, leading its own group: what a lost exit report
+ * leaves. To a signal it, and its group, still look present.
+ */
+async function uncollected(): Promise<{ pid: number; release(): Promise<void> }> {
+  const holder = Bun.spawn(["sh", "-c", "set -m; sleep 0.05 & echo $!; exec sleep 30"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const reader = holder.stdout.getReader();
+  let text = "";
+  while (!text.includes("\n")) {
+    const next = await reader.read();
+    if (next.done) break;
+    text += new TextDecoder().decode(next.value);
+  }
+  reader.releaseLock();
+  const pid = Number(text.trim());
+  if (!pid) throw new Error(`No uncollected process was started: ${JSON.stringify(text)}`);
+  return { pid, async release() { holder.kill("SIGKILL"); await holder.exited; } };
+}
+
+const groups = (timeout: number) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
+
+// What the final list shows of a target that still answers after the forced stop (a program, or its group by its
+// negative number). Only a complete list that names it, or every member of its group, defunct shows it ended: a list
+// silent about something still present, an empty group, a running member or no list at all leaves it unconfirmed.
+// Rows are this check's own columns: number, group, state.
+{
+  const self = `${process.pid} ${process.pid} S`, leader = 4242, both = [-leader, leader];
+  const cases: [string, string | undefined, number[], boolean, ObservedProcess?][] = [
+    ["its own row and its group's only member defunct", `${self}\n${leader} ${leader} Z`, both, true],
+    ["every member of its group defunct, the leader and one it started", `${self}\n${leader} ${leader} Z\n4243 ${leader} Z+`, both, true],
+    ["nothing still present", self, [], true],
+    ["a member of its group still running", `${self}\n${leader} ${leader} Z\n4243 ${leader} S`, both, false],
+    ["no readable list", undefined, both, false],
+    ["a list cut short before this process", `${leader} ${leader} Z`, both, false],
+    ["no row for the program, though its group's other member is defunct", `${self}\n4243 ${leader} Z`, both, false, { pid: leader, state: "absent", sources: ["target"] }],
+    ["no listed member of its group, though the program's own row is defunct", `${self}\n${leader} 1 Z`, both, false, { pid: leader, state: "absent", sources: ["group"] }],
+    ["no row for a lone program", self, [leader], false],
+    ["no listed member of a lone group", self, [-leader], false],
+  ];
+  for (const [name, list, present, ended, observed] of cases) it(`${ended ? "counts" : "never counts"} what is still present after the forced stop as ended with ${name}`, () => {
+    const states = presentStates(list, present);
+    expect(states.ended).toBe(ended);
+    if (observed) expect(states.processes).toContainEqual(observed);
+  });
+}
+
+// The stop's final second reads the process list for what is still present after the forced stop. Only a complete
+// list showing it defunct confirms the stop; an unreadable list, or one that shows it running, never does.
+for (const list of ["defunct", "unreadable", "running", "silent"] as const) it.skipIf(process.platform === "win32")(`${list === "defunct" ? "confirms" : "never confirms"} a stop whose agent exited without being collected when the final list ${list === "defunct" ? "shows it defunct" : list === "unreadable" ? "cannot be read" : list === "running" ? "shows it running" : "never names it or its group"}`, async () => {
+  const agent = await uncollected();
+  try {
+    await waitFor(async () => (await childState(agent.pid)) === "ended", "the agent to be defunct", 10_000);
+    const notes: string[] = [];
+    const own = (line: string) => Number(line.trim().split(/\s+/)[0]) === agent.pid;
+    const read = list === "defunct" ? groups : list === "unreadable" ? async () => undefined
+      : list === "running" ? async (timeout: number) => (await groups(timeout))?.split("\n").map((line) => own(line) ? line.replace(/Z\S*\s*$/, "S") : line).join("\n")
+      : async (timeout: number) => (await groups(timeout))?.split("\n").filter((line) => !own(line)).join("\n");
+    const from = Date.now();
+    const stopped = await stopAll({ pid: agent.pid, exitCode: null, signalCode: null } as unknown as ChildProcess, 2_000, true, (line) => { notes.push(line); }, read);
+    expect(Date.now() - from).toBeLessThan(7_000);
+    expect(stopped).toBe(list === "defunct");
+    if (list === "defunct") expect(notes).toEqual([]);
+    else {
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatch(new RegExp(`^${AGENT_CLEANUP_NOTE} stage=forced elapsed=\\d+ms lists=read,read processes=\\d+ shown=\\d+ omitted=0 owned=.*${agent.pid}:${{ unreadable: "unknown", running: "running", silent: "absent" }[list]}:target`));
+    }
+  } finally { await agent.release(); }
 });

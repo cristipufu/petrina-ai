@@ -88,8 +88,8 @@ async function open(answer: World["answer"] = groupByBug, withNotes = false): Pr
   await engine.waitUntilReady();
   await engine["followUps"].catchUp();
   await Promise.all([...engine.backgroundWork]);
-  const shop = await engine.addProduct(makeProduct(root), "Shop");
-  const notes = withNotes ? await engine.addProduct(makeProduct(join(root, "other")), "Notes") : "";
+  const shop = await engine.addProduct(await makeProduct(root), "Shop");
+  const notes = withNotes ? await engine.addProduct(await makeProduct(join(root, "other")), "Notes") : "";
   const world: World = { engine, data, root, shop, notes, prompts, answer };
   return world;
 }
@@ -1261,7 +1261,7 @@ it("asks the reviewer's tool once when two wordings need a match", async () => {
   const unsubscribe = engine.subscribe(() => { if (engine.s.backgroundAgents?.length) counted = true; });
   try {
     await engine["followUps"].catchUp();
-    const shop = await engine.addProduct(makeProduct(root), "Shop");
+    const shop = await engine.addProduct(await makeProduct(root), "Shop");
     const task = taskOf(engine, shop, "Two reviewers", [
       older("one", "bug-agent: The footer opens a retired page."),
       older("two", "bug-agent: Choosing About still lands on the old page.", { raisedBy: "sol-high", roleId: "security-reviewer" }),

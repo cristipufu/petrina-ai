@@ -427,7 +427,7 @@ describe("Petrina runs the checks itself during a task", () => {
   for (const outcome of ["pass", "fail"] as const) {
     it(`${outcome === "pass" ? "lets the review go ahead when they pass" : "sends the work back before any reviewer runs when they fail"}`, async () => {
       const dir = root("petrina-checks-task-");
-      const product = makeProduct(dir);
+      const product = await makeProduct(dir);
       const fakes = new Fakes(join(dir, "fake"));
       fakes.scenario({ planner: "short", checks: outcome });
       const engine = new Engine(join(dir, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
@@ -511,7 +511,7 @@ describe("a stopped check keeps an incomplete cleanup warning", () => {
       const hookScript = join(dir, "hook.ts");
       writeFileSync(parent, kind === "check" ? hang : "process.exit(0);\n");
       if (kind === "hook") writeFileSync(hookScript, hang);
-      const repo = makeProduct(dir);
+      const repo = await makeProduct(dir);
       if (kind === "hook") {
         const hook = join(repo, ".git", "hooks", "pre-commit");
         writeFileSync(hook, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(hookScript)}\n`);

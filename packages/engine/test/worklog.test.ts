@@ -1,7 +1,7 @@
 import { expectRejection } from "./rejections.js";
 // The work log, end to end: a real engine with the fake agent reporting usage and settings the
 // way Claude Code and Codex do, and the product list that never hands an id out again.
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,17 +15,12 @@ import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WaitClock, WorkLog } from "../src/worklog.js";
-import { removeDir, SLOW, testBrowserRoot, testGitEnv } from "./fixtures.js";
+import { git, removeDir, SLOW, testBrowserRoot } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-worklog-"));
 const data = join(temp, "data");
-const git = (cwd: string, ...args: string[]) => {
-  const result = Bun.spawnSync(["git", ...args], { cwd, env: testGitEnv(), stdout: "pipe", stderr: "pipe", windowsHide: true });
-  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString() || result.stdout.toString()}`);
-  return result.stdout.toString().trim();
-};
 // Each profile's agent behaves like its own tool: Claude Code or Codex.
 const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], usageCommands: { codex: [process.execPath, fakeCodex] } };
 
@@ -69,15 +64,15 @@ it("attributes design answers to the last finished author in that stage and roun
   } finally { db.close(); }
 });
 
-function makeRepo(parent: string, file = "README.md"): string {
+async function makeRepo(parent: string, file = "README.md"): Promise<string> {
   const repo = join(parent, "repo");
   mkdirSync(repo, { recursive: true });
-  git(repo, "init", "-q", "-b", "main");
-  git(repo, "config", "user.email", "test@example.com");
-  git(repo, "config", "user.name", "Test");
+  await git(repo, "init", "-q", "-b", "main");
+  await git(repo, "config", "user.email", "test@example.com");
+  await git(repo, "config", "user.name", "Test");
   writeFileSync(join(repo, file), "# Demo\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-q", "-m", "init");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-q", "-m", "init");
   return repo;
 }
 
@@ -104,7 +99,8 @@ function readLog<T>(read: (log: WorkLog) => T): T {
 }
 
 describe("The work log of a real engine", () => {
-  const repo = makeRepo(temp);
+  let repo = "";
+  beforeAll(async () => { repo = await makeRepo(temp); });
   let engine = new Engine(data, options);
   let taskId = "";
   let productId = "";
@@ -143,7 +139,7 @@ describe("The work log of a real engine", () => {
     expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
     // The work is on main, with the permission granted.
-    expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+    expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     await until(engine, (state) => !!state.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt, () => undefined);
     expect(existsSync(task.worktree!)).toBe(false);
@@ -291,7 +287,7 @@ describe("The work log of a real engine", () => {
   it("never gives a removed product's id or history to another repository, even after the state is lost", async () => {
     engine.removeProduct(productId);
     // A different repository with the same name.
-    const other = makeRepo(join(temp, "elsewhere"), "OTHER.md");
+    const other = await makeRepo(join(temp, "elsewhere"), "OTHER.md");
     const fresh = await engine.addProduct(other);
     expect(fresh).not.toBe(productId);
     expect(engine.getState().tasks.filter((task) => task.productId === fresh)).toHaveLength(0);

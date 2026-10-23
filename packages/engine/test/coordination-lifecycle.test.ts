@@ -16,7 +16,7 @@ async function fixture() {
   fakes.scenario({ controlled: true });
   const engine = await EngineProcess.harness(home, fakes.dir);
   const client = new EngineClient(home);
-  const productId = (await engine.act("addProduct", makeProduct(root))) as string;
+  const productId = (await engine.act("addProduct", await makeProduct(root))) as string;
   const release = (id: string) => writeFileSync(join(fakes.dir, `release-${id}`), "go");
   const settle = (s: State) => {
     for (const item of s.inbox)
@@ -210,7 +210,7 @@ describe("graceful coordination lifecycle", () => {
     const home = join(root, "home"),
       fakes = new Fakes(join(root, "fakes"));
     fakes.scenario({ controlled: true });
-    makeProduct(root);
+    await makeProduct(root);
     const original = await EngineProcess.start(home, [HARNESS, home, fakes.dir, join(root, "origin.git"), "--new-key"]);
     const client = new EngineClient(home);
     const before = readConnection(home)!;

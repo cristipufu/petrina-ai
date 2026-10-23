@@ -14,12 +14,12 @@ import { Cleanup } from "../src/cleanup.js";
 import { Fakes, git, makeWorld, removeDir, SLOW, waitFor } from "./support.js";
 
 // Reports choose captures from each agent's browser folder, in this world's own browser folder.
-const world = makeWorld("report-images", { browser: true });
+const world = await makeWorld("report-images", { browser: true });
 const root = world.dir;
 afterAll(() => { removeDir(root); removeDir(world.browsers!); });
 
 it("removes finished and orphaned picture storage without depending on worktree cleanup or loading archive bodies", async () => {
-  const world = makeWorld("report-picture-lifetime");
+  const world = await makeWorld("report-picture-lifetime");
   let engine = world.start();
   try {
     engine.setPoolPaused(true);
@@ -91,8 +91,8 @@ it("builder and read-only reports preserve only chosen images through correction
     expect(reports.every((line) => line.profileId && line.images?.[0]?.caption)).toBe(true);
     expect(readdirSync(join(home, "captures", id))).toHaveLength(2);
     expect(readdirSync(join(home, "browser-temp"))).toEqual([]);
-    expect(git(task.worktree!, "status", "--porcelain")).toBe("");
-    expect(git(task.worktree!, "ls-tree", "-r", "--name-only", "HEAD")).not.toMatch(/png|browser|capture/);
+    expect(await git(task.worktree!, "status", "--porcelain")).toBe("");
+    expect(await git(task.worktree!, "ls-tree", "-r", "--name-only", "HEAD")).not.toMatch(/png|browser|capture/);
     expect(fakes.prompts().filter((text) => text.includes("Your result block could not be used"))).toHaveLength(2);
     const stateText = JSON.stringify(engine.getState());
     expect(stateText).not.toContain("base64");
@@ -195,7 +195,7 @@ it("builder and read-only reports preserve only chosen images through correction
 }, 90_000 * SLOW);
 
 it("delivers a message arriving during picture saving to every unfinished reviewer and keeps only their final pictures", async () => {
-  const world = makeWorld("report-picture-messages", { browser: true });
+  const world = await makeWorld("report-picture-messages", { browser: true });
   const fakes = new Fakes(join(world.dir, "fake"));
   fakes.scenario({ planner: "parallel", builder: "plain", pictures: "valid", controlled: true });
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { draftOf, journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { Fakes, git, headNow, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -18,7 +18,7 @@ describe("the tester tries the change once, and the final code once more", () =>
     fakes.scenario({ planner: "tester-with-design", builder: "plain", tester: "omit-once" });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       engine.setProductDelivery(productId, "local", true);
       const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
       const task = await waitFor(() => {
@@ -47,7 +47,7 @@ describe("the tester tries the change once, and the final code once more", () =>
     fakes.scenario({ planner: "tester-with-design", builder: "plain", tester, risk: "low" });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       engine.updateProduct(productId, { name: "Shop", delivery: "local", approveDelivery: true, shipLowRisk: true });
       const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
       const task = await waitFor(() => {
@@ -84,7 +84,7 @@ describe("the tester tries the change once, and the final code once more", () =>
     const data = join(root, "data");
     let engine = new Engine(data, options);
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       engine.setProductDelivery(productId, "local", true);
       const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
       const task = await waitFor(() => {
@@ -130,9 +130,9 @@ describe("the tester tries the change once, and the final code once more", () =>
     try {
       const tester = engine.getState().roles.find((role) => role.id === "tester")!;
       engine.saveRole(tester.id, { ...draftOf(tester), canEdit: true });
-      const repo = makeProduct(root);
+      const repo = await makeProduct(root);
       // Exercise Git's Windows checkout conversion on every platform.
-      git(repo, "config", "core.autocrlf", "true");
+      await git(repo, "config", "core.autocrlf", "true");
       const productId = await engine.addProduct(repo);
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
@@ -169,17 +169,21 @@ describe("the tester tries the change once, and the final code once more", () =>
     fakes.scenario({ planner: "tester-first", reviewer: handoff ? "important-twice" : "important", fixes: "change", tester: "fail-once", ...(handoff ? { learnings: "tester", limited: [{ model: "opus", role: "tester" }] } : {}) });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     let roundTwoReviewHead: string | undefined;
+    // A failed read is reported by the test, not thrown into the engine's announcement.
+    let captureFailure: unknown;
     let unsubscribe = () => {};
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+      // Announcements stay synchronous: read the reviewed code's HEAD from Git's files at that moment.
       unsubscribe = engine.subscribe(() => {
         const current = engine.task(taskId);
         const reviewStage = current?.plan?.stages.find((stage) => stage.kind === "review-chain");
         if (!roundTwoReviewHead && current && executionFor(current).work.worktree && reviewStage && current.stageIndex > current.plan!.stages.indexOf(reviewStage)
           && current.journey?.some((step) => step.roleId === "code-reviewer" && step.round === 2 && step.reason === "review passed")) {
-          roundTwoReviewHead = git(executionFor(current).work.worktree!, "rev-parse", "HEAD");
+          try { roundTwoReviewHead = headNow(executionFor(current).work.worktree!); }
+          catch (error) { captureFailure ??= error; }
         }
       });
       const task = await waitFor(() => {
@@ -194,6 +198,7 @@ describe("the tester tries the change once, and the final code once more", () =>
         if (found?.state === "failed") throw new Error(`The task failed: ${found.error}`);
         return state.inbox.some((item) => item.taskId === taskId && item.kind === "delivery") && found;
       }, "the delivery check", 120_000);
+      if (captureFailure) throw captureFailure;
       const lines = task.timeline.map((entry) => entry.text);
       // Once before the first review; not after the review's fix; once on the final code (failed); once more after that fix.
       expect(lines.filter((line) => line === "Tester started")).toHaveLength(3);

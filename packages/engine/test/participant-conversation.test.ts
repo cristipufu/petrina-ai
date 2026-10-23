@@ -54,7 +54,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
   trace?.mark("Creating the fixture repository");
   const root = tempDir("petrina-seat-conversation-"); roots.push(root);
   if (trace) trace.snapshot = () => ({ root });
-  const repo = makeProduct(root), base = git(repo, "rev-parse", "HEAD");
+  const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ reopen: "resume", addedReviewer: "pass" });
   const launches: { at: number; profileId: string; toolId: string }[] = [];
@@ -178,21 +178,21 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
  * The task's branch in its own copy, so main can move on and conflict with it, compared locally only.
  * Each call brings in a conflicting main change, then leaves the work as the Builder's port does, back on the first review stage.
  */
-function conflicting(f: Awaited<ReturnType<typeof fixture>>) {
+async function conflicting(f: Awaited<ReturnType<typeof fixture>>) {
   const main = f.scope.work.worktree!, copy = join(dirname(main), "task-copy");
-  const commit = (cwd: string, greeting: string) => {
+  const commit = async (cwd: string, greeting: string) => {
     writeFileSync(join(cwd, "greeting.txt"), greeting);
-    git(cwd, "add", "."); git(cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", greeting);
+    await git(cwd, "add", "."); await git(cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", greeting);
   };
-  git(main, "worktree", "add", "-q", "-b", "task", copy);
-  commit(copy, "The task's greeting\n");
+  await git(main, "worktree", "add", "-q", "-b", "task", copy);
+  await commit(copy, "The task's greeting\n");
   Object.assign(f.scope.work, { worktree: copy, branch: "task", delivery: "local" });
   f.engine.s.products.find((product) => product.id === "p")!.remoteRefused = "No remote in this fixture";
   f.task.plan!.stages.push({ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["opus-high"] });
   return async (greeting: string) => {
-    commit(main, greeting);
+    await commit(main, greeting);
     expect(await f.engine["updates"].upToDate(f.scope, new AbortController().signal)).toBe("conflict");
-    commit(copy, `Ported: ${greeting}`);
+    await commit(copy, `Ported: ${greeting}`);
     delete f.scope.work.updating;
     f.task.stageIndex = 0;
   };
@@ -247,7 +247,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
       releaseResult.resolve();
       expect(await round).toHaveLength(2);
       expect(Object.keys(f.task.reviewSessions![f.stage.id]!)).toEqual(["0", "1"]);
-      expect(git(f.scope.work.worktree!, "worktree", "list", "--porcelain")).not.toContain("task-1.copies");
+      expect(await git(f.scope.work.worktree!, "worktree", "list", "--porcelain")).not.toContain("task-1.copies");
       trace.report("complete");
       expect(JSON.parse(lines.at(-1)!.split("Held review cleanup: ")[1]!).processes).toEqual([]);
     } finally {
@@ -386,8 +386,8 @@ describe.concurrent("eligible saved review stand-ins", () => {
         else if (changed === "port") { f.scope.work.portReview = { from: f.scope.work.baseSha!, head: f.scope.work.baseSha!, onto: f.scope.work.baseSha!, files: [] }; reason = "role, profile, request or starting point changed"; }
         else if (changed === "starting point") {
           const repo = f.scope.work.worktree!;
-          const replacement = git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", `${f.scope.work.baseSha}^{tree}`, "-m", "Replace starting history");
-          git(repo, "reset", "--hard", replacement);
+          const replacement = await git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit-tree", `${f.scope.work.baseSha}^{tree}`, "-m", "Replace starting history");
+          await git(repo, "reset", "--hard", replacement);
           f.scope.work.baseSha = replacement;
           reason = "starting branch's history was replaced or diverged";
         }
@@ -481,7 +481,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
   it("keeps each conflict-dropped conversation's reason with its own stage and seat until that seat starts", async () => {
     const f = await fixture(true);
     try {
-      const conflict = conflicting(f);
+      const conflict = await conflicting(f);
       const later = { ...f.stage, id: "later", title: "Review once more" };
       f.task.plan!.stages.push(later);
       const choose = (seat: string) => f.engine.choose(later.profileIds[Number(seat)]!, f.scope, later.roleId, undefined, seat);
@@ -520,7 +520,7 @@ describe.concurrent("eligible saved review stand-ins", () => {
   for (const pair of [true, false]) it(`gives a ${pair ? "parallel" : "single"} seat's usage stand-in its own start, not the conflict reason the seat already used`, async () => {
     const f = await fixture(pair);
     try {
-      const conflict = conflicting(f);
+      const conflict = await conflicting(f);
       await f.round(1);
       await conflict("Main's greeting\n");
       const why = "main conflicted with the change, so the Builder had to port it";

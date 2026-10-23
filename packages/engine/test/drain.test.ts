@@ -21,7 +21,7 @@ async function reviewing() {
     released.add(session);
     writeFileSync(join(fakes.dir, `release-${session}`), "go");
   };
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
   const settle = (state: State) => {
     for (const item of state.inbox) {

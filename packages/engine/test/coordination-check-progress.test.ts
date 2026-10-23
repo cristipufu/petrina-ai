@@ -17,7 +17,7 @@ afterAll(async () => {
   roots.forEach(removeDir);
 });
 const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
-function fixture() {
+async function fixture() {
   const root = tempDir("petrina-check-evidence-");
   roots.push(root);
   const home = join(root, "home");
@@ -25,7 +25,7 @@ function fixture() {
   engines.push(engine);
   engine.setPoolPaused(true);
   engine.schedule = () => {};
-  const product = makeProduct(root);
+  const product = await makeProduct(root);
   engine.s.products.push({ id: "product", name: "Example", repo: "local/example", path: product, tone: "blue", delivery: "local" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Check evidence" }))!;
   executionFor(task).work.worktree = product;
@@ -38,12 +38,12 @@ function fixture() {
 }
 
 it("records a first failure on its own code before completion, including a hook failure", async () => {
-  const { engine, task, coordination } = fixture();
+  const { engine, task, coordination } = await fixture();
   const scope = executionFor(task);
-  scope.work.baseSha = git(scope.work.worktree!, "rev-parse", "HEAD");
-  scope.work.branch = git(scope.work.worktree!, "symbolic-ref", "--short", "HEAD");
+  scope.work.baseSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
+  scope.work.branch = await git(scope.work.worktree!, "symbolic-ref", "--short", "HEAD");
   writeFileSync(join(scope.work.worktree!, "checked.txt"), "The change to check\n");
-  git(scope.work.worktree!, "add", "."); git(scope.work.worktree!, "commit", "-qm", "Prepare the checked change");
+  await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Prepare the checked change");
   const check: ProductCheck = { name: "Quick", argv: [process.execPath, "-e", "process.exit(1)"] };
   task.journey = [];
   expect(await engine["checks"].runProductChecks(scope, [check], new AbortController().signal)).toBe(1);
@@ -62,7 +62,7 @@ it("records a first failure on its own code before completion, including a hook 
 });
 
 it("retains live check progress and every original diagnostic through repeated preparation and restart", async () => {
-  const { root, home, engine, task, coordination } = fixture();
+  const { root, home, engine, task, coordination } = await fixture();
   const release = join(root, "release");
   const checks: ProductCheck[] = [
     { name: "Quick", argv: [process.execPath, "-e", 'console.log("First preparation diagnostic")'] },
@@ -70,7 +70,7 @@ it("retains live check progress and every original diagnostic through repeated p
   ];
   const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
   const work = executionFor(task).work;
-  const firstSha = git(work.worktree!, "rev-parse", "HEAD");
+  const firstSha = await git(work.worktree!, "rev-parse", "HEAD");
   const running = engine["checks"].runProductChecks(executionFor(task), checks, new AbortController().signal);
   try {
     await waitFor(() => task.journey![0]!.productChecks?.[0]?.result === "pass" && task.journey![0]!.productChecks?.[1]?.result === "running", "a completed check beside a running check");
@@ -86,15 +86,15 @@ it("retains live check progress and every original diagnostic through repeated p
     expect(visible[0]!.run!.source).toEqual({ stepId: "notes", attemptId: "run-0", checkId: "check-0" });
     const batch = await coordination.call("watch.events", { taskIds: [task.id], cursor, timeoutMs: 0, limit: 100 });
     const completed = (batch.events as WorkflowEvent[]).find(event => event.kind === "check.finished")!;
-    expect(completed).toEqual(expect.objectContaining({ name: "Quick", result: "pass", versions: expect.objectContaining({ sha: firstSha, tree: git(work.worktree!, "rev-parse", "HEAD^{tree}"), definition: expect.any(String), attemptId: "run-0" }) }));
+    expect(completed).toEqual(expect.objectContaining({ name: "Quick", result: "pass", versions: expect.objectContaining({ sha: firstSha, tree: await git(work.worktree!, "rev-parse", "HEAD^{tree}"), definition: expect.any(String), attemptId: "run-0" }) }));
     expect(completed.versions).not.toHaveProperty("passed");
   } finally { writeFileSync(release, "go"); }
   expect(await running).toBe(0);
   const firstLog = task.journey![0]!.productChecks![0]!.run!.logPath;
   const firstVersion = structuredClone(task.journey![0]!.checkAttempts![0]!);
   writeFileSync(join(work.worktree!, "changed.txt"), "New code for the next attempt\n");
-  git(work.worktree!, "add", "."); git(work.worktree!, "commit", "-qm", "Change the checked code");
-  const nextSha = git(work.worktree!, "rev-parse", "HEAD");
+  await git(work.worktree!, "add", "."); await git(work.worktree!, "commit", "-qm", "Change the checked code");
+  const nextSha = await git(work.worktree!, "rev-parse", "HEAD");
   const repeatCursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
   const failure = "Original failure near the beginning\n" + "Later diagnostic line\n".repeat(9000);
   expect(await engine["checks"].runProductChecks(executionFor(task), [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], new AbortController().signal)).toBe(1);
@@ -132,14 +132,14 @@ it("retains live check progress and every original diagnostic through repeated p
 });
 
 it("reuses the recorded attempt within repeated release preparation without linking another run's diagnostics", async () => {
-  const { engine, task, coordination } = fixture();
+  const { engine, task, coordination } = await fixture();
   const scope = executionFor(task);
   const checks = [{ name: "Quick", argv: [process.execPath, "-e", "console.log('checked')"] }];
   engine.s.products[0]!.checks = checks;
   engine.s.products[0]!.checksBy = "coordinator";
   expect(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal)).toBe(0);
   writeFileSync(join(scope.work.worktree!, "changed.txt"), "A new version for release preparation\n");
-  git(scope.work.worktree!, "add", "."); git(scope.work.worktree!, "commit", "-qm", "Change the checked version");
+  await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Change the checked version");
   expect(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal)).toBe(0);
   expect(task.journey).toHaveLength(1);
   const attempts = task.journey![0]!.checkAttempts!;
@@ -155,7 +155,7 @@ it("reuses the recorded attempt within repeated release preparation without link
 });
 
 it("keeps stopped check diagnostics beside completed peers without duplicating progress entries", async () => {
-  const { engine, task, coordination } = fixture();
+  const { engine, task, coordination } = await fixture();
   const stop = new AbortController();
   const running = engine["checks"].runProductChecks(executionFor(task), [
     { name: "Quick", argv: [process.execPath, "-e", 'console.log("Completed peer")'] },
@@ -174,13 +174,14 @@ it("keeps stopped check diagnostics beside completed peers without duplicating p
   const batch = await coordination.call("watch.events", { taskIds: [task.id], from: "oldest", timeoutMs: 0, limit: 100 });
   const completed = (batch.events as WorkflowEvent[]).filter(event => event.kind === "check.finished");
   expect(completed.map(event => event.result)).toEqual(["pass", "stopped"]);
-  expect(completed.every(event => (event.versions as { sha?: string } | null)?.sha === git(executionFor(task).work.worktree!, "rev-parse", "HEAD"))).toBe(true);
+  const head = await git(executionFor(task).work.worktree!, "rev-parse", "HEAD");
+  expect(completed.every(event => (event.versions as { sha?: string } | null)?.sha === head)).toBe(true);
   expect(task.journey![0]!.checkAttempts![0]).not.toHaveProperty("passed");
   expect((await coordination.call("journey.check", { taskId: task.id, nodeId: "notes", index: 1 })).commandOutcome).toBe("unfinished");
 });
 
 it("records a run with nothing to run, so reviewers start on none-configured rather than unavailable, directly and through reuse", async () => {
-  const { engine, task, coordination } = fixture();
+  const { engine, task, coordination } = await fixture();
   const scope = executionFor(task);
   task.journey = [];
   engine.s.products[0]!.checks = [];
@@ -211,7 +212,7 @@ it("records a run with nothing to run, so reviewers start on none-configured rat
 });
 
 it("keeps uncommitted edits when there is nothing to run, and still records the empty run", async () => {
-  const { engine, task } = fixture();
+  const { engine, task } = await fixture();
   const scope = executionFor(task);
   task.journey = [];
   engine.s.products[0]!.checks = [];
@@ -230,7 +231,7 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
     expect(restores).not.toHaveBeenCalled();
     expect(resets).not.toHaveBeenCalled();
     // Control: a check that changes a tracked file is put back, so nothing unreviewed joins the work.
-    git(scope.work.worktree!, "add", "."); git(scope.work.worktree!, "commit", "-qm", "Keep the edit");
+    await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Keep the edit");
     const changing = { name: "Changing", argv: [process.execPath, "-e", "require('node:fs').appendFileSync('README.md', 'Added by a check\\n')"] };
     engine.s.products[0]!.checks = [changing];
     expect(await engine["checks"].runProductChecks(scope, [changing], new AbortController().signal)).toBe(0);
@@ -240,7 +241,7 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
 });
 
 it("describes a resumed attempt with nothing left to run as nothing configured, not as the stopped attempt", async () => {
-  const { root, engine, task, coordination } = fixture();
+  const { root, engine, task, coordination } = await fixture();
   const scope = executionFor(task);
   task.journey = [];
   const controller = new AbortController();
@@ -271,7 +272,7 @@ it("describes a resumed attempt with nothing left to run as nothing configured, 
 });
 
 it("describes the latest attempt when an interrupted run is resumed on the same step", async () => {
-  const { root, engine, task, coordination } = fixture();
+  const { root, engine, task, coordination } = await fixture();
   const scope = executionFor(task);
   task.journey = [];
   const controller = new AbortController();

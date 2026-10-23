@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { agentEnv, loginShellPath, mergePath, pathFromEnv, withoutCredentials } from "../src/env.js";
 import { ADAPTERS } from "../src/tools.js";
 import { BACKGROUND } from "../src/prompts.js";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runCommand } from "./commands.js";
 
 describe("agent safety", () => {
   it("runs every tool in its own automatic safety mode", () => {
@@ -32,25 +32,25 @@ describe("agent safety", () => {
   });
 
   // A stand-in password program that answers at once (a real one would open a window): /usr/bin/true.
-  it.skipIf(process.platform === "win32")("never runs a password program: a missing login fails at once, a saved one still answers", () => {
+  it.skipIf(process.platform === "win32")("never runs a password program: a missing login fails at once, a saved one still answers", async () => {
     const home = mkdtempSync(join(tmpdir(), "petrina-askpass-"));
     try {
       const config = join(home, "gitconfig");
       writeFileSync(config, "[core]\n\taskPass = /usr/bin/true\n");
       const own = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: "1" };
-      const fill = (env: NodeJS.ProcessEnv) => spawnSync("git", ["credential", "fill"], { cwd: home, env, input: "protocol=https\nhost=example.invalid\n\n", encoding: "utf8" });
+      const fill = (env: NodeJS.ProcessEnv) => runCommand(["git", "credential", "fill"], { cwd: home, env, input: "protocol=https\nhost=example.invalid\n\n" });
       // Without Petrina's settings git asks the password program, from git's settings or from the environment.
       for (const env of [own, { ...own, GIT_ASKPASS: "/usr/bin/true", SSH_ASKPASS: "/usr/bin/true" }]) {
-        expect(fill(env).stdout).toContain("password=");
-        const agent = fill(agentEnv(env));
-        expect(agent.status).not.toBe(0);
+        expect((await fill(env)).stdout).toContain("password=");
+        const agent = await fill(agentEnv(env));
+        expect(agent.code).not.toBe(0);
         expect(agent.stdout).not.toContain("password=");
         expect(agent.stderr).toContain("terminal prompts disabled");
       }
       // A saved login, through the coordinator's credential helper, still works.
       writeFileSync(config, "[core]\n\taskPass = /usr/bin/true\n[credential]\n\thelper = \"!f() { echo username=me; echo password=saved; }; f\"\n");
-      const saved = fill(agentEnv(own));
-      expect(saved.status).toBe(0);
+      const saved = await fill(agentEnv(own));
+      expect(saved.code).toBe(0);
       expect(saved.stdout).toContain("password=saved");
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -95,11 +95,11 @@ describe("the PATH an app opened from the Dock gets", () => {
     expect(path?.split(":").length).toBeGreaterThan(0);
   });
 
-  it("keeps agents in the background", () => {
+  it("keeps agents in the background", async () => {
     expect(BACKGROUND).toContain("Never open windows or apps");
-    const result = Bun.spawnSync(["bun", join(import.meta.dir, "../src/cli.ts"), "open"], { env: { ...process.env, PETRINA_AGENT: "1", PETRINA_HOME: "/nonexistent-petrina-home" } });
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr.toString()).toContain("Agents work in the background");
+    const result = await runCommand(["bun", join(import.meta.dir, "../src/cli.ts"), "open"], { env: { ...process.env, PETRINA_AGENT: "1", PETRINA_HOME: "/nonexistent-petrina-home" } });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Agents work in the background");
   });
 
   it("reads the PATH even when the shell exports the marker as `_` (dash)", () => {

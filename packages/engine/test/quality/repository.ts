@@ -1,19 +1,21 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { testGitEnv } from "../test-git-env.js";
+import { runGit } from "../commands.js";
 import { isSource, isTest, impactPlan, type CoverageMap, type ImpactPlan } from "./impact.js";
 import { sourceFacts } from "./source.js";
 
 export const ROOT = resolve(import.meta.dir, "../../../..");
-export function readGit(root: string, args: string[]): string {
-  const result = Bun.spawnSync(["git", ...args], { cwd: root, env: testGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 });
-  if (result.exitCode !== 0) throw new Error(`Could not inspect test inputs: git ${args[0]} failed (${result.stderr.toString().trim()})`);
-  return result.stdout.toString();
+export async function readGit(root: string, args: string[]): Promise<string> {
+  let result;
+  try { result = await runGit(args, { cwd: root, timeoutMs: 30_000 }); }
+  catch (error) { throw new Error(`Could not inspect test inputs: ${error instanceof Error ? error.message : String(error)}`); }
+  if (result.code !== 0) throw new Error(`Could not inspect test inputs: git ${args[0]} failed (${result.stderr.trim()})`);
+  return result.stdout;
 }
 
-export function inputs(root: string): Map<string, string> {
-  const files = new Set(readGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter(Boolean));
+export async function inputs(root: string): Promise<Map<string, string>> {
+  const files = new Set((await readGit(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])).split("\0").filter(Boolean));
   const result = new Map<string, string>();
   for (const file of [...files].sort()) {
     try {
@@ -39,18 +41,21 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
       if (entry.runtime && /(?:^|\/)src\/checks\.[jt]s$/.test(entry.path) && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
     }
     if (engine) for (const line of facts.promiseMatchers) errors.push(`${file}:${line}: await rejectionOf/expectRejection or the ordinary Promise before asserting; do not use Bun's promise matchers`);
+    for (const line of facts.blockingCalls) errors.push(`${file}:${line}: run test programs with runCommand or git from test/commands; a synchronous child call holds the whole test worker until its exit is reported`);
+    if (engine) for (const { line, name } of facts.unfinished) errors.push(`${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`);
+    if (engine) for (const line of facts.asyncCallbacks) errors.push(`${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`);
     for (const line of facts.exclusiveTests) errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
   }
   return errors.sort();
 }
 
-export function observe(root: string, base = "origin/main", coverage?: CoverageMap): ImpactPlan & { base: string; head: string } {
-  const files = inputs(root);
-  const head = readGit(root, ["rev-parse", "HEAD"]).trim();
-  const resolved = readGit(root, ["rev-parse", "--verify", `${base}^{commit}`]).trim();
+export async function observe(root: string, base = "origin/main", coverage?: CoverageMap): Promise<ImpactPlan & { base: string; head: string }> {
+  const files = await inputs(root);
+  const head = (await readGit(root, ["rev-parse", "HEAD"])).trim();
+  const resolved = (await readGit(root, ["rev-parse", "--verify", `${base}^{commit}`])).trim();
   const changes = [
-    ...readGit(root, ["diff", "--name-only", "-z", "--no-renames", resolved, "--"]).split("\0"),
-    ...readGit(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
+    ...(await readGit(root, ["diff", "--name-only", "-z", "--no-renames", resolved, "--"])).split("\0"),
+    ...(await readGit(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"),
   ].filter(Boolean);
   return { ...impactPlan(files, changes, coverage), base: resolved, head };
 }
@@ -68,10 +73,10 @@ export function recordedCoverage(root: string): CoverageMap | undefined {
 if (import.meta.main) {
   const command = process.argv[2];
   if (command === "conventions") {
-    const errors = conventions(inputs(ROOT));
+    const errors = conventions(await inputs(ROOT));
     if (errors.length) { console.error(errors.join("\n")); process.exitCode = 1; }
     else console.log("Test fixture and assertion conventions passed");
   } else if (command === "impact") {
-    console.log(JSON.stringify(observe(ROOT, process.argv[3], recordedCoverage(ROOT)), null, 2));
+    console.log(JSON.stringify(await observe(ROOT, process.argv[3], recordedCoverage(ROOT)), null, 2));
   } else throw new Error("Use conventions or impact [base-ref]");
 }

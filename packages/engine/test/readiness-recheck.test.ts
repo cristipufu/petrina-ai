@@ -47,7 +47,7 @@ async function fixture(options: { pair?: boolean; seats?: string[]; checkTimeout
   const root = tempDir("petrina-readiness-recheck-");
   roots.push(root);
   const { engine, fakes, checks, check, uncertain, holdCheck, inChecks, name } = engineIn(root, options.checkTimeoutMs);
-  const repo = makeProduct(root), base = git(repo, "rev-parse", "HEAD");
+  const repo = await makeProduct(root), base = await git(repo, "rev-parse", "HEAD");
   fakes.scenario({ reopen: "resume" });
   engine.s.setup!.checks = engine.s.tools.map((tool) => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
   engine.s.tools.forEach((tool) => { tool.status = "ready"; });

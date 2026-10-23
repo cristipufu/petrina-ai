@@ -11,8 +11,8 @@ import { addCopy, branchName, ensureWorktree, removeWorktree } from "../src/git.
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, waitFor, waitForFile, type World } from "./support.js";
 
 const worlds: World[] = [];
-function world(name: string): World {
-  const w = makeWorld(`cleanup-${name}`);
+async function world(name: string): Promise<World> {
+  const w = await makeWorld(`cleanup-${name}`);
   worlds.push(w);
   // The fake builder leaves the same ignored packages/build output as real tools do.
   writeFileSync(join(w.clone, ".git", "info", "exclude"), "node_modules/\ntarget/\n");
@@ -26,7 +26,7 @@ afterAll(() => { for (const w of worlds) removeDir(w.dir); });
 
 const texts = (task: Task) => task.timeline.map((entry) => entry.text);
 const cleaned = async (engine: Engine, id: string) => taskOf(await until(engine, (s) => taskOf(s, id).cleanup?.removedAt !== undefined), id);
-const listed = (w: World, path: string) => {
+const listed = async (w: World, path: string) => {
   // Git lists native names; the fixture may use a Windows short name or another parent alias.
   // The copy itself may already be gone, so resolve the parent without following a replacement link.
   const nativeParent = (path: string): string => {
@@ -34,7 +34,7 @@ const listed = (w: World, path: string) => {
     catch { return join(nativeParent(dirname(path)), basename(path)); }
   };
   const location = (path: string) => join(nativeParent(dirname(path)), basename(path));
-  return git(w.clone, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree ")).some((field) => location(field.slice("worktree ".length)) === location(path));
+  return (await git(w.clone, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree ")).some((field) => location(field.slice("worktree ".length)) === location(path));
 };
 /** Coordinator inspection, History and immediate delivery waits for a task you marked done: never confirmed. */
 async function expectUnconfirmed(engine: Engine, taskId: string): Promise<void> {
@@ -43,16 +43,16 @@ async function expectUnconfirmed(engine: Engine, taskId: string): Promise<void> 
   expect((await c.call("task.history", { taskId })).items).toEqual([expect.objectContaining({ landing: "marked-done", deliveryConfirmed: false })]);
   for (const condition of ["delivered", "landed"]) expect((await c.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome).toBe("timed-out");
 }
-function gone(w: World, task: Task): void {
+async function gone(w: World, task: Task): Promise<void> {
   expect(existsSync(task.worktree!), `${task.id}: ${task.worktree} ${JSON.stringify(task.cleanup)}`).toBe(false);
-  expect(listed(w, task.worktree!)).toBe(false);
-  expect(git(w.clone, "rev-parse", task.branch!)).toMatch(/^[a-f0-9]{40}$/);
+  expect(await listed(w, task.worktree!)).toBe(false);
+  expect(await git(w.clone, "rev-parse", task.branch!)).toMatch(/^[a-f0-9]{40}$/);
   expect(readFileSync(join(w.dir, "shared-cache", "keep"), "utf8")).toBe("shared");
 }
 
 describe.concurrent("Finished tasks free their working copies", () => {
   it("keeps existing pull-request updates out of the new-pull-request attribution check", async () => {
-    const w = world("existing-pr-attribution");
+    const w = await world("existing-pr-attribution");
     const engine = w.start();
     try {
       engine.setPoolPaused(true);
@@ -78,7 +78,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it("recovers orphaned reviewer copies after the main copy was already removed, leaving unfinished tasks alone", async () => {
-    const w = world("reviewer-crash");
+    const w = await world("reviewer-crash");
     let engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
@@ -89,13 +89,13 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const folder = join(w.data, "worktrees", productId, `${id}.copies`);
       const copy = join(folder, "review-0");
       const missing = join(folder, "review-1");
-      await addCopy(w.clone, copy, git(w.clone, "rev-parse", task.branch!));
-      await addCopy(w.clone, missing, git(w.clone, "rev-parse", task.branch!));
-      git(w.clone, "worktree", "lock", copy);
-      git(w.clone, "worktree", "lock", missing);
+      await addCopy(w.clone, copy, await git(w.clone, "rev-parse", task.branch!));
+      await addCopy(w.clone, missing, await git(w.clone, "rev-parse", task.branch!));
+      await git(w.clone, "worktree", "lock", copy);
+      await git(w.clone, "worktree", "lock", missing);
       rmSync(missing, { recursive: true, force: true });
       const active = join(w.data, "worktrees", productId, "unfinished.copies", "review-0");
-      await addCopy(w.clone, active, git(w.clone, "rev-parse", task.branch!));
+      await addCopy(w.clone, active, await git(w.clone, "rev-parse", task.branch!));
       writeFileSync(join(active, "unsaved.txt"), "Keep this unfinished review");
       w.editSaved((state) => {
         const tasks = state.tasks as unknown as Task[];
@@ -104,16 +104,16 @@ describe.concurrent("Finished tasks free their working copies", () => {
         delete (previous.cleanup as { reviewCopiesRemovedAt?: number }).reviewCopiesRemovedAt;
       });
       engine = w.start({ checkEveryMs: 100 });
-      await waitFor(() => !existsSync(folder) && !listed(w, copy) && !listed(w, missing), "orphaned reviewer folders and locked Git records to be removed", 5_000);
-      gone(w, taskOf(engine.getState(), id));
+      await waitFor(async () => !existsSync(folder) && !await listed(w, copy) && !await listed(w, missing), "orphaned reviewer folders and locked Git records to be removed", 5_000);
+      await gone(w, taskOf(engine.getState(), id));
       expect(existsSync(active)).toBe(true);
-      expect(listed(w, active)).toBe(true);
+      expect(await listed(w, active)).toBe(true);
       expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("Keep this unfinished review");
     } finally { await engine.shutdown(); }
   });
 
   for (const slots of [1, 2]) it(`does not allocate any of ${slots} free slots to a resumed task still stopping`, async () => {
-    const w = world(`stopping-slots-${slots}`);
+    const w = await world(`stopping-slots-${slots}`);
     const engine = w.start();
     let release!: () => void;
     let stopped = "";
@@ -139,7 +139,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   for (const kind of ["uncertain", "older interrupted", "already marked", "no pull request"] as const) it(`checks GitHub before cleaning a ${kind} delivery marked done, including after restart`, async () => {
-    const w = world(`mark-done-${kind.replaceAll(" ", "-")}`);
+    const w = await world(`mark-done-${kind.replaceAll(" ", "-")}`);
     w.setGitHub((github) => (github.fail = { "pr create": 1 }));
     let engine = w.start({ checkEveryMs: 100 });
     try {
@@ -148,9 +148,10 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const failed = taskOf(await finish(engine, id), id);
       expect(failed.state).toBe("failed");
       const copy = failed.worktree!;
+      const headRefOid = await git(w.clone, "rev-parse", failed.branch!);
       w.setGitHub((github) => {
         github.offline = true;
-        if (kind !== "no pull request") github.prs.push({ number: 77, url: "https://github.com/acme/demo/pull/77", state: "OPEN", headRefName: failed.branch!, baseRefName: "main", headRefOid: git(w.clone, "rev-parse", failed.branch!), isCrossRepository: false, title: "Uncertain delivery", body: "" });
+        if (kind !== "no pull request") github.prs.push({ number: 77, url: "https://github.com/acme/demo/pull/77", state: "OPEN", headRefName: failed.branch!, baseRefName: "main", headRefOid, isCrossRepository: false, title: "Uncertain delivery", body: "" });
       });
       await engine.shutdown();
       w.editSaved((state) => {
@@ -179,7 +180,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       w.setGitHub((github) => (github.offline = false));
       if (kind === "no pull request") {
         const done = await cleaned(engine, id);
-        gone(w, done);
+        await gone(w, done);
         expect(done.cleanup?.pullRequest).toBe("none");
         expect(done.state).toBe("done");
         await expectUnconfirmed(engine, id);
@@ -195,7 +196,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(taskOf(engine.getState(), id).cleanup?.removedAt).toBeUndefined();
       w.setGitHub((github) => (github.prs[0]!.state = kind === "older interrupted" ? "MERGED" : "CLOSED"));
       const done = await cleaned(engine, id);
-      gone(w, done);
+      await gone(w, done);
       expect(done.state).toBe("done");
       expect(texts(done)).toContain(kind === "older interrupted" ? "Merged #77 on GitHub" : "Closed #77 without merging");
       expect((await updates()).at(-1)).toMatchObject({ landing: "marked-done", result: { kind: "unconfirmed", landed: false, lookup: { number: 77, state: kind === "older interrupted" ? "merged" : "closed" } } });
@@ -204,8 +205,8 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   for (const { github, marked } of [{ github: false, marked: false }, { github: false, marked: true }, { github: true, marked: false }]) it(`handles an older local delivery ${marked ? "already marked done" : "marked done now"} for a ${github ? "GitHub" : "computer-only"} product`, async () => {
-    const w = world(`older-local-${github}-${marked}`);
-    if (!github) git(w.clone, "remote", "remove", "origin");
+    const w = await world(`older-local-${github}-${marked}`);
+    if (!github) await git(w.clone, "remote", "remove", "origin");
     w.setGitHub((state) => (state.offline = true));
     let engine = w.start();
     try {
@@ -240,18 +241,18 @@ describe.concurrent("Finished tasks free their working copies", () => {
         expect(task.cleanup?.pullRequest).toBe("none");
         expect(task.cleanup?.error).toBeUndefined();
         expect(w.github().calls).toEqual([]);
-        gone(w, task);
+        await gone(w, task);
         await engine.shutdown();
         engine = w.start({ checkEveryMs: 100 });
         expect(taskOf(engine.getState(), id).cleanup).toEqual(task.cleanup);
         expect(w.github().calls).toEqual([]);
-        gone(w, taskOf(engine.getState(), id));
+        await gone(w, taskOf(engine.getState(), id));
       }
     } finally { await engine.shutdown(); }
   });
 
   for (const resumeImmediately of [false, true]) it(`keeps a copy paused during setup${resumeImmediately ? " and resumed before setup finishes" : " until it is resumed"}`, async () => {
-    const w = world(resumeImmediately ? "setup-resumed" : "setup-paused");
+    const w = await world(resumeImmediately ? "setup-resumed" : "setup-paused");
     const hold = join(w.dir, "checkout-hold");
     const filter = join(w.dir, "smudge.mjs");
     writeFileSync(hold, "");
@@ -261,12 +262,12 @@ describe.concurrent("Finished tasks free their working copies", () => {
       process.stdout.write(input);`);
     // Hold the actual checkout in git, after it starts creating the copy and before ensureWorktree returns.
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-    git(w.clone, "config", "filter.petrinaSetup.clean", `${quote(process.execPath)} -e ${quote('process.stdout.write(require("node:fs").readFileSync(0))')}`);
-    git(w.clone, "config", "filter.petrinaSetup.smudge", `${quote(process.execPath)} ${quote(filter)}`);
-    git(w.clone, "config", "filter.petrinaSetup.required", "true");
+    await git(w.clone, "config", "filter.petrinaSetup.clean", `${quote(process.execPath)} -e ${quote('process.stdout.write(require("node:fs").readFileSync(0))')}`);
+    await git(w.clone, "config", "filter.petrinaSetup.smudge", `${quote(process.execPath)} ${quote(filter)}`);
+    await git(w.clone, "config", "filter.petrinaSetup.required", "true");
     writeFileSync(join(w.clone, ".gitattributes"), "README.md filter=petrinaSetup\n");
-    git(w.clone, "add", ".gitattributes");
-    git(w.clone, "commit", "-qm", "Hold checkout for the test");
+    await git(w.clone, "add", ".gitattributes");
+    await git(w.clone, "commit", "-qm", "Hold checkout for the test");
     const engine = w.start({ checkEveryMs: 100 });
     try {
       const productId = await engine.addProduct(w.clone);
@@ -288,7 +289,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       await settling;
       const path = join(w.data, "worktrees", productId, id);
       expect(existsSync(join(path, "README.md"))).toBe(true);
-      expect(listed(w, path)).toBe(true);
+      expect(await listed(w, path)).toBe(true);
       if (!resumeImmediately) {
         expect(taskOf(engine.getState(), id).state).toBe("paused");
         expect(taskOf(engine.getState(), id).cleanup).toBeUndefined();
@@ -306,7 +307,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it.skipIf(process.platform === "win32")("finds a cancelled setup's copy after quitting and retries its locked output after restart", async () => {
-    const w = world("setup-cancel-quit");
+    const w = await world("setup-cancel-quit");
     const hold = join(w.dir, "checkout-hold");
     const filter = join(w.dir, "smudge.mjs");
     writeFileSync(hold, "");
@@ -315,12 +316,12 @@ describe.concurrent("Finished tasks free their working copies", () => {
       writeFileSync(hold + ".reached", ""); while (existsSync(hold)) Bun.sleepSync(10);
       process.stdout.write(input);`);
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-    git(w.clone, "config", "filter.petrinaSetup.clean", `${quote(process.execPath)} -e ${quote('process.stdout.write(require("node:fs").readFileSync(0))')}`);
-    git(w.clone, "config", "filter.petrinaSetup.smudge", `${quote(process.execPath)} ${quote(filter)}`);
-    git(w.clone, "config", "filter.petrinaSetup.required", "true");
+    await git(w.clone, "config", "filter.petrinaSetup.clean", `${quote(process.execPath)} -e ${quote('process.stdout.write(require("node:fs").readFileSync(0))')}`);
+    await git(w.clone, "config", "filter.petrinaSetup.smudge", `${quote(process.execPath)} ${quote(filter)}`);
+    await git(w.clone, "config", "filter.petrinaSetup.required", "true");
     writeFileSync(join(w.clone, ".gitattributes"), "README.md filter=petrinaSetup\n");
-    git(w.clone, "add", ".gitattributes");
-    git(w.clone, "commit", "-qm", "Hold checkout for the test");
+    await git(w.clone, "add", ".gitattributes");
+    await git(w.clone, "commit", "-qm", "Hold checkout for the test");
     let engine = w.start({ checkEveryMs: 100 });
     let locked: string | undefined;
     try {
@@ -346,7 +347,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(taskOf(engine.getState(), id).cleanup?.removedAt).toBeUndefined();
       chmodSync(locked, 0o755);
       const task = await cleaned(engine, id);
-      gone(w, { ...task, worktree: copy, branch: branchName("Cancel during checkout", id) });
+      await gone(w, { ...task, worktree: copy, branch: branchName("Cancel during checkout", id) });
       expect(task.state).toBe("cancelled");
       expect(texts(task).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
     } finally {
@@ -357,7 +358,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   for (const source of ["open", "no-pull-request"] as const) it(`checks a cancelled uncertain delivery marked done with ${source}, including retries and restart`, async () => {
-    const w = world(`cancelled-${source}`);
+    const w = await world(`cancelled-${source}`);
     let engine = w.start({ checkEveryMs: 100 });
     try {
       const productId = await engine.addProduct(w.clone);
@@ -393,7 +394,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
         w.setGitHub((github) => (github.prs[0]!.state = "CLOSED"));
       }
       const task = await cleaned(engine, id);
-      gone(w, task);
+      await gone(w, task);
       expect(task.state).toBe("cancelled");
       expect(task.statusLine).toBe("Cancelled");
       expect(task.cleanup?.pullRequest).toBe("none");
@@ -404,8 +405,8 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it("cleans a cancelled computer-only delivery marked done without asking GitHub", async () => {
-    const w = world("cancelled-computer-only");
-    git(w.clone, "remote", "remove", "origin");
+    const w = await world("cancelled-computer-only");
+    await git(w.clone, "remote", "remove", "origin");
     let engine = w.start({ checkEveryMs: 100 });
     try {
       const productId = await engine.addProduct(w.clone);
@@ -421,7 +422,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       }));
       engine = w.start({ checkEveryMs: 100 });
       const task = await cleaned(engine, id);
-      gone(w, task);
+      await gone(w, task);
       expect(task.state).toBe("cancelled");
       expect(task.cleanup?.pullRequest).toBe("none");
       expect(w.github().calls).toEqual([]);
@@ -429,7 +430,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it("saves local delivery and all history before removing packages and build output; reading after restart creates nothing", async () => {
-    const w = world("local");
+    const w = await world("local");
     let engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
@@ -439,11 +440,11 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const id = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
       expect(taskOf(await finish(engine, id), id).state).toBe("done");
       const task = await cleaned(engine, id);
-      gone(w, task);
+      await gone(w, task);
       expect(existsSync(other)).toBe(true);
       expect(readFileSync(join(w.clone, "greeting.txt"), "utf8")).toContain("Hello");
-      expect(git(w.clone, "rev-parse", "main")).toBe(git(w.clone, "rev-parse", task.branch!));
-      expect(remoteRef(w.remote, "refs/heads/main")).toBe(git(w.clone, "rev-parse", task.branch!));
+      expect(await git(w.clone, "rev-parse", "main")).toBe(await git(w.clone, "rev-parse", task.branch!));
+      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(await git(w.clone, "rev-parse", task.branch!));
       expect(texts(task).findIndex((line) => line.startsWith("Petrina pushed main to GitHub"))).toBeLessThan(texts(task).indexOf(CLEANUP_WORDS.removed));
       expect(task.brief).toBeDefined();
       expect(task.findings.length).toBeGreaterThan(0);
@@ -464,27 +465,27 @@ describe.concurrent("Finished tasks free their working copies", () => {
       for (const key of ["timeline", "session", "brief", "findings", "landed", "report", "cleanup"] as const) expect(saved[key]).toEqual(task[key]);
       await Bun.sleep(150);
       expect(taskOf(engine.getState(), id).agent).toBeUndefined();
-      gone(w, saved);
+      await gone(w, saved);
     } finally { engine.shutdown(); }
   });
 
   it("removes a verified release's copy and keeps its branch, tag and link", async () => {
-    const w = world("release");
+    const w = await world("release");
     const engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Release a greeting", description: "[quick]", delivery: "release", approveDelivery: false });
       expect(taskOf(await finish(engine, id), id).state).toBe("done");
       const task = await cleaned(engine, id);
-      gone(w, task);
+      await gone(w, task);
       expect(task.release?.url).toContain("/releases/tag/");
-      expect(remoteRef(w.remote, `refs/tags/${task.release!.tag}`)).toBe(git(w.clone, "rev-parse", task.branch!));
+      expect(await remoteRef(w.remote, `refs/tags/${task.release!.tag}`)).toBe(await git(w.clone, "rev-parse", task.branch!));
       expect(texts(task).findIndex((line) => line.startsWith("Petrina published release"))).toBeLessThan(texts(task).indexOf(CLEANUP_WORDS.removed));
     } finally { engine.shutdown(); }
   });
 
   it("still frees space when the disk cannot save the verified delivery until its copy is gone", async () => {
-    const w = world("full-disk");
+    const w = await world("full-disk");
     const engine = w.start();
     const save = engine.store.save.bind(engine.store);
     let failed = 0;
@@ -492,7 +493,9 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Free space", description: "[quick]", delivery: "local", approveDelivery: false });
       engine.store.save = (state, ...archive) => {
-        const task = displayTask(taskOf(state, id));
+        // Once its copy is gone, the task may already have moved to History.
+        const saved = state.tasks.find((entry) => entry.id === id);
+        const task = saved && displayTask(saved);
         if (task?.state === "done" && existsSync(task.worktree!)) { failed += 1; throw new Error("disk full"); }
         save(state, ...archive);
       };
@@ -500,14 +503,14 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(failed).toBeGreaterThan(0);
       expect(task.state).toBe("done");
       expect(task.error).toBeUndefined();
-      gone(w, task);
       engine.commitNow();
+      await gone(w, task);
       expect(displayTask(engine.store.history.get(id)!).cleanup?.removedAt).toBeDefined();
     } finally { engine.store.save = save; engine.shutdown(); }
   });
 
   it("cancels a running builder, waits for its background build, and removes any folder that comes back quietly", async () => {
-    const w = world("cancel");
+    const w = await world("cancel");
     const hold = join(w.dir, "builder-hold");
     const pids = join(w.dir, "build-pids");
     writeFileSync(hold, "");
@@ -524,7 +527,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const task = await cleaned(engine, id);
       expect(task.state).toBe("cancelled");
       expect(() => process.kill(pid, 0)).toThrow();
-      gone(w, task);
+      await gone(w, task);
       expect(engine.getState().inbox.some((item) => item.taskId === id)).toBe(false);
       const count = texts(task).length;
       mkdirSync(join(task.worktree!, "target"), { recursive: true });
@@ -535,7 +538,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it("keeps open pull requests through checks, restart and cancellation, then records merged and closed separately", async () => {
-    const w = world("pull-requests");
+    const w = await world("pull-requests");
     let engine = w.start({ checkEveryMs: 100 });
     try {
       const productId = await engine.addProduct(w.clone);
@@ -558,7 +561,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       }
       w.setGitHub((github) => { github.offline = false; github.prs.forEach((pr, index) => (pr.state = index === 0 ? "MERGED" : "CLOSED")); });
       const tasks = await Promise.all(ids.map((id) => cleaned(engine, id)));
-      for (const task of tasks) gone(w, task);
+      for (const task of tasks) await gone(w, task);
       expect(tasks.map((task) => [task.state, task.pr?.state])).toEqual([["done", "merged"], ["done", "closed"], ["cancelled", "closed"]]);
       expect(ids.map((id) => engine.tracking.log.moments({ taskId: id, kinds: ["task-end"] }).map((entry) => entry.outcome))).toEqual([
         ["delivered", "merged"], ["delivered", "closed"], ["delivered", "cancelled", "closed"],
@@ -566,12 +569,12 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(texts(tasks[1]!)).toContain("Closed #2 without merging");
       expect(tasks[2]!.statusLine).toBe("Cancelled");
       expect(w.github().calls.every((call) => !call.includes("merge") && !call.includes("close"))).toBe(true);
-      expect(remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
+      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
     } finally { engine.shutdown(); }
   });
 
   it("holds a copy cancelled while GitHub opens its pull request until GitHub can answer", async () => {
-    const w = world("opening");
+    const w = await world("opening");
     const hold = join(w.dir, "opening");
     writeFileSync(hold, "");
     w.setGitHub((github) => (github.hold = { command: "pr create", file: hold }));
@@ -602,13 +605,13 @@ describe.concurrent("Finished tasks free their working copies", () => {
       await until(engine, (s) => taskOf(s, id).pr?.state === "open");
       expect(taskOf(engine.getState(), id).cleanup).toBeUndefined();
       w.setGitHub((github) => (github.prs[0]!.state = "CLOSED"));
-      gone(w, await cleaned(engine, id));
+      await gone(w, await cleaned(engine, id));
       expect(taskOf(engine.getState(), id).state).toBe("cancelled");
     } finally { rmSync(hold, { force: true }); engine.shutdown(); }
   });
 
   it("cleans a cancelled publishing step when GitHub confirms it never opened a pull request", async () => {
-    const w = world("no-pull-request");
+    const w = await world("no-pull-request");
     w.setGitHub((github) => (github.fail = { "pr create": 1 }));
     const engine = w.start({ checkEveryMs: 100 });
     try {
@@ -619,13 +622,13 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const task = await cleaned(engine, id);
       expect(task.state).toBe("cancelled");
       expect(task.pr).toBeUndefined();
-      gone(w, task);
+      await gone(w, task);
     } finally { engine.shutdown(); }
   });
 
   it("retries a locked copy once a minute without crowding the timeline, then succeeds", async () => {
     if (process.platform === "win32") return; // Windows read-only directories do not prevent deletion.
-    const w = world("retry");
+    const w = await world("retry");
     w.setScript((script) => (script.locked = "Locked build"));
     const engine = w.start({ checkEveryMs: 100 });
     let locked: string | undefined;
@@ -637,7 +640,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       locked = join(task.worktree!, "target", "locked");
       expect(task.state).toBe("done");
       expect(task.cleanup?.removedAt).toBeUndefined();
-      expect(listed(w, task.worktree!)).toBe(true);
+      expect(await listed(w, task.worktree!)).toBe(true);
       const timeline = task.timeline;
       await Bun.sleep(350);
       expect(taskOf(engine.getState(), id).timeline).toEqual(timeline);
@@ -645,13 +648,13 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(engine.getState().inbox.some((item) => item.taskId === id)).toBe(false);
       chmodSync(locked, 0o755);
       task = await cleaned(engine, id);
-      gone(w, task);
+      await gone(w, task);
       expect(texts(task).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
     } finally { if (locked && existsSync(locked)) chmodSync(locked, 0o755); engine.shutdown(); }
   });
 
   it("catches up older tasks across products at startup while a stalled pull request leaves others free", async () => {
-    const w = world("catch-up");
+    const w = await world("catch-up");
     let engine = w.start();
     const hold = join(w.dir, "stalled");
     try {
@@ -683,7 +686,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       // As if cleanup stopped after deleting the folder, before dropping its repository record.
       const interrupted = join(w.data, "worktrees", "second-product", "done");
       rmSync(interrupted, { recursive: true, force: true });
-      expect(listed(w, interrupted)).toBe(true);
+      expect(await listed(w, interrupted)).toBe(true);
       w.setGitHub((github) => {
         const first = github.prs[0]!;
         github.prs = [{ ...first, number: 101, state: "OPEN" }, { ...first, number: 102, state: "CLOSED" }];
@@ -697,7 +700,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       await waitForFile(`${hold}.reached`);
       for (const key of [cancelled, "older-done", "older-closed"]) {
         const row = await cleaned(engine, key);
-        gone(w, row);
+        await gone(w, row);
       }
       expect(existsSync(task.worktree!)).toBe(true);
       for (const status of ["running", "paused", "failed", "queued", "needs-you"]) expect(existsSync(join(w.data, "worktrees", "second-product", status))).toBe(true);
@@ -705,7 +708,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it("says nothing about a copy when cancelled before setup, and safely completes an interrupted removal", async () => {
-    const w = world("setup");
+    const w = await world("setup");
     const engine = w.start({ checkEveryMs: 100 });
     try {
       const productId = await engine.addProduct(w.clone);
@@ -720,11 +723,11 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const branch = branchName("Interrupted", "old");
       await ensureWorktree(w.clone, path, branch, "main");
       rmSync(path, { recursive: true, force: true });
-      expect(listed(w, path)).toBe(true);
+      expect(await listed(w, path)).toBe(true);
       expect(await removeWorktree(w.clone, path)).toBe(true);
-      expect(listed(w, path)).toBe(false);
+      expect(await listed(w, path)).toBe(false);
       expect(await removeWorktree(w.clone, path)).toBe(false);
-      expect(git(w.clone, "rev-parse", branch)).toBe(w.initial);
+      expect(await git(w.clone, "rev-parse", branch)).toBe(w.initial);
     } finally { engine.shutdown(); }
   });
 });

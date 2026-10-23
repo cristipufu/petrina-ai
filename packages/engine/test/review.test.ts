@@ -27,8 +27,8 @@ async function untilDelivery(scenario: Scenario, poolLimit?: number, ship = fals
   try {
     if (poolLimit) engine.setPoolLimit(poolLimit);
     if (scenario.planner === "mixed-review") engine.addRole(ROLE_STARTS.find((entry) => entry.id === "security")!.draft);
-    const repo = makeProduct(root);
-    const before = git(repo, "rev-parse", "HEAD");
+    const repo = await makeProduct(root);
+    const before = await git(repo, "rev-parse", "HEAD");
     const productId = await engine.addProduct(repo);
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
@@ -331,7 +331,7 @@ describe.concurrent("reviewers at once, then a vote", () => {
     fakes.scenario({ reviewer: "work" });
     const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
     let engine = new Engine(join(root, "data"), options);
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
     const coordinate = (current: Engine) => {
@@ -370,7 +370,7 @@ describe.concurrent("reviewers at once, then a vote", () => {
     expect(fakes.marked("branch-moved")).toBe(true);
     expect(lines(task)).toContain("Undid commits from Code reviewer, which is read-only");
     // The work the builder committed is still what ships.
-    expect(git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting");
+    expect(await git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting");
   });
 
   it("takes turns when the pool has one slot, and still gets every review and vote", async () => {
@@ -386,8 +386,8 @@ describe("a clean history", () => {
     const { task, repo, before } = await untilDelivery({ reviewer: "important", fixes: "change" }, undefined, true);
     // A build and a round of review fixes, kept as one commit all along.
     expect(task.timeline.map((entry) => entry.text)).toContain("Sent back to the builder: 1 important");
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
-    expect(git(repo, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
+    expect(await git(repo, "log", "-1", "--format=%B", "main")).toContain("Built by Petrina");
   });
 });
 

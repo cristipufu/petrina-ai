@@ -15,7 +15,7 @@ for (const parallel of [false, true]) it(`saves separate public messages before 
   fakes.scenario({ planner: parallel ? "parallel" : "short", liveMessageRoles: [parallel ? "code reviewer" : "builder"] });
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const id = engine.addTask({ productId, title: "A clear live conversation", description: "[no-check]" });
     const current = () => engine.getState().tasks.find((task) => task.id === id)!;
     await waitFor(() => {

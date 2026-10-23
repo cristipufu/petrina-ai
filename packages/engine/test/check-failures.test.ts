@@ -39,7 +39,7 @@ process.exit(ok ? 0 : 1);
 `);
   const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
   let engine = new Engine(join(root, "data"), options);
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   const productId = await engine.addProduct(repo);
   engine.setProductDelivery(productId, "local", approveDelivery);
   const command = (...args: string[]) => commandText([process.execPath, file, log, ...args]);
@@ -206,10 +206,11 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       // A later fix changes the patch after acceptance has already passed. The earlier
       // automatic check fixes have used their allowance, as on a long-running task.
       const live = f.engine.task(f.taskId)!;
-      executionFor(live).work.checkReturns = 2;
       writeFileSync(join(executionFor(live).work.worktree!, "later-fix.txt"), "A later change\n");
-      git(executionFor(live).work.worktree!, "add", "later-fix.txt");
-      git(executionFor(live).work.worktree!, "commit", "-q", "-m", "A later change");
+      await git(executionFor(live).work.worktree!, "add", "later-fix.txt");
+      await git(executionFor(live).work.worktree!, "commit", "-q", "-m", "A later change");
+      // Change the live record only once the commit has finished, right before the engine acts on it.
+      executionFor(live).work.checkReturns = 2;
       f.setCheck();
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Check the later change");
 
@@ -252,10 +253,10 @@ describe.concurrent("failed checks are evidence until something changes", () => 
 
       writeFileSync(join(executionFor(task).work.worktree!, "greeting.txt"), "Uncommitted change\n");
       expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      git(executionFor(task).work.worktree!, "add", "greeting.txt");
-      git(executionFor(task).work.worktree!, "commit", "-q", "-m", "A real change");
+      await git(executionFor(task).work.worktree!, "add", "greeting.txt");
+      await git(executionFor(task).work.worktree!, "commit", "-q", "-m", "A real change");
       expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      git(executionFor(task).work.worktree!, "reset", "--hard", saved.sha!);
+      await git(executionFor(task).work.worktree!, "reset", "--hard", saved.sha!);
       expect((await evidence())?.title).toBe("Current product checks, run by Petrina itself");
 
       f.setCheck("--pass", "--changed");
@@ -502,14 +503,14 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       f.setCheck("--pass");
       const reviewedTree = (await f.delivery()).checks!.tree;
       writeFileSync(join(f.repo, "NEWS.md"), "News from another task\n");
-      git(f.repo, "add", "NEWS.md");
-      git(f.repo, "commit", "-q", "-m", "News on main");
+      await git(f.repo, "add", "NEWS.md");
+      await git(f.repo, "commit", "-q", "-m", "News on main");
       f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       const state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       const shipped = taskOf(state, f.taskId);
       expect(f.runs()).toEqual(["passed", "passed"]);
       expect(shipped.checks!.tree).not.toBe(reviewedTree);
-      expect(shipped.checks!.sha).toBe(git(f.repo, "rev-parse", "main"));
+      expect(shipped.checks!.sha).toBe(await git(f.repo, "rev-parse", "main"));
     } finally {
       f.engine.shutdown();
     }
@@ -538,20 +539,20 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       const state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(taskOf(state, f.taskId).checks!.results.find((run) => run.name === "Commit message hook")?.output).toContain("The changed hook ran");
       expect(f.runs()).toEqual(["passed", "passed", "passed"]);
-      expect(git(f.repo, "log", "-1", "--format=%s")).toBe("Fix: Add a greeting");
+      expect(await git(f.repo, "log", "-1", "--format=%s")).toBe("Fix: Add a greeting");
     } finally {
       f.engine.shutdown();
     }
   });
 
   for (const hookName of ["pre-commit", "commit-msg"] as const) {
-    function externalHook(f: Awaited<ReturnType<typeof fixture>>, pass: boolean) {
+    async function externalHook(f: Awaited<ReturnType<typeof fixture>>, pass: boolean) {
       const folder = join(f.root, "external-hooks");
       mkdirSync(folder);
       const launcher = join(folder, hookName);
       writeFileSync(launcher, '#!/bin/sh\nexec sh "$(dirname "$0")/implementation"\n');
       chmodSync(launcher, 0o755);
-      git(f.repo, "config", "core.hooksPath", folder);
+      await git(f.repo, "config", "core.hooksPath", folder);
       const set = (ok: boolean) => writeFileSync(join(folder, "implementation"), `dir=$(dirname "$0")\nprintf 'run\\n' >> "$dir/runs"\necho "External implementation: ${ok ? "passed" : "failed (captured hook failure)"}"\nexit ${ok ? 0 : 1}\n`);
       set(pass);
       return { launcher, set, runs: () => existsSync(join(folder, "runs")) ? readFileSync(join(folder, "runs"), "utf8").trim().split("\n").length : 0 };
@@ -561,7 +562,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       const f = await fixture();
       try {
         f.setCheck("--pass");
-        const hook = externalHook(f, true);
+        const hook = await externalHook(f, true);
         const launcher = readFileSync(hook.launcher, "utf8");
         const passed = (await f.delivery()).checks!;
         const initialRuns = hook.runs();
@@ -606,7 +607,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       const f = await fixture();
       try {
         f.setCheck("--pass");
-        const hook = externalHook(f, true);
+        const hook = await externalHook(f, true);
         const passed = (await f.delivery()).checks!;
         const initialRuns = hook.runs();
         f.engine.takeItem(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
@@ -640,12 +641,12 @@ describe.concurrent("failed checks are evidence until something changes", () => 
           writeFileSync(join(folder, "check"), `echo "Hook beside the launcher: ${exit === 0 ? "passed" : "failed"}"\nexit ${exit}\n`);
         }
         expect(readFileSync(join(bad, hookName), "utf8")).toBe(readFileSync(join(good, hookName), "utf8"));
-        git(f.repo, "config", "core.hooksPath", bad);
+        await git(f.repo, "config", "core.hooksPath", bad);
         const failed = (await f.delivery()).checks!;
         expect(failed.results.at(-1)!.ok).toBe(false);
         expect(f.runs()).toEqual(["passed"]);
 
-        git(f.repo, "config", "core.hooksPath", good);
+        await git(f.repo, "config", "core.hooksPath", good);
         f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Use the corrected hook folder");
         const passed = (await f.delivery()).checks!;
         expect(passed.tree).toBe(failed.tree);
@@ -655,12 +656,12 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(f.runs()).toEqual(["passed", "passed"]);
 
         // Moving back after review must invalidate the pass at final delivery preparation too.
-        git(f.repo, "config", "core.hooksPath", bad);
+        await git(f.repo, "config", "core.hooksPath", bad);
         f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
         const task = await f.delivery();
         expect(task.checks!.results.at(-1)!.output).toContain("Hook beside the launcher: failed");
         expect(f.runs()).toEqual(["passed", "passed", "passed"]);
-        expect(git(f.repo, "rev-parse", "HEAD")).not.toBe(git(task.worktree!, "rev-parse", "HEAD"));
+        expect(await git(f.repo, "rev-parse", "HEAD")).not.toBe(await git(task.worktree!, "rev-parse", "HEAD"));
       } finally {
         f.engine.shutdown();
       }
@@ -755,8 +756,8 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         if (exhausted) await f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
         // Main overlaps the already reviewed work. The builder must port greeting.txt by hand.
         writeFileSync(join(f.repo, "greeting.txt"), "A greeting on main\n");
-        git(f.repo, "add", "greeting.txt");
-        git(f.repo, "commit", "-q", "-m", "A greeting on main");
+        await git(f.repo, "add", "greeting.txt");
+        await git(f.repo, "commit", "-q", "-m", "A greeting on main");
         f.setCheck();
         // The port resolves greeting.txt; the later check fix changes welcome.txt, outside the port.
         f.fakes.scenario({ fixes: "change" });

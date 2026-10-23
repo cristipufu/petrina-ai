@@ -98,7 +98,7 @@ it("gives real agents a browser in the standard folder, and scripted agents one 
 it("finishes a scripted workflow unrelated to browsing while the standard browser folder refuses writes", async () => {
   const refusal = refuseStandardFolder();
   const started = spyOn(AgentBrowser, "start");
-  const world = makeWorld("browser-free-workflow");
+  const world = await makeWorld("browser-free-workflow");
   const engine = world.start();
   try {
     // The refusal reaches browser startup: the standard folder cannot hold a session here.
@@ -128,7 +128,7 @@ it("finishes a scripted workflow unrelated to browsing while the standard browse
 }, 120_000 * SLOW);
 
 it.skipIf(process.platform === "win32")("saves a failed browser cleanup's private note in the task's own log and only the shared warning on the task", async () => {
-  const world = makeWorld("browser-cleanup-note", { browser: true });
+  const world = await makeWorld("browser-cleanup-note", { browser: true });
   // The first agent's helper dies before its conversation opens, and this engine cannot read the folder scans.
   const opened: AgentBrowser[] = [];
   const start = AgentBrowser.start;

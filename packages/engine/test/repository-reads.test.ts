@@ -14,7 +14,7 @@ const visible = [process.execPath, "-e", 'console.log("example/project")', "--"]
 
 async function probe(blocked: boolean) {
   const root = join(temp, blocked ? "blocked" : "healthy");
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   const home = join(root, "home");
   if (blocked) writeFileSync(home, "A private file cannot hold runtime-tmp", { mode: 0o600 });
   else mkdirSync(home, { mode: 0o700 });
@@ -150,7 +150,7 @@ describe("repository visibility and saved-file failures", () => {
         } else expect(await read).toBeUndefined();
       }
     } finally { spawning.mockRestore(); }
-    const repo = makeProduct(join(temp, "absent-file"));
+    const repo = await makeProduct(join(temp, "absent-file"));
     expect(await commands.fileAt(repo, "HEAD", "ABSENT.md", limit)).toBeUndefined();
     expect(await commands.fileAt(repo, "HEAD", "README.md", limit)).toBe("# Demo\n");
   });

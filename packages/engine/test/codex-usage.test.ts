@@ -92,8 +92,8 @@ describe("the engine slows a tool down before its limit", () => {
     const fakes = new Fakes(join(root, "fake"));
     // Planned on Claude Code, built on Codex; each fresh agent waits for its release file.
     fakes.scenario({ planner: "short", builder: "plain", controlled: true });
-    const repo = makeProduct(root);
-    git(repo, "config", "branch.autoSetupMerge", "false");
+    const repo = await makeProduct(root);
+    await git(repo, "config", "branch.autoSetupMerge", "false");
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fakeAgent, fakes.dir], usageCommands: { codex: server.command }, toolPath: () => "/bin/true" });
     try {
       engine.setPoolPaused(true);

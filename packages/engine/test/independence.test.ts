@@ -22,7 +22,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
   await engine.checkTools();
   engine.setPoolLimit(limit);
   for (const tool of Object.keys(ADAPTERS)) engine.setToolCap(tool, 1);
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   const productId = await engine.addProduct(repo);
   engine.setProductDelivery(productId, "local", true);
   if (reviewOnly) {
@@ -172,12 +172,12 @@ describe.concurrent("reviews after a usage handoff", () => {
       await f.advance(() => f.fakes.received("builder").length === 1, (role) => role !== "builder");
       writeFileSync(join(f.task().worktree!, "notes.txt"), "A first draft\n");
       await f.advance(f.delivery);
-      expect(git(f.task().worktree!, "show", "HEAD:notes.txt")).toBe("A first draft");
+      expect(await git(f.task().worktree!, "show", "HEAD:notes.txt")).toBe("A first draft");
       // The original build and review finished. A conflicting change lands before delivery.
       expect(f.task().builderSession?.toolId).toBe("claude-code");
       writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
-      git(f.repo, "add", "greeting.txt");
-      git(f.repo, "commit", "-q", "-m", "A greeting on main");
+      await git(f.repo, "add", "greeting.txt");
+      await git(f.repo, "commit", "-q", "-m", "A greeting on main");
       f.fakes.scenario({ builder: "plain", controlled: true, limited: [{ model: "opus", role: "builder", spendCap: true }] });
       f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
       await f.advance(() => f.task().portReview !== undefined && f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");
@@ -214,8 +214,8 @@ describe.concurrent("reviews after a usage handoff", () => {
     try {
       await f.advance(f.delivery);
       writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
-      git(f.repo, "add", "greeting.txt");
-      git(f.repo, "commit", "-q", "-m", "A greeting on main");
+      await git(f.repo, "add", "greeting.txt");
+      await git(f.repo, "commit", "-q", "-m", "A greeting on main");
       f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
       await f.advance(() => f.fakes.received("code reviewer").some((entry) => entry.text.includes("Review only the port")), (role) => role !== "code reviewer");
       // Older releases saved this mark even for an unreviewed feature. A restart must not trust it.
@@ -236,7 +236,7 @@ describe.concurrent("reviews after a usage handoff", () => {
         expect(review.text).toContain(`git diff ${f.task().baseSha}...HEAD`);
       }
       expect(f.task().portReview).toBeUndefined();
-      expect(f.task().reviewedTree).toBe(git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
+      expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
     } finally { f.engine.shutdown(); }
   });
 
@@ -247,8 +247,8 @@ describe.concurrent("reviews after a usage handoff", () => {
         await f.advance(f.delivery);
         expect(f.fakes.openings("code reviewer")).toHaveLength(1);
         writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
-        git(f.repo, "add", "greeting.txt");
-        git(f.repo, "commit", "-q", "-m", "A greeting on main");
+        await git(f.repo, "add", "greeting.txt");
+        await git(f.repo, "commit", "-q", "-m", "A greeting on main");
         f.engine.approve(f.engine.getState().inbox.find((item) => item.kind === "delivery")!.id);
         await f.advance(() => f.fakes.received("code reviewer").length === 2 && !!f.task().conversation?.briefed, (role) => role !== "code reviewer");
         const port = f.fakes.received("code reviewer").at(-1)!;
@@ -278,7 +278,7 @@ describe.concurrent("reviews after a usage handoff", () => {
           expect(after[0]!.session).toBe(port.session);
           expect(after[0]!.text).toContain("Petrina restarted");
         }
-        expect(f.task().reviewedTree).toBe(git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
+        expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
       } finally { f.engine.shutdown(); }
     });
   }

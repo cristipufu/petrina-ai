@@ -20,7 +20,7 @@ async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"]
   const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" };
   let engine = new Engine(data, options);
   engine.setPoolPaused(true); await engine.checkTools();
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   const taskId = engine.addTask({ productId, title: "Agree on the greeting", description: "ORIGINAL-DESIGN-REQUEST: keep it welcoming." });
   const task = () => engine.task(taskId)!;
   const tick = (holdReviewer = false) => {

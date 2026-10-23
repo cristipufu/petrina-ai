@@ -16,7 +16,7 @@ async function setUp(scenario: Scenario, shipLowRisk = false) {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   engine.updateProduct(productId, { name: "Shop", delivery: "local", approveDelivery: true, shipLowRisk });
   // Changing only the delivery keeps the low-risk choice.
   engine.setProductDelivery(productId, "local", true);
@@ -91,8 +91,8 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
       f.engine.approve(f.delivery(f.engine.getState())!.id);
       await f.step((_, task) => task?.state === "waiting", "the delivery to wait for the paused pool");
       writeFileSync(join(first.worktree!, "late.txt"), "A change after the approval\n");
-      git(first.worktree!, "add", "late.txt");
-      git(first.worktree!, "commit", "--quiet", "-m", "A late change");
+      await git(first.worktree!, "add", "late.txt");
+      await git(first.worktree!, "commit", "--quiet", "-m", "A late change");
       f.engine.setPoolPaused(false);
 
       const task = await f.step((state) => f.delivery(state), "the delivery check again");

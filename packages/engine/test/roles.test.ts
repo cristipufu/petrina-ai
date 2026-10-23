@@ -75,7 +75,7 @@ describe("a role renamed after the state was saved", () => {
     let engine = new Engine(data);
     try {
       engine.setPoolPaused(true);
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Old work" });
       const saved = JSON.parse(JSON.stringify(engine.getState())) as State;
       engine.shutdown();

@@ -504,7 +504,7 @@ describe("The clone finder", () => {
 
   it("hides products already added", async () => {
     const home = fresh("home");
-    const repo = makeGitHubClone(join(home, "code", "shop"));
+    const repo = await makeGitHubClone(join(home, "code", "shop"));
     clone(join(home, "code", "blog"), "https://github.com/acme/blog.git", Date.now());
     const engine = new Engine(fresh("data"), { home, agentCommand: agents({}) });
     try {
@@ -521,15 +521,15 @@ describe("The clone finder", () => {
 });
 
 /** A real clone whose origin says github.com. */
-function makeGitHubClone(path: string): string {
+async function makeGitHubClone(path: string): Promise<string> {
   mkdirSync(path, { recursive: true });
-  git(path, "init", "-q", "-b", "main");
-  git(path, "config", "user.email", "test@example.com");
-  git(path, "config", "user.name", "Test");
+  await git(path, "init", "-q", "-b", "main");
+  await git(path, "config", "user.email", "test@example.com");
+  await git(path, "config", "user.name", "Test");
   writeFileSync(join(path, "README.md"), "# Shop\n");
-  git(path, "add", ".");
-  git(path, "commit", "-q", "-m", "init");
-  git(path, "remote", "add", "origin", "https://github.com/acme/shop.git");
+  await git(path, "add", ".");
+  await git(path, "commit", "-q", "-m", "init");
+  await git(path, "remote", "add", "origin", "https://github.com/acme/shop.git");
   mkdirSync(join(path, "src", "checkout"), { recursive: true });
   return path;
 }
@@ -537,8 +537,8 @@ function makeGitHubClone(path: string): string {
 describe("Adding a product", () => {
   it("takes ~ and subfolders, and says plainly why a folder cannot be added", async () => {
     const home = fresh("home");
-    const repo = makeGitHubClone(join(home, "code", "shop"));
-    const local = makeProduct(fresh("local"));
+    const repo = await makeGitHubClone(join(home, "code", "shop"));
+    const local = await makeProduct(fresh("local"));
     writeFileSync(join(home, "notes.txt"), "not a folder\n");
     mkdirSync(join(home, "plain"));
     const engine = new Engine(fresh("data"), { home, agentCommand: agents({}) });
@@ -547,7 +547,7 @@ describe("Adding a product", () => {
       const product = engine.getState().products.find((entry) => entry.id === id)!;
       expect(product.repo).toBe("acme/shop");
       expect(product.delivery).toBe("pull-request");
-      expect(product.path && git(product.path, "rev-parse", "--show-toplevel")).toBe(git(repo, "rev-parse", "--show-toplevel"));
+      expect(product.path && await git(product.path, "rev-parse", "--show-toplevel")).toBe(await git(repo, "rev-parse", "--show-toplevel"));
       // Adding it again opens the one already there, never a second product.
       expect(await engine.addProduct(repo)).toBe(id);
       await expectRejection(engine.addProduct("~/nowhere"), "There is no folder at ~/nowhere.");
@@ -573,12 +573,12 @@ describe("Adding a product", () => {
 
   it("adds an http or git-protocol GitHub clone as a pull request", async () => {
     const home = fresh("schemes");
-    const httpRepo = makeGitHubClone(join(home, "code", "http-shop"));
-    git(httpRepo, "remote", "set-url", "origin", "http://github.com/acme/http-shop.git");
-    const gitRepo = makeGitHubClone(join(home, "code", "git-shop"));
-    git(gitRepo, "remote", "set-url", "origin", "git://github.com/acme/git-shop.git");
-    const elsewhere = makeGitHubClone(join(home, "code", "elsewhere"));
-    git(elsewhere, "remote", "set-url", "origin", "http://gitlab.com/acme/elsewhere.git");
+    const httpRepo = await makeGitHubClone(join(home, "code", "http-shop"));
+    await git(httpRepo, "remote", "set-url", "origin", "http://github.com/acme/http-shop.git");
+    const gitRepo = await makeGitHubClone(join(home, "code", "git-shop"));
+    await git(gitRepo, "remote", "set-url", "origin", "git://github.com/acme/git-shop.git");
+    const elsewhere = await makeGitHubClone(join(home, "code", "elsewhere"));
+    await git(elsewhere, "remote", "set-url", "origin", "http://gitlab.com/acme/elsewhere.git");
     const engine = new Engine(fresh("data"), { home, agentCommand: agents({}) });
     try {
       expect((await findClones({ home })).map((entry) => entry.repo).sort()).toEqual(["acme/git-shop", "acme/http-shop"]);
@@ -595,7 +595,7 @@ describe("Adding a product", () => {
         const remote = { url: `https://github.com/${product.repo}.git` };
         expect(await connections.connection(executionFor(task), new AbortController().signal)).toEqual({ ok: true, remote });
         expect(connections.savedRemote(executionFor(task))).toEqual(remote);
-        expect(product.remote).toBe(git(path, "config", "--get", "remote.origin.url"));
+        expect(product.remote).toBe(await git(path, "config", "--get", "remote.origin.url"));
       }
       const localId = await engine.addProduct(elsewhere);
       expect(engine.getState().products.find((entry) => entry.id === localId)?.delivery).toBe("local");
@@ -623,7 +623,7 @@ describe("Adding a product", () => {
 describe("Setup and the first task", () => {
   it("starts a fresh install on first run, keeps where it got to, and finishes it once the first task is saved", async () => {
     const data = fresh("data");
-    const repo = makeGitHubClone(fresh("shop"));
+    const repo = await makeGitHubClone(fresh("shop"));
     let engine = new Engine(data, { agentCommand: agents({}) });
     try {
       expect(engine.getState().setup).toMatchObject({ done: false });
@@ -718,7 +718,7 @@ describe("The squad uses tools that are ready", () => {
 
   // A product on GitHub (a folder stands in for it), delivering a release: the Release Manager, an agent, writes its notes.
   const run = async (tools: Partial<Record<CheckId, Behaviour>>, options: EngineOptions = {}) => {
-    const w = makeWorld("tools", { version: "1.0.0" });
+    const w = await makeWorld("tools", { version: "1.0.0" });
     worlds.push(w.dir);
     const engine = new Engine(w.data, { agentCommand: agents(tools), gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote], remote: w.remote, toolCheckTimeoutMs: LIMIT, ...options });
     await engine.checkTools();
@@ -878,7 +878,7 @@ describe("The squad uses tools that are ready", () => {
     const engine = new Engine(fresh("data"), { agentCommand: agents({ codex: "logged-out", "claude-code": "logged-out" }, fakes.dir), toolCheckTimeoutMs: LIMIT });
     try {
       await engine.checkTools();
-      const productId = await engine.addProduct(makeProduct(fresh("product")));
+      const productId = await engine.addProduct(await makeProduct(fresh("product")));
       const taskId = engine.addTask({ productId, title: "Add a greeting" });
       const state = await until(engine, (current) => current.inbox.some((item) => item.kind === "stuck"));
       const item = state.inbox.find((entry) => entry.kind === "stuck")!;
@@ -901,7 +901,7 @@ describe("The squad uses tools that are ready", () => {
 
 describe("Delivering to GitHub", () => {
   it("asks for a GitHub login before shipping, and nothing ships half way", async () => {
-    const w = makeWorld("login");
+    const w = await makeWorld("login");
     worlds.push(w.dir);
     const fakes = new Fakes(w.dir);
     fakes.scenario({ planner: "short", builder: "plain" });

@@ -57,7 +57,7 @@ describe("roles the coordinator edits and adds", () => {
         const facts = engine.addRole(FACT_CHECKER);
         const planner = engine.getState().roles.find((role) => role.id === "planner")!;
         engine.saveRole(planner.id, { ...draftOf(planner), instructions: "Keep this plan small." });
-        const productId = await engine.addProduct(makeProduct(root));
+        const productId = await engine.addProduct(await makeProduct(root));
         const taskId = engine.addTask({ productId, title: "Plan the welcome message", approvePlan: true });
         const task = await waitFor(() => {
           const task = engine.getState().tasks.find((entry) => entry.id === taskId)!;
@@ -95,7 +95,7 @@ describe("roles the coordinator edits and adds", () => {
         const security = await engine.act("addRole", start("security")) as string;
         const before = await engine.state();
         const reviewers = before.roles.filter((role) => role.id === "code-reviewer" || role.id === security);
-        const productId = await engine.act("addProduct", makeProduct(root)) as string;
+        const productId = await engine.act("addProduct", await makeProduct(root)) as string;
         await engine.act("setProductDelivery", productId, "local", false);
         const taskId = await engine.act("addTask", { productId, title: "Review the greeting", description: "A friendly greeting." }) as string;
         const released = new Set<string>();
@@ -178,7 +178,7 @@ describe("roles the coordinator edits and adds", () => {
       try {
         const architect = engine.getState().roles.find((role) => role.id === "architect")!;
         engine.saveRole(architect.id, { ...draftOf(architect), canEdit: true });
-        const productId = await engine.addProduct(makeProduct(root));
+        const productId = await engine.addProduct(await makeProduct(root));
         const taskId = engine.addTask({ productId, title: "Design a greeting", description: call ? "[disagree] [screens]" : "A greeting." });
         const checkpoint = (kind: "disagreement" | "design") => waitFor(() => {
           const state = engine.getState();
@@ -195,18 +195,18 @@ describe("roles the coordinator edits and adds", () => {
         }, kind);
         const first = await checkpoint(call ? "disagreement" : "design");
         // A read-only design reviewer has run after the Architect. Its clean-up must keep the Architect's work.
-        expect(git(first.task.worktree!, "show", "HEAD:architecture.txt")).toBe("Before the design review");
-        expect(git(first.task.worktree!, "log", "-1", "--format=%s")).toBe("Design a greeting: Architect");
+        expect(await git(first.task.worktree!, "show", "HEAD:architecture.txt")).toBe("Before the design review");
+        expect(await git(first.task.worktree!, "log", "-1", "--format=%s")).toBe("Design a greeting: Architect");
         if (call) {
           engine.requestChanges(first.item.id, "Show the greeting to everyone.");
           const followed = await checkpoint("design");
           // The read-only Screens step runs after following the call, before the check.
-          expect(git(followed.task.worktree!, "show", "HEAD:architecture.txt")).toBe("After the coordinator's call");
+          expect(await git(followed.task.worktree!, "show", "HEAD:architecture.txt")).toBe("After the coordinator's call");
           engine.requestChanges(followed.item.id, "Make the greeting shorter.");
           const revised = await checkpoint("design");
-          expect(git(revised.task.worktree!, "show", "HEAD:architecture.txt")).toBe("After the design check");
+          expect(await git(revised.task.worktree!, "show", "HEAD:architecture.txt")).toBe("After the design check");
         }
-        expect(git(first.task.worktree!, "status", "--porcelain")).toBe("");
+        expect(await git(first.task.worktree!, "status", "--porcelain")).toBe("");
         engine.cancel(taskId);
       } finally {
         engine.shutdown();
@@ -246,7 +246,7 @@ describe("roles the coordinator edits and adds", () => {
     try {
       engine.setPoolPaused(true);
       const added = engine.addRole(start("security"));
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Review the greeting" });
       const task = engine.s.tasks.find((entry) => entry.id === taskId)!;
       task.plan = { plannerProfileId: "opus-high", rationale: "Two independent reviews.", stages: [{ id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high", "sol-high"], roleIds: ["code-reviewer", added] }] };
@@ -275,11 +275,11 @@ describe("roles the coordinator edits and adds", () => {
   it("are planned, briefed, reviewed, committed and kept in check like built-in ones, and survive a restart", async () => {
     const root = tempDir("petrina-roles-");
     roots.push(root);
-    const product = makeProduct(root);
+    const product = await makeProduct(root);
     const home = join(root, "home");
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ planner: "roles", builder: "plain" });
-    git(product, "remote", "set-url", "origin", "https://github.com/acme/demo.git");
+    await git(product, "remote", "set-url", "origin", "https://github.com/acme/demo.git");
     let engine = await EngineProcess.harness(home, fakes.dir, join(root, "origin.git"));
 
     // The coordinator changes a built-in role's wording and adds three of their own.
@@ -346,7 +346,7 @@ describe("roles the coordinator edits and adds", () => {
     // Its next step used the new version: read-only, so what it committed was undone, and its saved work stayed.
     expect(copy[1]).toContain(MAY_CHANGE.readOnly);
     expect(said("Undid commits from Copywriter, which is read-only")).toBe(true);
-    expect(git(task.worktree!, "show", "HEAD:copywriter.txt")).toBe("Written while changing the product");
+    expect(await git(task.worktree!, "show", "HEAD:copywriter.txt")).toBe("Written while changing the product");
     // Petrina later folds step commits into the task’s single delivery commit.
 
     // The Security reviewer joined the review: its blocking finding, under its name, went back to the builder.
@@ -400,7 +400,7 @@ describe("roles the coordinator edits and adds", () => {
     it(`keep a working agent's version of its role through a restart ${reopen ? "that reopens its conversation" : "that starts the step again"}, after the role is reworded, renamed and made read-only`, async () => {
       const root = tempDir("petrina-roles-");
       roots.push(root);
-      const product = makeProduct(root);
+      const product = await makeProduct(root);
       const home = join(root, "home");
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "copy", builder: "plain", notes: "work", ...(reopen ? { reopen } : {}) });
@@ -435,7 +435,7 @@ describe("roles the coordinator edits and adds", () => {
       expect(fakes.received("wordsmith")).toEqual([]);
       expect(said("Saved the changes from the Copywriter on the task's branch")).toBe(true);
       expect(said("Undid")).toBe(false);
-      expect(git(product, "show", "main:copywriter.txt")).toBe("A first draft");
+      expect(await git(product, "show", "main:copywriter.txt")).toBe("A first draft");
       // The next agent gets the new version.
       expect(state.roles.find((role) => role.id === copywriter)).toMatchObject({ name: "Wordsmith", instructions: edited.instructions, canEdit: false });
       await engine.quit();

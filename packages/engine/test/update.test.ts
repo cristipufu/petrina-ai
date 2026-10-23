@@ -11,10 +11,10 @@ const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 /** A commit on the product's own main, as another task landing there would make. */
-function land(repo: string, file: string, text: string, message: string): string {
+async function land(repo: string, file: string, text: string, message: string): Promise<string> {
   writeFileSync(join(repo, file), text);
-  git(repo, "add", file);
-  git(repo, "commit", "-q", "-m", message);
+  await git(repo, "add", file);
+  await git(repo, "commit", "-q", "-m", message);
   return git(repo, "rev-parse", "HEAD");
 }
 
@@ -29,24 +29,26 @@ function hook(repo: string, name: string, script: string): void {
  * One task to done on a product that commits to main locally. `setup` runs on the clone before it becomes a
  * product. `beforeBuild` runs at the first builder permission, once the working copy exists and before the
  * builder writes. `atDeliveryCheck` runs at the first delivery check, before the coordinator approves it.
- * `atBuilderPermission` can land main or add work while the scripted builder is waiting for permission.
+ * `atBuilderPermission` can land main or add work while the scripted builder is waiting for permission. Each
+ * hook finishes, Git included, before the engine gets the answer it is holding for.
  */
-async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void; beforeBuild?: (repo: string) => void; atDeliveryCheck?: (repo: string) => void; atBuilderPermission?: (repo: string, task: Task) => void } = {}) {
+type Hook<T extends unknown[]> = (...args: T) => unknown;
+async function ship(scenario: Scenario, hooks: { setup?: Hook<[repo: string]>; beforeBuild?: Hook<[repo: string]>; atDeliveryCheck?: Hook<[repo: string]>; atBuilderPermission?: Hook<[repo: string, task: Task]> } = {}) {
   const root = tempDir("petrina-update-");
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
   try {
-    const repo = makeProduct(root);
-    hooks.setup?.(repo);
-    const before = git(repo, "rev-parse", "HEAD");
+    const repo = await makeProduct(root);
+    await hooks.setup?.(repo);
+    const before = await git(repo, "rev-parse", "HEAD");
     const productId = await engine.addProduct(repo);
     engine.setProductDelivery(productId, "local", true);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", approvePlan: true });
     let deliveryChecks = 0;
     let movedBeforeBuild = false;
-    const task = await waitFor(() => {
+    const task = await waitFor(async () => {
       const state = engine.getState();
       const found = state.tasks.find((entry) => entry.id === taskId)!;
       for (const item of state.inbox) {
@@ -57,15 +59,15 @@ async function ship(scenario: Scenario, hooks: { setup?: (repo: string) => void;
         } else if (item.kind === "permission") {
           if (found.agent?.roleId === "builder") {
             // The copy exists and the builder has not written yet, so a commit here is a later move.
-            if (!movedBeforeBuild) { movedBeforeBuild = true; hooks.beforeBuild?.(repo); }
-            hooks.atBuilderPermission?.(repo, found);
+            if (!movedBeforeBuild) { movedBeforeBuild = true; await hooks.beforeBuild?.(repo); }
+            await hooks.atBuilderPermission?.(repo, found);
           }
           engine.allow(item.id, "once");
         }
         else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
         else if (item.kind === "delivery") {
           deliveryChecks += 1;
-          if (deliveryChecks === 1) hooks.atDeliveryCheck?.(repo);
+          if (deliveryChecks === 1) await hooks.atDeliveryCheck?.(repo);
           engine.approve(item.id);
         }
       }
@@ -83,25 +85,25 @@ const lines = (task: Task) => task.timeline.map((entry) => entry.text);
 describe.concurrent("a builder that brings main in itself", () => {
   it("has the work count from where the branch met main, so reviews see only its own changes and no merge commit lands", async () => {
     let landed = "";
-    const { task, fakes, repo, before } = await ship({ mergesMain: true }, { beforeBuild: (repo) => (landed = land(repo, "NEWS.md", "News\n", "News on main")) });
+    const { task, fakes, repo, before } = await ship({ mergesMain: true }, { beforeBuild: async (repo) => (landed = await land(repo, "NEWS.md", "News\n", "News on main")) });
     expect(lines(task).some((line) => line.startsWith("The builder brought main into the branch itself"))).toBe(true);
     expect(task.baseSha).toBe(landed);
     // Every reviewer compared against the met main, not the base from before the merge.
     for (const review of fakes.openings("code reviewer")) expect(review).toContain(`git diff ${landed}...HEAD`);
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
-    expect(git(repo, "rev-list", "--merges", "--count", `${before}..main`)).toBe("0");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(await git(repo, "rev-list", "--merges", "--count", `${before}..main`)).toBe("0");
   });
 });
 
 describe.concurrent("work brought up to date with main", () => {
   it("puts the work on top of a main that moved, before the delivery check, and ships it as one commit there", async () => {
     let landed = "";
-    const { task, repo, before, deliveryChecks } = await ship({}, { beforeBuild: (repo) => (landed = land(repo, "NEWS.md", "News\n", "News on main")) });
+    const { task, repo, before, deliveryChecks } = await ship({}, { beforeBuild: async (repo) => (landed = await land(repo, "NEWS.md", "News\n", "News on main")) });
     expect(lines(task)).toContain("Brought up to date with main (1 new commit there), with no conflicts");
     expect(deliveryChecks).toBe(1);
     // Main: what landed meanwhile, then this task's one commit on top of it.
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
-    expect(git(repo, "rev-parse", "main~1")).toBe(landed);
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(await git(repo, "rev-parse", "main~1")).toBe(landed);
     expect(task.baseSha).toBe(landed);
   });
 
@@ -113,9 +115,9 @@ describe.concurrent("work brought up to date with main", () => {
     expect(updated).toBeLessThan(text.indexOf("Code reviewer started"));
     expect(text.filter((line) => line.startsWith("Brought up to date with main"))).toHaveLength(1);
     // Every reviewer compared against the new main.
-    const landed = git(repo, "rev-parse", "main~1");
+    const landed = await git(repo, "rev-parse", "main~1");
     for (const review of fakes.openings("code reviewer")) expect(review).toContain(`git diff ${landed}...HEAD`);
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
   });
 
   it("sends a first-review conflict to the builder, then every planned reviewer looks at the whole change", async () => {
@@ -155,8 +157,8 @@ describe.concurrent("work brought up to date with main", () => {
     expect(names.some((name) => name.includes("again"))).toBe(false);
     expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(1);
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
-    expect(git(repo, "show", "main:greeting.txt")).not.toContain("<<<<<<<");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
+    expect(await git(repo, "show", "main:greeting.txt")).not.toContain("<<<<<<<");
   });
 
   it("resolves main's conflict before spending the first acceptance turn", async () => {
@@ -177,7 +179,7 @@ describe.concurrent("work brought up to date with main", () => {
     expect(text.indexOf("Brought up to date with main (1 new commit there), with no conflicts")).toBeGreaterThan(text.indexOf("You approved the delivery"));
     expect(text.some((line) => line.includes("Petrina asks you again"))).toBe(false);
     expect(deliveryChecks).toBe(1);
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nNews on main");
   });
 
   it("asks again when a change made after the approval conflicts with main, once the builder brought it up to date and the review looked again", async () => {
@@ -193,22 +195,22 @@ describe.concurrent("work brought up to date with main", () => {
     const ports = task.journey!.filter((step) => step.port && step.roleId === "code-reviewer");
     expect(ports).toHaveLength(1);
     expect(ports[0]!.team ?? [ports[0]!.profileId]).toHaveLength(1);
-    expect(task.reviewedTree).toBe(git(repo, "rev-parse", "main^{tree}"));
+    expect(task.reviewedTree).toBe(await git(repo, "rev-parse", "main^{tree}"));
     expect(journeyProblems(task)).toEqual([]);
     expect(deliveryChecks).toBe(2);
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting\nA greeting on main");
   });
 
   it("gives unreviewed fixes the full planned review when main conflicts during a fix round", async () => {
     let landed = false;
-    const { task, fakes, repo } = await ship({ reviewer: "important", fixes: "change" }, { atBuilderPermission: (repo, current) => {
+    const { task, fakes, repo } = await ship({ reviewer: "important", fixes: "change" }, { atBuilderPermission: async (repo, current) => {
       if (!current.fixing || current.updating || landed) return;
       landed = true;
-      land(repo, "greeting.txt", "Hi from main\n", "A greeting on main");
+      await land(repo, "greeting.txt", "Hi from main\n", "A greeting on main");
     } });
     expect(landed).toBe(true);
     expect(lines(task)).toContain("Brought up to date with main: Added a greeting.");
-    expect(git(repo, "show", "main:welcome.txt")).toContain("Hello");
+    expect(await git(repo, "show", "main:welcome.txt")).toContain("Hello");
     const reviews = fakes.openings("code reviewer");
     expect(reviews).toHaveLength(4);
     for (const review of reviews.slice(2)) {
@@ -231,7 +233,7 @@ describe.concurrent("work brought up to date with main", () => {
       },
     });
     expect(added).toBe(true);
-    expect(git(repo, "show", "main:welcome.txt")).toBe("An unreviewed welcome-page fix");
+    expect(await git(repo, "show", "main:welcome.txt")).toBe("An unreviewed welcome-page fix");
     const reviews = fakes.openings("code reviewer");
     expect(reviews).toHaveLength(4);
     for (const review of reviews.slice(2)) {
@@ -268,14 +270,14 @@ describe.concurrent("checks only look", () => {
   it("puts back whatever a check changes in files git tracks, so nothing unreviewed ships", async () => {
     const { task, repo } = await ship({ checks: "writes" });
     expect(lines(task)).toContain("A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
-    expect(git(repo, "ls-tree", "--name-only", "main")).toContain("README.md");
-    expect(git(repo, "ls-tree", "--name-only", "main")).not.toContain("README.txt");
+    expect(await git(repo, "ls-tree", "--name-only", "main")).toContain("README.md");
+    expect(await git(repo, "ls-tree", "--name-only", "main")).not.toContain("README.txt");
   });
 
   it("takes back a commit a check makes, so nothing the coordinator did not approve ships", async () => {
     const { task, repo, before } = await ship({ checks: "commits" });
     expect(lines(task)).toContain("A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
   });
 });
 
@@ -296,10 +298,10 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
     const saved = fakes.prompts("builder").find((prompt) => prompt.includes("Saved failed-check output"))!.match(/- Pre-commit hook: ("[^"\n]+")/)!;
     expect(readFileSync(JSON.parse(saved[1]!), "utf8")).toContain("internal-db-07");
     // What landed is clean, as one commit, and the clone is back on its branch.
-    expect(git(repo, "show", "main:greeting.txt")).not.toContain("internal-db");
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
-    expect(git(repo, "symbolic-ref", "--short", "HEAD")).toBe("main");
-    expect(git(repo, "rev-parse", task.branch!)).toBe(git(repo, "rev-parse", "main"));
+    expect(await git(repo, "show", "main:greeting.txt")).not.toContain("internal-db");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
+    expect(await git(repo, "symbolic-ref", "--short", "HEAD")).toBe("main");
+    expect(await git(repo, "rev-parse", task.branch!)).toBe(await git(repo, "rev-parse", "main"));
     expect(task.hooking).toBeUndefined();
   });
 
@@ -311,7 +313,7 @@ head -1 "$1" | grep -qE '^(feat|fix|chore): ' || { echo "commit-msg: use a conve
     expect(task.checks?.results.find((run) => run.name === "Commit message hook")).toMatchObject({ ok: true, command: "git hook run commit-msg" });
     const run = task.checks!.results.find((run) => run.name === "Commit message hook")!;
     expect(readFileSync(run.logPath!, "utf8")).toContain("Checking the commit title");
-    expect(git(repo, "log", "--format=%s", `${before}..main`)).toBe("feat: add a greeting");
-    expect(git(repo, "show", "main:README.md")).toBe("# Demo");
+    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("feat: add a greeting");
+    expect(await git(repo, "show", "main:README.md")).toBe("# Demo");
   });
 });

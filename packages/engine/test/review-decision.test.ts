@@ -18,7 +18,7 @@ for (const following of ["gate", "agent"] as const) it(`asks about exhausted rev
   engine.schedule = () => {};
   engine.setPoolPaused(true);
   try {
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     const productId = await engine.addProduct(repo);
     const task = engine.task(engine.addTask({ productId, title: "A bounded review" }))!;
     const work = executionFor(task).work;
@@ -80,7 +80,7 @@ it("keeps the early decision through restart, then runs changed checks and accep
   writeFileSync(check, `import { appendFileSync } from "node:fs"; appendFileSync(process.argv[2], process.argv[3] + "\\n");`);
   const definitions = (name: string) => [{ name: "Tests", command: commandText([process.execPath, check, log, name]) }];
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     engine.setProductDelivery(productId, "local", true);
     engine.setProductChecks(productId, definitions("before decision"));
     const id = engine.addTask({ productId, title: "A reviewed greeting", description: "[no-check]" });

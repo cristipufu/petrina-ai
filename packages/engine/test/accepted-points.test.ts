@@ -16,9 +16,9 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
   let engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
   try {
     engine.setPoolPaused(true);
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     const productId = await engine.addProduct(repo);
-    const beforeRule = git(repo, "rev-parse", "HEAD");
+    const beforeRule = await git(repo, "rev-parse", "HEAD");
     const task = engine.task(engine.addTask({ productId, title: "An old accepted lesson" }))!;
     engine.cancel(task.id);
     const incorporated = "Run the package test command.";
@@ -27,15 +27,15 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
     const pendingRule = "Verify each product's check evidence.";
     writeFileSync(join(repo, "AGENTS.md"), `- ${incorporated}\n`);
     writeFileSync(join(repo, "REVIEW.md"), `- ${incorporatedRule}\n`);
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "Incorporate approved instructions");
-    const incorporatedCommit = git(repo, "rev-parse", "HEAD");
-    git(repo, "switch", "-q", "-c", "unpublished");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "Incorporate approved instructions");
+    const incorporatedCommit = await git(repo, "rev-parse", "HEAD");
+    await git(repo, "switch", "-q", "-c", "unpublished");
     writeFileSync(join(repo, "AGENTS.md"), `- ${incorporated}\n- ${pending}\n`);
     writeFileSync(join(repo, "REVIEW.md"), `- ${incorporatedRule}\n- ${pendingRule}\n`);
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "Instructions still on another branch");
-    git(repo, "switch", "-q", "main");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "Instructions still on another branch");
+    await git(repo, "switch", "-q", "main");
     const product = engine.productOf(task)!;
     product.learnings = [incorporated, pending].map((text) => ({ text, at: 0, fromTask: task.id, writtenOn: task.id }));
     product.reviewGuide = [incorporatedRule, pendingRule].map((text) => ({ text, at: 0, fromTask: task.id, writtenOn: task.id }));
@@ -50,11 +50,11 @@ it("retires incorporated lessons and guide points after restart, preserving unpu
     expect(saved.reviewGuide?.map((line) => [line.text, line.incorporatedOn])).toEqual([[incorporatedRule, incorporatedCommit], [pendingRule, undefined]]);
     writeFileSync(join(repo, "AGENTS.md"), "# Corrected guidance\n");
     writeFileSync(join(repo, "REVIEW.md"), "# Corrected review guide\n");
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "Coordinator removes obsolete instructions");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "Coordinator removes obsolete instructions");
     const next = engine.task(engine.addTask({ productId, title: "A later delivery" }))!;
     executionFor(next).work.worktree = repo;
-    executionFor(next).work.baseSha = git(repo, "rev-parse", "HEAD");
+    executionFor(next).work.baseSha = await git(repo, "rev-parse", "HEAD");
     const older = { ...next, repository: { ...next.repository!, baseSha: beforeRule } };
     const incorporatedBase = { ...next, repository: { ...next.repository!, baseSha: incorporatedCommit } };
     const keeper = engine["guide"];
@@ -95,7 +95,7 @@ it("keeps pending instructions when the default branch cannot be read", async ()
   const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
   try {
     engine.setPoolPaused(true);
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "Keep unpublished guidance" }))!;
     const product = engine.productOf(task)!;
     const pending = [{ text: "Keep this accepted instruction.", at: 0, fromTask: task.id }];

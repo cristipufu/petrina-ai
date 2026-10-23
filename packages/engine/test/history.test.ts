@@ -440,7 +440,7 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
   });
 
   it("keeps archived task details and dependencies available without sending bodies to the window", async () => {
-    const world = makeWorld("history-runtime");
+    const world = await makeWorld("history-runtime");
     worlds.push(world);
     let engine = world.start();
     try {
@@ -494,7 +494,7 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
   });
 
   it("leaves a product and its history unchanged when its removal cannot be saved", async () => {
-    const world = makeWorld("history-removal-rollback");
+    const world = await makeWorld("history-removal-rollback");
     worlds.push(world);
     const engine = world.start();
     let release = () => {};
@@ -532,7 +532,7 @@ describe.concurrent("Finished work is indexed outside the live snapshot", () => 
   });
 
   it("removes product pictures from actual storage without listing all history, preserving shared membership and rollback", async () => {
-    const world = makeWorld("history-capture-removal");
+    const world = await makeWorld("history-capture-removal");
     worlds.push(world);
     const engine = world.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     try {

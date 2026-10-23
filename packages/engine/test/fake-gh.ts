@@ -3,8 +3,8 @@
 // read from a folder standing in for GitHub's copy of the repository. No network; `gh auth status` says
 // it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { commitAt, gitWith } from "./commands.js";
 import { testGitEnv } from "./test-git-env.js";
 
 export interface FakePr {
@@ -107,7 +107,7 @@ export function updateGitHub(path: string, change: (state: FakeGitHub) => void):
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const [statePath, remote, ...args] = process.argv.slice(2);
   let unlock = lockGitHub(statePath!);
   // Unexpected exits also release this process's lock. Waiting calls release it first below.
@@ -143,13 +143,8 @@ function main(): void {
     process.exit(code);
   };
   const fail = (message: string): never => exit(1, "", message);
-  const ref = (name: string): string | undefined => {
-    try {
-      return execFileSync("git", ["--git-dir", remote!, "rev-parse", "--verify", "--quiet", `${name}^{commit}`], { env: testGitEnv() }).toString().trim() || undefined;
-    } catch {
-      return undefined;
-    }
-  };
+  // Absent only when Git confirms it; any other failure fails this call, and the test with it.
+  const ref = (name: string): Promise<string | undefined> => commitAt(remote!, name);
   const pick = (entry: object) => Object.fromEntries((flag("--json") ?? "").split(",").map((field) => [field, (entry as Record<string, unknown>)[field]]));
   const [noun, verb] = args;
   const command = `${noun} ${verb}`;
@@ -160,20 +155,20 @@ function main(): void {
     return true;
   };
   /** Wait while a hold for this call is on. */
-  const held = (): void => {
+  const held = async (): Promise<void> => {
     const hold = [state.hold, ...(state.holds ?? [])].find((entry) => entry?.command === command && (!entry.match || args.includes(entry.match)) && existsSync(entry.file));
     if (!hold) return;
     unlock();
     unlock = () => {};
     writeFileSync(`${hold.file}.reached`, "");
-    while (existsSync(hold.file)) Bun.sleepSync(20);
+    while (existsSync(hold.file)) await Bun.sleep(20);
     // The test may have changed GitHub meanwhile: answer from what it is now.
     unlock = lockGitHub(statePath!);
     Object.assign(state, readGitHub(statePath!));
   };
   /** The work is done and saved; now answer, maybe after waiting, maybe losing the answer. */
-  const answer = (out: string): never => {
-    held();
+  const answer = async (out: string): Promise<never> => {
+    await held();
     if (count(state.lose)) fail("error connecting to api.github.com");
     return exit(0, out);
   };
@@ -183,10 +178,10 @@ function main(): void {
   if (meanwhile?.times && meanwhile.command === command && (!meanwhile.withTag || (args[2] && !args[2].startsWith("-")))) {
     meanwhile.times -= 1;
     const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Teammate", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "Teammate", GIT_COMMITTER_EMAIL: "t@example.com" });
-    const moved = execFileSync("git", ["--git-dir", remote!, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change"], { env }).toString().trim();
-    execFileSync("git", ["--git-dir", remote!, "update-ref", "refs/heads/main", moved], { env: testGitEnv() });
+    const moved = await gitWith({ env }, "--git-dir", remote!, "commit-tree", "main^{tree}", "-p", "main", "-m", "A teammate's change");
+    await gitWith({}, "--git-dir", remote!, "update-ref", "refs/heads/main", moved);
     if (meanwhile.release) {
-      execFileSync("git", ["--git-dir", remote!, "update-ref", `refs/tags/${meanwhile.release}`, moved], { env: testGitEnv() });
+      await gitWith({}, "--git-dir", remote!, "update-ref", `refs/tags/${meanwhile.release}`, moved);
       state.releases.push({ tagName: meanwhile.release, url: `https://github.com/${state.repo}/releases/tag/${meanwhile.release}`, publishedAt: new Date().toISOString(), isDraft: false, name: meanwhile.release, body: "A teammate's release." });
       delete meanwhile.release;
     }
@@ -204,49 +199,52 @@ function main(): void {
     fail(`GraphQL: Could not resolve to a Repository with the name '${state.repo}'. (repository)`);
   }
 
-  const refreshPr = (pr: FakePr): void => {
+  const refreshPr = async (pr: FakePr): Promise<void> => {
     if (pr.state !== "OPEN") return;
     const folder = pr.isCrossRepository ? state.forks?.[pr.headRepository?.nameWithOwner ?? ""] : remote;
     if (!folder) return;
-    try {
-      const sha = execFileSync("git", ["--git-dir", folder, "rev-parse", `refs/heads/${pr.headRefName}`]).toString().trim();
-      if (folder !== remote) execFileSync("git", ["--git-dir", remote!, "fetch", "-q", folder, sha]);
-      execFileSync("git", ["--git-dir", remote!, "update-ref", `refs/pull/${pr.number}/head`, sha]);
-      pr.headRefOid = sha;
-      save();
-    } catch { /* A deleted branch remains visible as a PR with its former head. */ }
+    // A deleted branch remains visible as a PR with its former head. Every other failure fails the call.
+    const sha = await commitAt(folder, `refs/heads/${pr.headRefName}`);
+    if (!sha) return;
+    if (folder !== remote) await gitWith({}, "--git-dir", remote!, "fetch", "-q", folder, sha);
+    await gitWith({}, "--git-dir", remote!, "update-ref", `refs/pull/${pr.number}/head`, sha);
+    pr.headRefOid = sha;
+    save();
   };
   if (noun === "api") {
     const endpoint = verb!.slice(`repos/${state.repo}/`.length);
     if (!args.includes("--paginate") || !args.includes("--slurp")) fail("API lists must read every page");
     const pages = state.pages?.[endpoint];
-    if (pages) answer(JSON.stringify(pages));
+    if (pages) await answer(JSON.stringify(pages));
     if (endpoint.startsWith("branches/")) {
-      const sha = ref(`refs/heads/${decodeURIComponent(endpoint.slice(9))}`);
+      const sha = await ref(`refs/heads/${decodeURIComponent(endpoint.slice(9))}`);
       if (!sha) fail("HTTP 404: branch not found");
-      answer(JSON.stringify([{ commit: { sha } }]));
+      await answer(JSON.stringify([{ commit: { sha } }]));
     }
-    if (endpoint.includes("/check-runs")) answer(JSON.stringify([{ check_runs: [] }]));
-    if (endpoint.includes("/status?")) answer(JSON.stringify([{ statuses: [] }]));
-    if (/^(pulls|issues)\/\d+\/(reviews|comments)/.test(endpoint)) answer("[[]]");
+    if (endpoint.includes("/check-runs")) await answer(JSON.stringify([{ check_runs: [] }]));
+    if (endpoint.includes("/status?")) await answer(JSON.stringify([{ statuses: [] }]));
+    if (/^(pulls|issues)\/\d+\/(reviews|comments)/.test(endpoint)) await answer("[[]]");
     fail("Unknown API endpoint");
   }
-  if (command === "repo view") answer(flag("--jq") === ".nameWithOwner" ? state.repo : JSON.stringify({ nameWithOwner: state.repo, defaultBranchRef: { name: "main" } }));
+  if (command === "repo view") await answer(flag("--jq") === ".nameWithOwner" ? state.repo : JSON.stringify({ nameWithOwner: state.repo, defaultBranchRef: { name: "main" } }));
 
   if (command === "pr list") {
-    if (count(state.stale)) answer("[]");
+    if (count(state.stale)) await answer("[]");
     const head = flag("--head");
     // GitHub moves an open pull request's head along with its branch.
-    for (const pr of state.prs) if (pr.state === "OPEN" && ref(`refs/heads/${pr.headRefName}`)) pr.headRefOid = ref(`refs/heads/${pr.headRefName}`)!;
+    for (const pr of state.prs) {
+      const sha = pr.state === "OPEN" ? await ref(`refs/heads/${pr.headRefName}`) : undefined;
+      if (sha) pr.headRefOid = sha;
+    }
     save();
     const limit = Number(flag("--limit") ?? 30);
-    answer(JSON.stringify(state.prs.filter((pr) => pr.headRefName === head && (flag("--state") === "all" || pr.state === "OPEN")).slice(0, limit).map(pick)));
+    await answer(JSON.stringify(state.prs.filter((pr) => pr.headRefName === head && (flag("--state") === "all" || pr.state === "OPEN")).slice(0, limit).map(pick)));
   }
   if (command === "pr view") {
     const pr = state.prs.find((entry) => String(entry.number) === positional || entry.headRefName === positional);
     if (!pr) fail(`no pull requests found for branch "${positional}"`);
-    refreshPr(pr!);
-    answer(flag("--jq") === ".state" ? pr!.state : JSON.stringify(pick(pr!)));
+    await refreshPr(pr!);
+    await answer(flag("--jq") === ".state" ? pr!.state : JSON.stringify(pick(pr!)));
   }
   if (command === "pr edit" || command === "pr comment") {
     const pr = state.prs.find((entry) => String(entry.number) === positional);
@@ -259,12 +257,12 @@ function main(): void {
       const comments = state.pages[endpoint]?.flat() ?? [];
       state.pages[endpoint] = [[...comments, { body }]];
     }
-    save(); answer(pr!.url);
+    save(); await answer(pr!.url);
   }
   if (command === "pr create") {
     const head = flag("--head")!;
     const base = flag("--base")!;
-    const oid = ref(`refs/heads/${head}`);
+    const oid = await ref(`refs/heads/${head}`);
     if (!oid) fail(`pull request create failed: GraphQL: Head sha can't be blank, Head ref must be a branch`);
     const open = state.prs.find((pr) => pr.headRefName === head && pr.baseRefName === base && pr.state === "OPEN");
     if (open) fail(`a pull request for branch "${head}" into branch "${base}" already exists:\n${open.url}`);
@@ -272,29 +270,33 @@ function main(): void {
     const pr: FakePr = { number, url: `https://github.com/${state.repo}/pull/${number}`, headRefName: head, baseRefName: base, headRefOid: oid!, state: "OPEN", isCrossRepository: false, title: flag("--title") ?? "", body: readFileSync(0, "utf8") };
     state.prs.push(pr);
     save();
-    answer(pr.url);
+    await answer(pr.url);
   }
   if (command === "release view") {
     if (count(state.stale)) fail("release not found");
     const published = state.releases.filter((entry) => !entry.isDraft).sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
     const release = positional ? state.releases.find((entry) => entry.tagName === positional) : published[0];
     if (!release) {
-      held();
+      await held();
       fail("release not found");
     }
-    answer(JSON.stringify(pick(release!)));
+    await answer(JSON.stringify(pick(release!)));
   }
   if (command === "release create") {
     const tag = positional!;
     if (state.releases.some((entry) => entry.tagName === tag)) fail("HTTP 422: Validation Failed: tag_name already exists");
-    if (args.includes("--verify-tag") && !ref(`refs/tags/${tag}`)) fail(`tag ${tag} doesn't exist in the repo ${state.repo}, aborting due to --verify-tag flag`);
+    if (args.includes("--verify-tag") && !(await ref(`refs/tags/${tag}`))) fail(`tag ${tag} doesn't exist in the repo ${state.repo}, aborting due to --verify-tag flag`);
     if (!args.includes("--verify-tag")) fail("fake gh: Petrina always passes --verify-tag");
     const release: FakeRelease = { tagName: tag, url: `https://github.com/${state.repo}/releases/tag/${tag}`, publishedAt: new Date().toISOString(), isDraft: false, name: flag("--title") ?? tag, body: readFileSync(0, "utf8") };
     state.releases.push(release);
     save();
-    answer(release.url);
+    await answer(release.url);
   }
   fail(`fake gh does not know: ${args.join(" ")}`);
 }
 
-if (import.meta.main) main();
+// A failed Git lookup fails the call with Git's own words, never as a confirmed "not found".
+if (import.meta.main) await main().catch((error: unknown) => {
+  process.stderr.write(`fake gh could not answer: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+});

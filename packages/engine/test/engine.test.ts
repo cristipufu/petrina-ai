@@ -1,25 +1,23 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { removeDir, SLOW, testGitEnv } from "./fixtures.js";
+import { git, removeDir, SLOW } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
 
-function makeRepo(name = "repo"): string {
+async function makeRepo(name = "repo"): Promise<string> {
   const repo = join(temp, name);
   mkdirSync(repo, { recursive: true });
-  git(repo, "init", "-q", "-b", "main");
-  git(repo, "config", "user.email", "test@example.com");
-  git(repo, "config", "user.name", "Test");
+  await git(repo, "init", "-q", "-b", "main");
+  await git(repo, "config", "user.email", "test@example.com");
+  await git(repo, "config", "user.name", "Test");
   writeFileSync(join(repo, "README.md"), "# Demo\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-q", "-m", "init");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-q", "-m", "init");
   return repo;
 }
 
@@ -38,7 +36,8 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
 }
 
 describe("Engine with a fake ACP agent", () => {
-  const repo = makeRepo();
+  let repo = "";
+  beforeAll(async () => { repo = await makeRepo(); });
   const awakeChanges: boolean[] = [];
   const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake], awakeObserver: (active) => awakeChanges.push(active) });
 
@@ -85,11 +84,11 @@ describe("Engine with a fake ACP agent", () => {
     expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
     expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
     // The work is on main, with the permission granted.
-    expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+    expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
     await until(engine, (s) => s.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt !== undefined, () => {});
     expect(existsSync(task.worktree!)).toBe(false);
-    expect(git(repo, "rev-parse", task.branch!)).toBe(git(repo, "rev-parse", "main"));
+    expect(await git(repo, "rev-parse", task.branch!)).toBe(await git(repo, "rev-parse", "main"));
     await until(engine, () => awakeChanges.at(-1) === false, () => {});
   });
 });
@@ -98,7 +97,7 @@ describe("answers to a request missing from the inbox", () => {
   it("resumes its live waiter without an extra agent turn, and keeps other open permissions blocking", async () => {
     const engine = new Engine(join(temp, "orphan-data"), { agentCommand: () => [process.execPath, fake] });
     try {
-      const repo = makeRepo("orphan-repo");
+      const repo = await makeRepo("orphan-repo");
       const productId = await engine.addProduct(repo);
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file.", kind: "feature" });
@@ -130,14 +129,15 @@ describe("answers to a request missing from the inbox", () => {
         }
       });
       expect(final.tasks.find((t) => t.id === taskId)!.timeline.some((entry) => entry.text === "You answered: allow")).toBe(true);
-      expect(git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
+      expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
     } finally { engine.shutdown(); }
   });
 });
 
 describe("The coordinator's call on a design disagreement", () => {
   const CALL = "Show the greeting to everyone, in English only.";
-  const repo = makeRepo("call-repo");
+  let repo = "";
+  beforeAll(async () => { repo = await makeRepo("call-repo"); });
   const data = join(temp, "call-data");
   // While this file exists, the architect stops halfway through following a call.
   const hold = join(temp, "hold-call");

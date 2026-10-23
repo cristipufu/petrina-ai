@@ -51,7 +51,7 @@ async function start(scenario: Scenario, options: { description?: string; before
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
   const stops = holdCapacityWaits(engine);
   options.before?.(engine);
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: options.description ?? "[no-check]" });
   const find = () => engine.getState().tasks.find((task) => task.id === taskId) as Task;
@@ -233,9 +233,9 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(waiting.conversation).toMatchObject({ roleId: "builder", briefed: true });
       const session = run.fakes.received("builder")[0]!.session;
       expect(waiting.conversation?.sessionId).toBe(session);
-      const head = git(waiting.worktree!, "rev-parse", "HEAD");
+      const head = await git(waiting.worktree!, "rev-parse", "HEAD");
       expect(waiting.baseSha).toBe(head);
-      expect(git(waiting.worktree!, "status", "--porcelain")).toBe("");
+      expect(await git(waiting.worktree!, "status", "--porcelain")).toBe("");
       assertNotAccountLimit(run, waiting);
       await releaseCapacity(run.engine, run.taskId);
       const task = await run.done();
@@ -257,16 +257,16 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(readFileSync(join(waiting.worktree!, "capacity-draft.txt"), "utf8")).toBe("A greeting draft\n");
       expect(waiting.session.some((line) => line.from === "agent" && line.text.includes("I drafted the greeting before the model filled up."))).toBe(true);
       expect(waiting.conversation?.sessionId).toBe(run.fakes.received("builder")[0]!.session);
-      const head = git(waiting.worktree!, "rev-parse", "HEAD");
+      const head = await git(waiting.worktree!, "rev-parse", "HEAD");
       expect(waiting.baseSha).toBe(head);
-      expect(git(waiting.worktree!, "status", "--porcelain")).toContain("capacity-draft.txt");
+      expect(await git(waiting.worktree!, "status", "--porcelain")).toContain("capacity-draft.txt");
       await releaseCapacity(run.engine, run.taskId);
       await waitFor(() => {
         run.answer();
         return run.fakes.received("builder").length >= 2;
       }, "the same conversation to continue");
       expect(existsSync(join(run.find().worktree!, "capacity-draft.txt"))).toBe(true);
-      expect(git(run.find().worktree!, "rev-parse", "HEAD")).toBe(head);
+      expect(await git(run.find().worktree!, "rev-parse", "HEAD")).toBe(head);
       const again = run.fakes.received("builder")[1]!.text;
       expect(again.startsWith("The selected model was at capacity.")).toBe(true);
       expect(again).not.toContain("# Your job");
@@ -737,7 +737,7 @@ describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
 
 describe("a scheduled run whose model is at capacity", () => {
   it("waits and retries the saved profile, and leaves the working copy unchanged", async () => {
-    const world = makeWorld("capacity-maintenance");
+    const world = await makeWorld("capacity-maintenance");
     roots.push(world.dir);
     const fakes = new Fakes(join(world.dir, "agents"));
     fakes.scenario({ maintenance: {}, reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "bug finder", times: 4 }] });
@@ -757,14 +757,14 @@ describe("a scheduled run whose model is at capacity", () => {
       for (const [index, delay] of SHORT_WAITS.entries()) {
         const waiting = await capacityWait(run, delay, "gpt-6.1-sol", index + 1);
         expect(waiting.maintenance?.profile.id).toBe("sol-medium");
-        const waitingHead = git(waiting.worktree!, "rev-parse", "HEAD");
+        const waitingHead = await git(waiting.worktree!, "rev-parse", "HEAD");
         expect(waiting.baseSha).toBe(waitingHead);
-        expect(git(waiting.worktree!, "status", "--porcelain")).toBe("");
+        expect(await git(waiting.worktree!, "status", "--porcelain")).toBe("");
         await releaseCapacity(engine, taskId);
       }
       const held = await capacityWait(run, 5 * 60_000);
       expect(held.maintenance?.profile.id).toBe("sol-medium");
-      expect(git(held.worktree!, "status", "--porcelain")).toBe("");
+      expect(await git(held.worktree!, "status", "--porcelain")).toBe("");
       expect(engine.getState().pool.limited ?? []).toEqual([]);
       expect(fakes.received("bug finder").every((entry) => fakes.settings(entry.session).includes("model=gpt-6.1-sol"))).toBe(true);
       expect(engine.s.tasks.find((task) => task.id === taskId)?.capacityRetries?.some((entry) => entry.tried === 3)).toBe(true);

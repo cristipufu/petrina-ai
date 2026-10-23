@@ -24,7 +24,7 @@ it.each(["failed", "interrupted", "mixed", "passed"] as const)("keeps %s results
   engine.schedule = () => {};
   engine.setPoolPaused(true);
   try {
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     engine.s.products.push({ id: "product", name: "Shop", repo: "local/shop", path: repo, tone: "blue", delivery: "local", checksBy: "coordinator" });
     const task = engine.task(engine.addTask({ productId: "product", title: "Check evidence" }))!;
     const scope = executionFor(task);

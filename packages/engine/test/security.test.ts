@@ -2,16 +2,15 @@
 // they refuse unsafe settings, use only the address saved when the product was added, carry only what
 // Petrina names, run no hook, and run one at a time per product.
 import { afterAll, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { ADDRESS, coordinator, FAKE_AGENT, FAKE_GH, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
+import { ADDRESS, commitAt, coordinator, FAKE_AGENT, FAKE_GH, finish, git, gitWith, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];
-const world = (...args: Parameters<typeof makeWorld>) => {
-  const made = makeWorld(...args);
+const world = async (...args: Parameters<typeof makeWorld>) => {
+  const made = await makeWorld(...args);
   worlds.push(made);
   return made;
 };
@@ -31,7 +30,7 @@ function planted(w: World, name: string): { script: string; marks: () => string[
 
 describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps trust none of the repository's own settings", () => {
   it("refuses to fetch or publish once unsafe settings are planted after setup, and runs none of them", async () => {
-    const w = world("planted");
+    const w = await world("planted");
     const program = planted(w, "evil");
     const included = join(w.dir, "included.gitconfig");
     writeFileSync(included, `[core]\n\tsshCommand = ${program.script}\n`);
@@ -48,17 +47,17 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "pull-request", false);
       for (const [key, setting] of [...plants, ["credential.helper", ["--worktree", "credential.helper", `!${program.script}`]] as [string, string[]]]) {
-        if (setting[0] === "--worktree") git(w.clone, "config", "extensions.worktreeConfig", "true");
-        git(w.clone, "config", ...setting);
+        if (setting[0] === "--worktree") await git(w.clone, "config", "extensions.worktreeConfig", "true");
+        await git(w.clone, "config", ...setting);
         const taskId = engine.addTask({ productId, title: `Planted ${key}`, description: "A greeting file. [quick]" });
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.state).toBe("failed");
         expect(task.error).toContain("could not get the latest main from GitHub (the repository's git settings include");
         expect(task.error).toContain(key);
         expect(task.timeline.some((entry) => entry.tone === "warn" && entry.text.includes("could misuse your GitHub login"))).toBe(true);
-        expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
-        git(w.clone, "config", ...(setting[0] === "--worktree" ? ["--worktree", "--unset-all", setting[1]!] : ["--unset-all", setting[0]!]));
-        if (setting[0] === "--worktree") git(w.clone, "config", "--unset", "extensions.worktreeConfig");
+        expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
+        await git(w.clone, "config", ...(setting[0] === "--worktree" ? ["--worktree", "--unset-all", setting[1]!] : ["--unset-all", setting[0]!]));
+        if (setting[0] === "--worktree") await git(w.clone, "config", "--unset", "extensions.worktreeConfig");
         engine.cancel(taskId);
       }
       expect(program.marks()).toEqual([]);
@@ -70,32 +69,26 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
 
   for (const mode of ["pull-request", "release"] as const) {
     it(`publishes a ${mode} only to the saved address, with no hooks, extra tags or submodules, whatever the remote, push address and hooks now say`, async () => {
-      const w = world(`redirect-${mode}`);
+      const w = await world(`redirect-${mode}`);
       const evil = join(w.dir, "evil.git");
-      git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
+      await git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
       // A submodule whose newest commit is only local; the work being pushed points at it.
       const libOrigin = join(w.dir, "lib.git");
-      git(w.dir, "init", "-q", "--bare", "-b", "main", libOrigin);
+      await git(w.dir, "init", "-q", "--bare", "-b", "main", libOrigin);
       const lib = join(w.dir, "lib");
-      git(w.dir, "init", "-q", "-b", "main", lib);
-      git(lib, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "Library");
-      git(lib, "push", "-q", libOrigin, "main");
-      git(w.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", libOrigin, "lib");
-      git(w.clone, "commit", "-q", "-m", "Add the library");
-      git(w.clone, "push", "-q", w.remote, "main");
-      git(join(w.clone, "lib"), "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "Not pushed");
-      const unpushed = git(join(w.clone, "lib"), "rev-parse", "HEAD");
+      await git(w.dir, "init", "-q", "-b", "main", lib);
+      await git(lib, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "Library");
+      await git(lib, "push", "-q", libOrigin, "main");
+      await git(w.clone, "-c", "protocol.file.allow=always", "submodule", "add", "-q", libOrigin, "lib");
+      await git(w.clone, "commit", "-q", "-m", "Add the library");
+      await git(w.clone, "push", "-q", w.remote, "main");
+      await git(join(w.clone, "lib"), "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "Not pushed");
+      const unpushed = await git(join(w.clone, "lib"), "rev-parse", "HEAD");
       w.setScript((script) => (script.gitlink = { path: "lib", sha: unpushed }));
-      const libHas = () => {
-        try {
-          execFileSync("git", ["--git-dir", libOrigin, "cat-file", "-e", `${unpushed}^{commit}`], { env: testGitEnv(), stdio: "ignore" });
-          return true;
-        } catch {
-          return false;
-        }
-      };
+      // Absent only when Git confirms it: any other failure fails the test.
+      const libHas = async () => (await commitAt(libOrigin, unpushed)) !== undefined;
       // An extra annotated tag on work that gets pushed.
-      git(w.clone, "tag", "-a", "planted", "-m", "Should never travel", "HEAD");
+      await git(w.clone, "tag", "-a", "planted", "-m", "Should never travel", "HEAD");
       // Hooks that run around pushes, checkouts and ref changes: none of Petrina's own git steps may run them.
       // (Commit hooks are the repository's checks, which Petrina runs on purpose, without a login.)
       const hook = planted(w, "hook");
@@ -117,27 +110,27 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         const productId = await engine.addProduct(w.clone);
         engine.setProductDelivery(productId, mode, false);
         // Planted after setup: a new remote and push address, and hooks.
-        git(w.clone, "remote", "set-url", "origin", evil);
-        git(w.clone, "remote", "set-url", "--push", "origin", evil);
-        git(w.clone, "config", "core.hooksPath", hooks);
+        await git(w.clone, "remote", "set-url", "origin", evil);
+        await git(w.clone, "remote", "set-url", "--push", "origin", evil);
+        await git(w.clone, "config", "core.hooksPath", hooks);
         const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.error).toBeUndefined();
         expect(task.state).toBe(mode === "pull-request" ? "pr-open" : "done");
-        const tested = git(w.clone, "rev-parse", task.branch!);
-        expect(remoteRef(w.remote, mode === "pull-request" ? `refs/heads/${task.branch}` : "refs/heads/main")).toBe(tested);
-        expect(git(w.dir, "--git-dir", evil, "for-each-ref")).toBe("");
-        expect(remoteRef(w.remote, "refs/tags/planted")).toBeUndefined();
-        expect(git(w.dir, "--git-dir", w.remote, "for-each-ref", "--format=%(refname)", "refs/tags")).toBe(mode === "release" ? "refs/tags/v0.1.0" : "");
+        const tested = await git(w.clone, "rev-parse", task.branch!);
+        expect(await remoteRef(w.remote, mode === "pull-request" ? `refs/heads/${task.branch}` : "refs/heads/main")).toBe(tested);
+        expect(await git(w.dir, "--git-dir", evil, "for-each-ref")).toBe("");
+        expect(await remoteRef(w.remote, "refs/tags/planted")).toBeUndefined();
+        expect(await git(w.dir, "--git-dir", w.remote, "for-each-ref", "--format=%(refname)", "refs/tags")).toBe(mode === "release" ? "refs/tags/v0.1.0" : "");
         expect(hook.marks()).toEqual([]);
-        expect(git(w.dir, "--git-dir", w.remote, "rev-parse", `${tested}:lib`)).toBe(unpushed);
-        expect(libHas()).toBe(false);
+        expect(await git(w.dir, "--git-dir", w.remote, "rev-parse", `${tested}:lib`)).toBe(unpushed);
+        expect(await libHas()).toBe(false);
         // The saved address stays what it was when the product was added.
         expect(engine.getState().products[0]!.remote).toBe(ADDRESS);
         // With the same settings, a plain push would have taken the submodule's commit along.
         const plain = testGitEnv(process.env);
-        execFileSync("git", ["-c", "core.hooksPath=/dev/null", "push", "-q", "--no-verify", w.remote, `${tested}:refs/heads/plain`], { cwd: w.clone, env: { ...plain, GIT_CONFIG_GLOBAL: globalConfig }, stdio: "pipe" });
-        expect(libHas()).toBe(true);
+        await gitWith({ cwd: w.clone, env: { ...plain, GIT_CONFIG_GLOBAL: globalConfig } }, "-c", "core.hooksPath=/dev/null", "push", "-q", "--no-verify", w.remote, `${tested}:refs/heads/plain`);
+        expect(await libHas()).toBe(true);
       } finally {
         engine.shutdown();
         if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL;
@@ -149,9 +142,9 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
   for (const mode of ["pull-request", "release"] as const) {
     it(`fetches and publishes a ${mode} over the SSH address saved when the product was added, not wherever origin points now`, async () => {
       const saved = "git@github.com:acme/demo.git";
-      const w = world(`saved-${mode}`, { address: saved });
+      const w = await world(`saved-${mode}`, { address: saved });
       const evil = join(w.dir, "evil.git");
-      git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
+      await git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
       // The coordinator's own SSH setup: an ssh that serves the folder standing in for GitHub and notes what it was asked for.
       const asked = join(w.dir, "ssh.log");
       const ssh = join(w.dir, "ssh.sh");
@@ -168,15 +161,15 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         const productId = await engine.addProduct(w.clone);
         engine.setProductDelivery(productId, mode, false);
         expect(engine.getState().products[0]!.remote).toBe(saved);
-        git(w.clone, "remote", "set-url", "origin", evil);
-        git(w.clone, "remote", "set-url", "--push", "origin", evil);
+        await git(w.clone, "remote", "set-url", "origin", evil);
+        await git(w.clone, "remote", "set-url", "--push", "origin", evil);
         const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
         const task = taskOf(await finish(engine, taskId), taskId);
         expect(task.error).toBeUndefined();
         expect(task.state).toBe(mode === "pull-request" ? "pr-open" : "done");
-        const tested = git(w.clone, "rev-parse", task.branch!);
-        expect(remoteRef(w.remote, mode === "pull-request" ? `refs/heads/${task.branch}` : "refs/tags/v0.1.0")).toBe(tested);
-        expect(git(w.dir, "--git-dir", evil, "for-each-ref")).toBe("");
+        const tested = await git(w.clone, "rev-parse", task.branch!);
+        expect(await remoteRef(w.remote, mode === "pull-request" ? `refs/heads/${task.branch}` : "refs/tags/v0.1.0")).toBe(tested);
+        expect(await git(w.dir, "--git-dir", evil, "for-each-ref")).toBe("");
         // Every fetch and push went to the saved address, and both happened.
         const calls = readFileSync(asked, "utf8").trim().split("\n");
         expect([...new Set(calls)].sort()).toEqual(["git@github.com git-receive-pack 'acme/demo.git'", "git@github.com git-upload-pack 'acme/demo.git'"]);
@@ -189,7 +182,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
   }
 
   it("runs a product's credentialed git steps one at a time, task-start updates included", async () => {
-    const w = world("serial");
+    const w = await world("serial");
     let open = 0;
     let most = 0;
     let total = 0;
@@ -234,7 +227,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
     });
 
   it("shows the current address once, keeps the answer, and then fetches and publishes there", async () => {
-    const w = world("confirm");
+    const w = await world("confirm");
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);
@@ -268,7 +261,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
   });
 
   it("stops credentialed work after a No, and still delivers locally", async () => {
-    const w = world("refuse");
+    const w = await world("refuse");
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);
@@ -286,19 +279,19 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       expect(task.error).toContain(`you said ${ADDRESS} is not Clone's GitHub address`);
       expect(engine.getState().products[0]!.remoteRefused).toBe(ADDRESS);
       expect(w.github().calls).toEqual([]);
-      expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
+      expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
 
       const local = engine.addTask({ productId, title: "Add a local greeting", description: "A greeting file. [quick]", delivery: "local", approveDelivery: false });
       task = taskOf(await finish(engine, local), local);
       expect(task.state).toBe("done");
-      expect(git(w.clone, "rev-parse", "main")).toBe(git(w.clone, "rev-parse", task.branch!));
+      expect(await git(w.clone, "rev-parse", "main")).toBe(await git(w.clone, "rev-parse", task.branch!));
     } finally {
       engine.shutdown();
     }
   });
 
   it("publishes nothing when the saved address is not the product's repository", async () => {
-    const w = world("mismatch");
+    const w = await world("mismatch");
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);

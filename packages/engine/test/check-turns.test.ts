@@ -19,7 +19,7 @@ describe("tasks' checks take turns on one machine", () => {
     engine.setPoolPaused(true);
     const held: (() => void)[] = [];
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const task = engine.task(engine.addTask({ productId, title: "A check waiting its turn" }))!;
       engine.setHeld(task.id, true);
       engine.setPoolPaused(false);
@@ -52,7 +52,7 @@ describe("tasks' checks take turns on one machine", () => {
     engine.setPoolPaused(true);
     const held: (() => void)[] = [];
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const task = engine.task(engine.addTask({ productId, title: "A cancelled check" }))!;
       engine.setHeld(task.id, true);
       engine.setPoolPaused(false);
@@ -98,7 +98,7 @@ describe("tasks' checks take turns on one machine", () => {
     engine.setPoolPaused(true);
     const held: (() => void)[] = [];
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const task = engine.task(engine.addTask({ productId, title: "A check at the drain boundary" }))!;
       engine.setHeld(task.id, true);
       engine.setPoolPaused(false);
@@ -180,7 +180,7 @@ try {
       waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running } };
     });
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const ids = [engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" }), engine.addTask({ productId, title: "Add a farewell", description: "[no-check]" })];
       await waitFor(() => {
         const state = engine.getState();
@@ -225,7 +225,7 @@ it("admits bounded check preparation while every model slot is occupied", async 
   const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
   engine.setPoolPaused(true);
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "Prepare checks without reserving a reviewer", backlog: true }))!;
     task.plan = { rationale: "Review", plannerProfileId: "sol-high", stages: [{ id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 }] };
     task.stageIndex = 0;
@@ -257,7 +257,7 @@ it("admits a queued planner while the check-preparation lane is full", async () 
   const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   });
   engine.setPoolPaused(true);
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const check = engine.task(engine.addTask({ productId, title: "Waiting for checks", backlog: true }))!;
     Object.assign(check, { state: "waiting", startedAt: Date.now(), stageIndex: 0, plan: { rationale: "Review", plannerProfileId: "sol-high", stages: [{ id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high"], maxRounds: 2 }] } });
     const queued = engine.addTask({ productId, title: "Plan while checks wait" });
@@ -276,7 +276,7 @@ it("keeps shared check readiness independent of the active repository and invali
   const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
   engine.setPoolPaused(true);
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "Shared readiness", backlog: true }))!;
     task.repositories = [productId, "peer"].map((id, index) => ({ productId: id, delivery: "local", baseSha: `base-${id}`, checks: { at: 10 + index, current: true, results: [] }, completedStages: [] }));
     task.activeProductId = productId;

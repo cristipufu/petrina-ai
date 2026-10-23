@@ -17,12 +17,12 @@ it("carries only bounded current source locations to design or a first builder, 
   const engine = new Engine(join(root, "data"), { usageCommands: { codex: null, grok: null },  });
   try {
     engine.setPoolPaused(true);
-    const copy = makeProduct(root);
+    const copy = await makeProduct(root);
     const productId = await engine.addProduct(copy);
     const id = engine.addTask({ productId, title: "Choose the design independently", backlog: true });
     const task = engine.task(id)!;
     executionFor(task).work.worktree = copy;
-    const revision = git(copy, "rev-parse", "HEAD");
+    const revision = await git(copy, "rev-parse", "HEAD");
     const pointer = { productId, revision, path: "README.md" };
     task.sourcePointers = [pointer, pointer, { ...pointer, revision: "f".repeat(40) }, { ...pointer, path: "absent.md" }, { ...pointer, productId: "another-product" }];
     expect(await currentSourcePointers(repositoryView(executionFor(task)), task.sourcePointers)).toEqual([pointer]);
@@ -53,8 +53,8 @@ it("carries only bounded current source locations to design or a first builder, 
     expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.sourcePointers).toEqual(task.sourcePointers);
     expect(engine.store.loadActive()!.tasks.find((entry) => entry.id === id)!.brief!.sourcePointers).toEqual([pointer]);
     writeFileSync(join(copy, "VERSION"), "2.0.0\n");
-    git(copy, "add", "VERSION");
-    git(copy, "commit", "-q", "-m", "A different source version");
+    await git(copy, "add", "VERSION");
+    await git(copy, "commit", "-q", "-m", "A different source version");
     expect(await currentSourcePointers(repositoryView(executionFor(task)), [pointer])).toEqual([]);
   } finally { await engine.shutdown(); removeDir(root); }
 });
@@ -116,15 +116,15 @@ async function handoff(products: readonly { id: string; repo: string }[]) {
   await engine.checkTools();
   const copies: Record<string, string> = {};
   for (const { id, repo } of products) {
-    copies[id] = makeProduct(join(root, id));
+    copies[id] = await makeProduct(join(root, id));
     engine.s.products.push({ id, name: `Product ${id}`, repo, path: copies[id], defaultBranch: "main", tone: "blue" });
   }
   engine.s.pool.paused = false;
   const head = (id: string) => git(copies[id]!, "rev-parse", "HEAD");
-  const commit = (id: string, file: string) => {
+  const commit = async (id: string, file: string) => {
     writeFileSync(join(copies[id]!, file), `${file}\n`);
-    git(copies[id]!, "add", file);
-    git(copies[id]!, "commit", "-q", "-m", `Add ${file}`);
+    await git(copies[id]!, "add", file);
+    await git(copies[id]!, "commit", "-q", "-m", `Add ${file}`);
     return head(id);
   };
   const plan = (task: MTask) => engine["planning"].runPlanner(task, signal());
@@ -170,8 +170,8 @@ describe.concurrent("source hints between agents", () => {
   it("hands a single product's valid hints from the planner to the Architect and the first Builder, by exact product id", async () => {
     const f = await handoff([{ id: "petrina-ai", repo: "cristipufu/petrina-ai" }, { id: "elsewhere", repo: "local/elsewhere" }]);
     try {
-      const old = f.head("petrina-ai");
-      const head = f.commit("petrina-ai", "NOTES.md");
+      const old = await f.head("petrina-ai");
+      const head = await f.commit("petrina-ai", "NOTES.md");
       const at = (path: string, productId = "petrina-ai", revision = head) => ({ productId, revision, path });
       const task = f.engine.task(f.engine.addTask({ productId: "petrina-ai", title: "Keep hints", description: "Keep navigation hints tied to products.", backlog: true }))!;
       f.fakes.scenario({ architect: "plain", builder: "plain", sourcePointers: { planner: [
@@ -230,7 +230,7 @@ describe.concurrent("source hints between agents", () => {
   it("hands the planner's valid hints straight to the first Builder when design is skipped, and nothing when there are none", async () => {
     const f = await handoff([{ id: "petrina-ai", repo: "cristipufu/petrina-ai" }]);
     try {
-      const head = f.head("petrina-ai");
+      const head = await f.head("petrina-ai");
       const at = (path: string, productId = "petrina-ai") => ({ productId, revision: head, path });
       const tasks = ["With hints", "Without hints"].map((title) => f.engine.task(f.engine.addTask({ productId: "petrina-ai", title, backlog: true }))!);
       f.fakes.scenario({ planner: "short", builder: "plain", sourcePointers: { planner: [at("README.md", "cristipufu/petrina-ai"), at("VERSION", "cristipufu/petrina-ai")] } });
@@ -254,8 +254,8 @@ describe.concurrent("source hints between agents", () => {
   it("keeps shared products' hints apart and drops a removed product's hints before saving or forwarding", async () => {
     const f = await handoff([{ id: "shop", repo: "local/shop" }, { id: "site", repo: "local/site" }, { id: "elsewhere", repo: "local/elsewhere" }]);
     try {
-      const shop = f.head("shop");
-      const site = f.commit("site", "SITE.md");
+      const shop = await f.head("shop");
+      const site = await f.commit("site", "SITE.md");
       const at = (productId: string, path: string) => ({ productId, revision: productId === "site" ? site : shop, path });
       const worksOn = ["shop", "site"].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" }) satisfies WorkChoice);
       const task = f.engine.task(f.engine.addTask({ productId: "shop", worksOn, title: "Share hints", backlog: true }))!;

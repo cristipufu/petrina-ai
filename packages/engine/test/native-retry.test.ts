@@ -29,7 +29,7 @@ async function start(scenario: Scenario) {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
   const find = () => engine.getState().tasks.find((task) => task.id === taskId) as Task;

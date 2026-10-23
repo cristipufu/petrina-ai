@@ -15,7 +15,7 @@ it("does not mistake a configured hook command for an automatically appended hoo
   const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
   engine.schedule = () => {};
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "An explicit check" }))!;
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;
@@ -38,7 +38,7 @@ appendFileSync(log, mode + "\\n");
 if (mode === "old-pass") { writeFileSync(started, "ready"); while (!existsSync(release)) await Bun.sleep(10); }
 process.exit(mode === "new-fail" ? 1 : 0);`);
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "Check freshness" }))!;
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;
@@ -69,7 +69,7 @@ it("bounds changing-input revalidation and never reports an obsolete pass as cur
 const [started, release] = process.argv.slice(2);
 writeFileSync(started, "ready"); while (!existsSync(release)) await Bun.sleep(10);`);
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const task = engine.task(engine.addTask({ productId, title: "Unstable requirements" }))!;
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;

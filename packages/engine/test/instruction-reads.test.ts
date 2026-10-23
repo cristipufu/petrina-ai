@@ -15,12 +15,14 @@ writeFileSync(join(folder, "package.json"), '{"private":true,"type":"module"}');
 afterAll(() => removeDir(folder));
 let serial = 0;
 
-/** A controlled Git response, through the real process APIs on both sides of the repair. */
+/**
+ * A controlled Git response, through the real process API on both sides of the repair. Only the engine's own
+ * reads are redirected: the fixtures' commands use a private process starter this replacement never sees.
+ */
 async function withGit(script: string, check: () => Promise<void>): Promise<void> {
   const entry = join(folder, `git-${++serial}.ts`);
   writeFileSync(entry, script);
   const spawn = Bun.spawn;
-  const sync = Bun.spawnSync;
   const children: ReturnType<typeof Bun.spawn>[] = [];
   const route = (args: unknown[]) => {
     const command = args[0];
@@ -32,12 +34,10 @@ async function withGit(script: string, check: () => Promise<void>): Promise<void
     children.push(child);
     return child;
   }) as typeof Bun.spawn);
-  const synchronous = spyOn(Bun, "spawnSync").mockImplementation(((...args: unknown[]) => Reflect.apply(sync, Bun, route(args))) as typeof Bun.spawnSync);
   try {
     await check();
   } finally {
     asynchronous.mockRestore();
-    synchronous.mockRestore();
     for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
     await Promise.all(children.map((child) => child.exited));
   }
@@ -49,7 +49,7 @@ describe("reading a product's committed files", () => {
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep messages through a failed preparation", backlog: true });
       const scope = executionFor(engine.task(taskId)!);
       scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
@@ -71,7 +71,7 @@ describe("reading a product's committed files", () => {
     const checkRead = new Promise<boolean>((resolve) => { checksDone = resolve; });
     let reading: Promise<Awaited<ReturnType<Context["sectionsFor"]>>> | undefined;
     try {
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep live notes while reading context", backlog: true });
       const scope = executionFor(engine.task(taskId)!);
       scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
@@ -124,7 +124,7 @@ describe("reading a product's committed files", () => {
     const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep the coordinator's latest note" });
       const task = engine.task(taskId)!;
       if (pullRequest) {
@@ -164,7 +164,7 @@ describe("reading a product's committed files", () => {
     try {
       engine.setPoolPaused(true);
       const reviewer = engine.addRole(ROLE_STARTS.find((start) => start.id === "security")!.draft);
-      const productId = await engine.addProduct(makeProduct(root));
+      const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Keep every role's notes" });
       const task = engine.task(taskId)!;
       if (pullRequest) executionFor(task).work.source = {

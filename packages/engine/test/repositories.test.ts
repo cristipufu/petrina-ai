@@ -15,14 +15,14 @@ import { beginRepair, invalidateAcceptance, versionsOf } from "../src/repositori
 import { checkReviewEvidence } from "../src/review.js";
 import { ReviewResult } from "../src/roles.js";
 import { Coordination } from "../src/coordination.js";
-import { Fakes, coordinator, finish, git, itemOf, makeWorld, removeDir, taskOf, until, waitFor, type World } from "./support.js";
+import { Fakes, coordinator, finish, git, headNow, itemOf, makeWorld, removeDir, taskOf, until, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
-function setup(name: string) {
-  const shop = makeWorld(`shared-shop-${name}`), api = makeWorld(`shared-api-${name}`);
+async function setup(name: string) {
+  const shop = await makeWorld(`shared-shop-${name}`), api = await makeWorld(`shared-api-${name}`);
   worlds.push(shop, api);
-  git(api.clone, "remote", "set-url", "origin", "https://github.com/acme/api.git");
+  await git(api.clone, "remote", "set-url", "origin", "https://github.com/acme/api.git");
   api.setGitHub((state) => { state.repo = "acme/api"; });
   const mapping = join(shop.dir, "portfolio.json");
   writeFileSync(mapping, JSON.stringify({ "acme/demo": { state: join(shop.dir, "github.json"), remote: shop.remote }, "acme/api": { state: join(api.dir, "github.json"), remote: api.remote } }));
@@ -38,7 +38,7 @@ function setup(name: string) {
  * The pull-request poll this test asks for. The engine also polls at start and every minute, and a poll skips a task
  * its driver or another poll still holds: wait until neither does, so this one reads every open pull request itself.
  */
-async function pollPullRequests(engine: ReturnType<ReturnType<typeof setup>["start"]>, taskId: string) {
+async function pollPullRequests(engine: ReturnType<Awaited<ReturnType<typeof setup>>["start"]>, taskId: string) {
   const monitor = engine["shipping"].monitor;
   await waitFor(() => !engine.drivers.has(taskId) && !monitor["following"].has(taskId), "the task's pull requests to be free to read");
   await monitor.pollPullRequests();
@@ -54,7 +54,7 @@ async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordina
 
 describe.concurrent("one task across products", () => {
   for (const shared of [false, true]) it(`updates each product once before the Tester (${shared ? "shared" : "single"} task)`, async () => {
-    const { shop, api, start, fakes } = setup(`tester-updates-${shared}`);
+    const { shop, api, start, fakes } = await setup(`tester-updates-${shared}`);
     const engine = start();
     const updates = engine["updates"], original = updates.upToDate.bind(updates), prepared: string[] = [];
     updates.upToDate = (scope, signal) => {
@@ -82,7 +82,7 @@ describe.concurrent("one task across products", () => {
     ["unknown-only reports", [undefined, ["foreign"]], [[], []]],
     ["invalid mixed reports", [["first", "foreign"], ["second", "foreign"]], [[], []]],
   ] as const) for (const reverse of [false, true]) it(`keeps explicit finding owners across ${name}${reverse ? " in reverse order" : ""}`, async () => {
-    const { shop, api, start } = setup(`finding-owners-${name.replaceAll(" ", "-")}-${reverse}`);
+    const { shop, api, start } = await setup(`finding-owners-${name.replaceAll(" ", "-")}-${reverse}`);
     const engine = start();
     try {
       engine.setPoolPaused(true);
@@ -107,7 +107,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("routes an incompletely repeated finding to its saved owner after restart and keeps ownership in History", async () => {
-    const { shop, api, start, fakes } = setup("finding-owner-restart");
+    const { shop, api, start, fakes } = await setup("finding-owner-restart");
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -199,7 +199,7 @@ describe.concurrent("one task across products", () => {
   });
 
   for (const count of [1, 2]) it(`settles completed objections before waiting for voting usage across ${count} products`, async () => {
-    const { shop, api, start, fakes } = setup(`objection-usage-${count}`);
+    const { shop, api, start, fakes } = await setup(`objection-usage-${count}`);
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone);
@@ -232,7 +232,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("reopens dismissed reports with fresh proof while keeping classification, ownership and review history", async () => {
-    const { shop, api, start } = setup("dismissed-proof"); const engine = start();
+    const { shop, api, start } = await setup("dismissed-proof"); const engine = start();
     try {
       engine.setPoolPaused(true);
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -290,7 +290,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("does not reopen another product's claimed fix for independently reported equal wording", async () => {
-    const { shop, api, start } = setup("independent-finding-proof"); const engine = start();
+    const { shop, api, start } = await setup("independent-finding-proof"); const engine = start();
     try {
       engine.setPoolPaused(true);
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -349,7 +349,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("keeps cleanup awake until every product copy is removed without starting a system process", async () => {
-    const { shop, api, start } = setup("cleanup-awake");
+    const { shop, api, start } = await setup("cleanup-awake");
     const paths: string[] = [];
     const activity: { active: boolean; copies: number }[] = [];
     const engine = start({ awakeObserver: (active) => activity.push({ active, copies: paths.filter((path) => existsSync(path)).length }) });
@@ -371,7 +371,7 @@ describe.concurrent("one task across products", () => {
       // A crash can remove a review folder before its Git registration is cleaned up.
       for (const work of task.repositories) {
         const copy = join(shop.data, "worktrees", work.productId, `${id}.copies`, "review-0");
-        await addCopy(work.source!.product.path!, copy, git(work.worktree!, "rev-parse", "HEAD"));
+        await addCopy(work.source!.product.path!, copy, await git(work.worktree!, "rev-parse", "HEAD"));
         rmSync(copy, { recursive: true });
       }
       task.state = "cancelled";
@@ -384,12 +384,12 @@ describe.concurrent("one task across products", () => {
       expect(paths.some((path) => existsSync(path))).toBe(false);
       expect(activity).toEqual([{ active: true, copies: 2 }, { active: false, copies: 0 }]);
       expect(engine.cleanupJobs.size).toBe(0);
-      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
+      for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
     } finally { await engine.shutdown(); }
   });
 
   it("retires shared local deliveries into paged history and removes them only with their last product", async () => {
-    const { shop, api, start, fakes } = setup("shared-history");
+    const { shop, api, start, fakes } = await setup("shared-history");
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -433,7 +433,7 @@ describe.concurrent("one task across products", () => {
     { name: "one product did not opt in", ask: false, secondOptedIn: false, acceptance: true, ships: false },
     { name: "shared acceptance has not run", ask: false, secondOptedIn: true, acceptance: false, ships: false },
   ]) it(`${choice.ships ? "ships" : "asks about"} low-risk shared work when ${choice.name}`, async () => {
-    const { shop, api, start, fakes } = setup(`low-risk-${choice.name.replaceAll(" ", "-")}`);
+    const { shop, api, start, fakes } = await setup(`low-risk-${choice.name.replaceAll(" ", "-")}`);
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -459,7 +459,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("keeps each parallel reviewer's complete snapshot map and queued coordinator message", async () => {
-    const { shop, api, start, fakes } = setup("review-messages");
+    const { shop, api, start, fakes } = await setup("review-messages");
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -488,12 +488,12 @@ describe.concurrent("one task across products", () => {
       expect(heard.map((entry) => entry.session).sort()).toEqual(reviews.map((entry) => entry.session).sort());
       expect(taskOf(state, id).queued).toEqual([]);
       for (const match of copies) expect(existsSync(match[2]!)).toBe(false);
-      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
+      for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
     } finally { await engine.shutdown(); }
   });
 
   for (const decision of ["pause", "cancel"] as const) it(`cleans every product's saved review copies after restart and ${decision}`, async () => {
-    const { shop, api, start, fakes } = setup(`screen-copy-${decision}`);
+    const { shop, api, start, fakes } = await setup(`screen-copy-${decision}`);
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -514,13 +514,13 @@ describe.concurrent("one task across products", () => {
       engine[decision](id);
       await Promise.all(engine.copyCleanups.values());
       for (const [, copy] of copies) expect(existsSync(copy)).toBe(false);
-      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
+      for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
       expect(engine.task(id)!.hunt?.screenTurns).toBeUndefined();
     } finally { await engine.shutdown(); }
   });
 
   it("gives a third answer its own portable copy in every product and resumes it there after a screen wait and restart", async () => {
-    const { shop, api, start, fakes } = setup("third-answer-copies");
+    const { shop, api, start, fakes } = await setup("third-answer-copies");
     let engine = start();
     try {
       await engine.checkTools();
@@ -548,7 +548,7 @@ describe.concurrent("one task across products", () => {
       expect([...opened.values()]).toEqual(expect.arrayContaining([copies("vote-sol-high"), copies("vote-grok-high"), kept]));
       // A companion copy saved under another folder name, as an earlier version named it, is still the one reopened.
       const earlier = join(shop.data, "worktrees", second, `${id}.copies`, "saved-earlier");
-      git(api.clone, "worktree", "move", kept[second]!, earlier);
+      await git(api.clone, "worktree", "move", kept[second]!, earlier);
       const resumed = { ...kept, [second]: earlier };
       const turn = engine.task(id)!.hunt!.screenTurns![member]!;
       turn.copies = resumed;
@@ -578,12 +578,12 @@ describe.concurrent("one task across products", () => {
       expect(task.journey!.filter((step) => step.roleId === "verifier").map((step) => step.seats)).toEqual([["verifier:sol-high", "verifier:grok-high"], ["verifier:third:argon-high"]]);
       expect(new Set(fakes.received("verifier").map((entry) => entry.session)).size).toBe(3);
       for (const map of [resumed, kept, copies("vote-sol-high"), copies("vote-grok-high")]) for (const copy of Object.values(map)) expect(existsSync(copy)).toBe(false);
-      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
+      for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
     } finally { await engine.shutdown(); }
   });
 
   it("prepares two separate copies only after approval, builds both and opens mutually linked PRs", async () => {
-    const { shop, api, start, fakes } = setup("two");
+    const { shop, api, start, fakes } = await setup("two");
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -615,13 +615,13 @@ describe.concurrent("one task across products", () => {
       expect(shop.github().prs[0]!.body).toContain("Part of a change across:");
       expect(task.repositories!.every((work) => work.companion?.state === "done")).toBe(true);
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
-      expect(git(shop.clone, "branch", "--show-current")).toBe("main");
-      expect(git(api.clone, "branch", "--show-current")).toBe("main");
+      expect(await git(shop.clone, "branch", "--show-current")).toBe("main");
+      expect(await git(api.clone, "branch", "--show-current")).toBe("main");
     } finally { await engine.shutdown(); }
   });
 
   it("clones a proposed product into the confirmed folder only after the complete plan is approved", async () => {
-    const { shop, api, start, fakes } = setup("addition");
+    const { shop, api, start, fakes } = await setup("addition");
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone);
@@ -637,13 +637,13 @@ describe.concurrent("one task across products", () => {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined();
       expect(existsSync(join(folder, ".git"))).toBe(true);
-      expect(git(folder, "branch", "--show-current")).toBe("main");
+      expect(await git(folder, "branch", "--show-current")).toBe("main");
       expect(task.repositories!.every((work) => work.worktree !== folder)).toBe(true);
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
     } finally { await engine.shutdown(); }
   });
   for (const recovery of ["unchanged", "fresh", "retry", "restart"] as const) it(`delivers to an addition's approved local branch after remote default changes: ${recovery}`, async () => {
-    const { shop, api, start, fakes, remotes } = setup(`local-default-${recovery}`);
+    const { shop, api, start, fakes, remotes } = await setup(`local-default-${recovery}`);
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone);
@@ -655,12 +655,12 @@ describe.concurrent("one task across products", () => {
       expect(taskOf(engine.getState(), id).workRows![1]!.source!.product.defaultBranch).toBe("main");
       let trunk: string | undefined;
       if (recovery !== "unchanged") {
-        git(api.clone, "switch", "-q", "-c", "trunk");
+        await git(api.clone, "switch", "-q", "-c", "trunk");
         writeFileSync(join(api.clone, "TRUNK_ONLY.md"), "Unapproved new default\n");
-        git(api.clone, "add", "."); git(api.clone, "commit", "-qm", "A distinct new default");
-        git(api.clone, "push", "-q", api.remote, "trunk");
-        trunk = git(api.clone, "rev-parse", "trunk");
-        git(api.remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
+        await git(api.clone, "add", "."); await git(api.clone, "commit", "-qm", "A distinct new default");
+        await git(api.clone, "push", "-q", api.remote, "trunk");
+        trunk = await git(api.clone, "rev-parse", "trunk");
+        await git(api.remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
       }
       if (recovery === "retry" || recovery === "restart") remotes["acme/api"] = join(api.dir, "unavailable.git");
       engine.approve(itemOf(engine.getState(), id, "plan")!.id);
@@ -668,8 +668,8 @@ describe.concurrent("one task across products", () => {
         await until(engine, (state) => !!taskOf(state, id).error);
         expect(taskOf(engine.getState(), id).workRows![1]!.addition?.created).toBe(true);
         remotes["acme/api"] = api.remote;
-        git(shop.dir, "clone", "-q", api.remote, folder);
-        expect(git(folder, "branch", "--list", "main")).toBe("");
+        await git(shop.dir, "clone", "-q", api.remote, folder);
+        expect(await git(folder, "branch", "--list", "main")).toBe("");
         writeFileSync(join(folder, "keep.txt"), "Preserved completed clone\n");
         if (recovery === "restart") { await engine.shutdown(); engine = start(); }
         engine.retry(itemOf(engine.getState(), id, "stuck")!.id);
@@ -684,23 +684,23 @@ describe.concurrent("one task across products", () => {
       expect(work.source!.destination.branch).toBe("main");
       expect(work.landed?.branch).toBe("main");
       expect(work.nothingToPublish).not.toBe(true);
-      const landed = git(folder, "rev-parse", "refs/heads/main");
-      expect(git(folder, "rev-parse", `refs/heads/${work.branch}`)).toBe(landed);
-      expect(git(api.remote, "rev-parse", "refs/heads/main")).toBe(landed);
-      expect(git(folder, "show", `${landed}:greeting.txt`)).toContain("Hello");
-      expect(git(folder, "ls-tree", "--name-only", landed, "TRUNK_ONLY.md")).toBe("");
+      const landed = await git(folder, "rev-parse", "refs/heads/main");
+      expect(await git(folder, "rev-parse", `refs/heads/${work.branch}`)).toBe(landed);
+      expect(await git(api.remote, "rev-parse", "refs/heads/main")).toBe(landed);
+      expect(await git(folder, "show", `${landed}:greeting.txt`)).toContain("Hello");
+      expect(await git(folder, "ls-tree", "--name-only", landed, "TRUNK_ONLY.md")).toBe("");
       if (trunk) {
-        expect(git(api.remote, "rev-parse", "refs/heads/trunk")).toBe(trunk);
-        expect(git(folder, "rev-parse", "refs/heads/trunk")).toBe(trunk);
-        expect(git(folder, "branch", "--show-current")).toBe("trunk");
+        expect(await git(api.remote, "rev-parse", "refs/heads/trunk")).toBe(trunk);
+        expect(await git(folder, "rev-parse", "refs/heads/trunk")).toBe(trunk);
+        expect(await git(folder, "branch", "--show-current")).toBe("trunk");
       }
-      if (recovery === "retry" || recovery === "restart") expect(git(folder, "status", "--short")).toContain("keep.txt");
+      if (recovery === "retry" || recovery === "restart") expect(await git(folder, "status", "--short")).toContain("keep.txt");
       expect(api.github().prs).toHaveLength(0);
     } finally { await engine.shutdown(); }
   });
 
   for (const invalid of ["branch", "pull-request", "release"] as const) it(`requires a confirmed folder after correcting a proposed repository's invalid ${invalid} choice`, async () => {
-    const { shop, api, start, fakes } = setup(`invalid-addition-${invalid}`);
+    const { shop, api, start, fakes } = await setup(`invalid-addition-${invalid}`);
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone);
@@ -732,13 +732,13 @@ describe.concurrent("one task across products", () => {
       const finished = taskOf(await finish(engine, id), id);
       expect(finished.error).toBeUndefined();
       expect(finished.state).toBe("pr-open");
-      expect(git(folder, "branch", "--show-current")).toBe("main");
+      expect(await git(folder, "branch", "--show-current")).toBe("main");
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
     } finally { await engine.shutdown(); }
   });
 
   it("keeps a confirmed PR when another repository fails, then resumes after restart without publishing twice", async () => {
-    const { shop, api, start } = setup("partial");
+    const { shop, api, start } = await setup("partial");
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -770,7 +770,7 @@ describe.concurrent("one task across products", () => {
   });
 
   for (const closed of [false, true]) it(`keeps dependents blocked with one merged PR and one ${closed ? "closed" : "open"} PR`, async () => {
-    const { shop, api, start } = setup(`landing-${closed}`);
+    const { shop, api, start } = await setup(`landing-${closed}`);
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -816,7 +816,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("charges only affected products once per repair pass and preserves independent allowances at restart", async () => {
-    const { shop, api, start } = setup("budgets");
+    const { shop, api, start } = await setup("budgets");
     let engine = start();
     try {
       engine.setPoolPaused(true);
@@ -855,7 +855,7 @@ describe.concurrent("one task across products", () => {
   });
 
   for (const kind of ["checks", "acceptance"] as const) for (const shared of [false, true]) it(`uses remaining ${kind} tries despite an exhausted owner of ${shared ? "a shared failure" : "a separate failure"}, including restart`, async () => {
-    const { shop, api, start } = setup(`independent-${kind}-${shared}`);
+    const { shop, api, start } = await setup(`independent-${kind}-${shared}`);
     let engine = start();
     try {
       engine.setPoolPaused(true);
@@ -891,7 +891,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("retains a coordinator row omitted by the planner until the coordinator removes it", async () => {
-    const { shop, api, start, fakes } = setup("omitted"); const engine = start();
+    const { shop, api, start, fakes } = await setup("omitted"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const worksOn = [first, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const }));
@@ -909,7 +909,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("retries an interrupted clone in its saved folder and leaves an unrelated occupied folder untouched", async () => {
-    const { shop, api, start, fakes, remotes } = setup("clone-retry"); let engine = start();
+    const { shop, api, start, fakes, remotes } = await setup("clone-retry"); let engine = start();
     try {
       const first = await engine.addProduct(shop.clone);
       fakes.scenario({ planner: "short", builder: "plain", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", reason: "Both repositories need the greeting", startFrom: { kind: "default" }, delivery: "pull-request" }] });
@@ -931,28 +931,28 @@ describe.concurrent("one task across products", () => {
       const done = taskOf(await finish(engine, id), id);
       expect(done.error).toBeUndefined();
       expect(done.repositories![0]!.worktree).toBe(firstCopy);
-      expect(git(folder, "branch", "--show-current")).toBe("main");
-      expect(git(shop.clone, "show", "HEAD:README.md")).toContain("Demo");
+      expect(await git(folder, "branch", "--show-current")).toBe("main");
+      expect(await git(shop.clone, "show", "HEAD:README.md")).toContain("Demo");
       expect(api.github().prs).toHaveLength(1);
     } finally { await engine.shutdown(); }
   });
 
   for (const saved of ["approved", "approved SSH", "other repository", "other GitHub repository", "no origin", "empty other repository"] as const) it(`checks the saved clone's remote before retrying an addition with ${saved}`, async () => {
-    const { shop, api, remotes } = setup(`clone-identity-${saved.replaceAll(" ", "-")}`);
+    const { shop, api, remotes } = await setup(`clone-identity-${saved.replaceAll(" ", "-")}`);
     if (saved === "approved SSH" || saved === "other GitHub repository") delete (remotes as Record<string, string>)["acme/api"];
     const products: Product[] = [];
     const sources = new Sources({ options: { remotes }, s: { products }, dataDir: shop.dir, commitNow() {}, tracking: { product() {} } } as unknown as Kernel, {} as Connections);
     const folder = join(shop.dir, "saved-addition");
     if (saved === "empty other repository") {
-      git(shop.dir, "init", "-q", "--initial-branch=main", folder);
-      git(folder, "remote", "add", "origin", shop.remote);
+      await git(shop.dir, "init", "-q", "--initial-branch=main", folder);
+      await git(folder, "remote", "add", "origin", shop.remote);
     } else {
-      git(shop.dir, "clone", "-q", saved === "other repository" ? shop.remote : api.remote, folder);
-      if (saved === "no origin") git(folder, "remote", "remove", "origin");
-      if (saved === "approved SSH" || saved === "other GitHub repository") git(folder, "remote", "set-url", "origin", saved === "approved SSH" ? "git@github.com:acme/api.git" : "https://github.com/other/repository.git");
+      await git(shop.dir, "clone", "-q", saved === "other repository" ? shop.remote : api.remote, folder);
+      if (saved === "no origin") await git(folder, "remote", "remove", "origin");
+      if (saved === "approved SSH" || saved === "other GitHub repository") await git(folder, "remote", "set-url", "origin", saved === "approved SSH" ? "git@github.com:acme/api.git" : "https://github.com/other/repository.git");
     }
     writeFileSync(join(folder, ".git", "keep.txt"), "Keep this repository metadata");
-    const before = git(folder, "config", "--local", "--list");
+    const before = await git(folder, "config", "--local", "--list");
     const task = { workRows: [{ choice: { productId: "addition", repo: "acme/api", startFrom: { kind: "default" }, delivery: "pull-request" }, source: { product: { id: "addition", name: "API", repo: "acme/api", path: folder, defaultBranch: "main", remote: "https://github.com/acme/api.git" }, start: { kind: "default", branch: "main" }, destination: { kind: "new-pr", mode: "pull-request", repo: "acme/api", branch: "main" }, confirmed: true }, addition: { productId: "addition", name: "API", path: folder, created: true } }] } as MTask;
     const add = () => sources.addApproved(task, "addition", new AbortController().signal);
     if (saved === "approved" || saved === "approved SSH") {
@@ -964,12 +964,12 @@ describe.concurrent("one task across products", () => {
       expect(task.workRows![0]!.addition!.ready).not.toBe(true);
       expect(products.some((product) => product.id === "addition")).toBe(false);
     }
-    expect(git(folder, "config", "--local", "--list")).toBe(before);
+    expect(await git(folder, "config", "--local", "--list")).toBe(before);
     expect(existsSync(join(folder, ".git", "keep.txt"))).toBe(true);
   });
 
   it("retries companion linking alone after both publications are confirmed", async () => {
-    const { shop, api, start } = setup("links"); const engine = start();
+    const { shop, api, start } = await setup("links"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       api.setGitHub((state) => { state.fail = { "pr edit": 1 }; });
@@ -984,8 +984,10 @@ describe.concurrent("one task across products", () => {
   });
 
   it("visits both affected saved builders in one shared repair pass and keeps separate answers", async () => {
-    const { shop, api, start, fakes } = setup("shared-repair"); const engine = start();
+    const { shop, api, start, fakes } = await setup("shared-repair"); const engine = start();
     const reviewedHeads = new Map<string, string>();
+    // A failed read is reported by the test, not thrown into the engine's announcement.
+    let captureFailure: unknown;
     let unsubscribe = () => {};
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -997,9 +999,12 @@ describe.concurrent("one task across products", () => {
         if (!current || !review || current.rounds[review.id] !== 2 || reviewedHeads.size) return;
         const builder = current.plan!.stages.findIndex((stage) => stage.kind === "do" && stage.roleId === "builder");
         if (current.stageIndex !== builder) return;
-        for (const work of current.repositories ?? []) reviewedHeads.set(work.productId, git(work.worktree!, "rev-parse", "HEAD"));
+        // Announcements stay synchronous: read each copy's HEAD from Git's files as the fix round starts.
+        try { for (const work of current.repositories ?? []) reviewedHeads.set(work.productId, headNow(work.worktree!)); }
+        catch (error) { captureFailure ??= error; }
       });
       const task = taskOf(await finish(engine, id), id);
+      if (captureFailure) throw captureFailure;
       expect(task.error).toBeUndefined();
       const finding = task.findings.find((finding) => finding.severity === "blocking")!;
       expect(finding.productIds).toEqual([first, second]);
@@ -1032,7 +1037,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("keeps unassigned Important findings under Together and sends them to no builder", async () => {
-    const { shop, api, start, fakes } = setup("unassigned"); const engine = start();
+    const { shop, api, start, fakes } = await setup("unassigned"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ builder: "plain", reviewer: "important-twice" });
@@ -1061,7 +1066,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("invalidates shared evidence when one named version changes while retaining unrelated current checks", async () => {
-    const { shop, api, start } = setup("evidence"); const engine = start();
+    const { shop, api, start } = await setup("evidence"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep evidence honest" });
@@ -1076,7 +1081,7 @@ describe.concurrent("one task across products", () => {
       task.acceptancePassed = true;
       const copy = task.repositories![1]!.worktree!;
       writeFileSync(join(copy, "api-repair.txt"), "A repair changes this product\n");
-      git(copy, "add", "."); git(copy, "commit", "-qm", "Repair API");
+      await git(copy, "add", "."); await git(copy, "commit", "-qm", "Repair API");
       await invalidateAcceptance(task);
       expect(task.brief.acceptance[0]!.verification).toBe("passed");
       expect(task.brief.acceptance[1]!.verification).toBe("stale");
@@ -1088,9 +1093,9 @@ describe.concurrent("one task across products", () => {
   });
 
   it("previews a release without a version commit and waits for the companion open PR after publishing", async () => {
-    const { shop, api, start } = setup("mixed-release");
+    const { shop, api, start } = await setup("mixed-release");
     writeFileSync(join(api.clone, "package.json"), JSON.stringify({ name: "api", version: "1.0.0" }));
-    git(api.clone, "add", "."); git(api.clone, "commit", "-qm", "Record the version"); git(api.clone, "push", "-q", api.remote, "main");
+    await git(api.clone, "add", "."); await git(api.clone, "commit", "-qm", "Record the version"); await git(api.clone, "push", "-q", api.remote, "main");
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -1099,7 +1104,7 @@ describe.concurrent("one task across products", () => {
       const preview = taskOf(ready, id);
       expect(preview.error).toBeUndefined();
       expect(preview.repositories![1]!.releasePreview?.notes).toBeTruthy();
-      expect(JSON.parse(git(preview.repositories![1]!.worktree!, "show", "HEAD:package.json")).version).toBe("1.0.0");
+      expect(JSON.parse(await git(preview.repositories![1]!.worktree!, "show", "HEAD:package.json")).version).toBe("1.0.0");
       expect(shop.github().prs).toHaveLength(0); expect(api.github().releases).toHaveLength(0);
       engine.approve(itemOf(ready, id, "delivery")!.id);
       const done = taskOf(await finish(engine, id), id);
@@ -1111,16 +1116,16 @@ describe.concurrent("one task across products", () => {
   });
 
   it("keeps a PR fork within its original product and retries its companion comment without duplicates", async () => {
-    const { shop, api, start, sourceRemotes } = setup("fork-links");
-    const fork = join(shop.dir, "fork.git"); git(shop.dir, "clone", "-q", "--bare", shop.remote, fork);
+    const { shop, api, start, sourceRemotes } = await setup("fork-links");
+    const fork = join(shop.dir, "fork.git"); await git(shop.dir, "clone", "-q", "--bare", shop.remote, fork);
     sourceRemotes["contributor/demo"] = fork;
-    git(shop.clone, "switch", "-q", "-c", "review-work");
+    await git(shop.clone, "switch", "-q", "-c", "review-work");
     writeFileSync(join(shop.clone, "existing.txt"), "Existing PR work");
-    git(shop.clone, "add", "."); git(shop.clone, "commit", "-qm", "Existing PR work");
-    const initial = git(shop.clone, "rev-parse", "HEAD");
-    git(shop.clone, "push", "-q", fork, "review-work");
-    git(shop.clone, "push", "-q", shop.remote, `${initial}:refs/pull/7/head`);
-    git(shop.clone, "switch", "-q", "main");
+    await git(shop.clone, "add", "."); await git(shop.clone, "commit", "-qm", "Existing PR work");
+    const initial = await git(shop.clone, "rev-parse", "HEAD");
+    await git(shop.clone, "push", "-q", fork, "review-work");
+    await git(shop.clone, "push", "-q", shop.remote, `${initial}:refs/pull/7/head`);
+    await git(shop.clone, "switch", "-q", "main");
     shop.setGitHub((state) => { state.forks = { "contributor/demo": fork }; state.lose = { "pr comment": 1 }; state.prs.push({ number: 7, url: "https://github.com/acme/demo/pull/7", state: "OPEN", title: "Original title", body: "Original description", headRefName: "review-work", baseRefName: "main", headRefOid: initial, headRepository: { nameWithOwner: "contributor/demo" }, isCrossRepository: true }); });
     const engine = start();
     try {
@@ -1145,7 +1150,7 @@ describe.concurrent("one task across products", () => {
   });
 
   it("saves an editing architect's work separately in each product before the shared review", async () => {
-    const { shop, api, start, fakes } = setup("editing-design"); const engine = start();
+    const { shop, api, start, fakes } = await setup("editing-design"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const architect = engine.getState().roles.find((role) => role.result === "brief")!;
@@ -1155,7 +1160,7 @@ describe.concurrent("one task across products", () => {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined();
       expect(task.repositories!.every((work) => work.completedStages.some((stage) => stage.includes(":author:")))).toBe(true);
-      for (const work of task.repositories!) expect(git(work.worktree!, "show", "HEAD:architecture.txt")).toContain("Before the design review");
+      for (const work of task.repositories!) expect(await git(work.worktree!, "show", "HEAD:architecture.txt")).toContain("Before the design review");
     } finally { await engine.shutdown(); }
   });
 
@@ -1163,7 +1168,7 @@ describe.concurrent("one task across products", () => {
 
 describe.concurrent("shared-task repair regressions", () => {
   it("stops at exhausted acceptance allowances, keeps them after restart and renews every product on send-back", async () => {
-    const { shop, api, start, fakes } = setup("acceptance-exhausted");
+    const { shop, api, start, fakes } = await setup("acceptance-exhausted");
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -1202,7 +1207,7 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   it("repairs assigned review problems while leaving unassigned problems for the coordinator", async () => {
-    const { shop, api, start, fakes } = setup("mixed-ownership"); const engine = start();
+    const { shop, api, start, fakes } = await setup("mixed-ownership"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ builder: "plain", reviewer: "important-twice", affectedProducts: [second], unassignedFinding: true, fixes: "change", reopen: "resume" });
@@ -1236,7 +1241,7 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   for (const order of ["pass-first", "confirmation-first", "dispute-first", "confirmation-before-dispute", "repeated-finding-after-dispute", "repeated-finding-before-dispute", "dispute-without-confirmation", "both-pass"] as const) it(`combines shared fix reviews regardless of completion order, including restart: ${order}`, async () => {
-    const { shop, api, start } = setup(`shared-verdict-${order}`); let engine = start();
+    const { shop, api, start } = await setup(`shared-verdict-${order}`); let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Verify the shared repair" });
@@ -1284,7 +1289,7 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   it("settles single-product objections with the whole group and preserves checks and unresolved ownership", async () => {
-    const { shop, api, start } = setup("group-objection-controls"); const engine = start();
+    const { shop, api, start } = await setup("group-objection-controls"); const engine = start();
     try {
       engine.setPoolPaused(true);
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -1317,7 +1322,7 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   it("keeps each editing role's product report available to the next product and the combined reviewers", async () => {
-    const { shop, api, start, fakes } = setup("editing-notes"); const engine = start();
+    const { shop, api, start, fakes } = await setup("editing-notes"); const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       engine.addRole({ ...draftOf(engine.getState().roles.find((role) => role.result === "notes")!), name: "Copywriter", result: "notes", canEdit: true });
@@ -1338,7 +1343,7 @@ describe.concurrent("shared-task repair regressions", () => {
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
   it("attributes both products' reused failures after a shared unchanged repair", async () => {
-    const { shop, api, start, fakes } = setup("unchanged-shared-check-repair");
+    const { shop, api, start, fakes } = await setup("unchanged-shared-check-repair");
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -1367,7 +1372,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
   });
 
   it("returns a shared check repair started right before shipping through review, acceptance and the delivery check", async () => {
-    const { shop, api, start, fakes } = setup("check-repair-before-shipping");
+    const { shop, api, start, fakes } = await setup("check-repair-before-shipping");
     const engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -1403,11 +1408,11 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
   });
 
   for (const decision of ["approve-again", "send-back"] as const) it(`cleans earlier unpublished release versions before shared ${decision} after a later preview mismatch`, async () => {
-    const { shop, api, start, fakes } = setup(`release-preview-mismatch-${decision}`);
+    const { shop, api, start, fakes } = await setup(`release-preview-mismatch-${decision}`);
     for (const world of [shop, api]) {
       writeFileSync(join(world.clone, "package.json"), JSON.stringify({ name: world === shop ? "shop" : "api", version: "1.0.0" }));
-      git(world.clone, "add", "package.json"); git(world.clone, "commit", "-qm", "Record the release version"); git(world.clone, "push", "-q", world.remote, "main");
-      git(world.remote, "update-ref", "refs/tags/v1.0.0", git(world.clone, "rev-parse", "HEAD"));
+      await git(world.clone, "add", "package.json"); await git(world.clone, "commit", "-qm", "Record the release version"); await git(world.clone, "push", "-q", world.remote, "main");
+      await git(world.remote, "update-ref", "refs/tags/v1.0.0", await git(world.clone, "rev-parse", "HEAD"));
       world.setGitHub((state) => state.releases.push({ tagName: "v1.0.0", url: `https://github.com/${state.repo}/releases/tag/v1.0.0`, publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "Previous release" }));
     }
     const peerState = join(api.dir, "github.json");
@@ -1421,7 +1426,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
         fs.writeFileSync(path, JSON.stringify(state));
       }
     `);
-    git(shop.clone, "add", "mutate-peer-release.cjs"); git(shop.clone, "commit", "-qm", "Add a check helper"); git(shop.clone, "push", "-q", shop.remote, "main");
+    await git(shop.clone, "add", "mutate-peer-release.cjs"); await git(shop.clone, "commit", "-qm", "Add a check helper"); await git(shop.clone, "push", "-q", shop.remote, "main");
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
@@ -1448,8 +1453,8 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       // B's preview changes after A's version check; pausing at the gate must not preserve A's version commit.
       for (const work of waiting.repositories!) {
         expect(work.shipping?.prepared).toBeUndefined();
-        expect(git(work.worktree!, "rev-parse", "HEAD")).toBe(work.checkedSha!);
-        expect(JSON.parse(git(work.worktree!, "show", "HEAD:package.json")).version).toBe("1.0.0");
+        expect(await git(work.worktree!, "rev-parse", "HEAD")).toBe(work.checkedSha!);
+        expect(JSON.parse(await git(work.worktree!, "show", "HEAD:package.json")).version).toBe("1.0.0");
       }
       expect(shop.github().releases).toHaveLength(1);
       expect(api.github().releases).toHaveLength(1);
@@ -1458,7 +1463,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(taskOf(mismatch, id).error).toBeUndefined();
       await engine.shutdown(); engine = start();
       const restored = engine.task(id)!;
-      expect(restored.repositories!.map((work) => git(work.worktree!, "rev-parse", "HEAD"))).toEqual(approved);
+      expect(await Promise.all(restored.repositories!.map((work) => git(work.worktree!, "rev-parse", "HEAD")))).toEqual(approved);
       const decisionItem = itemOf(engine.getState(), id, "delivery")!;
       if (decision === "send-back") {
         engine.requestChanges(decisionItem.id, "Revisit the shared release before trying again");
@@ -1483,12 +1488,12 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
   });
 
   for (const decision of ["retry", "send-back"] as const) it(`keeps shared approval and offers ${decision} when release-version checks fail`, async () => {
-    const { shop, api, start, fakes } = setup(`release-version-failure-${decision}`);
+    const { shop, api, start, fakes } = await setup(`release-version-failure-${decision}`);
     const allow = join(api.dir, "allow-release");
     writeFileSync(join(api.clone, "package.json"), JSON.stringify({ name: "api", version: "1.0.0" }));
     writeFileSync(join(api.clone, "version-check.cjs"), `if (require('./package.json').version !== '1.0.0' && !require('node:fs').existsSync(${JSON.stringify(allow)})) process.exit(1);`);
-    git(api.clone, "add", "."); git(api.clone, "commit", "-qm", "Record the version"); git(api.clone, "push", "-q", api.remote, "main");
-    git(api.remote, "update-ref", "refs/tags/v1.0.0", git(api.clone, "rev-parse", "HEAD"));
+    await git(api.clone, "add", "."); await git(api.clone, "commit", "-qm", "Record the version"); await git(api.clone, "push", "-q", api.remote, "main");
+    await git(api.remote, "update-ref", "refs/tags/v1.0.0", await git(api.clone, "rev-parse", "HEAD"));
     api.setGitHub((state) => state.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/api/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "Previous release" }));
     let engine = start();
     try {
@@ -1509,9 +1514,9 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(failed.plan!.stages[failed.stageIndex]!.gate).toBe("delivery");
       for (const work of failed.repositories!) {
         expect(work.shipping?.prepared).toBeUndefined();
-        expect(git(work.worktree!, "rev-parse", "HEAD")).toBe(work.approvedSha!);
+        expect(await git(work.worktree!, "rev-parse", "HEAD")).toBe(work.approvedSha!);
       }
-      expect(JSON.parse(git(failed.repositories![1]!.worktree!, "show", "HEAD:package.json")).version).toBe("1.0.0");
+      expect(JSON.parse(await git(failed.repositories![1]!.worktree!, "show", "HEAD:package.json")).version).toBe("1.0.0");
       expect(failed.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking")).toEqual([]);
       expect(failed.repositories![1]!.checks!.results.every((run) => run.ok)).toBe(true);
       expect(fakes.received("builder")).toHaveLength(2);
@@ -1544,11 +1549,11 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
   });
 
   for (const peerOnly of [false, true]) it(`checks and routes deleted tests in ${peerOnly ? "only the other review snapshot" : "every changed review snapshot"} on hand-back`, async () => {
-    const { shop, api, start, fakes } = setup(`hand-back-${peerOnly}`);
+    const { shop, api, start, fakes } = await setup(`hand-back-${peerOnly}`);
     for (const world of [shop, api]) {
       mkdirSync(join(world.clone, "test"));
       writeFileSync(join(world.clone, "test", "greeting.test.ts"), 'import { test, expect } from "bun:test"; test("greeting", () => expect(true).toBe(true));\n');
-      git(world.clone, "add", "."); git(world.clone, "commit", "-qm", "Keep the greeting test"); git(world.clone, "push", "-q", world.remote, "main");
+      await git(world.clone, "add", "."); await git(world.clone, "commit", "-qm", "Keep the greeting test"); await git(world.clone, "push", "-q", world.remote, "main");
     }
     // Copying the launch command never starts a terminal or app.
     const engine = start({ toolPath: () => process.execPath });
@@ -1566,11 +1571,11 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       const active = task.productId;
       const changed = peerOnly ? [first, second].filter((id) => id !== active) : [first, second];
       const untouched = task.repositories!.find((work) => !changed.includes(work.productId));
-      const original = untouched && git(untouched.worktree!, "rev-parse", "HEAD");
+      const original = untouched && await git(untouched.worktree!, "rev-parse", "HEAD");
       for (const productId of changed) {
         const snapshot = task.driving!.repositoryCopies![productId]!.path;
-        git(snapshot, "rm", "test/greeting.test.ts");
-        git(snapshot, "commit", "-qm", "Coordinator removes a test");
+        await git(snapshot, "rm", "test/greeting.test.ts");
+        await git(snapshot, "commit", "-qm", "Coordinator removes a test");
       }
       engine.setPoolPaused(true);
       // Inspect the saved hand-back before the resumed review can move the active product again.
@@ -1585,7 +1590,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
           expect(work.tamper?.problems.length).toBe(1);
           expect(existsSync(join(work.worktree!, "test/greeting.test.ts"))).toBe(false);
           expect(work.checks?.current).toBe(false);
-        } else expect(git(work.worktree!, "rev-parse", "HEAD")).toBe(original!);
+        } else expect(await git(work.worktree!, "rev-parse", "HEAD")).toBe(original!);
       }
       // Routing selects exactly the affected saved builders, even when the driven product was untouched.
       expect(beginRepair(engine, task, "review", task.stageIndex)).toBe(true);

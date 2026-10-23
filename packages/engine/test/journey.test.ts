@@ -15,7 +15,7 @@ async function setup(scenario: Parameters<Fakes["scenario"]>[0] = {}, approveDel
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir] });
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", approveDelivery);
   return { engine, productId, fakes };
 }
@@ -246,7 +246,7 @@ describe("the engine records each task's journey", () => {
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ controlled: true });
     let engine = new Engine(data, { agentCommand: () => [process.execPath, fake, fakes.dir] });
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     engine.setPoolPaused(true);
     const id = engine.addTask({ productId, title: "From before" });
     // As if it ran before journeys were recorded: planned, designed and waiting for its build.
@@ -275,7 +275,7 @@ describe("the engine records each task's journey", () => {
     fakes.scenario({});
     const open = () => new Engine(data, { agentCommand: () => [process.execPath, fake, fakes.dir] });
     let engine = open();
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     engine.setProductDelivery(productId, "local", false);
     const id = engine.addTask({ productId, title: "From before", description: "A friendly greeting file." });
     const question = () => engine.getState().inbox.find((item) => item.taskId === id && item.kind === "question");

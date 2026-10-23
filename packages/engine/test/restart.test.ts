@@ -8,16 +8,16 @@ import { EngineProcess, Fakes, makeProduct, removeDir, tempDir, waitFor } from "
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-function setup() {
+async function setup() {
   const root = tempDir("petrina-restart-");
   roots.push(root);
-  return { product: makeProduct(root), home: join(root, "home"), fakes: new Fakes(join(root, "fake")) };
+  return { product: await makeProduct(root), home: join(root, "home"), fakes: new Fakes(join(root, "fake")) };
 }
 
 describe("what the coordinator says during a step survives a restart", () => {
   for (const stop of ["quit", "kill", "pause"] as const) {
     it(`reaches the agent that starts the step again, after ${stop === "quit" ? "an ordinary quit" : stop === "kill" ? "a forced kill" : "pausing and resuming"}`, async () => {
-      const { product, home, fakes } = setup();
+      const { product, home, fakes } = await setup();
       fakes.scenario({ planner: "short", builder: "restart" });
       let engine = await EngineProcess.harness(home, fakes.dir);
       const productId = (await engine.act("addProduct", product)) as string;
@@ -81,7 +81,7 @@ describe("what the coordinator says during a step survives a restart", () => {
 
 describe("a message sent as the engine is killed", () => {
   it("is kept exactly once after the window sends it again", async () => {
-    const { product, home, fakes } = setup();
+    const { product, home, fakes } = await setup();
     let engine = await EngineProcess.harness(home, fakes.dir);
     await engine.act("setPoolPaused", true);
     const productId = (await engine.act("addProduct", product)) as string;
@@ -114,7 +114,7 @@ describe("what the coordinator says is kept for the step", () => {
   afterAll(() => engine.shutdown());
 
   async function waitingTask(): Promise<() => Task> {
-    const product = makeProduct(join(root, `p${Date.now()}`));
+    const product = await makeProduct(join(root, `p${Date.now()}`));
     engine.setPoolPaused(true);
     const productId = await engine.addProduct(product, `Product ${engine.getState().products.length + 1}`);
     const taskId = engine.addTask({ productId, title: "Hold still" });

@@ -389,7 +389,7 @@ it("reuses unchanged context across companion base updates, but not a changed ap
 });
 
 it("removes terminal and orphaned context packets while retaining an unfinished task's fallback", async () => {
-  const world = makeWorld("builder-context-cleanup");
+  const world = await makeWorld("builder-context-cleanup");
   const engine = world.start();
   try {
     engine.setPoolPaused(true);

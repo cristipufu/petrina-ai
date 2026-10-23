@@ -473,7 +473,7 @@ describe("a real workflow through the event feed", () => {
     fakes.scenario(scenario);
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir] });
     engines.push(engine);
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     engine.setProductDelivery(productId, "local", true);
     return { engine, productId, fakes, root };
   }
@@ -678,7 +678,7 @@ describe("a planned reviewer that never starts", () => {
     fakes.scenario({ planner: "parallel", builder: "plain", controlled: true });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir] });
     engines.push(engine);
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     engine.setProductDelivery(productId, "local", true);
     // One agent at a time: the second reviewer cannot start beside the first.
     engine.setPoolLimit(1);

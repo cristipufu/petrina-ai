@@ -17,7 +17,7 @@ describe("the checks found for each set of CI and build files", () => {
     fakes.scenario({ fixes: "change" });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
     try {
-      const repo = makeProduct(root);
+      const repo = await makeProduct(root);
       const productId = await engine.addProduct(repo);
       engine.setProductDelivery(productId, "local", true);
       const settle = (state: State) => {
@@ -41,8 +41,8 @@ describe("the checks found for each set of CI and build files", () => {
       const check = await atDelivery(first);
       // Main's build files change: the next task's working copy has other ones.
       writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "demo", scripts: { test: "true" } }, null, 2));
-      git(repo, "add", "package.json");
-      git(repo, "commit", "-q", "-m", "A package.json on main");
+      await git(repo, "add", "package.json");
+      await git(repo, "commit", "-q", "-m", "A package.json on main");
       const second = engine.addTask({ productId, title: "Add a farewell", description: "[no-check]" });
       await atDelivery(second);
       expect(finds(second)).toBe(1);

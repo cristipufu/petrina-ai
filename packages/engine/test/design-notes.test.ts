@@ -21,7 +21,7 @@ const designCheck = (id: string, round: number): JourneyStep => ({ id, kind: "yo
 /** Context and native prompts directly: planning, the design loop itself and check discovery are unrelated here. */
 async function fixture() {
   const root = tempDir("petrina-design-notes-");
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume" });
   const engine = new Engine(join(root, "data"), {
@@ -35,7 +35,7 @@ async function fixture() {
   engine.s.products.push({ id: "product", name: "Product", repo: "local/product", path: repo, defaultBranch: "main", tone: "blue" });
   const task = engine.task(engine.addTask({ productId: "product", title: "Add a greeting", description: "A greeting file.", backlog: true }))!;
   const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: git(repo, "rev-parse", "HEAD") });
+  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
   task.plan = { rationale: "Design, then build", plannerProfileId: "opus-high", stages: [
     { id: "design", kind: "converge", title: "Agree on the greeting", roleId: "architect", profileIds: ["opus-high"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-high"], maxRounds: 3 },
     { id: "check", kind: "gate", title: "Your design check", roleId: "architect", profileIds: [], gate: "design" },

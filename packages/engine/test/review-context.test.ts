@@ -22,14 +22,14 @@ const earlier: DeepMutable<Finding> = { id: "older", text: "An earlier bug", sev
 
 async function bare() {
   const root = tempDir("petrina-review-input-"); roots.push(root);
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   writeFileSync(join(repo, "REVIEW.md"), "# Rules\nPreserve the original rule.\n");
-  git(repo, "add", "REVIEW.md"); git(repo, "commit", "-qm", "Record the original review guide");
-  const base = git(repo, "rev-parse", "HEAD");
+  await git(repo, "add", "REVIEW.md"); await git(repo, "commit", "-qm", "Record the original review guide");
+  const base = await git(repo, "rev-parse", "HEAD");
   writeFileSync(join(repo, "REVIEW.md"), "# Rules\nA change cannot replace the original rule.\n");
   writeFileSync(join(repo, "greeting.txt"), "FIRST-CHANGE\n");
-  git(repo, "add", "."); git(repo, "commit", "-qm", "Add the greeting");
-  const first = git(repo, "rev-parse", "HEAD");
+  await git(repo, "add", "."); await git(repo, "commit", "-qm", "Add the greeting");
+  const first = await git(repo, "rev-parse", "HEAD");
   const engine = new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
   engine.schedule = () => {}; engine.setPoolPaused(true);
   engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
@@ -51,15 +51,15 @@ describe("immutable review inputs", () => {
       f.task.stageIndex = 0; f.task.findings = [];
       const signal = new AbortController().signal;
       const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
-      const originalTree = git(f.repo, "rev-parse", "HEAD^{tree}");
+      const originalTree = await git(f.repo, "rev-parse", "HEAD^{tree}");
       expect(input.trees).toEqual({ p: originalTree });
       f.task.hunt = { stageId: stage.id, round: 1, reported: { "0": true }, input };
       beginAgentStep(f.task, "code-reviewer", "sol-high", Date.now(), f.engine.s.roles, undefined, f.scope.work);
       writeFileSync(join(f.repo, "later.txt"), "Different current code\n");
-      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Later contents");
+      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Later contents");
       await f.engine["reviews"].runReview(f.task, stage, signal);
       expect(f.task.journey!.at(-1)!.checkReviews?.map((review) => review.tree)).toEqual([originalTree]);
-      expect(originalTree).not.toBe(git(f.repo, "rev-parse", "HEAD^{tree}"));
+      expect(originalTree).not.toBe(await git(f.repo, "rev-parse", "HEAD^{tree}"));
       f.task.stageIndex = 0;
       const { trees: _trees, ...olderInput } = input;
       f.task.hunt = { stageId: stage.id, round: 1, reported: { "0": true }, input: olderInput };
@@ -134,8 +134,8 @@ describe("immutable review inputs", () => {
       mkdirSync(join(f.repo, "packages", "[new]"), { recursive: true });
       writeFileSync(join(f.repo, "packages", "[new]", "package-lock.json"), "NESTED-PORT-LOCKFILE\n");
       writeFileSync(join(f.repo, "greeting.txt"), "A-PORTED-GREETING\n");
-      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Resolve the port");
-      const head = git(f.repo, "rev-parse", "HEAD");
+      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Resolve the port");
+      const head = await git(f.repo, "rev-parse", "HEAD");
       f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt", "bun.lock", "packages/[new]/package-lock.json"] };
       f.scope.work.reviewedSha = f.first;
       const run = spyOn(gitOps, "run");
@@ -205,7 +205,7 @@ describe("immutable review inputs", () => {
     try {
       f.scope.work.reviewedSha = f.first;
       writeFileSync(join(f.repo, "greeting.txt"), "FIRST-CHANGE\nFIX-ONLY\n");
-      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Fix the greeting");
+      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Fix the greeting");
       const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
       const snapshot = await readReviewInput(ref);
       const file = /: ("[^"\n]+\.md") \(reference/.exec(snapshot.material!.body)![1]!;
@@ -231,7 +231,7 @@ describe("immutable review inputs", () => {
       f.scope.work.reviewedSha = f.first;
       writeFileSync(join(f.repo, "bun.lock"), "LOCKFILE-ONLY-SENTINEL\n".repeat(5_000));
       writeFileSync(join(f.repo, "greeting.txt"), "FIRST-CHANGE\nFIX-ONLY\n");
-      git(f.repo, "add", "."); git(f.repo, "commit", "-qm", "Update a dependency and the greeting");
+      await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Update a dependency and the greeting");
       const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
       const input = await readReviewInput(ref);
       const ordinary = input.artifacts!.filter((artifact) => !artifact.file.endsWith("-lockfiles.md"));
@@ -290,10 +290,10 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
   const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null }, browser: true, browserTempRoot: browsers };
   let engine = new Engine(data, engineOptions);
   engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
-  const productId = await engine.addProduct(makeProduct(root)); engine.setProductDelivery(productId, "local", true);
+  const productId = await engine.addProduct(await makeProduct(root)); engine.setProductDelivery(productId, "local", true);
   let second: string | undefined;
   if (options.shared) {
-    const copy = makeProduct(join(root, "second")), named = join(root, "second", "api");
+    const copy = await makeProduct(join(root, "second")), named = join(root, "second", "api");
     renameSync(copy, named);
     second = await engine.addProduct(named, "Second");
     fakes.scenario({ ...scenario, affectedProducts: [productId, second] });
@@ -301,8 +301,9 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
   if (options.advance) for (const product of engine.s.products) {
     writeFileSync(join(product.path!, "REVIEW.md"), "OLD-BASE-GUIDE\n");
     writeFileSync(join(product.path!, "overlap.txt"), originalLines);
-    git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Set the original review context");
+    await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Set the original review context");
     product.checksBy = "coordinator";
+    // A product check: the engine's check runner bounds this program and stops its whole process group.
     product.checks = [{ name: "Exact code", argv: [process.execPath, "-e", `import { testGitEnv } from ${JSON.stringify(join(import.meta.dir, "test-git-env.ts"))}; console.log('CHECKED-CODE:' + Bun.spawnSync(['git','rev-parse','HEAD'], { env: testGitEnv() }).stdout.toString().trim()); if (require('node:fs').existsSync(${JSON.stringify(join(root, "fail-check"))})) process.exit(1);`], why: "Prove checks run on the current code" }];
   }
   const taskId = engine.addTask({ productId, title: "Reuse independent reviewers", description: "ORIGINAL-REVIEW-REQUEST [no-check]", approvePlan: true, ...(second ? { worksOn: [productId, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "local" as const })) } : {}) });
@@ -327,14 +328,14 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
     if (task().state === "failed") throw new Error(task().error);
   };
   const beforeFix = () => waitFor(() => { tick(); return existsSync(`${hold}.reached`); }, "the controlled Builder fix");
-  const advanceMain = (id = second ?? productId, conflict = false) => {
+  const advanceMain = async (id = second ?? productId, conflict = false) => {
     const product = engine.s.products.find((product) => product.id === id)!;
-    const before = git(product.path!, "rev-parse", "HEAD");
+    const before = await git(product.path!, "rev-parse", "HEAD");
     writeFileSync(join(product.path!, "REVIEW.md"), "NEW-BASE-GUIDE\n");
     writeFileSync(join(product.path!, "overlap.txt"), originalLines.replace("Original line 59\n", "Main changes the last line\n"));
     if (conflict) writeFileSync(join(product.path!, "greeting.txt"), "Main's incompatible greeting\n");
-    git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Advance main independently");
-    return { productId: id, before, base: git(product.path!, "rev-parse", "HEAD") };
+    await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Advance main independently");
+    return { productId: id, before, base: await git(product.path!, "rev-parse", "HEAD") };
   };
   const done = () => { rmSync(hold, { force: true }); return waitFor(() => { tick(); return engine.getState().inbox.some((item) => item.kind === "delivery") && task(); }, "the reviewed delivery"); };
   const restart = async () => { await engine.shutdown(); engine = new Engine(data, engineOptions); };
@@ -348,12 +349,12 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
     const f = await run(reopen, { advance: true, single: mode === "single", shared: mode === "shared" });
     try {
       await f.beforeFix();
-      const moved = f.advanceMain();
+      const moved = await f.advanceMain();
       const saved = structuredClone(f.task().reviewSessions!);
       if (mode === "builder-update") {
         const worktree = executionFor(f.task()).work.worktree!;
-        git(worktree, "add", "."); git(worktree, "commit", "-qm", "The Builder's fix");
-        git(worktree, "merge", "--no-edit", "-m", "The Builder brings main in itself", moved.base);
+        await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "The Builder's fix");
+        await git(worktree, "merge", "--no-edit", "-m", "The Builder brings main in itself", moved.base);
       }
       f.task().notes = [{ at: 1, text: "REFRESHED-COORDINATOR-INSTRUCTION" }];
       const task = await f.done();
@@ -365,7 +366,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       expect(rounds[0]!.agentInputs!.every((input) => !input.sections.some((section) => section.title.startsWith("Findings so far")))).toBe(true);
       const works = scopesFor(task).map(({ work }) => work);
       const current = works.find((work) => work.productId === moved.productId)!;
-      const head = git(current.worktree!, "rev-parse", "HEAD");
+      const head = await git(current.worktree!, "rev-parse", "HEAD");
       expect(current.baseSha).toBe(moved.base);
       expect(current.checks!.sha).toBe(head);
       expect(current.checks!.results.every((run) => run.ok && run.output.includes(`CHECKED-CODE:${head}`))).toBe(true);
@@ -496,7 +497,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
   it("starts fresh with complete inputs when the harness cannot reopen a reviewer", async () => {
     const f = await run(undefined, { advance: true });
     try {
-      await f.beforeFix(); f.advanceMain();
+      await f.beforeFix(); await f.advanceMain();
       const task = await f.done();
       const second = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
       expect(second.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription!.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
@@ -522,7 +523,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
   for (const changed of ["context", "absent context", "profile", "source", "bases", "incomplete bases", "native session"] as const) it(`starts the affected seats fresh after ${changed} changes while main advances`, async () => {
     const f = await run("resume", { advance: true });
     try {
-      await f.beforeFix(); f.advanceMain();
+      await f.beforeFix(); await f.advanceMain();
       const stage = f.task().plan!.stages.find((entry) => entry.kind === "review-chain")!;
       const prior = f.task().reviewSessions![stage.id]!["0"]!;
       if (changed === "context") {
@@ -540,7 +541,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       } else if (changed === "profile") stage.profileIds[0] = "opus-xhigh";
       else if (changed === "source") {
         const work = executionFor(f.task()).work;
-        work.source!.initialSha = git(work.worktree!, "rev-parse", `${prior.bases![work.productId]}~1`);
+        work.source!.initialSha = await git(work.worktree!, "rev-parse", `${prior.bases![work.productId]}~1`);
       } else if (changed === "bases") delete prior.bases;
       else if (changed === "incomplete bases") prior.bases = {};
       else rmSync(join(f.fakes.dir, "conversations", `${prior.sessionId}.json`));
@@ -566,7 +567,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
     const f = await run(single ? "load" : "resume", { advance: true, shared, single });
     try {
       await f.beforeFix();
-      const moved = f.advanceMain(undefined, true);
+      const moved = await f.advanceMain(undefined, true);
       const saved = f.task().reviewSessions!;
       const sessions = Object.values(saved).flatMap((seats) => Object.values(seats).map((seat) => seat.sessionId));
       const why = `main conflicted with the change${shared ? ` in ${f.engine().s.products.find((product) => product.id === moved.productId)!.name}` : ""}, so the Builder had to port it`;
@@ -615,9 +616,9 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
     try {
       await f.beforeFix();
       const product = f.engine().s.products[0]!;
-      git(product.path!, "reset", "--hard", "HEAD~1");
+      await git(product.path!, "reset", "--hard", "HEAD~1");
       writeFileSync(join(product.path!, "replacement.txt"), "Different history\n");
-      git(product.path!, "add", "."); git(product.path!, "commit", "-qm", "Replace the source history");
+      await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Replace the source history");
       await expectRejection(f.done(), "history was replaced or diverged");
       const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
       expect(sessions.size).toBe(2);
@@ -628,7 +629,7 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
   it("returns failed checks on updated code to the Builder before spending another review", async () => {
     const f = await run("resume", { advance: true });
     try {
-      await f.beforeFix(); f.advanceMain();
+      await f.beforeFix(); await f.advanceMain();
       writeFileSync(join(f.root, "fail-check"), "");
       const task = await f.done();
       expect(task.journey!.filter((step) => step.roleId === "code-reviewer")).toHaveLength(1);
@@ -720,7 +721,7 @@ it("checks each seat's remembered bases, including missing, unchanged, forward, 
     expect(branch.sections[0]!.body).toContain("release gained 1 commit.");
     expect(branch.sections[0]!.body).toContain("release's incoming changes are not in the incremental comparison");
     expect((await reviewBaseUpdates(f.scope, { p: f.first }, heads)).sections).toEqual([]);
-    const unrelated = git(f.repo, "commit-tree", `${f.first}^{tree}`, "-m", "A base without the original history");
+    const unrelated = await git(f.repo, "commit-tree", `${f.first}^{tree}`, "-m", "A base without the original history");
     expect((await reviewBaseUpdates(f.scope, { p: unrelated }, heads)).reason).toContain("replaced or diverged");
     f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt"] };
     expect((await reviewBaseUpdates(f.scope, bases, heads)).reason).toContain("conflict port review");
@@ -819,7 +820,10 @@ describe("bounded verifier places after handoffs", () => {
     const folder = join(f.engine.dataDir, "worktrees", "p", `${f.task.id}.copies`);
     const seen: { member?: string; place?: string; copy: string; head: string; peers: string[] }[] = [];
     const turn = spyOn(f.engine["turns"], "parallel").mockImplementation(async (_scope, _role, _profile, copy, _given, _schema, _signal, options) => {
-      seen.push({ member: options?.member, place: options?.place, copy, head: git(copy, "rev-parse", "HEAD"), peers: readdirSync(folder).sort() });
+      // Each start in call order, with the folder as it was then; its version follows once Git answers.
+      const entry = { member: options?.member, place: options?.place, copy, head: "", peers: readdirSync(folder).sort() };
+      seen.push(entry);
+      entry.head = await git(copy, "rev-parse", "HEAD");
       await (options!.check as (value: unknown) => unknown)({ verdicts: [{ id: "x", verdict: "real", reason: "Reproduced the missing x greeting." }, { id: "y", verdict: "real", reason: "Reproduced the missing y greeting." }] });
       return undefined as never;
     });
@@ -833,7 +837,7 @@ describe("bounded verifier places after handoffs", () => {
       // The later start still sees its peer's separate copy: both were made beside each other.
       expect(seen.at(-1)!.peers).toEqual(["vote-third_3aopus-high", "vote-third_3asol-high"]);
       expect(existsSync(folder)).toBe(false);
-      expect(git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
+      expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
       // Answers keep their logical places: the takeover's answer counts for the place it took.
       const [x, y] = f.task.findings;
       expect(x!.votes!.at(-1)).toMatchObject({ by: "opus-high", toolId: "claude-code", verdict: "real", ballot: { seat: "third:opus-high" } });
@@ -878,7 +882,7 @@ describe("bounded verifier places after handoffs", () => {
       expect(f.task.findings[1]!.votes!.at(-1)).toMatchObject({ by: "argon-high", toolId: "antigravity", verdict: "real", ballot: { seat: "third:sol-high" } });
       expect(f.task.findings[0]!.votes!.at(-1)).toMatchObject({ by: "opus-high", toolId: "claude-code", verdict: "real", ballot: { seat: "third:opus-high" } });
       expect(existsSync(folder)).toBe(false);
-      expect(git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
+      expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
     } finally { turn.mockRestore(); await f.engine.shutdown(); }
   });
 
@@ -902,7 +906,10 @@ describe("bounded verifier places after handoffs", () => {
     f.task.screen = { reason: "Check the window", at: Date.now(), roleId: "verifier", profileId: "_46", member: "vote-_46", granted: true };
     const starts: { member?: string; copy: string; head: string; notes: boolean; peers: string[] }[] = [];
     const record = async (copy: string, options: { member?: string; check?: unknown } | undefined) => {
-      starts.push({ member: options?.member, copy, head: git(copy, "rev-parse", "HEAD"), notes: existsSync(join(copy, "screen-notes.txt")), peers: readdirSync(folder).sort() });
+      // Each start in call order, with its copy and folder as they were then; its version follows once Git answers.
+      const entry = { member: options?.member, copy, head: "", notes: existsSync(join(copy, "screen-notes.txt")), peers: readdirSync(folder).sort() };
+      starts.push(entry);
+      entry.head = await git(copy, "rev-parse", "HEAD");
       await (options!.check as (value: unknown) => unknown)({ verdicts: [{ id: "a", verdict: "real", reason: `Reproduced the missing a greeting in ${options?.member}.` }] });
       return undefined as never;
     };
@@ -917,7 +924,7 @@ describe("bounded verifier places after handoffs", () => {
       ]);
       expect(f.task.findings[0]!.votes!.map((vote) => [vote.by, vote.ballot?.seat])).toEqual([["_46", "_46"], ["F", "F"]]);
       expect(existsSync(folder)).toBe(false);
-      expect(git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
+      expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
     } finally { continued.mockRestore(); fresh.mockRestore(); await f.engine.shutdown(); }
   });
 
@@ -1027,7 +1034,7 @@ describe("bounded verifier places after handoffs", () => {
   // An older round may have saved only the commit; a later round of the same commit records its tree as well.
   for (const recorded of ["commit", "commit and tree"] as const) it(`keeps a finding a vote left unresolved when a written confirmation arrives on the same code, its ${recorded} saved`, async () => {
     const f = await ballot(["sol-high", "opus-high"], ["u"], 2);
-    const tree = git(f.repo, "rev-parse", `${f.first}^{tree}`);
+    const tree = await git(f.repo, "rev-parse", `${f.first}^{tree}`);
     const round1 = { stageId: f.stage.id, round: 1, input: { heads: { p: f.first } } };
     const finding = f.task.findings[0]!;
     finding.votes = [answer(round1, "sol-high", "sol-high", "codex", "nit"), answer(round1, "grok-high", "grok-high", "grok", "nit")];

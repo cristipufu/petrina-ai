@@ -10,12 +10,12 @@ import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 describe("product settings in the engine", () => {
   it("enforces names and atomic saves through the API, preserves repository identity, and keeps old task choices", async () => {
     const root = tempDir("petrina-products-");
-    const initial = makeProduct(root);
+    const initial = await makeProduct(root);
     const repo = join(root, "petrina-ai");
     renameSync(initial, repo);
     const secondRoot = join(root, "second");
     mkdirSync(secondRoot);
-    const second = makeProduct(secondRoot);
+    const second = await makeProduct(secondRoot);
     const data = join(root, "data");
     let engine = new Engine(data);
     const server = serve(engine, { port: 0, token: "product-settings-test-key" });
@@ -60,7 +60,7 @@ describe("product settings in the engine", () => {
 
   it("refuses every unfinished state, then removes all finished and cancelled history and inbox entries durably", async () => {
     const root = tempDir("petrina-remove-");
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     const data = join(root, "data");
     let engine = new Engine(data);
     engine.setPoolPaused(true);
@@ -98,7 +98,7 @@ describe("product settings in the engine", () => {
 
   it("gives the next agent the saved display name while keeping the working copy and branch", async () => {
     const root = tempDir("petrina-rename-agent-");
-    const repo = makeProduct(root);
+    const repo = await makeProduct(root);
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ planner: "limits", controlled: true });
     const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });

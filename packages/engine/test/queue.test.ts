@@ -11,7 +11,7 @@ afterAll(() => { engine.shutdown(); removeDir(dir); });
 
 it("places filtered cards beside their neighbours and applies quick keyboard requests to the latest real queue", async () => {
   engine.setPoolPaused(true);
-  const productId = await engine.addProduct(makeProduct(dir));
+  const productId = await engine.addProduct(await makeProduct(dir));
   const make = (title: string) => engine.addTask({ productId, title, kind: "chore" });
   const a1 = make("A1"), b1 = make("B1"), a2 = make("A2");
   const ids = () => queueOf(engine.getState().tasks).map((task) => task.id);

@@ -15,7 +15,7 @@ export function coveredFiles(lcov: string, workspace: string, root: string): str
 }
 
 if (import.meta.main) {
-  const files = inputs(ROOT);
+  const files = await inputs(ROOT);
   const file = process.argv[2]?.replaceAll("\\", "/");
   if (!file || !file.startsWith("packages/engine/test/") || !isTest(file) || !files.has(file)) throw new Error("Pass one exact engine test file relative to the repository root");
   const before = fingerprint(files);
@@ -28,7 +28,7 @@ if (import.meta.main) {
   try { code = await child.exited; }
   finally { process.off("SIGINT", stop); process.off("SIGTERM", stop); }
   if (code !== 0) process.exit(code);
-  if (fingerprint(inputs(ROOT)) !== before) throw new Error("Inputs changed during coverage collection; no mapping was recorded");
+  if (fingerprint(await inputs(ROOT)) !== before) throw new Error("Inputs changed during coverage collection; no mapping was recorded");
   const existing = recordedCoverage(ROOT);
   const record: CoverageMap = { version: 1, fingerprint: before, tests: existing?.fingerprint === before ? existing.tests : {} };
   record.tests[file] = coveredFiles(readFileSync(join(folder, "lcov.info"), "utf8"), "packages/engine", ROOT).filter(path => files.has(path));

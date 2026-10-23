@@ -13,7 +13,7 @@ import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowse
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, parseProcessState, processList, readProcessList } from "../src/process-tree.js";
-import { defunctProcess, engineEnv, Fakes, finishedHelper, firstLine, HARNESS, makeProduct, removeDir, runChecks, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
+import { defunctProcess, engineEnv, Fakes, finishedHelper, firstLine, HARNESS, makeProduct, removeDir, runChecks, runCommand, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
 const root = tempDir("petrina-browser-");
 // Sessions start in this file's own short browser folder, never the user's standard one.
@@ -363,7 +363,7 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
   await withPendingBrowserRecovery(async ({ engine, fakes, work, registry, stale, startup, ready, release }) => {
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(registry)).toBe(false);
-    const productId = await engine.addProduct(makeProduct(work));
+    const productId = await engine.addProduct(await makeProduct(work));
     expect(ready()).toBe(false);
     const taskId = engine.addTask({ productId, title: "A queued task", description: "[no-check]" });
     const task = engine.task(taskId)!;
@@ -1057,10 +1057,10 @@ try {
     child.kill("SIGKILL");
     await exited;
 
-    const failed = Bun.spawnSync([process.execPath, recoveryScript, registry, browsers], { cwd: import.meta.dir, env: { ...process.env, PATH: bin }, stdout: "pipe", stderr: "pipe" });
-    expect(failed.exitCode, failed.stderr.toString()).toBe(0);
-    expect(JSON.parse(failed.stdout.toString())).toMatchObject({ failed: true, message: process.platform === "win32" ? "The headless browser did not stop." : "Petrina could not confirm that a background browser from an earlier session stopped. Petrina could not read the list of running programs." });
-    if (process.platform !== "win32") expect(failed.stderr.toString().split("\n").filter((line) => line.startsWith(CLEANUP_NOTE))).toHaveLength(1);
+    const failed = await runCommand([process.execPath, recoveryScript, registry, browsers], { cwd: import.meta.dir, env: { ...process.env, PATH: bin } });
+    expect(failed.code, failed.stderr).toBe(0);
+    expect(JSON.parse(failed.stdout)).toMatchObject({ failed: true, message: process.platform === "win32" ? "The headless browser did not stop." : "Petrina could not confirm that a background browser from an earlier session stopped. Petrina could not read the list of running programs." });
+    if (process.platform !== "win32") expect(failed.stderr.split("\n").filter((line) => line.startsWith(CLEANUP_NOTE))).toHaveLength(1);
     expect(readdirSync(registry)).toHaveLength(1);
     expect(existsSync(browser.directory)).toBe(true);
     expect(owned.some(processAlive)).toBe(true);

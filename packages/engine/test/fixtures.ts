@@ -1,50 +1,20 @@
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
 import { ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { cpus, loadavg, tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import type { State } from "@petrina/core";
 import type { Scenario } from "./fake-agent.js";
 import { updateGitHub, type FakeGitHub } from "./fake-gh.js";
 import { shortTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import type { MachineRecords } from "../src/check-interruption.js";
 import { runChecks as runProductChecks } from "../src/checks.js";
-import { testGitEnv } from "./test-git-env.js";
 import { readPrompts, type PromptRecord } from "./prompt-records.js";
+import { commitAt, git } from "./commands.js";
+import { currentSlow } from "./slow.js";
 export { testGitEnv } from "./test-git-env.js";
-
-/**
- * How much longer the time limits are on this machine. A Windows runner takes several times longer to start
- * every engine, agent and git process these tests drive, and so does a machine busy with other work. The limits
- * only catch hangs, so they stretch there; what a test asserts about time (the engine stopping within 10
- * seconds, say) stays as it is.
- */
-export let SLOW = Math.max(process.platform === "win32" ? 3 : 1, busy());
-let lastLoadSample = Date.now();
-
-/** Keep waits in a test worker proportional as its own parallel work makes the machine busier. */
-export function currentSlow(): number {
-  const now = Date.now();
-  if (now - lastLoadSample >= 1_000) {
-    SLOW = Math.max(SLOW, process.platform === "win32" ? 3 : 1, busy());
-    lastLoadSample = now;
-  }
-  return SLOW;
-}
-
-/**
- * How much busier than its cores this machine is right now, as a factor for deadlines (1 to 8). Petrina builds
- * itself, so its tests often run while its own agents work on the same machine: a deadline that only holds on
- * an idle machine would fail them for nothing. Windows reports no load, and has its own factor above.
- */
-function busy(): number {
-  const [load] = loadavg();
-  // A test worker often starts several Bun, Git and engine processes at once. On a many-core Mac,
-  // waiting until load exceeds the core count misses that I/O and process-start contention. Start
-  // stretching waits once the machine is near full, then scale faster as its run queue grows.
-  const ratio = (load ?? 0) / Math.max(1, cpus().length);
-  return Math.min(8, Math.max(1, Math.ceil(1 + Math.max(0, ratio - 0.75) * 4)));
-}
+export { SLOW, currentSlow } from "./slow.js";
+export { CommandFailure, commitAt, git, gitWith, runCommand, runGit } from "./commands.js";
 
 export const CLI = join(import.meta.dir, "../src/cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");
@@ -75,62 +45,68 @@ export function removeDir(path: string): void {
   }
 }
 
-/** Use Bun's native result and a deadline: the Node synchronous wrapper can stall after Git has exited. */
-export const git = (cwd: string, ...args: string[]): string => {
-  const result = Bun.spawnSync(["git", ...args], { cwd, env: testGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true, timeout: 30_000 * SLOW, killSignal: "SIGKILL" });
-  const output = result.stdout.toString();
-  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed (${result.signalCode ?? result.exitCode}):\n${[output, result.stderr.toString()].filter(Boolean).join("\n")}`);
-  return output.trim();
-};
-
 /** A product with a GitHub-like origin: a bare repository and a clone of it, on main. */
-export function makeProduct(root: string): string {
-  const seed = repositorySeed(undefined, true);
+export async function makeProduct(root: string): Promise<string> {
+  const seed = await repositorySeed(undefined, true);
   const origin = join(root, "origin.git");
   const clone = join(root, "clone");
   mkdirSync(root, { recursive: true });
   cpSync(seed.origin, origin, { recursive: true });
   cpSync(seed.clone, clone, { recursive: true });
-  git(clone, "remote", "set-url", "origin", origin);
+  await git(clone, "remote", "set-url", "origin", origin);
   return clone;
 }
 
 /** Reuse only the immutable starting commit. Each fixture copies its objects, refs and config. */
-interface RepositorySeed { path: string; origin: string; clone: string; head: string }
-const repositorySeeds = new Map<string, RepositorySeed>();
-export function repositorySeed(version?: string, versionFile = false, objectFormat?: "sha1" | "sha256"): RepositorySeed {
+interface RepositorySeed { readonly path: string; readonly origin: string; readonly clone: string; readonly head: string }
+// Concurrent fixtures asking for one recipe share its preparation while it runs. Only a completed seed is
+// ever handed out; a failed one leaves no entry and no folder behind, so the next fixture prepares it afresh.
+const repositorySeeds = new Map<string, Promise<RepositorySeed>>();
+const seedFolders = new Set<string>();
+export function repositorySeed(version?: string, versionFile = false, objectFormat?: "sha1" | "sha256"): Promise<RepositorySeed> {
   const key = JSON.stringify([version ?? "", versionFile, objectFormat]);
   const saved = repositorySeeds.get(key);
   if (saved) return saved;
   const path = tempDir("petrina-repository-seed-");
+  seedFolders.add(path);
+  const preparing = prepareSeed(path, version, versionFile, objectFormat).catch((error: unknown) => {
+    if (repositorySeeds.get(key) === preparing) repositorySeeds.delete(key);
+    removeDir(path);
+    // A folder that could not be removed yet stays for the exit cleanup.
+    if (!existsSync(path)) seedFolders.delete(path);
+    throw new Error(`Could not prepare the starting repository in ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  repositorySeeds.set(key, preparing);
+  return preparing;
+}
+
+async function prepareSeed(path: string, version: string | undefined, versionFile: boolean, objectFormat: "sha1" | "sha256" | undefined): Promise<RepositorySeed> {
   const source = join(path, "source"), origin = join(path, "origin.git"), clone = join(path, "clone");
   mkdirSync(source);
-  git(source, "init", "-q", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
+  await git(source, "init", "-q", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
   writeFileSync(join(source, "README.md"), "# Demo\n");
   if (versionFile) writeFileSync(join(source, "VERSION"), "1.0.0\n");
   if (version) writeFileSync(join(source, "package.json"), `${JSON.stringify({ name: "demo", version }, null, 2)}\n`);
-  git(source, "add", ".");
-  git(source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init");
-  if (versionFile) git(path, "clone", "-q", "--bare", "--no-hardlinks", source, origin);
+  await git(source, "add", ".");
+  await git(source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init");
+  if (versionFile) await git(path, "clone", "-q", "--bare", "--no-hardlinks", source, origin);
   else {
-    git(path, "init", "-q", "--bare", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []), origin);
-    git(source, "push", "-q", origin, "main");
+    await git(path, "init", "-q", "--bare", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []), origin);
+    await git(source, "push", "-q", origin, "main");
   }
-  git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", origin, clone);
-  if (versionFile) git(clone, "remote", "set-url", "origin", ADDRESS);
+  await git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", origin, clone);
+  if (versionFile) await git(clone, "remote", "set-url", "origin", ADDRESS);
   else {
     // Worlds originally pushed an initial commit to a bare repository by path, without tracking
     // refs or upstream configuration. Product fixtures are real clones and keep those defaults.
-    git(clone, "remote", "remove", "origin");
-    git(clone, "remote", "add", "origin", ADDRESS);
+    await git(clone, "remote", "remove", "origin");
+    await git(clone, "remote", "add", "origin", ADDRESS);
   }
-  const seed = { path, origin, clone, head: git(source, "rev-parse", "HEAD") };
-  repositorySeeds.set(key, seed);
-  return seed;
+  return Object.freeze({ path, origin, clone, head: await git(source, "rev-parse", "HEAD") });
 }
 // Standalone diagnostic scripts import these helpers too. The parallel runner owns cleanup when
 // Bun's isolated workers bypass exit hooks; ordinary scripts clean their seeds on exit.
-process.on("exit", () => { for (const seed of repositorySeeds.values()) removeDir(seed.path); });
+process.on("exit", () => { for (const path of seedFolders) removeDir(path); });
 
 /**
  * Stops at once, saying why, when this machine holds back programs written a moment ago. Take-over
@@ -196,7 +172,7 @@ export async function traceTaskWait<T>(label: string | undefined, state: () => S
     } catch { /* Diagnostics must not replace the test's result. */ }
   };
   // This only reports progress; it is not a hang deadline and never ends or retries the wait.
-  const timer = setInterval(() => void report(), 15_000);
+  const timer = setInterval(() => void report().catch(() => undefined), 15_000);
   timer.unref();
   try { return await wait(); }
   finally { finished = true; clearInterval(timer); }
@@ -301,15 +277,26 @@ export const FAKE_GH = join(import.meta.dir, "fake-gh.ts");
 export const REPO = "acme/demo";
 export const ADDRESS = "https://github.com/acme/demo.git";
 
-/** A ref on the stand-in GitHub, or undefined. */
-export const remoteRef = (remote: string, ref: string): string | undefined => {
-  try {
-    return git(process.cwd(), "--git-dir", remote, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`) || undefined;
-  } catch {
-    return undefined;
-  }
-};
+/**
+ * The commit a working copy's HEAD names at this moment, read from Git's own files without starting a program:
+ * for callbacks the engine calls synchronously, such as its announcements, where a Git command cannot be awaited.
+ * Reads linked worktrees, detached heads and packed refs; anything else fails rather than guess.
+ */
+export function headNow(worktree: string): string {
+  let gitDir = join(worktree, ".git");
+  if (statSync(gitDir).isFile()) gitDir = resolve(worktree, /^gitdir: (.+)$/m.exec(readFileSync(gitDir, "utf8"))?.[1]?.trim() ?? "");
+  const common = existsSync(join(gitDir, "commondir")) ? resolve(gitDir, readFileSync(join(gitDir, "commondir"), "utf8").trim()) : gitDir;
+  const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+  const ref = /^ref: (refs\/.+)$/.exec(head)?.[1];
+  // A loose ref wins over packed-refs; one packed away between the two reads is found there.
+  const read = (path: string) => { try { return readFileSync(path, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } };
+  const sha = !ref ? head : read(join(common, ref))?.trim() ?? read(join(common, "packed-refs"))?.split("\n").find((line) => line.endsWith(` ${ref}`))?.split(" ")[0] ?? "";
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sha)) throw new Error(`Could not read the HEAD of ${worktree} from Git's files (${head})`);
+  return sha;
+}
 
+/** A ref's commit on the stand-in GitHub, or undefined when Git confirms the ref is absent. */
+export const remoteRef = (remote: string, ref: string): Promise<string | undefined> => commitAt(remote, ref);
 
 /** Wait until a file exists (the fake gh writes one when it starts holding). */
 export async function waitForFile(path: string, ms = 60_000): Promise<void> {

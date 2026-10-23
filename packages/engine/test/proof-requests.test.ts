@@ -29,21 +29,23 @@ async function fixture(shared = false, brief = false, fakes?: Fakes) {
   const products: DeepMutable<Product>[] = [];
   for (let i = 0; i < (shared ? 2 : 1); i++) {
     const dir = join(root, `product-${i}`); mkdirSync(dir);
-    const repo = makeProduct(dir); git(repo, "remote", "remove", "origin");
+    const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
     const id = await engine.addProduct(repo);
     engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: true });
     engine.setProductChecks(id, [{ name: "Test", command: commandText([process.execPath, "-e", "process.exit(0)"]) }]);
     products.push(engine.s.products.find(product => product.id === id)!);
   }
   const task = engine.task(engine.addTask({ productId: products[0]!.id, title: "Keep required Linux proof current", backlog: true }))!;
-  const owners = products.map((product, i) => {
-    const worktree = join(root, `work-${i}`), baseSha = git(product.path!, "rev-parse", "HEAD"), branch = `proof-${i}`;
-    git(product.path!, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
+  const owner = async (product: DeepMutable<Product>, i: number) => {
+    const worktree = join(root, `work-${i}`), baseSha = await git(product.path!, "rev-parse", "HEAD"), branch = `proof-${i}`;
+    await git(product.path!, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
     writeFileSync(join(worktree, "feature.txt"), "the task's change\n");
-    git(worktree, "add", "."); git(worktree, "commit", "-q", "-m", "Add the feature");
+    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Add the feature");
     return { productId: product.id, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
       source: { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: true } };
-  });
+  };
+  const owners: Awaited<ReturnType<typeof owner>>[] = [];
+  for (const [i, product] of products.entries()) owners.push(await owner(product, i));
   if (shared) { delete task.repository; task.repositories = owners; task.activeProductId = products[0]!.id; }
   else task.repository = owners[0];
   const build = { id: "build", title: "Build", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] };
@@ -56,13 +58,15 @@ async function fixture(shared = false, brief = false, fakes?: Fakes) {
   task.state = "running"; task.stageIndex = 3; task.risk = { level: "low", why: "Only copy" };
   const scope = executionFor(task);
   let sequence = 0;
-  const advance = (index = 0) => {
+  const advance = async (index = 0) => {
     const product = products[index]!;
     writeFileSync(join(product.path!, `incoming-${++sequence}.txt`), `main ${sequence}\n`);
-    git(product.path!, "add", "."); git(product.path!, "commit", "-q", "-m", "Main advances");
+    await git(product.path!, "add", "."); await git(product.path!, "commit", "-q", "-m", "Main advances");
   };
-  const request = (text = "Run Linux recovery", ids = products.map(product => product.id)): DeepMutable<ProofRequest> => {
-    const item: DeepMutable<ProofRequest> = { id: `proof-${(task.proofRequests?.length ?? 0) + 1}`, text, reason: "Required on final code", productIds: ids, source: `source-${task.proofRequests?.length ?? 0}`, requestedBy: { stageId: review.id, round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, ownerStageId: tester.id, reviewedVersions: Object.fromEntries(owners.map(owner => [owner.productId, git(owner.worktree, "rev-parse", "HEAD^{tree}")])), status: "pending" };
+  const request = async (text = "Run Linux recovery", ids = products.map(product => product.id)): Promise<DeepMutable<ProofRequest>> => {
+    const reviewedVersions: Record<string, string> = {};
+    for (const owner of owners) reviewedVersions[owner.productId] = await git(owner.worktree, "rev-parse", "HEAD^{tree}");
+    const item: DeepMutable<ProofRequest> = { id: `proof-${(task.proofRequests?.length ?? 0) + 1}`, text, reason: "Required on final code", productIds: ids, source: `source-${task.proofRequests?.length ?? 0}`, requestedBy: { stageId: review.id, round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, ownerStageId: tester.id, reviewedVersions, status: "pending" };
     task.proofRequests ??= []; task.proofRequests.push(item); return item;
   };
   const recordPass = async (requests = task.proofRequests ?? []) => {
@@ -109,18 +113,18 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`fi
   try {
     const role = { ...f.engine.role("tester")!, id: "acceptance-specialist", canEdit: true };
     f.engine.s.roles.push(role); f.tester.roleId = role.id;
-    const request = proof ? f.request() : undefined;
+    const request = proof ? await f.request() : undefined;
     const worktree = f.scope.work.worktree!;
     if (committed) {
       // The stand-in commits on every subsequent run, so a lost read-only boundary would repeat.
       writeFileSync(join(fakeRoot, "tester-passed-once"), "");
       writeFileSync(join(worktree, "tester-edit.txt"), "Before the review\n");
-      git(worktree, "add", "."); git(worktree, "commit", "-q", "-m", "Keep the permitted earlier edit");
+      await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Keep the permitted earlier edit");
     }
     const earlier = await f.recordPass();
     earlier.roleId = role.id; earlier.agentResults![0]!.roleId = role.id;
     writeFileSync(join(worktree, "feature.txt"), "The builder's final change\n");
-    git(worktree, "add", "."); git(worktree, "commit", "-q", "-m", "Prepare the reviewed final change");
+    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Prepare the reviewed final change");
     const versions = await versionsOf(f.task);
     fakes.scenario({ tester: "writes", ...(request ? { testerProofAnswers: passes([request.id]) } : {}) });
 
@@ -134,8 +138,8 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`fi
     expect(f.task.acceptancePassed).toBe(true); expect(f.task.acceptanceBlocked).toBeUndefined();
     expect(f.task.acceptanceUnverified).toBe(false); expect(f.task.testedVersions).toEqual(versions);
     expect(await versionsOf(f.task)).toEqual(versions);
-    expect(git(worktree, "log", "--format=%s")).not.toContain("Tester commits after the review");
-    expect(git(worktree, "status", "--porcelain")).toBe("");
+    expect(await git(worktree, "log", "--format=%s")).not.toContain("Tester commits after the review");
+    expect(await git(worktree, "status", "--porcelain")).toBe("");
     if (committed) {
       expect(readFileSync(join(worktree, "tester-edit.txt"), "utf8")).toBe("Before the review\n");
       expect(f.task.timeline.some(entry => entry.text === "Undid commits from Tester, which is read-only")).toBe(true);
@@ -179,8 +183,8 @@ for (const brief of [false, true]) it(`forces exact-version proof after unchange
   const f = await fixture(false, brief);
   const reply = testerReply(f, passes);
   try {
-    const request = f.request(); await f.recordPass(); const oldPatch = f.task.testedPatch;
-    f.advance();
+    const request = await f.request(); await f.recordPass(); const oldPatch = f.task.testedPatch;
+    await f.advance();
     await f.drive();
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.proofRefreshes).toBe(1);
     expect(request.status).toBe("proved"); expect(f.task.testedPatch).toBe(oldPatch);
@@ -202,10 +206,10 @@ for (const brief of [false, true]) it(`forces exact-version proof after unchange
     expect(checkpoint.acceptance!.evidence.products[0]!.state).toBe("same-contents");
     expect(f.task.findings).toEqual([]); expect(f.scope.work.acceptanceReturns).toBeUndefined(); expect(f.scope.work.checkReturns).toBeUndefined();
     expect(f.task.rounds.review).toBeUndefined(); expect(f.task.stageIndex).toBe(3);
-    f.engine.s.inbox = []; f.advance(); await f.drive();
+    f.engine.s.inbox = []; await f.advance(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(2); expect(f.task.proofRefreshes).toBe(2);
     expect(f.task.timeline.some(line => line.text === "Final acceptance testing: main moved since the proof was recorded")).toBe(true);
-    f.engine.s.inbox = []; f.advance(); await f.drive();
+    f.engine.s.inbox = []; await f.advance(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(2); expect(request.status).toBe("stale");
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
     checkpoint = await inspect();
@@ -220,13 +224,13 @@ for (const brief of [false, true]) it(`forces exact-version proof after unchange
 });
 
 for (const refreshes of [0, 1]) it(`refreshes proof after main moves during final testing, with ${2 - refreshes} main refreshes available`, async () => {
-  const f = await fixture(); const request = f.request(); await f.recordPass(); f.task.proofRefreshes = refreshes;
+  const f = await fixture(); const request = await f.request(); await f.recordPass(); f.task.proofRefreshes = refreshes;
   let runs = 0;
   const reply = testerReply(f, passes, async () => {
-    if (++runs === 1) { f.advance(); await f.engine["updates"].upToDate(f.scope, signal()); }
+    if (++runs === 1) { await f.advance(); await f.engine["updates"].upToDate(f.scope, signal()); }
   });
   try {
-    f.advance(); await f.drive();
+    await f.advance(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(2 - refreshes); expect(f.task.proofRefreshes).toBe(2);
     expect(request.proof!.result).toBe("pass"); expect(f.task.acceptanceUnverified).toBe(false);
     expect(f.task.acceptanceBlocked).toBeUndefined(); expect(f.task.findings).toEqual([]);
@@ -240,7 +244,7 @@ for (const refreshes of [0, 1]) it(`refreshes proof after main moves during fina
 it("passes proof-only review without votes or Builder work, freezes peer context and tests once after both main advances", async () => {
   const f = await fixture(); const reply = testerReply(f, passes);
   try {
-    await f.recordPass([]); f.advance(); await f.engine["updates"].upToDate(f.scope, signal());
+    await f.recordPass([]); await f.advance(); await f.engine["updates"].upToDate(f.scope, signal());
     const snapshot = await f.engine["context"].captureReview(f.scope);
     f.task.hunt = { stageId: "review", round: 1, reported: { "0": true }, findings: 0, input: { file: "unused", digest: "unused", heads: {}, trees: await versionsOf(f.task) } };
     const value = ReviewResult.parse({ verdict: "pass", proofRequests: [{ text: "Required Ubuntu proof", reason: "Linux must cover the final code", productIds: [f.task.productId] }] });
@@ -253,7 +257,7 @@ it("passes proof-only review without votes or Builder work, freezes peer context
     await f.engine["reviews"]["closeReviewRound"](f.task, f.review, 1, "Nothing to fix", await versionsOf(f.task));
     expect(f.task.stageIndex).toBe(3); expect(f.task.fixing).toBe(false); expect(f.task.findings).toEqual([]);
     expect(f.task.journey!.at(-1)!.reason).toContain("review passed; 1 proof request");
-    f.advance(); await f.drive();
+    await f.advance(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.proofRequests![0]!.status).toBe("proved");
     expect(f.task.journey!.filter(step => step.roleId === "builder")).toHaveLength(0);
     expect(f.task.rounds.review).toBeUndefined();
@@ -263,8 +267,8 @@ it("passes proof-only review without votes or Builder work, freezes peer context
 it("keeps ordinary unchanged-patch reuse and already-current proof without an additional Tester", async () => {
   const f = await fixture(); const reply = testerReply(f, passes);
   try {
-    await f.recordPass([]); f.advance(); await f.drive(); expect(reply).not.toHaveBeenCalled();
-    f.engine.s.inbox = []; f.request(); await f.recordPass(); await f.drive(); expect(reply).not.toHaveBeenCalled();
+    await f.recordPass([]); await f.advance(); await f.drive(); expect(reply).not.toHaveBeenCalled();
+    f.engine.s.inbox = []; await f.request(); await f.recordPass(); await f.drive(); expect(reply).not.toHaveBeenCalled();
     expect(f.task.proofRequests![0]!.status).toBe("proved");
   } finally { reply.mockRestore(); await f.engine.shutdown(); }
 });
@@ -272,7 +276,7 @@ it("keeps ordinary unchanged-patch reuse and already-current proof without an ad
 it("keeps unavailable platform proof unverified, never auto-ships and never retries unchanged", async () => {
   const f = await fixture(); const reply = testerReply(f, ids => ids.map(id => ({ id, result: "blocked", reason: "Ubuntu runner unavailable" })));
   try {
-    f.request(); f.products[0]!.shipLowRisk = true;
+    await f.request(); f.products[0]!.shipLowRisk = true;
     await f.drive(); expect(reply).toHaveBeenCalledTimes(1);
     expect(f.task.proofRequests![0]!.status).toBe("unverified"); expect(f.task.findings).toEqual([]);
     expect(f.scope.work.acceptanceReturns).toBeUndefined(); expect(f.task.stageIndex).toBe(3);
@@ -283,7 +287,7 @@ it("keeps unavailable platform proof unverified, never auto-ships and never retr
 });
 
 it("routes reproduced proof failures by request id even with identical text and an unavailable peer", async () => {
-  const f = await fixture(true); const a = f.request("Same wording", [f.products[0]!.id]); const b = f.request("Same wording", [f.products[1]!.id]); const c = f.request("Unavailable platform");
+  const f = await fixture(true); const a = await f.request("Same wording", [f.products[0]!.id]); const b = await f.request("Same wording", [f.products[1]!.id]); const c = await f.request("Unavailable platform");
   const reply = testerReply(f, ids => ids.map(id => ({ id, result: id === a.id ? "fail" : id === b.id ? "pass" : "blocked", evidence: id === c.id ? undefined : "The failing scenario reproduced; the passing control worked", reason: id === c.id ? "Runner unavailable" : undefined })));
   try {
     f.task.retest = true; f.task.stageIndex = 1;
@@ -304,7 +308,7 @@ it("routes reproduced proof failures by request id even with identical text and 
 it("never starts a Tester while configured checks fail and preserves the existing Builder return", async () => {
   const f = await fixture(); const reply = testerReply(f, passes);
   try {
-    f.request(); f.engine.setProductChecks(f.task.productId, [{ name: "Tests", command: commandText([process.execPath, "-e", "console.error('reproduced check failure');process.exit(1)"]) }]);
+    await f.request(); f.engine.setProductChecks(f.task.productId, [{ name: "Tests", command: commandText([process.execPath, "-e", "console.error('reproduced check failure');process.exit(1)"]) }]);
     const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(false);
     await f.engine["driver"]["drive"](f.task.id); admit.mockRestore();
     expect(reply).not.toHaveBeenCalled(); expect(f.task.stageIndex).toBe(0); expect(f.scope.work.checkReturns).toBe(1);
@@ -316,7 +320,7 @@ it("keeps real and mixed code findings on their normal review repair route", asy
   for (const mixed of [false, true]) {
     const f = await fixture();
     try {
-      if (mixed) f.request();
+      if (mixed) await f.request();
       f.task.stageIndex = 2;
       f.task.findings.push({ id: "defect", text: "Current recovery loses the saved message", severity: "blocking", raisedBy: "sol-high", confirmedBy: ["opus-high"], status: "open" });
       beginAgentStep(f.task, "code-reviewer", "sol-high", 1, f.engine.s.roles, undefined, f.scope.work);
@@ -329,7 +333,7 @@ it("keeps real and mixed code findings on their normal review repair route", asy
 });
 
 it("retains one interrupted Tester run across restart and binds a stand-in's proof to its actual completed step", async () => {
-  const f = await fixture(); f.request();
+  const f = await fixture(); await f.request();
   f.task.retest = true; f.task.proofRefreshes = 1; f.task.stageIndex = 1;
   const first = spyOn(f.engine["turns"], "turn").mockImplementation(async () => {
     beginAgentStep(f.task, "tester", "opus-high", 1, f.engine.s.roles, undefined, f.scope.work);
@@ -362,7 +366,7 @@ it("retains one interrupted Tester run across restart and binds a stand-in's pro
 });
 
 it("repairs missing or duplicate proof answers in the same Tester turn and never trusts evidence-free passes", async () => {
-  const f = await fixture(); f.request(); f.task.retest = true; f.task.stageIndex = 1;
+  const f = await fixture(); await f.request(); f.task.retest = true; f.task.stageIndex = 1;
   const turn = spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, profileId, _given, schema, _signal, options) => {
     const missing = schema.parse({ summary: "Incomplete answer" });
     expect(await options?.check?.(missing)).toContain("exactly once by id");
@@ -381,11 +385,11 @@ it("repairs missing or duplicate proof answers in the same Tester turn and never
 });
 
 it("requires every affected shared product version and bounds main-only shared refreshes", async () => {
-  const f = await fixture(true); const request = f.request(); const reply = testerReply(f, passes);
+  const f = await fixture(true); const request = await f.request(); const reply = testerReply(f, passes);
   try {
     await f.recordPass();
     for (let i = 0; i < 3; i++) {
-      f.engine.s.inbox = []; f.advance(i % 2); await f.drive();
+      f.engine.s.inbox = []; await f.advance(i % 2); await f.drive();
       expect(f.task.stageIndex).toBe(3);
     }
     expect(reply).toHaveBeenCalledTimes(2); expect(f.task.proofRefreshes).toBe(2); expect(request.status).toBe("stale");
@@ -395,9 +399,9 @@ it("requires every affected shared product version and bounds main-only shared r
 });
 
 it("binds an explicit decision about A's proof on version B to B, blocks publishing C, and keeps the refresh limit after restart", async () => {
-  const f = await fixture(); f.request(); await f.recordPass();
+  const f = await fixture(); await f.request(); await f.recordPass();
   try {
-    f.task.proofRefreshes = 2; f.advance(); await f.drive();
+    f.task.proofRefreshes = 2; await f.advance(); await f.drive();
     const viewed = structuredClone(f.task.checkedProofDecision)!;
     expect(Object.values(viewed.statuses)).toEqual(["stale"]);
     f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
@@ -406,11 +410,11 @@ it("binds an explicit decision about A's proof on version B to B, blocks publish
     const saved = new Store(join(f.engine.dataDir, "petrina.db")); expect(saved.load()!.tasks.find(task => task.id === f.task.id)!.approvedProofDecision).toEqual(viewed); saved.close();
     f.engine = new Engine(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
-    f.engine.setPoolPaused(false); f.advance();
-    const destinationBefore = git(f.products[0]!.path!, "rev-parse", "main");
+    f.engine.setPoolPaused(false); await f.advance();
+    const destinationBefore = await git(f.products[0]!.path!, "rev-parse", "main");
     expect(await f.engine["shipping"]["readyToShip"](f.scope, signal())).toBe("back");
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined(); expect(f.task.proofRefreshes).toBe(2);
-    expect(git(f.products[0]!.path!, "rev-parse", "main")).toBe(destinationBefore);
+    expect(await git(f.products[0]!.path!, "rev-parse", "main")).toBe(destinationBefore);
     f.task.state = "running"; await f.engine["driver"]["drive"](f.task.id); expect(f.task.proofRefreshes).toBe(2); expect(f.task.checkedProofDecision).not.toEqual(viewed);
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
     f.engine.requestChanges(f.engine.s.inbox.find(item => item.kind === "delivery")!.id, "Obtain the required proof after the next fix");
@@ -419,12 +423,12 @@ it("binds an explicit decision about A's proof on version B to B, blocks publish
 });
 
 it("checks a saved prepared delivery again after main moves and retains the publishing return reason", async () => {
-  const f = await fixture(); f.request(); await f.recordPass();
+  const f = await fixture(); await f.request(); await f.recordPass();
   try {
     const versions = await versionsOf(f.task); f.task.approvedProofDecision = proofDecision(f.task, versions);
-    f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: git(f.scope.work.worktree!, "rev-parse", "HEAD"), prepared: { tested: git(f.scope.work.worktree!, "rev-parse", "HEAD"), summary: "Prepared" } };
+    f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: await git(f.scope.work.worktree!, "rev-parse", "HEAD"), prepared: { tested: await git(f.scope.work.worktree!, "rev-parse", "HEAD"), summary: "Prepared" } };
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(true);
-    f.advance();
+    await f.advance();
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
     await f.engine["shipping"]["prepareAgain"](f.scope, "Main moved during publishing");
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined();
@@ -433,15 +437,15 @@ it("checks a saved prepared delivery again after main moves and retains the publ
 });
 
 it("requires explicit release-gap approval and permits only Petrina's verified version commit, including the pushed restart and shared continuation", async () => {
-  const f = await fixture(true); f.request(); await f.recordPass();
+  const f = await fixture(true); await f.request(); await f.recordPass();
   try {
     const release = f.task.repositories![0]!; release.delivery = "release";
-    writeFileSync(join(release.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" })); git(release.worktree!, "add", "."); git(release.worktree!, "commit", "-q", "-m", "Declare the fixture version");
+    writeFileSync(join(release.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" })); await git(release.worktree!, "add", "."); await git(release.worktree!, "commit", "-q", "-m", "Declare the fixture version");
     await f.recordPass();
     f.task.checkedProofDecision = proofDecision(f.task, await versionsOf(f.task));
     expect(proofGap(f.task)).toContain("release version"); expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
     f.engine.gate(f.task, "delivery"); f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
-    const start = git(release.worktree!, "rev-parse", "HEAD");
+    const start = await git(release.worktree!, "rev-parse", "HEAD");
     release.shipping = { moves: 0, failures: 0, base: release.baseSha, start, version: "0.2.0", tag: "v0.2.0" };
     const releaseScope = executionFor(f.task, release.productId);
     const versions = await f.engine["shipping"].releases["declaredVersions"](release.worktree!, start);
@@ -456,7 +460,7 @@ it("requires explicit release-gap approval and permits only Petrina's verified v
     const preparedRelease = release.shipping; delete release.shipping;
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(true);
     delete release.release; release.shipping = preparedRelease; delete release.shipping.pushed;
-    writeFileSync(join(release.worktree!, "unexpected.txt"), "unreviewed edit"); git(release.worktree!, "add", "."); git(release.worktree!, "commit", "-q", "-m", "Unexpected change");
+    writeFileSync(join(release.worktree!, "unexpected.txt"), "unreviewed edit"); await git(release.worktree!, "add", "."); await git(release.worktree!, "commit", "-q", "-m", "Unexpected change");
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
   } finally { await f.engine.shutdown(); }
 });
@@ -478,10 +482,10 @@ it("adds final preparation to a plan that omitted delivery approval, while curre
 });
 
 it("retains acceptance failure limits and does not charge main-only refreshes for actual task edits", async () => {
-  const f = await fixture(); f.request(); await f.recordPass(); f.task.proofRefreshes = 2;
+  const f = await fixture(); await f.request(); await f.recordPass(); f.task.proofRefreshes = 2;
   const reply = testerReply(f, ids => ids.map(id => ({ id, result: "fail", evidence: "Recovery reproduced a lost message on this code; nearby recovery succeeded" })));
   try {
-    writeFileSync(join(f.scope.work.worktree!, "feature.txt"), "a changed task patch\n"); git(f.scope.work.worktree!, "add", "."); git(f.scope.work.worktree!, "commit", "-q", "-m", "Change the implementation");
+    writeFileSync(join(f.scope.work.worktree!, "feature.txt"), "a changed task patch\n"); await git(f.scope.work.worktree!, "add", "."); await git(f.scope.work.worktree!, "commit", "-q", "-m", "Change the implementation");
     const stop = spyOn(f.engine["work"], "runDo").mockResolvedValue("stop");
     await f.drive(); expect(f.task.stageIndex).toBe(1); expect(f.task.retest).toBe(true); expect(f.task.proofRefreshes).toBe(2); stop.mockRestore();
     for (let turn = 1; turn <= 3; turn++) {
@@ -500,14 +504,14 @@ it("tries a newly pending request despite an earlier unavailable acceptance resu
   try {
     const earlier = await f.recordPass([]); earlier.acceptanceChecks = [{ text: "An unavailable account", result: "blocked", reason: "Account unavailable" }];
     f.task.acceptancePassed = false; f.task.acceptanceUnverified = true;
-    f.request(); await f.drive();
+    await f.request(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.proofRequests![0]!.status).toBe("proved");
     expect(f.scope.work.acceptanceReturns).toBeUndefined();
   } finally { reply.mockRestore(); await f.engine.shutdown(); }
 });
 
 it("keeps an ordinary reproduced checklist failure's Builder retries when requested platform proof is unavailable", async () => {
-  const f = await fixture(false, true); f.request(); f.task.retest = true; f.task.stageIndex = 1;
+  const f = await fixture(false, true); await f.request(); f.task.retest = true; f.task.stageIndex = 1;
   const reply = testerReply(f, ids => ids.map(id => ({ id, result: "blocked", reason: "Ubuntu runner unavailable" })), undefined, [{ text: "Linux recovery works", result: "fail", evidence: "The recovery scenario lost the saved message, while the nearby case passed" }]);
   try {
     await f.engine["work"].runDo(f.scope, f.tester, signal());
@@ -526,11 +530,11 @@ it("keeps an ordinary reproduced checklist failure's Builder retries when reques
 });
 
 it("asks after the shared refresh limit even when main moved only outside a request's product subset", async () => {
-  const f = await fixture(true); const request = f.request("Prove only the first product", [f.products[0]!.id]); await f.recordPass();
+  const f = await fixture(true); const request = await f.request("Prove only the first product", [f.products[0]!.id]); await f.recordPass();
   const reply = testerReply(f, passes); const publish = spyOn(f.engine["shipping"], "deliver").mockResolvedValue("stop");
   try {
     for (let move = 0; move < 3; move++) {
-      f.engine.s.inbox = []; f.advance(1);
+      f.engine.s.inbox = []; await f.advance(1);
       if (move === 2) { f.task.proofDeliveryGate = "gate"; f.task.approveDelivery = false; }
       await f.drive();
     }
@@ -542,23 +546,23 @@ it("asks after the shared refresh limit even when main moved only outside a requ
 });
 
 it("discards an unpublished release identity before proving and preparing a newly approved version", async () => {
-  const f = await fixture(); f.request(); f.scope.work.delivery = "release";
+  const f = await fixture(); await f.request(); f.scope.work.delivery = "release";
   const release = f.engine["shipping"].releases;
   const notes = spyOn(f.engine["turns"], "turn").mockImplementation(async (_scope, roleId, _profileId, _given, schema) => {
     expect(roleId).toBe("release-manager"); return schema.parse({ summary: "Release ready", notes: "The recovery change is ready." });
   });
   const choose = spyOn(release, "chooseVersion").mockImplementation(async scope => {
     scope.work.shipping!.version = "0.3.0"; scope.work.shipping!.tag = "v0.3.0";
-    return release["declaredVersions"](scope.work.worktree!, git(scope.work.worktree!, "rev-parse", "HEAD"));
+    return release["declaredVersions"](scope.work.worktree!, await git(scope.work.worktree!, "rev-parse", "HEAD"));
   });
   try {
-    writeFileSync(join(f.scope.work.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" })); git(f.scope.work.worktree!, "add", "."); git(f.scope.work.worktree!, "commit", "-q", "-m", "Declare fixture version");
+    writeFileSync(join(f.scope.work.worktree!, "package.json"), JSON.stringify({ name: "fixture", version: "0.1.0" })); await git(f.scope.work.worktree!, "add", "."); await git(f.scope.work.worktree!, "commit", "-q", "-m", "Declare fixture version");
     await f.recordPass();
-    const start = git(f.scope.work.worktree!, "rev-parse", "HEAD");
+    const start = await git(f.scope.work.worktree!, "rev-parse", "HEAD");
     f.scope.work.shipping = { moves: 0, failures: 0, start, base: f.scope.work.baseSha, version: "0.2.0", tag: "v0.2.0" };
     const tested = await release.setVersion(f.scope, await release["declaredVersions"](f.scope.work.worktree!, start));
     f.scope.work.proofRelease = { start, tested }; f.scope.work.shipping.prepared = { tested, summary: "Earlier release preparation" };
-    f.advance();
+    await f.advance();
     await f.engine["shipping"]["prepareAgain"](f.scope, "Main moved before publishing");
     expect(f.scope.work.proofRelease).toBeUndefined(); expect(f.scope.work.shipping).toBeUndefined();
     await f.engine["updates"].upToDate(f.scope, signal()); await f.recordPass();
@@ -571,21 +575,21 @@ it("discards an unpublished release identity before proving and preparing a newl
 });
 
 it("retains an exact local update awaiting its push while rejecting a newer destination version", async () => {
-  const f = await fixture(); f.request(); await f.recordPass();
+  const f = await fixture(); await f.request(); await f.recordPass();
   try {
     f.task.approvedProofDecision = proofDecision(f.task, await versionsOf(f.task));
-    const tested = git(f.scope.work.worktree!, "rev-parse", "HEAD");
+    const tested = await git(f.scope.work.worktree!, "rev-parse", "HEAD");
     f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: tested, localUpdated: tested, prepared: { tested, summary: "Local update awaits its push" } };
-    git(f.products[0]!.path!, "reset", "--hard", tested);
+    await git(f.products[0]!.path!, "reset", "--hard", tested);
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(true);
-    f.advance();
+    await f.advance();
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
     expect(f.scope.work.shipping.localUpdated).toBe(tested);
   } finally { await f.engine.shutdown(); }
 });
 
 it("guards a pending local push through interrupted delivery recovery while preserving an already published result", async () => {
-  const f = await fixture(); f.request(); await f.recordPass();
+  const f = await fixture(); await f.request(); await f.recordPass();
   const connections = f.engine["connections"], verifier = f.engine["shipping"].verifier;
   const product = f.products[0]!; product.repo = "acme/proof"; product.remote = "https://github.com/acme/proof.git";
   const remote = { url: product.remote };
@@ -594,10 +598,10 @@ it("guards a pending local push through interrupted delivery recovery while pres
   const refs = spyOn(gitSteps, "remoteRefs").mockResolvedValue({ ok: true, value: new Map() });
   const push = spyOn(gitSteps, "push").mockResolvedValue({ ok: true, value: undefined });
   try {
-    const tested = git(f.scope.work.worktree!, "rev-parse", "HEAD");
+    const tested = await git(f.scope.work.worktree!, "rev-parse", "HEAD");
     f.task.stageIndex = 4; f.task.approvedProofDecision = proofDecision(f.task, await versionsOf(f.task));
     f.scope.work.shipping = { moves: 0, failures: 0, base: f.scope.work.baseSha, start: tested, localUpdated: tested, prepared: { tested, summary: "Local placement is complete" }, step: "push", boot: "earlier-boot" };
-    git(product.path!, "reset", "--hard", tested);
+    await git(product.path!, "reset", "--hard", tested);
     f.scope.work.localUpdate = { branch: "main", sha: tested, pushed: false };
     // A changed proof status is part of the bound decision even when the placed code is identical.
     delete f.task.proofRequests![0]!.proof;
@@ -614,13 +618,13 @@ it("guards a pending local push through interrupted delivery recovery while pres
 });
 
 it("retains an earlier pass and refreshes it when an affected product changes during acceptance", async () => {
-  const f = await fixture(true); const request = f.request();
+  const f = await fixture(true); const request = await f.request();
   const before = await versionsOf(f.task);
   f.task.retest = true; f.task.stageIndex = 1;
-  const reply = testerReply(f, passes, () => {
+  const reply = testerReply(f, passes, async () => {
     const companion = f.owners[1]!.worktree;
     writeFileSync(join(companion, "changed-during-acceptance.txt"), "A different companion version\n");
-    git(companion, "add", "."); git(companion, "commit", "-q", "-m", "Change the companion during acceptance");
+    await git(companion, "add", "."); await git(companion, "commit", "-q", "-m", "Change the companion during acceptance");
   });
   try {
     await f.engine["work"].runDo(f.scope, f.tester, signal());
@@ -672,14 +676,14 @@ it("keeps new requests from a reopened passing review, while replay and restart 
 });
 
 for (const proof of [false, true]) it(`takes a new prepared snapshot after a failed Tester attempt, with requested proof ${proof}`, async () => {
-  const f = await fixture(); if (proof) f.request(); f.task.stageIndex = 1;
+  const f = await fixture(); if (proof) await f.request(); f.task.stageIndex = 1;
   const broken = spyOn(f.engine["turns"], "turn").mockRejectedValue(new Error("Controlled tool failure"));
   const review = spyOn(f.engine["reviews"], "runReview").mockResolvedValue("stop");
   try {
     await expectRejection(f.drive(), "Controlled tool failure");
     const old = structuredClone(f.task.acceptanceRun!.versions);
     expect(f.scope.work.conversation).toBeUndefined();
-    broken.mockRestore(); f.advance();
+    broken.mockRestore(); await f.advance();
     await f.engine.retry(f.engine.s.inbox.find(item => item.kind === "stuck")!.id);
     const reply = testerReply(f, passes);
     try {
@@ -694,7 +698,7 @@ for (const proof of [false, true]) it(`takes a new prepared snapshot after a fai
 });
 
 for (const savedConversation of [false, true]) it(`binds a restarted Tester to its ${savedConversation ? "saved conversation" : "newly prepared copy"}`, async () => {
-  const f = await fixture(); f.request(); f.task.stageIndex = 1;
+  const f = await fixture(); await f.request(); f.task.stageIndex = 1;
   const versions = await versionsOf(f.task);
   f.task.acceptanceRun = { versions, changes: await changesOf(f.task), requestIds: [f.task.proofRequests![0]!.id] };
   if (savedConversation) f.scope.work.conversation = { step: stepKey(f.task), roleId: "tester", profileId: "opus-high", toolId: "claude", model: "opus", sessionId: "saved-tester", startedAt: 1 };
@@ -703,7 +707,7 @@ for (const savedConversation of [false, true]) it(`binds a restarted Tester to i
   await f.engine.waitUntilReady(); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task); f.engine.setPoolPaused(false);
   const reply = testerReply(f, passes); const review = spyOn(f.engine["reviews"], "runReview").mockResolvedValue("stop");
   try {
-    f.advance(); f.task.state = "running";
+    await f.advance(); f.task.state = "running";
     const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
     try { await f.engine["driver"]["drive"](f.task.id); } finally { admit.mockRestore(); }
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.acceptancePassed).toBe(true);
@@ -714,12 +718,12 @@ for (const savedConversation of [false, true]) it(`binds a restarted Tester to i
 });
 
 for (const shared of [false, true]) for (const unrelated of shared ? [false, true] : [false]) for (const result of ["pass", "fail"] as const) it(`preserves ${result} for ${shared ? "shared" : "single"} proof when ${unrelated ? "another" : "an affected"} product changes during testing`, async () => {
-  const f = await fixture(shared); const request = f.request("Prove the first product", [f.products[0]!.id]);
+  const f = await fixture(shared); const request = await f.request("Prove the first product", [f.products[0]!.id]);
   f.task.retest = true; f.task.stageIndex = 1;
   const before = await versionsOf(f.task);
-  const reply = testerReply(f, ids => ids.map(id => ({ id, result, evidence: "The scoped scenario and its nearby control were tried" })), () => {
+  const reply = testerReply(f, ids => ids.map(id => ({ id, result, evidence: "The scoped scenario and its nearby control were tried" })), async () => {
     const work = f.owners[unrelated ? 1 : 0]!.worktree;
-    writeFileSync(join(work, "during.txt"), "A new task change\n"); git(work, "add", "."); git(work, "commit", "-q", "-m", "Change during acceptance");
+    writeFileSync(join(work, "during.txt"), "A new task change\n"); await git(work, "add", "."); await git(work, "commit", "-q", "-m", "Change during acceptance");
   });
   try {
     await f.engine["work"].runDo(f.scope, f.tester, signal());
@@ -742,11 +746,11 @@ for (const shared of [false, true]) for (const unrelated of shared ? [false, tru
 });
 
 for (const started of [false, true]) it(`records the publishing return with ${started ? "an open" : "no open"} publishing step`, async () => {
-  const f = await fixture(); f.request(); await f.recordPass();
+  const f = await fixture(); await f.request(); await f.recordPass();
   try {
     await f.drive(); f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
     if (started) beginPetrinaStep(f.task, "delivery", Date.now());
-    f.advance();
+    await f.advance();
     if (started) await f.engine["shipping"]["returnForProofDecision"](f.task);
     else expect(await f.engine["shipping"]["readyToShip"](f.scope, signal())).toBe("back");
     const steps = f.task.journey!.filter(step => step.kind === "petrina" && step.work === "delivery");

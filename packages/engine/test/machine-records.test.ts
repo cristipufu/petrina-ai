@@ -47,12 +47,12 @@ for (const source of ["the fixture's default", "an explicit source"] as const) i
   let engine = new Engine(home, options);
   engine.schedule = () => {};
   try {
-    const repo = makeProduct(dir);
-    const base = git(repo, "rev-parse", "HEAD");
-    git(repo, "checkout", "-qb", "task");
+    const repo = await makeProduct(dir);
+    const base = await git(repo, "rev-parse", "HEAD");
+    await git(repo, "checkout", "-qb", "task");
     writeFileSync(join(repo, "change.txt"), "The task's change\n");
-    git(repo, "add", "change.txt");
-    git(repo, "commit", "-qm", "Add the change");
+    await git(repo, "add", "change.txt");
+    await git(repo, "commit", "-qm", "Add the change");
     for (const hook of ["pre-commit", "commit-msg"]) {
       writeFileSync(join(repo, ".git", "hooks", hook), `#!/bin/sh\necho "Original ${hook} failure"\nexit 1\n`);
       chmodSync(join(repo, ".git", "hooks", hook), 0o755);
@@ -128,7 +128,7 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
     const dir = root(`petrina-machine-records-${name}-`);
     const engine = new Engine(join(dir, "data"), { agentCommand: () => undefined, terminals: () => [], machineRecords: held.source });
     engine.schedule = () => {};
-    const repo = makeProduct(dir);
+    const repo = await makeProduct(dir);
     engine.s.products.push({ id: "product", name: "Shop", repo: "local/shop", path: repo, tone: "blue", delivery: "local", checksBy: "coordinator", checks });
     const task = engine.task(engine.addTask({ productId: "product", title: `${name} engine's failure` }))!;
     const scope = executionFor(task);

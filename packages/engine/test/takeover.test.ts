@@ -24,7 +24,7 @@ const SECRET = "petrina-test-secret-value-1234";
 async function start(scenario: Scenario, description = "", open: (launcher: string) => string[] = (launcher) => ["/bin/sh", launcher]) {
   const root = tempDir("petrina-takeover-");
   roots.push(root);
-  const product = makeProduct(root);
+  const product = await makeProduct(root);
   const data = join(root, "data");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
@@ -131,8 +131,8 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(item).toMatchObject({ kind: "driving", blocking: false, roleId: "builder" });
     // The builder's unfinished work was saved as its own commit before the terminal opened.
     expect(task.driving!.saved?.files).toEqual(["notes.txt"]);
-    expect(git(task.worktree!, "log", "-1", "--format=%s", task.driving!.saved!.sha)).toBe("Add a greeting (unfinished work)");
-    expect(task.driving!.head).toBe(git(task.worktree!, "rev-parse", "HEAD"));
+    expect(await git(task.worktree!, "log", "-1", "--format=%s", task.driving!.saved!.sha)).toBe("Add a greeting (unfinished work)");
+    expect(task.driving!.head).toBe(await git(task.worktree!, "rev-parse", "HEAD"));
     expect(task.timeline.some((entry) => entry.text === "Saved the Builder's unfinished work as one commit (1 file)")).toBe(true);
 
     // Pause and Cancel wait for the hand back; pausing the pool changes nothing.
@@ -173,7 +173,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(task.driving).toBeUndefined();
     expect(engine.getState().inbox.some((entry) => entry.kind === "driving")).toBe(false);
     expect(existsSync(takeoverDir(run.data, run.taskId))).toBe(false);
-    expect(git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting (changes made by hand)");
+    expect(await git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting (changes made by hand)");
     const note = task.notes!.at(-1)!.text;
     // This workflow checks the hand-back evidence, not how fast the machine finishes it.
     // Duration wording is checked separately with explicit elapsed times.
@@ -210,8 +210,8 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(done.handChanges).toBeUndefined();
     expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(1);
     // Everything done by hand and by the agent landed.
-    for (const file of ["notes.txt", "by-hand.txt", "committed-by-hand.txt"]) expect(git(run.product, "show", `main:${file}`)).toBeTruthy();
-    expect(git(run.product, "show", "main:greeting.txt")).toBe("Hello");
+    for (const file of ["notes.txt", "by-hand.txt", "committed-by-hand.txt"]) expect(await git(run.product, "show", `main:${file}`)).toBeTruthy();
+    expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello");
     delete process.env.PETRINA_TEST_SECRET;
     delete process.env.GH_TOKEN_FOR_TEST;
     run.engine().shutdown();
@@ -253,8 +253,8 @@ describe.skipIf(!posix)("take over a reviewer, which is read-only", () => {
     const texts = done.timeline.map((entry) => entry.text);
     expect(texts.lastIndexOf("Tamper check passed: no tests removed or skipped")).toBeGreaterThan(texts.indexOf("Reviewing your changes: the review starts again from the first reviewer"));
     // What was changed by hand is kept, even though the role is read-only, and ships inside the task's one commit.
-    expect(git(run.product, "show", "main:hand.txt")).toBe("Changed by hand");
-    expect(git(run.product, "log", "--format=%s", "main")).toBe("Add a greeting\ninit");
+    expect(await git(run.product, "show", "main:hand.txt")).toBe("Changed by hand");
+    expect(await git(run.product, "log", "--format=%s", "main")).toBe("Add a greeting\ninit");
     run.engine().shutdown();
   });
 });
@@ -281,7 +281,7 @@ describe.skipIf(!posix)("hand changes after every review chain", () => {
     expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeGreaterThan(rerun);
     expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeLessThan(milestones.findIndex((text) => text.startsWith("Petrina moved main forward to it")));
     expect(done.rounds[review.id]).toBeUndefined();
-    expect(git(run.product, "show", "main:fix.txt")).toBe("A fix");
+    expect(await git(run.product, "show", "main:fix.txt")).toBe("A fix");
     run.engine().shutdown();
   });
 });
@@ -306,7 +306,7 @@ describe.skipIf(!posix)("hand changes during design", () => {
     expect(done.timeline.some((entry) => entry.text === "Reviewing your changes: the review starts again from the first reviewer")).toBe(false);
     // Two reviewers in the chain, each once.
     expect(done.timeline.filter((entry) => entry.text === "Code reviewer started")).toHaveLength(2);
-    expect(git(run.product, "show", "main:design-note.txt")).toBe("A sketch");
+    expect(await git(run.product, "show", "main:design-note.txt")).toBe("A sketch");
     run.engine().shutdown();
   });
 });
@@ -328,7 +328,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
       expect(read.mock.calls).toEqual([]);
       expect(run.task().driving).toBeUndefined();
       expect(run.task().conversation?.head).toBe(before);
-      expect(git(run.task().worktree!, "rev-parse", "HEAD")).toBe(before);
+      expect(await git(run.task().worktree!, "rev-parse", "HEAD")).toBe(before);
       expect(run.task().handChanges).not.toBe(true);
     } finally { read?.mockRestore(); await run.engine().shutdown(); }
   });
@@ -373,7 +373,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     expect(await first.exited).toBe(0);
     await engine.handBack(run.taskId);
     const done = await run.finished();
-    expect(git(run.product, "show", "main:late.txt")).toBe("Late");
+    expect(await git(run.product, "show", "main:late.txt")).toBe("Late");
     expect(done.timeline.some((entry) => entry.text === "Took the step back on the same conversation")).toBe(true);
     expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(0);
     engine.shutdown();
@@ -388,11 +388,11 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     await engine.takeOver(run.taskId);
     await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "ended", "the app to close");
     const worktree = run.task().worktree!;
-    git(worktree, "checkout", "-q", "-b", "elsewhere");
+    await git(worktree, "checkout", "-q", "-b", "elsewhere");
     expect((await engine.handBackPreview(run.taskId)).problem).toBe("The working copy is no longer on the task's branch. Switch back to it in your terminal, then hand back.");
     await expectRejection(engine.handBack(run.taskId), "no longer on the task's branch");
     expect(run.task().driving).toBeTruthy();
-    git(worktree, "checkout", "-q", run.task().branch!);
+    await git(worktree, "checkout", "-q", run.task().branch!);
     await engine.handBack(run.taskId);
     await run.finished();
     engine.shutdown();
@@ -443,7 +443,7 @@ describe.skipIf(!posix)("opening the terminal again", () => {
     await engine.handBack(run.taskId);
     await run.finished();
     expect(run.launched()).toHaveLength(2);
-    expect(git(run.product, "show", "main:again.txt")).toBe("Again");
+    expect(await git(run.product, "show", "main:again.txt")).toBe("Again");
     engine.shutdown();
   }, 60_000);
 });
@@ -454,7 +454,7 @@ describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
     await waitFor(() => run.fakes.marked("builder-working"), "the builder to draft");
     const worktree = (await run.working("builder")).worktree!;
     // Something else holds the working copy's index, so Petrina can't save the builder's draft.
-    const lock = resolve(worktree, git(worktree, "rev-parse", "--git-path", "index.lock"));
+    const lock = resolve(worktree, await git(worktree, "rev-parse", "--git-path", "index.lock"));
     writeFileSync(lock, "");
     const engine = run.engine();
     await expectRejection(engine.takeOver(run.taskId), "Petrina couldn't save the Builder's work before you took over, so the Builder carries on.");
@@ -468,7 +468,7 @@ describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
     // The builder picks its step back up and finishes, with its draft.
     const done = await run.finished();
     expect(done.timeline.some((entry) => entry.text.startsWith("Could not get the working copy ready for you, so the Builder carries on"))).toBe(true);
-    expect(git(run.product, "show", "main:notes.txt")).toBe("A first draft");
+    expect(await git(run.product, "show", "main:notes.txt")).toBe("A first draft");
     engine.shutdown();
   });
 });
@@ -477,7 +477,7 @@ describe.concurrent("when take over is not available", () => {
   it("is refused for a task with no agent, with a plain reason", async () => {
     const root = tempDir("petrina-takeover-");
     roots.push(root);
-    const product = makeProduct(root);
+    const product = await makeProduct(root);
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
     const productId = await engine.addProduct(product);
     engine.setPoolPaused(true);

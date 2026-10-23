@@ -204,28 +204,28 @@ describe("related check evidence", () => {
   });
 
   it("uses the actual prepared history after updates, never the original starting commit or short labels", async () => {
-    const w = makeWorld("related-delivery");
+    const w = await makeWorld("related-delivery");
     try {
-      git(w.clone, "checkout", "-q", "-b", "delivery");
+      await git(w.clone, "checkout", "-q", "-b", "delivery");
       writeFileSync(join(w.clone, "repair.txt"), "replacement progress");
-      git(w.clone, "add", "."); git(w.clone, "commit", "-qm", "Repair progress");
-      const delivered = git(w.clone, "rev-parse", "HEAD");
-      const delivery = { sha: delivered, tree: git(w.clone, "rev-parse", "HEAD^{tree}"), repo: "acme/p", branch: "main", at: 10 };
-      git(w.clone, "checkout", "-q", "main");
-      writeFileSync(join(w.clone, "feature.txt"), "feature"); git(w.clone, "add", "."); git(w.clone, "commit", "-qm", "Build feature");
+      await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Repair progress");
+      const delivered = await git(w.clone, "rev-parse", "HEAD");
+      const delivery = { sha: delivered, tree: await git(w.clone, "rev-parse", "HEAD^{tree}"), repo: "acme/p", branch: "main", at: 10 };
+      await git(w.clone, "checkout", "-q", "main");
+      writeFileSync(join(w.clone, "feature.txt"), "feature"); await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Build feature");
       expect(await deliveryMissing(w.clone, "acme/p", delivery)).toBe(true);
       expect(await deliveryMissing(w.clone, "acme/p", { ...delivery, sha: delivered.slice(0, 7) })).toBe(false);
       expect(await deliveryMissing(w.clone, "acme/p", { ...delivery, sha: sha("f") })).toBe(false);
       expect(await deliveryMissing(w.clone, "other/p", delivery)).toBe(false);
       expect(await deliveryMissing(w.clone, "acme/p", { ...delivery, tree: sha("f") })).toBe(false);
-      git(w.clone, "merge", "--no-edit", "delivery");
+      await git(w.clone, "merge", "--no-edit", "delivery");
       expect(await deliveryMissing(w.clone, "acme/p", delivery)).toBe(false);
       expect(w.initial).not.toBe(delivered);
     } finally { removeDir(w.dir); }
   });
 
   it("records failure ownership and the completed Builder's answer, without borrowing a later pass after an update", async () => {
-    const w = makeWorld("related-recording");
+    const w = await makeWorld("related-recording");
     const engine = w.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.schedule = () => {}; engine.setPoolPaused(false);
     const turn = spyOn(engine["turns"], "turn");
@@ -235,7 +235,7 @@ describe("related check evidence", () => {
       const id = engine.addTask({ productId: "p", title: "Repair the progress fixture", backlog: true });
       const task = engine.task(id)!; task.state = "running";
       const scope = executionFor(task);
-      git(w.clone, "checkout", "-qb", "repair");
+      await git(w.clone, "checkout", "-qb", "repair");
       Object.assign(scope.work, { worktree: w.clone, baseSha: w.initial, base: "main", branch: "repair" });
       const stage = { id: "build", title: "Repair", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] };
       task.plan = { rationale: "Repair", plannerProfileId: "sol-high", stages: [stage] };
@@ -266,14 +266,14 @@ describe("related check evidence", () => {
       expect(candidate.findingId).toBe(findingId);
       expect(candidate.failureNode).toBe(failures[0]!.nodeId);
       expect(candidate.answer.text).toBe(value.answers[0]!.text);
-      expect(candidate.tree).toBe(git(w.clone, "rev-parse", "HEAD^{tree}"));
-      const candidateSha = git(w.clone, "rev-parse", "HEAD");
-      writeFileSync(join(w.clone, "update.txt"), "new base contents"); git(w.clone, "add", "."); git(w.clone, "commit", "-qm", "Update from main");
+      expect(candidate.tree).toBe(await git(w.clone, "rev-parse", "HEAD^{tree}"));
+      const candidateSha = await git(w.clone, "rev-parse", "HEAD");
+      writeFileSync(join(w.clone, "update.txt"), "new base contents"); await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Update from main");
       engine["checks"].claimPreparation(id);
       expect(await engine["checks"].runProductChecks(scope, [check], signal)).toBe(0);
       expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(true);
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("claimed");
-      git(w.clone, "reset", "--hard", candidateSha);
+      await git(w.clone, "reset", "--hard", candidateSha);
       engine["checks"].claimPreparation(id);
       expect(await engine["checks"].runProductChecks(scope, [check], signal)).toBe(0);
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("checked");
@@ -295,7 +295,7 @@ describe("related check evidence", () => {
   });
 
   it("shows at most three compact leads to added Builder roles and keeps fresh and continued review blind", async () => {
-    const w = makeWorld("related-context");
+    const w = await makeWorld("related-context");
     const engine = w.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true); engine.schedule = () => {};
     try {
@@ -338,22 +338,22 @@ describe("related check evidence", () => {
       const deliveredPeer = engine.s.tasks.find((other) => other.id !== task.id)!;
       deliveredPeer.state = "done";
       scope.work.baseSha = w.initial;
-      git(w.clone, "checkout", "-qb", "landed-lead");
+      await git(w.clone, "checkout", "-qb", "landed-lead");
       writeFileSync(join(w.clone, "landed-repair.txt"), "confirmed delivered contents");
-      git(w.clone, "add", "."); git(w.clone, "commit", "-qm", "Deliver the related repair");
-      const deliveredSha = git(w.clone, "rev-parse", "HEAD"), deliveredTree = git(w.clone, "rev-parse", "HEAD^{tree}");
+      await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Deliver the related repair");
+      const deliveredSha = await git(w.clone, "rev-parse", "HEAD"), deliveredTree = await git(w.clone, "rev-parse", "HEAD^{tree}");
       executionFor(deliveredPeer).work.confirmedDelivery = { sha: deliveredSha, tree: deliveredTree, repo: "acme/p", branch: "main", at: 10 };
-      git(w.clone, "checkout", "-q", "main");
+      await git(w.clone, "checkout", "-q", "main");
       const missing = (await engine["context"].sectionsFor(scope, "added-builder")).find((section) => section.title === "Related check evidence")!.body;
       expect(missing).toContain("Separately confirmed landed contents");
       expect(missing).toContain(deliveredSha);
       expect(missing.indexOf(`Task ${deliveredPeer.id};`)).toBeLessThan(missing.indexOf(`Task ${engine.s.tasks[2]!.id};`));
-      git(w.clone, "merge", "--ff-only", "landed-lead");
+      await git(w.clone, "merge", "--ff-only", "landed-lead");
       const included = (await engine["context"].sectionsFor(scope, "added-builder")).find((section) => section.title === "Related check evidence")!.body;
       expect(included).not.toContain(`Task ${deliveredPeer.id};`);
       expect(included).not.toContain("Separately confirmed landed contents");
       expect(scope.work.baseSha).toBe(w.initial);
-      const initialTree = git(w.clone, "rev-parse", `${w.initial}^{tree}`);
+      const initialTree = await git(w.clone, "rev-parse", `${w.initial}^{tree}`);
       for (let i = 0; i < 7; i++) {
         const id = engine.addTask({ productId: "p", title: "Already delivered peer", backlog: true });
         const other = engine.task(id)!; other.state = "done";
@@ -370,7 +370,7 @@ describe("related check evidence", () => {
       task.fixing = false;
       expect((await engine["context"].sectionsFor(scope, "added-builder")).some((section) => section.title === "Related check evidence")).toBe(false);
       task.state = "cancelled";
-      const actualSha = git(w.clone, "rev-parse", "HEAD"), actualTree = git(w.clone, "rev-parse", "HEAD^{tree}");
+      const actualSha = await git(w.clone, "rev-parse", "HEAD"), actualTree = await git(w.clone, "rev-parse", "HEAD^{tree}");
       scope.work.localUpdate = { branch: "main", sha: actualSha, pushed: false };
       await engine["shipping"]["recordLanded"](scope, "main", actualSha);
       expect(scope.work.confirmedDelivery).toBeUndefined();

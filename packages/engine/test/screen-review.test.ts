@@ -17,8 +17,8 @@ async function fixture(role: "code reviewer" | "verifier", extra: Scenario = {},
   const fakes = new Fakes(join(root, "fake"));
   const scenario: Scenario = { planner: "parallel", builder: "plain", reviewer: role === "verifier" ? "important" : undefined, verifier: "not-a-bug", screenRoles: [role], screenRoleHold: true, reopen: "resume", ...extra };
   fakes.scenario(scenario);
-  const repo = makeProduct(root);
-  git(repo, "config", "branch.autoSetupMerge", "false");
+  const repo = await makeProduct(root);
+  await git(repo, "config", "branch.autoSetupMerge", "false");
   const data = join(root, "data");
   const settings: EngineOptions = { agentCommand: profile => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(profile.toolId === "antigravity" ? ["--logged-out"] : [])], ...options };
   let engine = new Engine(data, settings);
@@ -104,7 +104,7 @@ for (const role of ["code reviewer", "verifier"] as const) {
         await stopped.settling.get(f.id);
         expect(existsSync(copy)).toBe(true);
         expect(peers.every((peer) => !existsSync(peer))).toBe(true);
-        const registered = git(f.repo, "worktree", "list", "--porcelain");
+        const registered = await git(f.repo, "worktree", "list", "--porcelain");
         for (const peer of registeredPeers) expect(registered).not.toContain(peer);
         f.restart();
         f.engine.allowScreen(f.id);
@@ -188,11 +188,11 @@ for (const role of ["code reviewer", "verifier"] as const) {
         const dir = join(f.data, "takeover", f.id);
         const launcher = readdirSync(dir).find((name) => name.startsWith("open."))!;
         expect(readFileSync(join(dir, launcher), "utf8")).toContain(copy);
-        expect(f.task().driving?.head).toBe(git(copy, "rev-parse", "HEAD"));
+        expect(f.task().driving?.head).toBe(await git(copy, "rev-parse", "HEAD"));
         expect(existsSync(copy)).toBe(true);
         writeFileSync(join(copy, "committed-by-hand.txt"), "Committed by the coordinator\n");
-        git(copy, "add", ".");
-        git(copy, "commit", "-qm", "A change made by hand");
+        await git(copy, "add", ".");
+        await git(copy, "commit", "-qm", "A change made by hand");
         writeFileSync(join(copy, "unsaved-by-hand.txt"), "Also keep this\n");
         const preview = await f.engine.handBackPreview(f.id);
         expect(preview).toMatchObject({ files: 2, commits: 1, unsaved: true });
@@ -271,7 +271,7 @@ it("fails and returns the screen and copies when its reviewer crashes beside a p
     expect(f.engine.drivers.has(f.id)).toBe(false);
     expect(f.engine.getState().inbox.some((item) => item.taskId === f.id && (item.kind === "screen" || item.kind === "question"))).toBe(false);
     expect(copies.every((path) => !existsSync(path))).toBe(true);
-    for (const path of registered) expect(git(f.repo, "worktree", "list", "--porcelain")).not.toContain(path);
+    for (const path of registered) expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(path);
   } finally { await f.close(); }
 });
 
@@ -470,7 +470,7 @@ it.each(["pause", "cancel", "fail"] as const)("removes the saved copies and git 
       expect(Object.values(f.task().hunt!.screenTurns!).every((entry) => existsSync(entry.copy))).toBe(true);
     } else {
       await waitFor(() => !f.engine.copyCleanups.has(f.id) && !f.engine.cleanupJobs.has(f.id) && !f.engine.backgroundWork.size, "the copy cleanup and Git registry update to finish");
-      const registered = git(f.repo, "worktree", "list", "--porcelain");
+      const registered = await git(f.repo, "worktree", "list", "--porcelain");
       for (const copy of registeredCopies) expect(registered).not.toContain(copy);
     }
   } finally { await f.close(); }

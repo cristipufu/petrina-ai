@@ -1,16 +1,14 @@
 import { expectRejection } from "./rejections.js";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { addCopy, commitAll, commitTree, contains, copyFolderName, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { childState } from "../src/process-tree.js";
-import { defunctProcess, firstLine, removeDir, testGitEnv, waitFor } from "./fixtures.js";
+import { defunctProcess, firstLine, git, gitWith, removeDir, testGitEnv, waitFor } from "./fixtures.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env: testGitEnv() }).toString().trim();
 
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
@@ -20,13 +18,13 @@ describe("Petrina's own git steps", () => {
 
   for (const format of ["sha1", "sha256"] as const) it(`compares and restores ${format} versions without treating an invalid version as unchanged`, async () => {
     const repo = join(temp, `maintenance-${format}`); mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
-    git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
+    await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
     writeFileSync(join(repo, "README.md"), "Initial\n");
     await commitAll(repo, "Initial");
     const initial = await operations.head(repo), first = await operations.commitVersion(repo);
     expect(initial).toHaveLength(format === "sha256" ? 64 : 40);
-    expect(first).toEqual({ head: initial, tree: git(repo, "rev-parse", "HEAD^{tree}") });
+    expect(first).toEqual({ head: initial, tree: await git(repo, "rev-parse", "HEAD^{tree}") });
     expect(await operations.revParse(repo, "HEAD")).toBe(initial);
     expect(await operations.worktreeStatus(repo)).toEqual({ head: initial, clean: true, trackedChanged: false });
     expect(await operations.changedFiles(repo, initial, initial)).toEqual([]);
@@ -34,7 +32,7 @@ describe("Petrina's own git steps", () => {
     const changed = (await commitAll(repo, "Maintenance"))!;
     expect(await operations.changedFiles(repo, initial, changed)).toEqual(["maintenance.txt"]);
     expect(await operations.changedFiles(repo, initial.slice(0, 12), changed.slice(0, 12))).toEqual(["maintenance.txt"]);
-    expect(await operations.treeOf(repo)).toBe(git(repo, "rev-parse", "HEAD^{tree}"));
+    expect(await operations.treeOf(repo)).toBe(await git(repo, "rev-parse", "HEAD^{tree}"));
     expect(await contains(repo, changed, initial)).toBe(true);
     await expectRejection(operations.changedFiles(repo, "invalid", changed));
     await expectRejection(operations.changedFiles(repo, initial, "invalid"));
@@ -51,11 +49,11 @@ describe("Petrina's own git steps", () => {
 
   it("checks ancestry from HEAD directly while preserving hash validation for other inputs", async () => {
     const repo = join(temp, "head-ancestry"); mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "First\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "First");
-    const base = git(repo, "rev-parse", "HEAD");
-    writeFileSync(join(repo, "README.md"), "Second\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Second");
-    const head = git(repo, "rev-parse", "HEAD");
+    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "First\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "First");
+    const base = await git(repo, "rev-parse", "HEAD");
+    writeFileSync(join(repo, "README.md"), "Second\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Second");
+    const head = await git(repo, "rev-parse", "HEAD");
     expect(await contains(repo, "HEAD", base)).toBe(true);
     expect(await contains(repo, head, base)).toBe(true);
     expect(await contains(repo, base, head)).toBe(false);
@@ -66,27 +64,27 @@ describe("Petrina's own git steps", () => {
   it("unlinks a replaced reviewer folder without following it into an unfinished task", async () => {
     const repo = join(temp, "peer-link-repo");
     mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.email", "test@example.com");
-    git(repo, "config", "user.name", "Test");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
     writeFileSync(join(repo, "README.md"), "kept\n");
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "init");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "init");
     const activeFolder = join(temp, "active.copies");
     const active = join(activeFolder, "review-0");
     const oldFolder = join(temp, "finished.copies");
     const old = join(oldFolder, "review-0");
-    const sha = git(repo, "rev-parse", "HEAD");
+    const sha = await git(repo, "rev-parse", "HEAD");
     await addCopy(repo, active, sha);
     await addCopy(repo, old, sha);
-    git(repo, "worktree", "lock", old);
+    await git(repo, "worktree", "lock", old);
     writeFileSync(join(active, "unsaved.txt"), "Keep my work");
     rmSync(oldFolder, { recursive: true, force: true });
     symlinkSync(activeFolder, oldFolder, process.platform === "win32" ? "junction" : "dir");
     expect(await removeFinishedCopies(repo, oldFolder)).toBe(true);
     expect(existsSync(oldFolder)).toBe(false);
     expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("Keep my work");
-    const registered = git(repo, "worktree", "list", "--porcelain", "-z");
+    const registered = await git(repo, "worktree", "list", "--porcelain", "-z");
     expect(registered).toContain(realpathSync.native(active));
     expect(registered).not.toContain(old);
   });
@@ -108,13 +106,13 @@ describe("Petrina's own git steps", () => {
 
   it("removes finished locked and missing snapshots with one registration read and one batch verification", async () => {
     const repo = join(temp, "finished-batch"); mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep the product\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
-    const sha = git(repo, "rev-parse", "HEAD"), folder = join(temp, "finished-batch.copies");
+    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep the product\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "finished-batch.copies");
     const copies = ["one", "two", "three"].map(name => join(folder, name));
     const unrelated = join(temp, "unfinished-review");
     for (const copy of [...copies, unrelated]) await addCopy(repo, copy, sha);
-    git(repo, "worktree", "lock", copies[0]!); git(repo, "worktree", "lock", copies[1]!);
+    await git(repo, "worktree", "lock", copies[0]!); await git(repo, "worktree", "lock", copies[1]!);
     rmSync(copies[1]!, { recursive: true, force: true });
     mkdirSync(join(folder, "unregistered"));
     writeFileSync(join(unrelated, "unsaved.txt"), "Still working\n");
@@ -123,7 +121,7 @@ describe("Petrina's own git steps", () => {
       expect(await removeFinishedCopies(repo, folder)).toBe(true);
       expect(listed).toHaveBeenCalledTimes(2);
       expect(existsSync(folder)).toBe(false);
-      const remaining = git(repo, "worktree", "list", "--porcelain", "-z");
+      const remaining = await git(repo, "worktree", "list", "--porcelain", "-z");
       for (const copy of copies) expect(remaining).not.toContain(copy);
       expect(remaining).toContain(realpathSync.native(unrelated));
       expect(readFileSync(join(unrelated, "unsaved.txt"), "utf8")).toBe("Still working\n");
@@ -135,21 +133,21 @@ describe("Petrina's own git steps", () => {
 
   it("prunes deleted review copies in one batch, preserving saved screen copies and unrelated worktrees", async () => {
     const repo = join(temp, "batch-copies"); mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep the product\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
-    const sha = git(repo, "rev-parse", "HEAD"), folder = join(temp, "batch.copies");
+    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep the product\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "batch.copies");
     const kept = join(folder, "screen"), gone = [join(folder, "review-0"), join(folder, "review-1")], unrelated = join(temp, "other-task");
     for (const copy of [kept, ...gone, unrelated]) await addCopy(repo, copy, sha);
     writeFileSync(join(kept, "screen.txt"), "Keep the screen work");
     rmSync(gone[0]!, { recursive: true, force: true }); // Recover a missing folder's fresh registration too.
     await removeCopies(repo, folder, [kept]);
-    const registered = git(repo, "worktree", "list", "--porcelain", "-z");
+    const registered = await git(repo, "worktree", "list", "--porcelain", "-z");
     expect(readFileSync(join(kept, "screen.txt"), "utf8")).toBe("Keep the screen work");
     expect(registered).toContain(realpathSync.native(kept)); expect(registered).toContain(realpathSync.native(unrelated));
     for (const copy of gone) { expect(existsSync(copy)).toBe(false); expect(registered).not.toContain(copy); }
     await removeCopies(repo, folder);
     expect(existsSync(folder)).toBe(false);
-    expect(git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(kept);
+    expect(await git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(kept);
     expect(checkedOut(join(unrelated, "README.md"))).toBe("Keep the product\n");
   });
 
@@ -178,9 +176,9 @@ describe("Petrina's own git steps", () => {
 
   it("creates a separate real copy for each member that a naive or case-insensitive name would merge", async () => {
     const repo = join(temp, "portable-copies"); mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep the product\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
-    const sha = git(repo, "rev-parse", "HEAD"), folder = join(temp, "portable.copies");
+    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep the product\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
+    const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "portable.copies");
     const members = ["vote-third:argon-high", "vote-third-argon-high", "vote-third_argon-high", "vote-Third:argon-high", "vote-third:argon-high.", "review-0"];
     const names = members.map(copyFolderName);
     for (const name of names) await addCopy(repo, join(folder, name), sha);
@@ -196,17 +194,17 @@ describe("Petrina's own git steps", () => {
 
   it("does not follow a replaced review parent while preserving a screen conversation", async () => {
     const repo = join(temp, "batch-link"); mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
-    writeFileSync(join(repo, "README.md"), "Keep\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
+    await git(repo, "init", "-q", "-b", "main"); await git(repo, "config", "user.email", "test@example.com"); await git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep\n"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "Initial");
     const real = join(temp, "live.copies"), alias = join(temp, "replaced.copies");
     const screen = join(real, "screen"), peer = join(real, "peer");
-    for (const copy of [screen, peer]) await addCopy(repo, copy, git(repo, "rev-parse", "HEAD"));
+    for (const copy of [screen, peer]) await addCopy(repo, copy, await git(repo, "rev-parse", "HEAD"));
     writeFileSync(join(peer, "unsaved.txt"), "Unrelated work");
     symlinkSync(real, alias, process.platform === "win32" ? "junction" : "dir");
     await removeCopies(repo, alias, [join(alias, "screen")]);
     expect(existsSync(alias)).toBe(false);
     expect(readFileSync(join(peer, "unsaved.txt"), "utf8")).toBe("Unrelated work");
-    expect(git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(screen));
+    expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(screen));
   });
 
   for (const ownHome of [false, true]) it(`removes its private Git helpers on exit${ownHome ? " inside the engine home" : " in the system temp folder"}`, async () => {
@@ -241,26 +239,26 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     const finished = join(temp, "link-finished");
     const active = join(temp, "link-active");
     mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.email", "test@example.com");
-    git(repo, "config", "user.name", "Test");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
     writeFileSync(join(repo, "README.md"), "kept\n");
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "init");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "init");
     await ensureWorktree(repo, active, "petrina/active", "main");
     writeFileSync(join(active, "unsaved.txt"), "keep my work\n");
-    const refs = git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
+    const refs = await git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
     for (const target of [active, repo]) {
       await ensureWorktree(repo, finished, "petrina/finished", "main");
       rmSync(finished, { recursive: true, force: true });
       symlinkSync(target, finished, process.platform === "win32" ? "junction" : "dir");
       expect(await removeWorktree(repo, finished)).toBe(true);
       expect(existsSync(finished)).toBe(false);
-      const registered = git(repo, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree ")).map((field) => realpathSync.native(field.slice("worktree ".length)));
+      const registered = (await git(repo, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree ")).map((field) => realpathSync.native(field.slice("worktree ".length)));
       expect(new Set(registered)).toEqual(new Set([realpathSync.native(repo), realpathSync.native(active)]));
       expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("keep my work\n");
       expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
-      expect(git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(`${refs}\nrefs/heads/petrina/finished ${git(repo, "rev-parse", "main")}`);
+      expect(await git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(`${refs}\nrefs/heads/petrina/finished ${await git(repo, "rev-parse", "main")}`);
     }
   });
 
@@ -274,29 +272,29 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     mkdirSync(repo, { recursive: true });
     mkdirSync(cache);
     writeFileSync(join(cache, "keep"), "shared\n");
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.email", "test@example.com");
-    git(repo, "config", "user.name", "Test");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
     writeFileSync(join(repo, "README.md"), "product\n");
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "init");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "init");
     // Git records the native folder name; callers can arrive through a parent alias or a Windows
     // short temporary-folder name. Match the record even after the copy's parent is already gone.
     symlinkSync(parent, alias, process.platform === "win32" ? "junction" : "dir");
     await ensureWorktree(repo, copy, `petrina/identity-${missing}`, "main");
     symlinkSync(cache, join(copy, "cache"), process.platform === "win32" ? "junction" : "dir");
-    const refs = git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
-    const registered = () => git(repo, "worktree", "list", "--porcelain", "-z").split("\0").filter((field) => field.startsWith("worktree "));
-    expect(registered()).toHaveLength(2);
+    const refs = await git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
+    const registered = async () => (await git(repo, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree "));
+    expect(await registered()).toHaveLength(2);
     if (missing !== "neither") rmSync(missing === "copy" ? copy : copies, { recursive: true, force: true });
     const rootAlias = join(alias, "product");
     const copyAlias = join(alias, "copies", "finished");
     expect(await removeWorktree(rootAlias, copyAlias)).toBe(true);
     expect(existsSync(copy)).toBe(false);
-    expect(registered()).toHaveLength(1);
+    expect(await registered()).toHaveLength(1);
     expect(existsSync(alias)).toBe(true);
     expect(readFileSync(join(cache, "keep"), "utf8")).toBe("shared\n");
-    expect(git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(refs);
+    expect(await git(repo, "for-each-ref", "--format=%(refname) %(objectname)")).toBe(refs);
     await expectRejection(removeWorktree(rootAlias, repo), "that folder holds the product itself");
     expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("product\n");
     expect(await removeWorktree(rootAlias, copyAlias)).toBe(false);
@@ -305,16 +303,16 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
   it("never run hooks or the file monitor an agent planted", async () => {
     const repo = join(temp, "repo");
     mkdirSync(repo, { recursive: true });
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.email", "test@example.com");
-    git(repo, "config", "user.name", "Test");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
     const marker = join(temp, "ran");
     const script = join(temp, "evil.sh");
     writeFileSync(script, `#!/bin/sh\ntouch ${marker}\n`);
     chmodSync(script, 0o755);
     writeFileSync(join(repo, ".git", "hooks", "pre-commit"), `#!/bin/sh\ntouch ${marker}\n`);
     chmodSync(join(repo, ".git", "hooks", "pre-commit"), 0o755);
-    git(repo, "config", "core.fsmonitor", script);
+    await git(repo, "config", "core.fsmonitor", script);
     writeFileSync(join(repo, "a.txt"), "hello\n");
 
     expect(await isClean(repo)).toBe(false);
@@ -325,11 +323,11 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
   it("names the product's repository from its origin, and one cloned from a folder on this computer by the clone's own folder", async () => {
     const repo = join(temp, "named");
     mkdirSync(repo, { recursive: true });
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "remote", "add", "origin", "git@github.com:acme/shop.git");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "remote", "add", "origin", "git@github.com:acme/shop.git");
     expect(await repoInfo(repo)).toMatchObject({ owner: "acme", name: "shop" });
     for (const folder of ["C:\\Users\\ana\\origin.git", "C:/Users/ana/origin.git", "/home/ana/origin.git", "file:///home/ana/origin.git"]) {
-      git(repo, "remote", "set-url", "origin", folder);
+      await git(repo, "remote", "set-url", "origin", folder);
       expect(await repoInfo(repo)).toMatchObject({ owner: "local", name: "named" });
     }
   });
@@ -338,52 +336,52 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     const repo = join(temp, "cleanup-repo");
     const copy = join(temp, "cleanup-copy");
     mkdirSync(repo);
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.email", "test@example.com");
-    git(repo, "config", "user.name", "Test");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
     writeFileSync(join(repo, "README.md"), "kept\n");
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "init");
-    const before = git(repo, "rev-parse", "HEAD");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "init");
+    const before = await git(repo, "rev-parse", "HEAD");
     await ensureWorktree(repo, copy, "petrina/cleanup", "main");
-    git(repo, "worktree", "lock", copy);
+    await git(repo, "worktree", "lock", copy);
     mkdirSync(join(copy, "target", "release"), { recursive: true });
     writeFileSync(join(copy, "target", "release", "app"), "output");
     expect(await removeWorktree(repo, copy)).toBe(true);
     expect(existsSync(copy)).toBe(false);
-    expect(git(repo, "worktree", "list", "--porcelain")).not.toContain("cleanup-copy");
-    expect(git(repo, "rev-parse", "petrina/cleanup")).toBe(before);
+    expect(await git(repo, "worktree", "list", "--porcelain")).not.toContain("cleanup-copy");
+    expect(await git(repo, "rev-parse", "petrina/cleanup")).toBe(before);
     expect(await removeWorktree(repo, copy)).toBe(false);
     await expectRejection(removeWorktree(repo, repo), "that folder holds the product itself");
     await expectRejection(removeWorktree(repo, temp), "that folder holds the product itself");
     expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("kept\n");
-    expect(git(repo, "rev-parse", "main")).toBe(before);
+    expect(await git(repo, "rev-parse", "main")).toBe(before);
   });
 
   it("will not fetch with the coordinator's login when the repository's settings could misuse it", async () => {
     const repo = join(temp, "risky");
     mkdirSync(repo, { recursive: true });
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "remote", "add", "origin", "https://github.com/acme/shop.git");
-    git(repo, "config", "branch.main.remote", "origin");
-    git(repo, "config", "core.hooksPath", ".husky");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "remote", "add", "origin", "https://github.com/acme/shop.git");
+    await git(repo, "config", "branch.main.remote", "origin");
+    await git(repo, "config", "core.hooksPath", ".husky");
     expect(await riskySettings(repo)).toEqual([]);
-    git(repo, "config", "credential.helper", "!sh -c 'touch /tmp/stolen'");
-    git(repo, "config", "url.https://evil.example/.insteadOf", "https://github.com/");
-    git(repo, "config", "http.extraHeader", "X-Leak: 1");
-    git(repo, "config", "core.alternateRefsCommand", "sh -c id");
+    await git(repo, "config", "credential.helper", "!sh -c 'touch /tmp/stolen'");
+    await git(repo, "config", "url.https://evil.example/.insteadOf", "https://github.com/");
+    await git(repo, "config", "http.extraHeader", "X-Leak: 1");
+    await git(repo, "config", "core.alternateRefsCommand", "sh -c id");
     expect((await riskySettings(repo)).sort()).toEqual(["core.alternaterefscommand", "credential.helper", "http.extraheader", "url.https://evil.example/.insteadof"]);
   });
 
   it("never waits on a stalled fetch", async () => {
     const origin = join(temp, "origin");
     mkdirSync(origin, { recursive: true });
-    git(origin, "init", "-q", "-b", "main");
-    git(origin, "config", "user.email", "test@example.com");
-    git(origin, "config", "user.name", "Test");
+    await git(origin, "init", "-q", "-b", "main");
+    await git(origin, "config", "user.email", "test@example.com");
+    await git(origin, "config", "user.name", "Test");
     writeFileSync(join(origin, "a.txt"), "a\n");
-    git(origin, "add", ".");
-    git(origin, "commit", "-q", "-m", "init");
+    await git(origin, "add", ".");
+    await git(origin, "commit", "-q", "-m", "init");
     // An https address that accepts the connection and never answers.
     const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const started = Date.now();
@@ -511,135 +509,135 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
   it("treats a remote section named after an address as unsafe", async () => {
     const repo = join(temp, "named");
     mkdirSync(repo, { recursive: true });
-    git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "remote.origin.url", "git@github-work:acme/shop");
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "remote.origin.url", "git@github-work:acme/shop");
     expect(await riskySettings(repo)).toEqual([]);
-    git(repo, "config", "remote.git@github-work:acme/shop.url", "/tmp/evil.git");
+    await git(repo, "config", "remote.git@github-work:acme/shop.url", "/tmp/evil.git");
     expect(await riskySettings(repo)).toEqual(["remote.git@github-work:acme/shop.url"]);
   });
 
   describe("pushes and local updates", () => {
-    const setup = (name: string) => {
+    const setup = async (name: string) => {
       const remote = join(temp, `${name}.git`);
-      execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote], { env: testGitEnv() });
+      await gitWith({}, "init", "-q", "--bare", "-b", "main", remote);
       const repo = join(temp, name);
       mkdirSync(repo, { recursive: true });
-      git(repo, "init", "-q", "-b", "main");
-      git(repo, "config", "user.email", "test@example.com");
-      git(repo, "config", "user.name", "Test");
-      git(repo, "commit", "-q", "--allow-empty", "-m", "one");
-      const one = git(repo, "rev-parse", "HEAD");
-      git(repo, "push", "-q", remote, "main");
-      git(repo, "commit", "-q", "--allow-empty", "-m", "two");
-      const two = git(repo, "rev-parse", "HEAD");
-      return { remote, repo, one, two, at: (ref: string) => execFileSync("git", ["--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref], { env: testGitEnv() }).toString().trim() };
+      await git(repo, "init", "-q", "-b", "main");
+      await git(repo, "config", "user.email", "test@example.com");
+      await git(repo, "config", "user.name", "Test");
+      await git(repo, "commit", "-q", "--allow-empty", "-m", "one");
+      const one = await git(repo, "rev-parse", "HEAD");
+      await git(repo, "push", "-q", remote, "main");
+      await git(repo, "commit", "-q", "--allow-empty", "-m", "two");
+      const two = await git(repo, "rev-parse", "HEAD");
+      return { remote, repo, one, two, at: (ref: string) => gitWith({}, "--git-dir", remote, "for-each-ref", "--format=%(objectname)", ref) };
     };
 
     it("pushes main and a tag all or nothing, and refuses an existing tag", async () => {
-      const { remote, repo, one, two, at } = setup("atomic");
-      execFileSync("git", ["--git-dir", remote, "update-ref", "refs/tags/v1.0.0", one], { env: testGitEnv() });
+      const { remote, repo, one, two, at } = await setup("atomic");
+      await gitWith({}, "--git-dir", remote, "update-ref", "refs/tags/v1.0.0", one);
       const pushed = await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.0" }], true);
       expect(pushed.ok).toBe(false);
-      expect(at("refs/heads/main")).toBe(one);
-      expect(at("refs/tags/v1.0.0")).toBe(one);
+      expect(await at("refs/heads/main")).toBe(one);
+      expect(await at("refs/tags/v1.0.0")).toBe(one);
       expect((await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }, { sha: two, ref: "refs/tags/v1.0.1" }], true)).ok).toBe(true);
-      expect(at("refs/heads/main")).toBe(two);
-      expect(at("refs/tags/v1.0.1")).toBe(two);
+      expect(await at("refs/heads/main")).toBe(two);
+      expect(await at("refs/tags/v1.0.1")).toBe(two);
     });
 
     it("never forces: a branch that moved elsewhere on GitHub is refused, not overwritten", async () => {
-      const { remote, repo, one, two, at } = setup("forward");
-      git(repo, "commit", "-q", "--allow-empty", "-m", "elsewhere");
-      const elsewhere = git(repo, "rev-parse", "HEAD");
-      git(repo, "push", "-q", remote, "HEAD:main");
+      const { remote, repo, one, two, at } = await setup("forward");
+      await git(repo, "commit", "-q", "--allow-empty", "-m", "elsewhere");
+      const elsewhere = await git(repo, "rev-parse", "HEAD");
+      await git(repo, "push", "-q", remote, "HEAD:main");
       expect((await push(repo, { url: remote, local: true }, [{ sha: two, ref: "refs/heads/main" }])).ok).toBe(false);
-      expect(at("refs/heads/main")).toBe(elsewhere);
+      expect(await at("refs/heads/main")).toBe(elsewhere);
       expect((await push(repo, { url: "--receive-pack=sh", local: true }, [{ sha: one, ref: "refs/heads/x" }])).ok).toBe(false);
       // The file transport is only for a test stand-in: without it, a folder is refused.
       expect((await push(repo, { url: remote }, [{ sha: two, ref: "refs/heads/other" }])).ok).toBe(false);
-      expect(at("refs/heads/other")).toBe("");
+      expect(await at("refs/heads/other")).toBe("");
     });
 
     it("refuses a local update when the branch moved meanwhile, checked out or not", async () => {
-      const { repo, one, two } = setup("racing");
+      const { repo, one, two } = await setup("racing");
       // Not checked out: main must still be where Petrina saw it.
-      git(repo, "switch", "-q", "-c", "side", one);
-      git(repo, "commit", "-q", "--allow-empty", "-m", "a teammate's commit");
-      const teammate = git(repo, "rev-parse", "HEAD");
-      git(repo, "branch", "-f", "main", teammate);
+      await git(repo, "switch", "-q", "-c", "side", one);
+      await git(repo, "commit", "-q", "--allow-empty", "-m", "a teammate's commit");
+      const teammate = await git(repo, "rev-parse", "HEAD");
+      await git(repo, "branch", "-f", "main", teammate);
       expect((await fastForward(repo, "main", one, two, false)).ok).toBe(false);
-      expect(git(repo, "rev-parse", "main")).toBe(teammate);
+      expect(await git(repo, "rev-parse", "main")).toBe(teammate);
       // Checked out: refused just the same, history that is not ahead of it or not.
-      git(repo, "switch", "-q", "main");
+      await git(repo, "switch", "-q", "main");
       expect((await fastForward(repo, "main", one, two, true)).ok).toBe(false);
-      expect(git(repo, "rev-parse", "main")).toBe(teammate);
-      git(repo, "reset", "-q", "--hard", two);
+      expect(await git(repo, "rev-parse", "main")).toBe(teammate);
+      await git(repo, "reset", "-q", "--hard", two);
       writeFileSync(join(repo, "greeting.txt"), "Hello\n");
-      git(repo, "add", "greeting.txt");
-      git(repo, "commit", "-q", "-m", "three");
-      const three = git(repo, "rev-parse", "HEAD");
+      await git(repo, "add", "greeting.txt");
+      await git(repo, "commit", "-q", "-m", "three");
+      const three = await git(repo, "rev-parse", "HEAD");
       // Moved forward since Petrina looked, to a commit the tested one has: still refused, files untouched.
-      git(repo, "reset", "-q", "--hard", two);
+      await git(repo, "reset", "-q", "--hard", two);
       expect((await fastForward(repo, "main", one, three, true)).ok).toBe(false);
-      expect(git(repo, "rev-parse", "main")).toBe(two);
+      expect(await git(repo, "rev-parse", "main")).toBe(two);
       expect(existsSync(join(repo, "greeting.txt"))).toBe(false);
       // A change in the way: the branch goes back and the change stays.
       writeFileSync(join(repo, "greeting.txt"), "Mine\n");
       expect((await fastForward(repo, "main", two, three, true)).ok).toBe(false);
-      expect(git(repo, "rev-parse", "main")).toBe(two);
+      expect(await git(repo, "rev-parse", "main")).toBe(two);
       expect(checkedOut(join(repo, "greeting.txt"))).toBe("Mine\n");
       rmSync(join(repo, "greeting.txt"));
       expect((await fastForward(repo, "main", two, three, true)).ok).toBe(true);
-      expect(git(repo, "rev-parse", "main")).toBe(three);
+      expect(await git(repo, "rev-parse", "main")).toBe(three);
       expect(checkedOut(join(repo, "greeting.txt"))).toBe("Hello\n");
-      expect(git(repo, "status", "--porcelain")).toBe("");
-      expect(git(repo, "rev-list", "--merges", "--count", "main")).toBe("0");
+      expect(await git(repo, "status", "--porcelain")).toBe("");
+      expect(await git(repo, "rev-list", "--merges", "--count", "main")).toBe("0");
     });
 
     it("refuses a local update when the main copy switches branches at that moment, and stages nothing anywhere", async () => {
-      const { repo, one } = setup("switching");
+      const { repo, one } = await setup("switching");
       writeFileSync(join(repo, "greeting.txt"), "Hello\n");
-      git(repo, "add", "greeting.txt");
-      git(repo, "commit", "-q", "-m", "greeting");
-      const tested = git(repo, "rev-parse", "HEAD");
-      git(repo, "reset", "-q", "--hard", one);
+      await git(repo, "add", "greeting.txt");
+      await git(repo, "commit", "-q", "-m", "greeting");
+      const tested = await git(repo, "rev-parse", "HEAD");
+      await git(repo, "reset", "-q", "--hard", one);
       const lock = join(repo, ".git", "index.lock");
-      const untouched = () => {
-        expect(git(repo, "rev-parse", "main")).toBe(one);
-        expect(git(repo, "status", "--porcelain")).toBe("");
+      const untouched = async () => {
+        expect(await git(repo, "rev-parse", "main")).toBe(one);
+        expect(await git(repo, "status", "--porcelain")).toBe("");
         expect(existsSync(join(repo, "greeting.txt"))).toBe(false);
       };
       // Petrina saw main open; the coordinator switches to another branch just before the update.
-      git(repo, "switch", "-q", "-c", "feature");
+      await git(repo, "switch", "-q", "-c", "feature");
       expect(await fastForward(repo, "main", one, tested, true)).toEqual({ ok: false, error: "the main copy switched branches at that moment, so main stays where it was" });
-      untouched();
+      await untouched();
       expect(existsSync(lock)).toBe(false);
       // Petrina saw main not open; the copy switches to main just before: refused too.
-      git(repo, "switch", "-q", "main");
+      await git(repo, "switch", "-q", "main");
       expect((await fastForward(repo, "main", one, tested, false)).ok).toBe(false);
-      untouched();
+      await untouched();
       // A switch half done: the staging area and files are already another branch's, main still open.
-      git(repo, "switch", "-q", "-c", "other");
+      await git(repo, "switch", "-q", "-c", "other");
       writeFileSync(join(repo, "other.txt"), "Other\n");
-      git(repo, "add", "other.txt");
-      git(repo, "commit", "-q", "-m", "other");
-      git(repo, "symbolic-ref", "HEAD", "refs/heads/main");
+      await git(repo, "add", "other.txt");
+      await git(repo, "commit", "-q", "-m", "other");
+      await git(repo, "symbolic-ref", "HEAD", "refs/heads/main");
       expect((await fastForward(repo, "main", one, tested, true)).ok).toBe(false);
-      git(repo, "symbolic-ref", "HEAD", "refs/heads/other");
-      expect(git(repo, "status", "--porcelain")).toBe("");
-      git(repo, "switch", "-q", "main");
-      untouched();
+      await git(repo, "symbolic-ref", "HEAD", "refs/heads/other");
+      expect(await git(repo, "status", "--porcelain")).toBe("");
+      await git(repo, "switch", "-q", "main");
+      await untouched();
       // Another git command holds the lock: refused, and its lock stays.
       writeFileSync(lock, "");
       expect(await fastForward(repo, "main", one, tested, true)).toEqual({ ok: false, error: "another git command was working in the main copy at that moment" });
       expect(existsSync(lock)).toBe(true);
       rmSync(lock);
-      untouched();
+      await untouched();
       // Still on main: it goes through, and leaves no lock behind.
       expect((await fastForward(repo, "main", one, tested, true)).ok).toBe(true);
-      expect(git(repo, "rev-parse", "main")).toBe(tested);
+      expect(await git(repo, "rev-parse", "main")).toBe(tested);
       expect(checkedOut(join(repo, "greeting.txt"))).toBe("Hello\n");
-      expect(git(repo, "status", "--porcelain")).toBe("");
+      expect(await git(repo, "status", "--porcelain")).toBe("");
       expect(existsSync(lock)).toBe(false);
     });
   });
@@ -650,41 +648,41 @@ describe("the change's fingerprint", () => {
   afterAll(() => removeDir(folder));
 
   /** A repository with a task branch that changes one line in the middle of a file. */
-  function repo(): { path: string; run: (...args: string[]) => string } {
+  async function repo(): Promise<{ path: string; run: (...args: string[]) => Promise<string> }> {
     const path = mkdtempSync(join(folder, "repo-"));
-    const run = (...args: string[]) => execFileSync("git", args, { cwd: path, encoding: "utf8", env: testGitEnv() }).trim();
-    run("init", "-q", "-b", "main");
-    run("config", "user.email", "t@example.com");
-    run("config", "user.name", "T");
+    const run = (...args: string[]) => git(path, ...args);
+    await run("init", "-q", "-b", "main");
+    await run("config", "user.email", "t@example.com");
+    await run("config", "user.name", "T");
     writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 2\n");
-    run("add", ".");
-    run("commit", "-q", "-m", "init");
-    run("checkout", "-q", "-b", "task");
+    await run("add", ".");
+    await run("commit", "-q", "-m", "init");
+    await run("checkout", "-q", "-b", "task");
     writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n    return 3\n");
-    run("commit", "-qam", "task");
+    await run("commit", "-qam", "task");
     return { path, run };
   }
 
   it("stays the same when the change lands lower in a file that grew above it", async () => {
-    const { path, run } = repo();
-    const before = await patchId(path, run("rev-parse", "main"), "HEAD");
-    run("checkout", "-q", "main");
+    const { path, run } = await repo();
+    const before = await patchId(path, await run("rev-parse", "main"), "HEAD");
+    await run("checkout", "-q", "main");
     writeFileSync(join(path, "NEWS.md"), "News\n");
     writeFileSync(join(path, "app.py"), "import os\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n");
-    run("add", ".");
-    run("commit", "-q", "-m", "main moved");
-    run("checkout", "-q", "task");
-    const merged = await mergeTree(path, run("rev-parse", "main"));
+    await run("add", ".");
+    await run("commit", "-q", "-m", "main moved");
+    await run("checkout", "-q", "task");
+    const merged = await mergeTree(path, await run("rev-parse", "main"));
     expect(merged?.conflicts).toEqual([]);
-    await moveTo(path, await commitTree(path, merged!.tree, run("rev-parse", "main"), "task"));
-    expect(await patchId(path, run("rev-parse", "main"), "HEAD")).toBe(before!);
+    await moveTo(path, await commitTree(path, merged!.tree, await run("rev-parse", "main"), "task"));
+    expect(await patchId(path, await run("rev-parse", "main"), "HEAD")).toBe(before!);
   });
 
   it("changes when only whitespace differs, which is meaning in Python", async () => {
-    const { path, run } = repo();
-    const before = await patchId(path, run("rev-parse", "main"), "HEAD");
+    const { path, run } = await repo();
+    const before = await patchId(path, await run("rev-parse", "main"), "HEAD");
     writeFileSync(join(path, "app.py"), "def a():\n    return 1\n\n\ndef b():\n        return 3\n");
-    run("commit", "-qam", "indented");
-    expect(await patchId(path, run("rev-parse", "main"), "HEAD")).not.toBe(before!);
+    await run("commit", "-qam", "indented");
+    expect(await patchId(path, await run("rev-parse", "main"), "HEAD")).not.toBe(before!);
   });
 });

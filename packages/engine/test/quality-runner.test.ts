@@ -3,7 +3,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { isBuiltin } from "node:module";
 import { dirname, join } from "node:path";
 import { namedCheckFailures } from "../src/related-check-evidence.js";
-import { git, removeDir, tempDir, testGitEnv, waitForFile } from "./fixtures.js";
+import { git, removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "./fixtures.js";
 import { sourceFacts } from "./quality/source.js";
 
 const roots: string[] = [];
@@ -16,10 +16,12 @@ afterAll(() => roots.forEach(removeDir));
  * could not load its parser that way.
  */
 const ENGINE = join(import.meta.dir, "..");
+/** The engine files the copied runner imports from outside its own folder: the tests' bounded Git path and its helpers. */
+const SUPPORT = ["test/test-git-env.ts", "test/commands.ts", "test/slow.ts", "src/process-tree.ts"];
 const PACKAGES = (() => {
   const manifest = JSON.parse(readFileSync(join(ENGINE, "package.json"), "utf8")) as Record<"dependencies" | "devDependencies", Record<string, string>>;
   const declared = new Set(Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }));
-  const sources = [...readdirSync(join(import.meta.dir, "quality")).filter(name => name.endsWith(".ts")).map(name => join(import.meta.dir, "quality", name)), join(import.meta.dir, "test-git-env.ts")];
+  const sources = [...readdirSync(join(import.meta.dir, "quality")).filter(name => name.endsWith(".ts")).map(name => join(import.meta.dir, "quality", name)), ...SUPPORT.map(file => join(ENGINE, file))];
   const names = new Set(sources.flatMap(file => sourceFacts(readFileSync(file, "utf8"), file).imports)
     .filter(({ path, runtime }) => runtime && !path.startsWith(".") && !isBuiltin(path))
     .map(({ path }) => path.split("/").slice(0, path.startsWith("@") ? 2 : 1).join("/")));
@@ -38,7 +40,10 @@ function entryFixture(): string {
   const quality = join(root, "packages", "engine", "test", "quality");
   mkdirSync(quality, { recursive: true });
   cpSync(join(import.meta.dir, "quality"), quality, { recursive: true });
-  cpSync(join(import.meta.dir, "test-git-env.ts"), join(root, "packages", "engine", "test", "test-git-env.ts"));
+  for (const file of SUPPORT) {
+    mkdirSync(dirname(join(root, "packages", "engine", file)), { recursive: true });
+    cpSync(join(ENGINE, file), join(root, "packages", "engine", file));
+  }
   for (const { name, folder } of PACKAGES) {
     const link = join(root, "packages", "engine", "node_modules", name);
     mkdirSync(dirname(link), { recursive: true });
@@ -50,7 +55,7 @@ function entryFixture(): string {
 }
 
 /** A repository whose workspace test scripts are tiny stand-ins, never another full suite. */
-function fixture(scenario: Partial<Record<Suite, StandIn>>): string {
+async function fixture(scenario: Partial<Record<Suite, StandIn>>): Promise<string> {
   const root = entryFixture();
   writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nstarted*\n");
   const runner = join(root, "runner.ts");
@@ -78,8 +83,8 @@ if (stand.hold) {
     writeFileSync(join(folder, "test", "example.test.ts"), "// A controlled runner result, not another full suite.\n");
     writeFileSync(join(folder, "package.json"), JSON.stringify({ name: workspace, scripts: { test: `${JSON.stringify(process.execPath)} ${JSON.stringify(runner)} ${workspace.split("/")[1]}` } }));
   }
-  git(root, "init", "-q", "-b", "main"); git(root, "add", ".");
-  git(root, "-c", "user.email=t@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "Fixture");
+  await git(root, "init", "-q", "-b", "main"); await git(root, "add", ".");
+  await git(root, "-c", "user.email=t@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "Fixture");
   return root;
 }
 
@@ -99,12 +104,12 @@ function recorded(root: string, stdout: string) {
   };
 }
 
-function run(scenario: Partial<Record<Suite, StandIn>>, expected: number) {
-  const root = fixture(scenario);
-  const result = Bun.spawnSync([process.execPath, "run", "test"], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 30_000 });
-  const stdout = result.stdout.toString();
-  expect({ code: result.exitCode, output: result.exitCode === expected ? "" : `${stdout}\n${result.stderr.toString()}` }).toEqual({ code: expected, output: "" });
-  return { ...recorded(root, stdout), stdout, stderr: result.stderr.toString() };
+async function run(scenario: Partial<Record<Suite, StandIn>>, expected: number) {
+  const root = await fixture(scenario);
+  const result = await runCommand([process.execPath, "run", "test"], { cwd: root, env: environment(), timeoutMs: 30_000 });
+  const stdout = result.stdout;
+  expect({ code: result.code, output: result.code === expected ? "" : `${stdout}\n${result.stderr}` }).toEqual({ code: expected, output: "" });
+  return { ...recorded(root, stdout), stdout, stderr: result.stderr };
 }
 
 for (const args of [
@@ -115,41 +120,41 @@ for (const args of [
   ["--reporter=json"],
   ["--help", "test/chosen.test.ts"],
   ["test/chosen.test.ts", "-h"],
-] as const) it(`rejects root arguments ${args.join(" ")} before scanning or writing a report`, () => {
+] as const) it(`rejects root arguments ${args.join(" ")} before scanning or writing a report`, async () => {
   const root = entryFixture();
-  const result = Bun.spawnSync([process.execPath, "run", "test", ...args], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 10_000 });
-  expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toContain("The root test command does not accept file selectors or options. No tests ran.");
-  expect(result.stderr.toString()).toContain("bun run --cwd packages/engine test test/name.test.ts");
-  expect(result.stderr.toString()).not.toContain("Could not inspect test inputs");
-  expect(result.stdout.toString()).toBe("");
+  const result = await runCommand([process.execPath, "run", "test", ...args], { cwd: root, env: environment(), timeoutMs: 10_000 });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("The root test command does not accept file selectors or options. No tests ran.");
+  expect(result.stderr).toContain("bun run --cwd packages/engine test test/name.test.ts");
+  expect(result.stderr).not.toContain("Could not inspect test inputs");
+  expect(result.stdout).toBe("");
   expect(existsSync(join(root, ".test-results"))).toBe(false);
   expect(existsSync(join(root, "runs.log"))).toBe(false);
 });
 
-for (const option of ["--help", "-h"]) it(`shows ${option} through the root script without a repository, suites or reports`, () => {
+for (const option of ["--help", "-h"]) it(`shows ${option} through the root script without a repository, suites or reports`, async () => {
   const root = entryFixture();
-  const result = Bun.spawnSync([process.execPath, "run", "test", option], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 10_000 });
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout.toString()).toContain("bun run --cwd packages/engine test test/name.test.ts");
-  expect(result.stdout.toString()).toContain("Focused runs do not replace the required full check.");
-  expect(result.stdout.toString()).not.toContain("Test summary:");
-  expect(result.stderr.toString()).not.toContain("Could not inspect test inputs");
+  const result = await runCommand([process.execPath, "run", "test", option], { cwd: root, env: environment(), timeoutMs: 10_000 });
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("bun run --cwd packages/engine test test/name.test.ts");
+  expect(result.stdout).toContain("Focused runs do not replace the required full check.");
+  expect(result.stdout).not.toContain("Test summary:");
+  expect(result.stderr).not.toContain("Could not inspect test inputs");
   expect(existsSync(join(root, ".test-results"))).toBe(false);
   expect(existsSync(join(root, "runs.log"))).toBe(false);
 });
 
-it("rejects a selector in a ready repository without launching even a stand-in suite", () => {
-  const root = fixture({});
-  const result = Bun.spawnSync([process.execPath, "run", "test", "test/chosen.test.ts"], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 10_000 });
-  expect(result.exitCode).toBe(1);
-  expect(result.stderr.toString()).toContain("No tests ran.");
+it("rejects a selector in a ready repository without launching even a stand-in suite", async () => {
+  const root = await fixture({});
+  const result = await runCommand([process.execPath, "run", "test", "test/chosen.test.ts"], { cwd: root, env: environment(), timeoutMs: 10_000 });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("No tests ran.");
   expect(existsSync(join(root, "runs.log"))).toBe(false);
   expect(existsSync(join(root, ".test-results"))).toBe(false);
 });
 
-it("resolves the copied runner's packages from the engine's own install, never another one", () => {
-  const root = fixture({});
+it("resolves the copied runner's packages from the engine's own install, never another one", async () => {
+  const root = await fixture({});
   const modules = join(root, "packages", "engine", "node_modules"), copy = join(root, "packages", "engine", "test", "quality");
   expect(PACKAGES.map(({ name }) => name)).toContain("@babel/parser");
   // The copy's own package folder holds only those packages, each one link away from its installed folder,
@@ -162,8 +167,8 @@ it("resolves the copied runner's packages from the engine's own install, never a
   }
 });
 
-it("runs core and desktop before engine and passes only when every workspace passed", () => {
-  const { ran, report, summary } = run({}, 0);
+it("runs core and desktop before engine and passes only when every workspace passed", async () => {
+  const { ran, report, summary } = await run({}, 0);
   expect(ran).toBe("core\ndesktop\nengine\n");
   expect({ mode: report.mode, scope: report.scope, stableInputs: report.stableInputs, interrupted: report.interrupted }).toEqual({ mode: "observation", scope: "complete", stableInputs: true, interrupted: undefined });
   expect(report.results.every((result: { ms: number; missedFailures: string[] }) => result.ms >= 0 && result.missedFailures.length === 0)).toBe(true);
@@ -177,8 +182,8 @@ for (const [name, scenario, outcomes, lines] of [
   ["core's report is missing", { core: { report: "missing" } }, [0, 0], ["  core: incomplete after Ns: its structured results were unavailable", "  desktop: passed in Ns"]],
   ["core fails without a report", { core: { code: 1, report: "missing" } }, [1, 0], ["  core: failed after Ns; no failing test file could be attributed", "  desktop: passed in Ns"]],
   ["desktop's report contradicts its exit", { desktop: { report: "fail" } }, [0, 0], ["  core: passed in Ns", "  desktop: incomplete after Ns: it exited successfully but its structured results report failures; failing files: apps/desktop/test/example.test.ts"]],
-] as const) it(`never starts engine when ${name}, and records it as not run`, () => {
-  const { ran, report, outcomes: recordedOutcomes, summary } = run(scenario, 1);
+] as const) it(`never starts engine when ${name}, and records it as not run`, async () => {
+  const { ran, report, outcomes: recordedOutcomes, summary } = await run(scenario, 1);
   expect(ran).toBe("core\ndesktop\n");
   expect(recordedOutcomes).toEqual([["packages/core", outcomes[0]], ["apps/desktop", outcomes[1]], ["packages/engine", NOT_STARTED]]);
   // The unexecuted suite claims neither a pass nor an observation without misses.
@@ -193,24 +198,24 @@ for (const [name, scenario, engine] of [
   ["engine fails", { engine: { code: 1, report: "fail" } }, "  engine: failed after Ns; failing files: packages/engine/test/example.test.ts"],
   ["engine's report is missing", { engine: { report: "missing" } }, "  engine: incomplete after Ns: its structured results were unavailable"],
   ["engine's report contradicts its exit", { engine: { report: "fail" } }, "  engine: incomplete after Ns: it exited successfully but its structured results report failures; failing files: packages/engine/test/example.test.ts"],
-] as const) it(`runs every workspace and fails honestly when ${name}`, () => {
-  const { ran, report, summary } = run(scenario, 1);
+] as const) it(`runs every workspace and fails honestly when ${name}`, async () => {
+  const { ran, report, summary } = await run(scenario, 1);
   expect(ran).toBe("core\ndesktop\nengine\n");
   expect(report.scope).toBe("complete");
   expect(summary).toEqual(["Test summary:", "  core: passed in Ns", "  desktop: passed in Ns", engine]);
   if (name === "engine fails") expect(report.results[2].missedFailures).toEqual(["packages/engine/test/example.test.ts"]);
 });
 
-it("compares inputs once at the end: a change during core still runs every workspace and cannot pass", () => {
-  const { ran, report, stderr } = run({ core: { change: true } }, 1);
+it("compares inputs once at the end: a change during core still runs every workspace and cannot pass", async () => {
+  const { ran, report, stderr } = await run({ core: { change: true } }, 1);
   expect(ran).toBe("core\ndesktop\nengine\n");
   expect({ scope: report.scope, stableInputs: report.stableInputs }).toEqual({ scope: "complete", stableInputs: false });
   expect(stderr).toContain("Test inputs changed during the run. Results cannot authorize delivery.");
 });
 
-it("keeps core's real failure as the diagnostic when noisy desktop output follows", () => {
+it("keeps core's real failure as the diagnostic when noisy desktop output follows", async () => {
   const failure = "(fail) greeting > shows the registered name\nerror: expected \"Run tests\" but received \"run_tests\"\n";
-  const { stdout, report, summary } = run({ core: { code: 1, report: "fail", print: failure }, desktop: { print: "✓ a passing desktop case\n".repeat(2000) } }, 1);
+  const { stdout, report, summary } = await run({ core: { code: 1, report: "fail", print: failure }, desktop: { print: "✓ a passing desktop case\n".repeat(2000) } }, 1);
   expect(stdout.indexOf(failure)).toBeGreaterThanOrEqual(0);
   expect(stdout.indexOf(failure)).toBeLessThan(stdout.indexOf("✓ a passing desktop case"));
   expect(report.results[0].failures).toEqual(["packages/core/test/example.test.ts"]);
@@ -225,7 +230,7 @@ for (const [signal, code, scenario, ran] of [
   ["SIGTERM", 143, { core: { hold: true } }, "core\ncore received SIGTERM\n"],
   ["SIGINT", 130, { core: { code: 1, report: "fail" }, desktop: { hold: true } }, "core\ndesktop\ndesktop received SIGINT\n"],
 ] as const) it.skipIf(process.platform === "win32")(`passes a gentle ${signal} to the running suite, stops it and starts nothing later`, async () => {
-  const root = fixture(scenario);
+  const root = await fixture(scenario);
   const runner = Bun.spawn(command(root), { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" });
   const stdout = new Response(runner.stdout).text();
   await waitForFile(join(root, "started"), 20_000);

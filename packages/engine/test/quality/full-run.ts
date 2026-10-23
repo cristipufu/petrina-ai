@@ -28,15 +28,15 @@ type Ran = { workspace: string; code: number; ms: number; failures?: string[]; m
 type Result = Ran | { workspace: string; notRun: string };
 const passed = (result: Result) => "code" in result && result.code === 0 && !result.error && !result.failures?.length;
 
-const errors = conventions(inputs(ROOT));
+const errors = conventions(await inputs(ROOT));
 if (errors.length) { console.error(errors.join("\n")); process.exit(1); }
 const began = performance.now();
 const folder = join(ROOT, ".test-results", `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`);
 mkdirSync(folder, { recursive: true });
-let plan: ReturnType<typeof observe> | ReturnType<typeof impactPlan>;
-try { plan = observe(ROOT, process.env.PETRINA_TEST_BASE, recordedCoverage(ROOT)); }
+let plan: Awaited<ReturnType<typeof observe>> | ReturnType<typeof impactPlan>;
+try { plan = await observe(ROOT, process.env.PETRINA_TEST_BASE, recordedCoverage(ROOT)); }
 catch (error) {
-  const files = inputs(ROOT);
+  const files = await inputs(ROOT);
   plan = impactPlan(files, ["unknown-base"]);
   plan.reasons.push(error instanceof Error ? error.message : String(error));
 }
@@ -79,7 +79,7 @@ try {
   // Work never started is recorded as not run, never as a pass or an observation without misses.
   for (const workspace of ORDER) if (!results.some(result => result.workspace === workspace)) results.push({ workspace, notRun: interrupted ? "the run was interrupted first" : "the runner stopped first" });
   const complete = !interrupted && results.every(result => "code" in result);
-  const stable = fingerprint(inputs(ROOT)) === plan.fingerprint;
+  const stable = fingerprint(await inputs(ROOT)) === plan.fingerprint;
   writeFileSync(join(folder, "results.json"), JSON.stringify({ mode: "observation", scope: complete ? "complete" : "partial", stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), results }, null, 2));
   if (finished && !interrupted) {
     const unrun = results.filter(result => !("code" in result)).map(result => suite(result.workspace));

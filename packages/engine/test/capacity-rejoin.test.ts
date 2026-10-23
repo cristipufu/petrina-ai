@@ -61,7 +61,7 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
     };
   };
   open();
-  const productId = await engine.addProduct(makeProduct(root));
+  const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);
   taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
   const task = () => engine.s.tasks.find((entry) => entry.id === taskId)!;
@@ -172,7 +172,7 @@ describe.concurrent("a full model beside a working peer", () => {
       expectShortContinues(prompts.slice(1));
       expect(run.opens(sol)).toEqual(["new", "resume", "resume", "resume"]);
       expect(existsSync(join(copy, "kept-by-the-test.txt"))).toBe(true);
-      expect(git(copy, "rev-parse", "HEAD")).toBe(pinned);
+      expect(await git(copy, "rev-parse", "HEAD")).toBe(pinned);
       expect(run.task().hunt?.input).toEqual(input);
       expect(reads).toBe(0);
       run.release(opus);

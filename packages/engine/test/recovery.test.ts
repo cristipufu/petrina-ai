@@ -1,17 +1,16 @@
 // A delivery interrupted at any step never goes out twice: each publishing step is saved before it starts,
 // and what went out is looked up first after a restart, a pause, a Retry or a cancel.
 import { afterAll, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ShippingRecord, State } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { branchName } from "../src/git.js";
-import { finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World, SLOW } from "./support.js";
+import { finish, git, gitWith, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World, SLOW } from "./support.js";
 
 const worlds: World[] = [];
-const world = (...args: Parameters<typeof makeWorld>) => {
-  const made = makeWorld(...args);
+const world = async (...args: Parameters<typeof makeWorld>) => {
+  const made = await makeWorld(...args);
   worlds.push(made);
   return made;
 };
@@ -43,7 +42,8 @@ async function startHeld(w: World, mode: "pull-request" | "release", command: st
 }
 
 /** Stuck on a failing step: what Petrina saved, with a change, as if the save after a step that went through was lost. */
-async function stuckThenEdit(w: World, mode: "pull-request" | "release", failing: Record<string, number>, edit: (shipping: ShippingRecord) => void): Promise<{ engine: Engine; taskId: string }> {
+/** `edit` changes the saved record before its first wait; anything it then waits for, Git included, finishes while the engine is stopped. */
+async function stuckThenEdit(w: World, mode: "pull-request" | "release", failing: Record<string, number>, edit: (shipping: ShippingRecord) => unknown): Promise<{ engine: Engine; taskId: string }> {
   w.setGitHub((github) => (github.fail = failing));
   let engine = w.start();
   const productId = await engine.addProduct(w.clone);
@@ -52,7 +52,9 @@ async function stuckThenEdit(w: World, mode: "pull-request" | "release", failing
   const task = taskOf(await finish(engine, taskId), taskId);
   expect(task.state).toBe("failed");
   engine.shutdown();
-  w.editSaved((state) => edit(state.tasks.find((entry) => entry.id === taskId)!.shipping as ShippingRecord));
+  let editing: unknown;
+  w.editSaved((state) => { editing = edit(state.tasks.find((entry) => entry.id === taskId)!.shipping as ShippingRecord); });
+  await editing;
   engine = w.start();
   engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
   return { engine, taskId };
@@ -60,7 +62,7 @@ async function stuckThenEdit(w: World, mode: "pull-request" | "release", failing
 
 describe.concurrent("A delivery interrupted at any step never goes out twice", () => {
   it("records the pull request GitHub opened just before Petrina stopped", async () => {
-    const w = world("restart-open");
+    const w = await world("restart-open");
     const first = await startHeld(w, "pull-request", "pr create");
     expect(taskOf(first.engine.getState(), first.taskId).shipping?.step).toBe("open");
     first.engine.shutdown();
@@ -81,12 +83,12 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("pushes the same commit again when its push went through but was not saved, overwriting nothing", async () => {
-    const w = world("repeat-push");
+    const w = await world("repeat-push");
     const { engine, taskId } = await stuckThenEdit(w, "pull-request", { "pr create": 1 }, (shipping) => (shipping.step = "push"));
     try {
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("pr-open");
-      expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(git(task.worktree!, "rev-parse", "HEAD"));
+      expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(await git(task.worktree!, "rev-parse", "HEAD"));
       expect(w.github().prs).toHaveLength(1);
       expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
@@ -95,7 +97,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("records the release GitHub published just before Petrina stopped, with the same version", async () => {
-    const w = world("restart-release");
+    const w = await world("restart-release");
     const first = await startHeld(w, "release", "release create");
     first.engine.shutdown();
     const engine = w.start();
@@ -112,7 +114,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("finds a release push that went through but was not saved, and publishes the release on that tag with no new version", async () => {
-    const w = world("release-pushed");
+    const w = await world("release-pushed");
     const { engine, taskId } = await stuckThenEdit(w, "release", { "release create": 1 }, (shipping) => {
       shipping.pushed = false;
       shipping.step = "push";
@@ -121,7 +123,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.error).toBeUndefined();
       expect(task.release?.tag).toBe("v0.1.0");
-      expect(remoteRef(w.remote, "refs/tags/v0.1.1")).toBeUndefined();
+      expect(await remoteRef(w.remote, "refs/tags/v0.1.1")).toBeUndefined();
       expect(task.timeline.some((entry) => entry.text.startsWith("Checked: main and the tag v0.1.0 are already on GitHub"))).toBe(true);
       expect(w.script().releaseManagerPrompts).toHaveLength(1);
     } finally {
@@ -131,18 +133,18 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
   for (const how of ["moved", "gone"] as const) {
     it(`creates no release on Retry when the tag on GitHub ${how === "moved" ? "moved" : "went away"} after Petrina's push`, async () => {
-      const w = world(`release-tag-${how}`);
-      const { engine, taskId } = await stuckThenEdit(w, "release", { "release create": 1 }, (shipping) => {
+      const w = await world(`release-tag-${how}`);
+      const { engine, taskId } = await stuckThenEdit(w, "release", { "release create": 1 }, async (shipping) => {
         expect(shipping.pushed).toBe(true);
         const tested = shipping.prepared!.tested;
         if (how === "gone") {
-          execFileSync("git", ["--git-dir", w.remote, "update-ref", "-d", "refs/tags/v0.1.0"], { env: testGitEnv() });
+          await gitWith({}, "--git-dir", w.remote, "update-ref", "-d", "refs/tags/v0.1.0");
           return;
         }
         // Someone points the tag at untested work on top of the tested commit.
         const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
-        const other = execFileSync("git", ["--git-dir", w.remote, "commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "Untested change"], { env }).toString().trim();
-        execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v0.1.0", other], { env: testGitEnv() });
+        const other = await gitWith({ env }, "--git-dir", w.remote, "commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "Untested change");
+        await gitWith({}, "--git-dir", w.remote, "update-ref", "refs/tags/v0.1.0", other);
       });
       try {
         const task = taskOf(await finish(engine, taskId), taskId);
@@ -161,9 +163,9 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
   for (const where of ["preparing", "publishing"] as const) {
     it(`never takes a release published just before shipping for this delivery, interrupted while ${where}`, async () => {
-      const w = world(`release-before-${where}`);
+      const w = await world(`release-before-${where}`);
       // v1.0.0 came out just before this delivery started.
-      execFileSync("git", ["--git-dir", w.remote, "update-ref", "refs/tags/v1.0.0", w.initial], { env: testGitEnv() });
+      await gitWith({}, "--git-dir", w.remote, "update-ref", "refs/tags/v1.0.0", w.initial);
       w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v1.0.0", body: "" }));
       let engine: Engine;
       let taskId: string;
@@ -191,8 +193,8 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         expect(task.state).toBe("done");
         expect(task.release?.tag).toBe("v1.0.1");
         expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.0.0", "v1.0.1"]);
-        expect(remoteRef(w.remote, "refs/tags/v1.0.1")).toBe(remoteRef(w.remote, "refs/heads/main"));
-        expect(remoteRef(w.remote, "refs/tags/v1.0.0")).toBe(w.initial);
+        expect(await remoteRef(w.remote, "refs/tags/v1.0.1")).toBe(await remoteRef(w.remote, "refs/heads/main"));
+        expect(await remoteRef(w.remote, "refs/tags/v1.0.0")).toBe(w.initial);
         expect(task.timeline.some((entry) => entry.text.includes("v1.0.0") && entry.text.includes("already gone out"))).toBe(false);
       } finally {
         rmSync(hold, { force: true });
@@ -202,14 +204,14 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   }
 
   it("finds a local update that went through but was not saved", async () => {
-    const w = world("local-updated");
+    const w = await world("local-updated");
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "local", false);
     const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
     let task = taskOf(await finish(engine, taskId), taskId);
     expect(task.state).toBe("done");
-    const tested = git(w.clone, "rev-parse", "main");
+    const tested = await git(w.clone, "rev-parse", "main");
     engine.shutdown();
     // As if Petrina stopped right after git moved main, before it saved that.
     w.editSaved((state) => {
@@ -233,7 +235,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("starts no new step while paused, and on resume records what went out", async () => {
-    const w = world("pause");
+    const w = await world("pause");
     const { engine, taskId, hold } = await startHeld(w, "pull-request", "pr create");
     try {
       engine.pause(taskId);
@@ -251,7 +253,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("keeps the link to a pull request that went out while the task was cancelled, and keeps it cancelled", async () => {
-    const w = world("cancel");
+    const w = await world("cancel");
     const { engine, taskId, hold } = await startHeld(w, "pull-request", "pr create");
     try {
       engine.cancel(taskId);
@@ -267,7 +269,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("keeps the link when GitHub opened the pull request but its answer was lost as the task was cancelled", async () => {
-    const w = world("cancel-lost");
+    const w = await world("cancel-lost");
     w.setGitHub((github) => (github.lose = { "pr create": 1 }));
     const { engine, taskId, hold } = await startHeld(w, "pull-request", "pr create");
     try {
@@ -285,7 +287,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("looks again after a restart when GitHub could not be asked as the task was cancelled", async () => {
-    const w = world("cancel-unreachable");
+    const w = await world("cancel-unreachable");
     w.setGitHub((github) => (github.lose = { "pr create": 1 }));
     const first = await startHeld(w, "pull-request", "pr create");
     first.engine.cancel(first.taskId);
@@ -312,7 +314,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
   for (const how of ["released", "pushed"] as const) {
     it(`keeps a release that went out as the task was cancelled${how === "pushed" ? ", and says when only its push did" : ""}`, async () => {
-      const w = world(`cancel-${how}`);
+      const w = await world(`cancel-${how}`);
       const hold = join(w.dir, "hold");
       writeFileSync(hold, "");
       // Held right after GitHub created the release; or the release creation fails once main and the tag went out.
@@ -328,7 +330,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         rmSync(hold);
         const task = taskOf(await until(engine, (current) => !taskOf(current, taskId).shipping), taskId);
         expect(task.state).toBe("cancelled");
-        expect(remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(remoteRef(w.remote, "refs/heads/main"));
+        expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(await remoteRef(w.remote, "refs/heads/main"));
         if (how === "released") {
           expect(task.release?.tag).toBe("v0.1.0");
           expect(task.timeline.map((entry) => entry.text)).toContain("Release v0.1.0 went out while you cancelled it: https://github.com/acme/demo/releases/tag/v0.1.0");
@@ -344,7 +346,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   }
 
   it("never starts a publishing step that was waiting in line when the task was cancelled", async () => {
-    const w = world("cancel-queued");
+    const w = await world("cancel-queued");
     const listB = join(w.dir, "list-b");
     const listA = join(w.dir, "list-a");
     const buildA = join(w.dir, "build-a");
@@ -381,7 +383,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       const cancelled = taskOf(engine.getState(), b);
       expect(cancelled.state).toBe("cancelled");
       expect(cancelled.pr).toBeUndefined();
-      expect(remoteRef(w.remote, `refs/heads/${cancelled.branch}`)).toBeUndefined();
+      expect(await remoteRef(w.remote, `refs/heads/${cancelled.branch}`)).toBeUndefined();
       expect(w.github().prs.map((pr) => pr.headRefName)).toEqual([taskOf(state, a).branch!]);
     } finally {
       engine.shutdown();
@@ -389,7 +391,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("waits for Retry when GitHub cannot be asked, and never takes that for an empty answer", async () => {
-    const w = world("lookup");
+    const w = await world("lookup");
     w.setGitHub((github) => (github.fail = { "pr list": 1 }));
     const engine = w.start();
     try {
@@ -399,7 +401,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       let task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain("could not check GitHub for this task's pull request");
-      expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
+      expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
       engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
       task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("pr-open");
@@ -410,7 +412,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
   for (const mode of ["pull-request", "release"] as const) {
     it(`looks again when GitHub says a ${mode === "pull-request" ? "pull request" : "release"} already exists, and records it when it matches`, async () => {
-      const w = world(`exists-${mode}`);
+      const w = await world(`exists-${mode}`);
       const create = mode === "pull-request" ? "pr create" : "release create";
       // The first create goes through but its answer is lost; the next listing lags behind.
       w.setGitHub((github) => (github.lose = { [create]: 1 }));
@@ -436,7 +438,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   }
 
   it("records a merged or closed pull request found after an interruption, even with its branch deleted", async () => {
-    const w = world("merged");
+    const w = await world("merged");
     const first = await startHeld(w, "pull-request", "pr create");
     const saved = structuredClone(taskOf(first.engine.getState(), first.taskId).shipping) as ShippingRecord;
     const branch = taskOf(first.engine.getState(), first.taskId).branch!;
@@ -444,7 +446,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     rmSync(first.hold);
     await until(first.engine, () => w.github().prs.length === 1);
     // The branch is deleted on GitHub after the pull request closes; GitHub keeps its last commit.
-    execFileSync("git", ["--git-dir", w.remote, "update-ref", "-d", `refs/heads/${branch}`], { env: testGitEnv() });
+    await gitWith({}, "--git-dir", w.remote, "update-ref", "-d", `refs/heads/${branch}`);
     for (const state of ["MERGED", "CLOSED"] as const) {
       w.setGitHub((github) => {
         github.prs[0]!.state = state;
@@ -470,7 +472,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("stops when GitHub has a different pull request from the task's branch", async () => {
-    const w = world("unexpected");
+    const w = await world("unexpected");
     const engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
@@ -482,7 +484,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain("GitHub already has pull request #7 from this task's branch, but it is not this work");
-      expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
+      expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
       expect(w.github().prs).toHaveLength(1);
     } finally {
       engine.shutdown();
@@ -490,21 +492,21 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("confirms delivery when newer commits on GitHub follow the checked work", async () => {
-    const w = world("verify");
+    const w = await world("verify");
     const { engine, taskId, hold } = await startHeld(w, "pull-request", "pr create");
     try {
       // Someone pushes onto the branch while the pull request is being opened.
       const branch = taskOf(engine.getState(), taskId).branch!;
-      const at = remoteRef(w.remote, `refs/heads/${branch}`)!;
+      const at = (await remoteRef(w.remote, `refs/heads/${branch}`))!;
       const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
-      const other = execFileSync("git", ["--git-dir", w.remote, "commit-tree", `${at}^{tree}`, "-p", at, "-m", "Someone else's change"], { env }).toString().trim();
-      execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branch}`, other], { env: testGitEnv() });
+      const other = await gitWith({ env }, "--git-dir", w.remote, "commit-tree", `${at}^{tree}`, "-p", at, "-m", "Someone else's change");
+      await gitWith({}, "--git-dir", w.remote, "update-ref", `refs/heads/${branch}`, other);
       rmSync(hold);
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("pr-open");
       expect(task.error).toBeUndefined();
       expect(task.pr?.number).toBe(w.github().prs[0]!.number);
-      expect(remoteRef(w.remote, `refs/heads/${branch}`)).toBe(other);
+      expect(await remoteRef(w.remote, `refs/heads/${branch}`)).toBe(other);
       expect(w.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
     } finally {
       engine.shutdown();
@@ -512,7 +514,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
   });
 
   it("stops rather than overwrite a task branch GitHub holds at other work", async () => {
-    const w = world("branch-taken");
+    const w = await world("branch-taken");
     const engine = w.start();
     try {
       const productId = await engine.addProduct(w.clone);
@@ -520,12 +522,12 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       // Someone else's work is already on GitHub under this task's branch name.
       const env = testGitEnv({ ...process.env, GIT_AUTHOR_NAME: "Someone", GIT_AUTHOR_EMAIL: "s@example.com", GIT_COMMITTER_NAME: "Someone", GIT_COMMITTER_EMAIL: "s@example.com" });
-      const other = execFileSync("git", ["--git-dir", w.remote, "commit-tree", `${w.initial}^{tree}`, "-p", w.initial, "-m", "Someone else's work"], { env }).toString().trim();
-      execFileSync("git", ["--git-dir", w.remote, "update-ref", `refs/heads/${branchName("Add a greeting", taskId)}`, other], { env: testGitEnv() });
+      const other = await gitWith({ env }, "--git-dir", w.remote, "commit-tree", `${w.initial}^{tree}`, "-p", w.initial, "-m", "Someone else's work");
+      await gitWith({}, "--git-dir", w.remote, "update-ref", `refs/heads/${branchName("Add a greeting", taskId)}`, other);
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain(`GitHub has this task's branch at ${other.slice(0, 7)}, which is not this work, so Petrina pushed nothing`);
-      expect(remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(other);
+      expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(other);
       expect(w.github().prs).toEqual([]);
     } finally {
       engine.shutdown();

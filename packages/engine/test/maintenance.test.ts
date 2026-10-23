@@ -8,8 +8,8 @@ import { plannerRoles } from "../src/roles.js";
 import type { Engine } from "./engine.js";
 import { git } from "./fixtures.js";
 
-function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], objectFormat?: "sha1" | "sha256") {
-  const world = makeWorld(`maintenance-${name}`, { objectFormat }), fakes = new Fakes(join(world.dir, "agents"));
+async function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], objectFormat?: "sha1" | "sha256") {
+  const world = await makeWorld(`maintenance-${name}`, { objectFormat }), fakes = new Fakes(join(world.dir, "agents"));
   fakes.scenario({ maintenance: behavior });
   const start = (onlyTool?: string) => {
     const engine = world.start({ agentCommand: profile => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`, ...(onlyTool && onlyTool !== profile.toolId ? ["--logged-out"] : [])], toolPath: () => process.execPath });
@@ -36,7 +36,7 @@ async function result(engine: Engine, taskId: string): Promise<Task> {
 describe("real queue maintenance", () => {
   for (const format of ["sha1", "sha256"] as const) {
     it(`reviews committed maintenance changes in a ${format} product`, async () => {
-      const { world, fakes, start } = setup(`committed-${format}`, { change: true, commit: true }, format); const engine = start();
+      const { world, fakes, start } = await setup(`committed-${format}`, { change: true, commit: true }, format); const engine = start();
       try {
         const run = await create(engine, world.clone, "maintenance-dead-code"); engine.setPoolPaused(false);
         const task = await result(engine, run.taskId);
@@ -46,23 +46,23 @@ describe("real queue maintenance", () => {
         expect(task.checks?.results.every(check => check.ok)).toBe(true);
         expect(fakes.received("code reviewer")).toHaveLength(2);
         expect(engine.getState().inbox.some(item => item.taskId === run.taskId && item.kind === "delivery")).toBe(true);
-        expect(git(task.worktree!, "show", "HEAD:maintenance.txt")).toContain("Confirmed maintenance change");
+        expect(await git(task.worktree!, "show", "HEAD:maintenance.txt")).toContain("Confirmed maintenance change");
       } finally { await engine.shutdown(); removeDir(world.dir); }
     });
     it(`undoes a reports-only agent's committed writes in a ${format} product`, async () => {
-      const { world, start } = setup(`read-only-commit-${format}`, { readOnlyWrite: true, commit: true }, format); const engine = start();
+      const { world, start } = await setup(`read-only-commit-${format}`, { readOnlyWrite: true, commit: true }, format); const engine = start();
       try {
         const run = await create(engine, world.clone); engine.setPoolPaused(false);
         const task = await result(engine, run.taskId);
         expect(task.state).toBe("failed"); expect(task.error).toContain("read-only");
         expect(task.maintenance?.noProductChanges).not.toBe(true);
-        expect(git(task.worktree!, "rev-parse", "HEAD")).toBe(task.baseSha!);
+        expect(await git(task.worktree!, "rev-parse", "HEAD")).toBe(task.baseSha!);
         expect(existsSync(join(task.worktree!, "maintenance.txt"))).toBe(false);
-        expect(git(task.worktree!, "status", "--porcelain")).toBe("");
+        expect(await git(task.worktree!, "status", "--porcelain")).toBe("");
       } finally { await engine.shutdown(); removeDir(world.dir); }
     });
     it(`finishes an unchanged reports-only investigation in a ${format} product`, async () => {
-      const { world, fakes, start } = setup(`read-only-empty-${format}`, {}, format); const engine = start();
+      const { world, fakes, start } = await setup(`read-only-empty-${format}`, {}, format); const engine = start();
       try {
         const run = await create(engine, world.clone); engine.setPoolPaused(false);
         const task = await result(engine, run.taskId);
@@ -76,7 +76,7 @@ describe("real queue maintenance", () => {
     });
   }
   for (const [fresh, queued] of [[false, true], [true, false], [true, true]] as const) it(`keeps a held question with a ${fresh ? "replacement" : "resumed"} conversation ${queued ? "and queued instructions" : "without queued instructions"}`, async () => {
-    const { world, fakes, start } = setup(`kept-question-${fresh}-${queued}`, { mismatchReply: "question" }); let engine = start();
+    const { world, fakes, start } = await setup(`kept-question-${fresh}-${queued}`, { mismatchReply: "question" }); let engine = start();
     const questionText = "Should I investigate the guest view?", instruction = "Also inspect the account view.";
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
@@ -105,7 +105,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   for (const reply of ["question", "screen", "invalid", "validation", "cancelled"] as const) it(`holds changed settings before continuing a ${reply} reply`, async () => {
-    const { world, fakes, start } = setup(`intermediate-${reply}`, { mismatchReply: reply, mismatchSetting: reply === "invalid" ? "model" : "effort" }); let engine = start();
+    const { world, fakes, start } = await setup(`intermediate-${reply}`, { mismatchReply: reply, mismatchSetting: reply === "invalid" ? "model" : "effort" }); let engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       const held = await result(engine, run.taskId);
@@ -141,7 +141,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("retains queued instructions behind a settings decision and sends them only on the saved profile", async () => {
-    const { world, fakes, start } = setup("mismatch-message", { mismatch: true }); const engine = start();
+    const { world, fakes, start } = await setup("mismatch-message", { mismatch: true }); const engine = start();
     fakes.scenario({ maintenance: { mismatch: true }, controlled: true });
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
@@ -158,7 +158,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("answers an ordinary maintenance question without a settings decision when settings match", async () => {
-    const { world, fakes, start } = setup("matching-question", { question: true }); const engine = start();
+    const { world, fakes, start } = await setup("matching-question", { question: true }); const engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       const asking = await result(engine, run.taskId);
@@ -169,7 +169,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("retains a read-only violation through a kept reply and a second restart while answering", async () => {
-    const { world, fakes, start } = setup("read-only-question", { mismatchReply: "question", readOnlyWrite: true }); let engine = start();
+    const { world, fakes, start } = await setup("read-only-question", { mismatchReply: "question", readOnlyWrite: true }); let engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       const held = await result(engine, run.taskId); const copy = held.worktree!;
@@ -188,7 +188,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   for (const reply of ["final", "question"] as const) it(`keeps Stop cancelled across an interrupted save after a ${reply} reply`, async () => {
-    const { world, fakes, start } = setup(`stop-save-${reply}`, reply === "final" ? { mismatch: true } : { mismatchReply: "question" }); let engine = start();
+    const { world, fakes, start } = await setup(`stop-save-${reply}`, reply === "final" ? { mismatch: true } : { mismatchReply: "question" }); let engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       expect((await result(engine, run.taskId)).maintenance?.settingsDecision).toBeDefined();
@@ -210,7 +210,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("recovers interrupted read-only cleanup before accepting a held result, then allows a fresh retry", async () => {
-    const { world, fakes, start } = setup("read-only-recovery", { mismatch: true, readOnlyWrite: true }); let engine = start();
+    const { world, fakes, start } = await setup("read-only-recovery", { mismatch: true, readOnlyWrite: true }); let engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       const held = await result(engine, run.taskId);
@@ -229,7 +229,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("uses two independent reviewer conversations when only one tool is available", async () => {
-    const { world, fakes, start } = setup("one-tool", { change: true }); const engine = start("codex");
+    const { world, fakes, start } = await setup("one-tool", { change: true }); const engine = start("codex");
     try {
       await engine.checkTools();
       const run = await create(engine, world.clone, "maintenance-dead-code"); engine.setPoolPaused(false);
@@ -242,7 +242,7 @@ describe("real queue maintenance", () => {
   });
 
   for (const issue of ["repository missing", "tool failure"] as const) it(`keeps ${issue} visible without successful completion or another occurrence`, async () => {
-    const { world, fakes, start } = setup(issue, {}); const engine = start();
+    const { world, fakes, start } = await setup(issue, {}); const engine = start();
     try {
       const run = await create(engine, world.clone);
       if (issue === "repository missing") removeDir(world.clone);
@@ -256,7 +256,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("rolls back interrupted admission before retrying and respects drain admission", async () => {
-    const { world, fakes, start } = setup("atomic-save", {}); let engine = start();
+    const { world, fakes, start } = await setup("atomic-save", {}); let engine = start();
     try {
       const run = await create(engine, world.clone);
       engine.cancel(run.taskId);
@@ -278,7 +278,7 @@ describe("real queue maintenance", () => {
   });
 
   for (const issue of ["unsupported", "unconfirmed"] as const) it(`waits for ${issue} settings without sending maintenance instructions or substituting`, async () => {
-    const { world, fakes, start } = setup(issue, { [issue]: true }); const engine = start();
+    const { world, fakes, start } = await setup(issue, { [issue]: true }); const engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       const task = await result(engine, run.taskId);
@@ -296,7 +296,7 @@ describe("real queue maintenance", () => {
   });
 
   it("waits on the exact saved profile after a usage limit", async () => {
-    const { world, fakes, start } = setup("usage", {}); const engine = start();
+    const { world, fakes, start } = await setup("usage", {}); const engine = start();
     fakes.scenario({ maintenance: {}, limited: [{ model: "gpt-6.1-sol", role: "bug finder" }] });
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
@@ -308,7 +308,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("keeps changed work at Medium risk behind checks, two fresh reviewers and delivery approval", async () => {
-    const { world, fakes, start } = setup("changed", { change: true }); const engine = start();
+    const { world, fakes, start } = await setup("changed", { change: true }); const engine = start();
     try {
       const custom = engine.addRole({ ...draftOf(MAINTENANCE_ROLES[0]!), name: "Repository caretaker" });
       const run = await create(engine, world.clone, custom);
@@ -332,7 +332,7 @@ describe("real queue maintenance", () => {
   });
 
   it("returns failed checks to the frozen maintenance agent and completes withdrawn changes without review", async () => {
-    const { world, fakes, start } = setup("check-repair", { change: true }); const engine = start();
+    const { world, fakes, start } = await setup("check-repair", { change: true }); const engine = start();
     try {
       const run = await create(engine, world.clone, "maintenance-dead-code");
       engine.setProductChecks(run.productId, [{ name: "Confirmed repair", command: `${process.execPath} -e 'process.exit(1)'` }]);
@@ -352,7 +352,7 @@ describe("real queue maintenance", () => {
   });
 
   for (const choice of ["keep", "stop"] as const) it(`persists a settings decision across restart and can ${choice} the actual turn`, async () => {
-    const { world, fakes, start } = setup(`mismatch-${choice}`, { change: true, mismatch: true }); let engine = start();
+    const { world, fakes, start } = await setup(`mismatch-${choice}`, { change: true, mismatch: true }); let engine = start();
     try {
       const run = await create(engine, world.clone, "maintenance-dead-code"); engine.setPoolPaused(false);
       const held = await result(engine, run.taskId);
@@ -381,7 +381,7 @@ describe("real queue maintenance", () => {
   });
 
   it("uses the saved maintenance role for review send-backs and update conflicts", async () => {
-    const { world, fakes, start } = setup("review-repair", { change: true }); const engine = start();
+    const { world, fakes, start } = await setup("review-repair", { change: true }); const engine = start();
     fakes.scenario({ maintenance: { change: true }, reviewer: "important-twice" });
     try {
       const custom = engine.addRole({ ...draftOf(MAINTENANCE_ROLES[0]!), name: "Focused caretaker" });
@@ -393,8 +393,8 @@ describe("real queue maintenance", () => {
       expect(task.findings.some(finding => finding.verification)).toBe(true);
       const before = fakes.received("focused caretaker").length;
       writeFileSync(join(world.clone, "maintenance.txt"), "Default branch moved\n");
-      git(world.clone, "add", "maintenance.txt"); git(world.clone, "commit", "-m", "Change maintenance file");
-      git(world.clone, "push", world.remote, "main");
+      await git(world.clone, "add", "maintenance.txt"); await git(world.clone, "commit", "-m", "Change maintenance file");
+      await git(world.clone, "push", world.remote, "main");
       fakes.scenario({ maintenance: { change: true } });
       const item = engine.getState().inbox.find(i => i.taskId === run.taskId && i.kind === "delivery")!;
       engine.approve(item.id);
@@ -405,7 +405,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
   it("queues while paused, rejects all workflow roles, and preserves exact intent after edits, deletion and restart", async () => {
-    const { world, fakes, start } = setup("saved-intent", {}); let engine = start();
+    const { world, fakes, start } = await setup("saved-intent", {}); let engine = start();
     try {
       const run = await create(engine, world.clone);
       const task = engine.taskDetails(run.taskId)!;
@@ -439,7 +439,7 @@ describe("real queue maintenance", () => {
   });
 
   it("saves admission atomically, coalesces restart catch-up and does not overlap unfinished work", async () => {
-    const { world, start } = setup("admission", {}); let engine = start();
+    const { world, start } = await setup("admission", {}); let engine = start();
     try {
       const run = await create(engine, world.clone);
       engine.pollRoutines(run.due); engine.pollRoutines(run.due - 86_400_000);
@@ -463,7 +463,7 @@ describe("real queue maintenance", () => {
   });
 
   for (const profileId of ["astra-ultra", "sol-ultra", "sol-medium"]) it(`executes the saved ${profileId} profile and finishes writable investigations without changes`, async () => {
-    const { world, fakes, start } = setup(profileId, {}); const engine = start();
+    const { world, fakes, start } = await setup(profileId, {}); const engine = start();
     try {
       const run = await create(engine, world.clone, "maintenance-dead-code", profileId);
       engine.setPoolPaused(false);
@@ -477,7 +477,7 @@ describe("real queue maintenance", () => {
   });
 
   for (const [name, behavior] of [["incomplete", { incomplete: true }], ["read-only writes", { readOnlyWrite: true }]] as const) it(`does not call ${name} a successful empty investigation`, async () => {
-    const { world, start } = setup(name, behavior); const engine = start();
+    const { world, start } = await setup(name, behavior); const engine = start();
     try {
       const run = await create(engine, world.clone); engine.setPoolPaused(false);
       const task = await result(engine, run.taskId);
@@ -487,7 +487,7 @@ describe("real queue maintenance", () => {
   });
 
   it("excludes maintenance from actual planner descriptions and every ordinary stage position", async () => {
-    const { world, fakes, start } = setup("isolation", {}); const engine = start();
+    const { world, fakes, start } = await setup("isolation", {}); const engine = start();
     try {
       const productId = await engine.addProduct(world.clone);
       const ordinary = engine.addTask({ productId, title: "Plan an ordinary task", approvePlan: true });

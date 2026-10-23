@@ -1,11 +1,11 @@
 // Polling several pull requests at once must not make the GitHub stand-in lose state or recorded calls.
 import { expect, it } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FAKE_GH, makeWorld, removeDir, waitForFile } from "./support.js";
+import { FAKE_GH, makeWorld, removeDir, runCommand, waitForFile } from "./support.js";
 
 it("parallel GitHub checks preserve a teammate's update and every recorded call", async () => {
-  const w = makeWorld("github-concurrent");
+  const w = await makeWorld("github-concurrent");
   const path = join(w.dir, "github.json");
   const hold = join(w.dir, "update-hold");
   const writer = join(w.dir, "update.mjs");
@@ -38,4 +38,27 @@ it("parallel GitHub checks preserve a teammate's update and every recorded call"
     await Promise.all(lookups.map((lookup) => lookup.exited));
     removeDir(w.dir);
   }
+});
+
+it("answers not found only when Git confirms a ref is absent, and fails when Git cannot read GitHub's copy", async () => {
+  const w = await makeWorld("github-lookups");
+  const path = join(w.dir, "github.json");
+  const gh = (remote: string, ...args: string[]) => runCommand([process.execPath, FAKE_GH, path, remote, ...args, ...(args[0] === "api" ? ["--paginate", "--slurp"] : ["--repo", "acme/demo"])]);
+  try {
+    w.setGitHub((github) => github.prs.push({ number: 1, url: "https://github.com/acme/demo/pull/1", headRefName: "gone", baseRefName: "main", headRefOid: w.initial, state: "OPEN", isCrossRepository: false, title: "Greeting", body: "" }));
+    expect(await gh(w.remote, "api", "repos/acme/demo/branches/main")).toEqual({ code: 0, stdout: `${JSON.stringify([{ commit: { sha: w.initial } }])}\n`, stderr: "" });
+    expect(await gh(w.remote, "api", "repos/acme/demo/branches/gone")).toEqual({ code: 1, stdout: "", stderr: "HTTP 404: branch not found\n" });
+    // A deleted branch keeps its pull request at its former head.
+    expect(await gh(w.remote, "pr", "view", "1", "--json", "headRefOid")).toEqual({ code: 0, stdout: `${JSON.stringify({ headRefOid: w.initial })}\n`, stderr: "" });
+    const broken = join(w.dir, "not-a-repository");
+    mkdirSync(broken);
+    for (const args of [["api", "repos/acme/demo/branches/main"], ["pr", "view", "1", "--json", "headRefOid"], ["pr", "list", "--head", "gone", "--json", "number"]]) {
+      const failed = await gh(broken, ...args);
+      expect(failed.code).not.toBe(0);
+      expect(failed.stdout).toBe("");
+      expect(failed.stderr).toContain("not a git repository");
+      expect(failed.stderr).not.toContain("not found");
+    }
+    expect(existsSync(`${path}.lock`)).toBe(false);
+  } finally { removeDir(w.dir); }
 });

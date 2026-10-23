@@ -65,6 +65,115 @@ it("parses TypeScript/TSX imports and ignores mentions of forbidden patterns in 
   expect(conventions(new Map([["apps/desktop/test/a.test.tsx", `import { test as check } from 'vitest'; check.concurrent.each([]).only('example', () => {});`]]))).toHaveLength(1);
 });
 
+describe("test programs and the waits on them", () => {
+  const found = (source: string, file = "packages/engine/test/a.test.ts") => conventions(new Map([[file, source]])).map((error) => error.slice(file.length + 1));
+  const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "./rejections.js";\n`;
+
+  it("rejects synchronous child calls under any name, and leaves file reads, prose and child-program text alone", () => {
+    for (const source of [
+      `import { execFileSync } from "node:child_process"; execFileSync("git", ["status"]);`,
+      `import { spawnSync as run } from "child_process"; run("git");`,
+      `import { spawnSync } from "bun"; spawnSync(["git", "status"]);`,
+      `import { spawnSync as run } from "bun"; run(["git", "status"]);`,
+      `import * as processes from "node:child_process"; processes.execSync("git status");`,
+      `const { execFileSync } = require("node:child_process");`,
+      `Bun.spawnSync(["git", "status"]);`,
+      `const sync = Bun.spawnSync; sync(["git"]);`,
+      `const { spawnSync } = Bun;`,
+    ]) expect(found(source)).toEqual([expect.stringMatching(/^1: run test programs with runCommand or git from test\/commands/)]);
+    expect(found(`import { spawnSync } from "node:child_process";`, "apps/desktop/test/a.test.tsx")).toHaveLength(1);
+    expect(found([
+      `import { readFileSync } from "node:fs"; import { execFile, spawn } from "node:child_process";`,
+      `// Bun.spawnSync and execFileSync would hold the worker.`,
+      `const script = "Bun.spawnSync(['git', 'rev-parse', 'HEAD'])"; const child = \`require("node:child_process").execFileSync("git")\`;`,
+      `import { spawn as start } from "bun"; start(["git"]);`,
+      `readFileSync("README.md"); Bun.spawn(["git"]); spawn("git"); execFile("git", [], () => {});`,
+    ].join("\n"))).toEqual([]);
+  });
+
+  it("rejects ignored and asserted work from the fixtures' helpers, their aliases and local wrappers", () => {
+    for (const body of [
+      `git(repo, "add", ".");`,
+      `void git(repo, "add", ".");`,
+      `expect(git(repo, "rev-parse", "HEAD")).toBe("abc");`,
+      `expect(() => git(repo, "push")).not.toThrow();`,
+      `const sha = git(repo, "rev-parse", "HEAD"); expect(sha).toBeDefined();`,
+      `const heads = repos.map((repo) => git(repo, "rev-parse", "HEAD"));`,
+      `repos.forEach((repo) => git(repo, "fetch"));`,
+      `const world = { made: makeWorld("x") };`,
+      `const label = \`at \${runCommand(["git", "--version"])}\`;`,
+    ]) expect(found(`${fixtures}it("x", async () => { ${body} });`)).toEqual([expect.stringMatching(/^2: await (git|makeWorld|runCommand)\(…\), return it or collect it/)]);
+    expect(found(`import { git as run } from "./support.js";\nrun(repo, "add", ".");`)).toHaveLength(1);
+    expect(found(`import { git } from "../test/commands.js";\nconst alias = git;\nalias(repo, "add", ".");`)).toEqual([expect.stringMatching(/^3: await alias/)]);
+    expect(found(`${fixtures}const head = (repo: string) => git(repo, "rev-parse", "HEAD");\nasync function commit(repo: string) { await git(repo, "commit", "-qm", "x"); }\nit("x", async () => { expect(head(repo)).toBe("abc"); commit(repo); });`))
+      .toEqual([expect.stringMatching(/^4: await commit/), expect.stringMatching(/^4: await head/)]);
+    expect(found(`${fixtures}it("x", async () => { engine.subscribe(async () => { await git(repo, "rev-parse", "HEAD"); }); w.setGitHub(async (github) => { github.offline = true; }); });`))
+      .toEqual([expect.stringMatching(/^2: keep this callback synchronous/), expect.stringMatching(/^2: keep this callback synchronous/)]);
+  });
+
+  it("rejects work handed to callers that never wait, wrappers of any shape and values used before their wait", () => {
+    for (const body of [
+      `engine.subscribe(() => git(repo, "rev-parse", "HEAD"));`,
+      `w.setGitHub((github) => remoteRef(w.remote, "refs/heads/main"));`,
+      `const p = git(repo, "rev-parse", "HEAD"); expect(p).toBe("abc"); await p;`,
+      `const p = git(repo, "status"); const list = [p];`,
+      `Promise.all([git(repo, "fetch"), git(repo, "status")]);`,
+      `repos.forEach((repo) => { return git(repo, "fetch"); });`,
+      `engine.subscribe(() => { return git(repo, "rev-parse", "HEAD"); });`,
+    ]) expect(found(`import { expect, it } from "bun:test"; import { git, remoteRef } from "./support.js";\nit("x", async () => { ${body} });`)).toContainEqual(expect.stringMatching(/^2: await (git|remoteRef)/));
+    expect(found(`${fixtures}it("x", async () => { repos.map(async (repo) => { await git(repo, "fetch"); }); });`)).toEqual([expect.stringMatching(/^2: await map/)]);
+    for (const body of [
+      `expect(repos.some(async (repo) => (await git(repo, "status")) === "")).toBe(true);`,
+      `repos.filter(async (repo) => (await git(repo, "status")) === "");`,
+      `repos.forEach(async (repo) => { await git(repo, "fetch"); });`,
+      `expect(async () => { await git(repo, "push"); }).not.toThrow();`,
+    ]) expect(found(`${fixtures}it("x", async () => { ${body} });`)).toContainEqual(expect.stringMatching(/^2: keep this callback synchronous/));
+    expect(found(`${fixtures}async function heads(repos: string[]) { return Promise.all(repos.map((repo) => git(repo, "rev-parse", "HEAD"))); }
+async function ready(repo: string) { await waitFor(async () => (await git(repo, "status")) === "", "a clean copy"); }
+async function changed() { engine.getState(); }
+it("x", async () => { heads(repos); ready(repo); engine.subscribe(changed); });`)).toEqual([expect.stringMatching(/^5: await heads/), expect.stringMatching(/^5: await ready/), expect.stringMatching(/^5: keep this callback synchronous/)]);
+  });
+
+  it("allows work that is awaited, returned, collected or handed to a helper that waits for it", () => {
+    expect(found(`${fixtures}async function failureOf(work: Promise<unknown>) { return rejectionOf(work); }
+const head = (repo: string) => git(repo, "rev-parse", "HEAD");
+it("x", async () => {
+  expect(await git(repo, "rev-parse", "HEAD")).toBe(await head(repo));
+  const [one, two] = await Promise.all([git(repo, "status"), makeWorld("y")]);
+  const heads = await Promise.all(repos.map((repo) => git(repo, "rev-parse", "HEAD")));
+  const pending = runCommand(["git", "fetch"]); setTimeout(() => stop.abort(), 10); await failureOf(pending);
+  await rejectionOf(git(repo, "push")); await failureOf(runCommand(["missing"]));
+  expect((await git(repo, "log").then((text) => text.split("\\n"))).length).toBe(1);
+  await waitFor(async () => (await git(repo, "status")) === "", "a clean copy");
+});
+it("returns its work", () => git(repo, "fetch"));
+beforeAll(async () => { await makeWorld("z"); });
+let cached: Promise<unknown> | undefined;
+const once = () => (cached ??= makeWorld("cached"));
+it("keeps work for later", async () => {
+  const later = repo ? git(repo, "fetch") : undefined; seen.set(repo, later); await later;
+  void git(repo, "gc").catch(() => undefined); await once();
+  const pending = repos.map((repo) => git(repo, "fetch")); await Promise.all(pending);
+  const each = repos.map(async (repo) => { await git(repo, "status"); }); await each[0]; await Promise.all(each);
+  const maybe = repo ? git(repo, "fetch") : undefined; if (maybe !== undefined) await maybe;
+  const handled = git(repo, "status"); handled.catch(() => undefined); await handled;
+  background(repo);
+});
+function background(repo: string) { void git(repo, "fetch").catch(() => undefined); }`)).toEqual([]);
+  });
+
+  it("does not follow work through object properties or callbacks given to other APIs", () => {
+    // These limits are why controlled regressions and review remain necessary.
+    expect(found(`${fixtures}const f = { head: () => git(repo, "rev-parse", "HEAD") };\nit("x", async () => { expect(f.head()).toBe("abc"); });`)).toEqual([]);
+    expect(found(`${fixtures}it("x", async () => { engine.onIdle(async () => { await git(repo, "status"); }); });`)).toEqual([]);
+    expect(found(`import type { World } from "./support.js";\nfunction git(repo: string) { return repo; }\ngit("local, not the fixture's");`)).toEqual([]);
+    // A name bound twice in a file is not followed, so an unrelated value of the same name is never mistaken for work.
+    expect(found(`${fixtures}async function settled() { await git(repo, "status"); }\nit("x", () => { const settled = () => true; expect(settled()).toBe(true); });`)).toEqual([]);
+    // Other workspaces' tests are checked for blocking calls only.
+    expect(found(`import { git } from "../src/commands.js";\ngit("a");`, "packages/core/test/a.test.ts")).toEqual([]);
+  });
+});
+
 it("attributes failures to structured runner outcomes, including XML escaping and failed setup", () => {
   const root = resolve("test-project");
   expect(failedFiles(JSON.stringify({ testResults: [{ name: resolve(root, "packages/core/test/a.test.ts"), status: "failed" }, { name: resolve(root, "packages/core/test/b.test.ts"), status: "passed" }] }), "packages/core", "vitest", root)).toEqual(["packages/core/test/a.test.ts"]);

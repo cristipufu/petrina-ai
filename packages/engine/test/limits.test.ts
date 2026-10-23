@@ -11,9 +11,9 @@ async function fixture(limit: number, toolCap: number) {
   const root = tempDir("petrina-limits-");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "limits", builder: "plain", controlled: true });
-  const repo = makeProduct(root);
+  const repo = await makeProduct(root);
   // Parallel worktree creation need not write upstream tracking settings to the shared config.
-  git(repo, "config", "branch.autoSetupMerge", "false");
+  await git(repo, "config", "branch.autoSetupMerge", "false");
   const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir] });
   engine.setPoolPaused(true);
   engine.setPoolLimit(limit);

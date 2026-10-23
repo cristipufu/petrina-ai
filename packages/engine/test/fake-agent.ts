@@ -13,10 +13,10 @@ import type { WorkChoice } from "@petrina/core";
 // limits the way that tool's adapter does. With FAKE_BARE_ACK set, it acknowledges a settings change
 // without saying what the session ended up on. --record-tool only labels openings, keeping the generic choices.
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { testGitEnv } from "./test-git-env.js";
+import { git, runGit } from "./commands.js";
 import { recordPrompt } from "./prompt-records.js";
 import * as acp from "@agentclientprotocol/sdk";
 
@@ -248,7 +248,7 @@ const marked = (name: string) => !!dir && existsSync(join(dir, name));
 const silent = process.argv.includes("--silent") || scenario().silent === true;
 if (dir) appendFileSync(join(dir, "processes"), `${process.pid}\n`);
 /** The agent's own git: none of the programs a security test plants. */
-const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, env: testGitEnv(), stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+const run = (cwd: string, ...args: string[]) => git(cwd, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args);
 
 interface Reply {
   meta?: Record<string, unknown>;
@@ -505,14 +505,14 @@ async function held(role: "builder" | "release manager" | "code reviewer", text:
 }
 
 /** The Release Manager writes the notes from the commits it was given: every title it got, one line each. */
-function releaseManager(cwd: string, text: string): string {
+async function releaseManager(cwd: string, text: string): Promise<string> {
   const script = readScript();
   script.releaseManagerPrompts = [...(script.releaseManagerPrompts ?? []), text];
   if (script.releaseManagerCommits) {
     delete script.releaseManagerCommits;
     writeFileSync(join(cwd, "notes-draft.md"), "Not for the release\n");
-    run(cwd, "add", "notes-draft.md");
-    run(cwd, "commit", "--quiet", "-m", "A draft of the notes");
+    await run(cwd, "add", "notes-draft.md");
+    await run(cwd, "commit", "--quiet", "-m", "A draft of the notes");
   }
   saveScript(script);
   if (script.releaseManagerScreen && roleOf(text)) return block({ needsScreen: { reason: "Look at the released app on screen" } });
@@ -716,8 +716,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     const behavior = plan.maintenance;
     if (behavior.change || behavior.readOnlyWrite) writeFileSync(join(session.cwd, "maintenance.txt"), "Confirmed maintenance change\n");
     if (behavior.commit) {
-      run(session.cwd, "add", "--", "maintenance.txt");
-      run(session.cwd, "-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "--quiet", "-m", "Maintenance agent commit");
+      await run(session.cwd, "add", "--", "maintenance.txt");
+      await run(session.cwd, "-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "--quiet", "-m", "Maintenance agent commit");
     }
     if (session.turns === 1 && (behavior.mismatchReply || behavior.question)) {
       if (behavior.mismatchReply) {
@@ -1145,28 +1145,28 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "welcome.txt"), `Hello ${Date.now()}\n`);
       if (plan.leak && !text.includes("You are fixing the review findings")) writeFileSync(join(session.cwd, "greeting.txt"), "Hello from internal-db-07\n");
       if (plan.mergesMain && !text.includes("You are fixing the review findings")) {
-        execFileSync("git", ["add", "-A"], { cwd: session.cwd, env: testGitEnv() });
-        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "-q", "-m", "Builder's own commit"], { cwd: session.cwd, env: testGitEnv() });
-        execFileSync("git", ["-c", "user.email=fake@example.com", "-c", "user.name=Fake", "merge", "-q", "--no-edit", "main"], { cwd: session.cwd, env: testGitEnv() });
+        await git(session.cwd, "add", "-A");
+        await git(session.cwd, "-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "-q", "-m", "Builder's own commit");
+        await git(session.cwd, "-c", "user.email=fake@example.com", "-c", "user.name=Fake", "merge", "-q", "--no-edit", "main");
       }
       const script = readScript();
       const taskTitle = /^# The task: (.+)$/m.exec(text)?.[1];
       if (script.ownFiles && taskTitle) writeFileSync(join(session.cwd, `${taskTitle.toLowerCase().replace(/\W+/g, "-")}.txt`), `${taskTitle}\n`);
       await held("builder", text);
       if (script.envOut) {
-        let helper = "(none)";
-        try {
-          helper = execFileSync("git", ["config", "--get-all", "credential.helper"], { cwd: session.cwd, env: testGitEnv() }).toString();
-        } catch {}
+        // Git says nothing and exits 1 only when no helper is set; any other answer fails the agent.
+        const helpers = await runGit(["config", "--get-all", "credential.helper"], { cwd: session.cwd });
+        if (helpers.code !== 0 && (helpers.code !== 1 || helpers.stdout || helpers.stderr)) throw new Error(`git config --get-all credential.helper failed (${helpers.code}): ${helpers.stderr}`);
+        const helper = helpers.code === 0 ? helpers.stdout : "(none)";
         const names = ["GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "AWS_PROFILE", "GH_CONFIG_DIR", "GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT", "GH_PROMPT_DISABLED", "BROWSER", "PETRINA_AGENT"];
         writeFileSync(script.envOut, JSON.stringify({ ...Object.fromEntries(names.map((name) => [name, process.env[name]])), helper }));
       }
       // The work points a submodule at a commit only this computer has.
       const gitlink = script.gitlink;
-      if (gitlink && run(session.cwd, "rev-parse", `HEAD:${gitlink.path}`) !== gitlink.sha) {
-        run(session.cwd, "update-index", "--cacheinfo", `160000,${gitlink.sha},${gitlink.path}`);
-        run(session.cwd, "add", "greeting.txt");
-        run(session.cwd, "commit", "--quiet", "-m", "Bring the submodule up to date");
+      if (gitlink && await run(session.cwd, "rev-parse", `HEAD:${gitlink.path}`) !== gitlink.sha) {
+        await run(session.cwd, "update-index", "--cacheinfo", `160000,${gitlink.sha},${gitlink.path}`);
+        await run(session.cwd, "add", "greeting.txt");
+        await run(session.cwd, "commit", "--quiet", "-m", "Bring the submodule up to date");
       }
       const title = script.title ?? plan.title;
       const description = script.description ?? (text.includes('"description"') ? "Adds a greeting file.\n\nTested with the greeting test." : undefined);
@@ -1192,15 +1192,15 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       if (plan.reviewer === "commit" && !restarted && !earlierAttempt) {
         writeFileSync(join(session.cwd, "stray.txt"), "Not for this task\n");
-        run(session.cwd, "add", "stray.txt");
-        run(session.cwd, "commit", "--quiet", "-m", "A stray commit");
+        await run(session.cwd, "add", "stray.txt");
+        await run(session.cwd, "commit", "--quiet", "-m", "A stray commit");
         return hang(sessionId, "reviewer-committed");
       }
       if (plan.reviewer === "move-branch" && session.model === "opus" && !marked("branch-moved")) {
         // From its own copy, a misled reviewer rewinds the task's branch: the branches are shared.
         mark("branch-moved");
         const branch = /on branch (\S+?)\./.exec(text)?.[1];
-        if (branch) run(session.cwd, "update-ref", `refs/heads/${branch}`, "HEAD~1");
+        if (branch) await run(session.cwd, "update-ref", `refs/heads/${branch}`, "HEAD~1");
       }
       if (plan.reviewer === "confirm-fixed" && text.includes("This is review round")) return done({ verdict: "fail", findings: [], confirms: findingIds(text, "Findings so far (confirm or dispute by id)").map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." })), disputes: [] });
       if (plan.reviewer === "confirm-fixed-one-tool" && text.includes("This is review round")) return done({ verdict: session.model === "opus" ? "fail" : "pass", findings: [], confirms: session.model === "opus" ? findingIds(text, "Findings so far (confirm or dispute by id)").map((id) => ({ id, evidence: plan.reopenedEvidence ?? "On current code, the guest welcome page still omits the greeting; the signed-in control shows it." })) : [], disputes: [] });
@@ -1272,8 +1272,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         const final = marked("tester-passed-once");
         writeFileSync(join(session.cwd, "tester-edit.txt"), final ? "After the review\n" : "Before the review\n");
         if (final) {
-          run(session.cwd, "add", "tester-edit.txt");
-          run(session.cwd, "commit", "--quiet", "-m", "Tester commits after the review");
+          await run(session.cwd, "add", "tester-edit.txt");
+          await run(session.cwd, "commit", "--quiet", "-m", "Tester commits after the review");
         }
       }
       if (plan.tester === "work" && !marked("tester-worked")) {
@@ -1294,7 +1294,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       if (plan.releaseManager === "hang" && !marked("release-manager-started")) return hang(sessionId, "release-manager-started");
       await say("Writing the release notes");
       await held("release manager", text);
-      return { text: releaseManager(session.cwd, text) };
+      return { text: await releaseManager(session.cwd, text) };
     }
     default: {
       // Source-start tests only need the added reviewer to see the brief. Blocking would open a vote and a fix round.
@@ -1330,8 +1330,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         const readOnly = text.includes("you are read-only") || text.includes("You are read-only");
         writeFileSync(join(session.cwd, `${name}.txt`), `Written while ${readOnly ? "read-only" : "changing the product"}\n`);
         if (readOnly) {
-          run(session.cwd, "add", `${name}.txt`);
-          run(session.cwd, "commit", "--quiet", "-m", `${session.role} commits anyway`);
+          await run(session.cwd, "add", `${name}.txt`);
+          await run(session.cwd, "commit", "--quiet", "-m", `${session.role} commits anyway`);
         }
       }
       return done({ summary: `Notes from the ${session.role}.`, notes: [`A note from the ${session.role}`] });

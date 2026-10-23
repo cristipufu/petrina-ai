@@ -9,7 +9,7 @@ const browser = standInBrowser();
 afterAll(() => { browser.mockRestore(); roots.forEach(removeDir); });
 
 for (const [mode, afterPeer] of [["now", false], ["now", true], ["queue", false], ["interrupt", false], ["queue", true]] as const) it(`delivers a coordinator ${mode} message to every unfinished reviewer${afterPeer ? " after a peer reports" : " working in parallel"}`, async () => {
-  const world = makeWorld("review-messages");
+  const world = await makeWorld("review-messages");
   const root = world.dir;
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));

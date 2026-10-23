@@ -14,7 +14,7 @@ it("keeps reviewed requests out of agent work through a restart and queues them 
   const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
   let engine = new Engine(data, options);
   try {
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const id = engine.addTask({ productId, title: "Draft request", description: "Check scope", backlog: true });
     engine.setPoolPaused(false);
     engine.schedule();
@@ -49,7 +49,7 @@ it("saves a combination and its pictures before retiring the sources, and return
   let engine = new Engine(data, options);
   engine.setPoolPaused(true);
   try {
-    const productId = await engine.addProduct(makeProduct(join(root, "combine-product")));
+    const productId = await engine.addProduct(await makeProduct(join(root, "combine-product")));
     const first = engine.addTask({ productId, title: "First fix", description: "Keep this request.", approveDelivery: true, backlog: true });
     const second = engine.addTask({ productId, title: "Second fix", description: "And this request.", approveDelivery: false, backlog: true });
     const imageId = crypto.randomUUID();

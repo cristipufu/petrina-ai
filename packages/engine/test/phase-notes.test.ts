@@ -11,7 +11,7 @@ it("keeps a design revision instruction in its original phase without dropping l
   const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
   try {
     engine.setPoolPaused(true);
-    const productId = await engine.addProduct(makeProduct(root));
+    const productId = await engine.addProduct(await makeProduct(root));
     const id = engine.addTask({ productId, title: "Build the complete follow-up feature", backlog: true });
     const task = engine.task(id)!;
     task.plan = { rationale: "Design, then build", plannerProfileId: "opus-high", stages: [

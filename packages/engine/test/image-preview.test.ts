@@ -16,7 +16,7 @@ afterEach(async () => { await Promise.all(folders.splice(0).map((path) => rm(pat
 
 describe("screenshots read directly from a task's working copy", () => {
   it("previews absolute screenshots from this task's reviewer snapshot without widening relative links", async () => {
-    const world = makeWorld("reviewer-image-roots");
+    const world = await makeWorld("reviewer-image-roots");
     const engine = world.start();
     try {
       engine.setPoolPaused(true);
@@ -55,7 +55,7 @@ describe("screenshots read directly from a task's working copy", () => {
   });
 
   it("reads a shared task's named product copy rather than whichever product is active", async () => {
-    const world = makeWorld("shared-images");
+    const world = await makeWorld("shared-images");
     const engine = world.start();
     try {
       engine.setPoolPaused(true);
@@ -94,7 +94,7 @@ describe("screenshots read directly from a task's working copy", () => {
   });
 
   it("keeps explicit product roots after switching the active repository and refuses missing or removed owners", async () => {
-    const world = makeWorld("switched-image-roots");
+    const world = await makeWorld("switched-image-roots");
     const engine = world.start();
     try {
       engine.setPoolPaused(true);
