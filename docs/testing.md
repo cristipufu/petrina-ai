@@ -95,6 +95,7 @@ Selection remains in observation mode until representative changes and full-run 
 - Tests requiring a particular tool must wait for its readiness check to finish; another Ready tool can be admitted while that check is still running.
 - Change a running fake GitHub through its shared update helper, so simultaneous readers retain one consistent answer.
 - Pass `testGitEnv()` explicitly to test-owned Git child processes; environment cleanup alone does not remove inherited push protections.
+- An `execFile` stand-in that reports a successful process-list read returns `finishedHelper()`: a reported success counts as a list only once the helper's output ended, and Bun's unstarted `ChildProcess` throws when its output is read.
 - After local delivery the working copy may be removed. Read the delivered commit from the product clone using the task branch.
 - Engine helpers can be imported by standalone Bun diagnostics outside the checkout. Do not register test-runner-only hooks, such as time limits, at import time in those helpers.
 - With asymmetric matchers, Bun's `toMatchObject` can overwrite checked fields. Use `toEqual`, or check a copy.

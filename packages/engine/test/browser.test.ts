@@ -13,7 +13,7 @@ import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowse
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, parseProcessState, processList, readProcessList } from "../src/process-tree.js";
-import { defunctProcess, engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, runChecks, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
+import { defunctProcess, engineEnv, Fakes, finishedHelper, firstLine, HARNESS, makeProduct, removeDir, runChecks, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
 const root = tempDir("petrina-browser-");
 // Sessions start in this file's own short browser folder, never the user's standard one.
@@ -206,7 +206,7 @@ for (const { name, shown, ends, failure, changed } of [
     const output = shown[scans - 1] === "listed" ? listed : shown[scans - 1];
     const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
     queueMicrotask(() => output === undefined ? callback(new Error("The process list is unavailable"), "", "") : callback(null, output, ""));
-    return new processes.ChildProcess();
+    return finishedHelper();
   }) as typeof processes.execFile);
   const kill = spyOn(process, "kill").mockImplementation((target, signal) => {
     if (Math.abs(target) !== pid) return originalKill(target, signal);
@@ -317,7 +317,7 @@ async function withPendingBrowserRecovery(
     if (args[0] !== "ps") return Reflect.apply(originalExecFile, processes, args);
     const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void;
     queueMicrotask(() => callback(null, "", ""));
-    return new processes.ChildProcess();
+    return finishedHelper();
   }) as typeof processes.execFile);
   let engine: Engine | undefined;
   let startup: Promise<void> | undefined;
@@ -632,7 +632,7 @@ it.skipIf(process.platform === "win32")("keeps a killed helper's folder and regi
     const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
     // The helper's early process list is readable and empty; every folder scan fails.
     queueMicrotask(() => folder ? callback(new Error("The process list is unavailable"), "", "") : callback(null, "", ""));
-    return new processes.ChildProcess();
+    return finishedHelper();
   }) as typeof processes.execFile);
   try {
     // Connecting marks the helper used without opening a page, so its shutdown needs process scans.
@@ -684,7 +684,7 @@ it.skipIf(process.platform === "win32")("records a helper that never answered an
     const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
     // Both of the helper's own lists are readable and empty; every folder scan fails.
     queueMicrotask(() => folder ? callback(new Error("The process list is unavailable"), "", "") : callback(null, "", ""));
-    return new processes.ChildProcess();
+    return finishedHelper();
   }) as typeof processes.execFile);
   try {
     await (await connectBrowser(browser)).close();
@@ -715,7 +715,7 @@ function answerEarlyList(answer: (callback: (error: Error | null, stdout: string
     if (answered || args[0] !== "ps" || !(args[1] as string[]).includes("-A")) return Reflect.apply(originalRead, processes, args);
     answered = true;
     answer(args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void);
-    return new processes.ChildProcess();
+    return finishedHelper();
   }) as typeof processes.execFile);
 }
 

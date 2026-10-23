@@ -1,4 +1,5 @@
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
+import { ChildProcess } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -317,6 +318,14 @@ export async function waitForFile(path: string, ms = 60_000): Promise<void> {
     if (Date.now() - started > ms * currentSlow()) throw new Error(`Timed out waiting for ${path}`);
     await Bun.sleep(30);
   }
+}
+
+/**
+ * A stand-in for a process-list helper whose exit a test reports itself. Its output has ended, as a real
+ * helper's has when its reported success is a complete list, so the read takes that success as one.
+ */
+export function finishedHelper(): ChildProcess {
+  return Object.defineProperty(new ChildProcess(), "stdout", { value: { readableEnded: true } });
 }
 
 /**

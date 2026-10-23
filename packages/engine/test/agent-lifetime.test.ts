@@ -9,7 +9,7 @@ import { AgentRun } from "../src/acp-run.js";
 import { AgentBrowser } from "../src/browser.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { parseChildState } from "../src/process-tree.js";
-import { removeDir, tempDir, waitFor } from "./fixtures.js";
+import { finishedHelper, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-agent-lifetime-");
 afterAll(() => removeDir(root));
@@ -79,7 +79,7 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
       }
       done(null, listed, "");
     })().catch(error => done(error, "", ""));
-    return undefined;
+    return finishedHelper();
   }) as typeof processes.execFile);
   try {
     run = await AgentRun.start({ profile, cwd: dir, command: [process.execPath, agent], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: controller.signal, browser: false, onProcess: process => { child = process; } });
@@ -262,7 +262,7 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
       finish(null, listed, "");
     }, hang ? options.timeout : Math.min(delay, options.timeout));
     scanTimers.add(timer);
-    return undefined;
+    return finishedHelper();
   }) as typeof processes.execFile);
   const controller = new AbortController();
   try {

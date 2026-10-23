@@ -57,13 +57,16 @@ export function readProcessList(timeout: number): Promise<string | undefined> {
  * its callback still waits for an exit the system may never report: under load a finished child can
  * stay defunct with its exit lost, and a stop sequence waiting on that read would never end. An own
  * timer resolves the read as failed at the deadline and kills the helper, whatever the runtime reports.
+ * A list counts only once its output ended: at its own timeout the runtime closes the output before
+ * signalling, and a helper that still exits cleanly is reported as a success with its list cut short.
  */
 export function processList(args: readonly string[], timeout: number, maxBuffer?: number): Promise<string | undefined> {
   return new Promise<string | undefined>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const child = execFile("ps", [...args], { timeout, ...(maxBuffer ? { maxBuffer } : {}) }, (error, stdout) => {
+      // Settle before cancelling the fallback, so nothing here can leave the read unsettled.
+      resolve(error || child.stdout?.readableEnded === false ? undefined : stdout);
       clearTimeout(timer);
-      resolve(error ? undefined : stdout);
     });
     timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch { /* Already gone. */ }
