@@ -86,6 +86,14 @@ export const OPERATIONS = [
     "Inspect one task's current summary, workers, next step, waiting reason, delivery confirmation and inbox references. Read longer evidence separately.",
     task,
   ),
+  op("validation.run", "Queue a genuinely required extra full validation in an owned local Linux container on a Mac or Linux host. Tests only Petrina's last saved commit and tree; working edits are excluded. Extra evidence never satisfies delivery. No native, remote, detached execution or caller container options.", {
+    ...task, productId: id.optional(), name: z.string().trim().min(1).max(80), reason: z.string().trim().min(1).max(2000),
+    image: z.string().trim().min(1).max(300).regex(/^[A-Za-z0-9][A-Za-z0-9_.:@/+-]*$/),
+    argv: z.array(z.string().max(8000).refine(word => !word.includes("\0"))).min(1).max(100).refine(words => !!words[0]?.trim() && words.join(" ").length <= 16000),
+    ...wait,
+  }, true),
+  op("validation.inspect", "Read an extra run by its original request reference, including its exact saved version, state, image and outcome. Never product-check evidence.", { requestId: id }),
+  op("validation.log", "Read the original extra-run diagnostic with the same file-identity checks as a product check.", { requestId: id, section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence }),
   op("task.activity", "Inspect reported tool activity and bounded recent invocations, including available command/file details. Defaults to the latest agent step; filter by node and worker seat. Missing status or command means unreported; turnEndedAt never means completion.", { ...task, nodeId: id.optional(), seat: id.optional(), ...page }),
   op(
     "task.conversation",

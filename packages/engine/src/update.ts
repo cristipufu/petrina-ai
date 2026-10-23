@@ -40,6 +40,7 @@ export class Updates {
     const fork = settled.fork ?? await git.mergeBase(repository.worktree, "HEAD", base);
     if (!fork) return;
     await git.squash(repository.worktree, base, this.message(scope), fork);
+    await this.k.rememberVersion(scope);
     return fork;
   }
 
@@ -131,6 +132,7 @@ export class Updates {
       await git.moveTo(worktree, await git.commitTree(worktree, result, latest.sha, this.message(scope)));
       if (reviewed) repository.reviewedTree = result;
       if (repository.checks) repository.checks.current = repository.checks.tree === result;
+      await this.k.rememberVersion(scope);
       repository.baseSha = latest.sha;
       repository.base = latest.ref;
       // The version the last round reviewed, carried onto the new base too, so the next round still sees only what changed since.

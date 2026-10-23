@@ -422,6 +422,24 @@ describe("saved role wording", () => {
       expect(job).not.toContain("run the product's full checks");
     }
   });
+  it("keeps required extra full validations in the shared queue for default and edited Builders", () => {
+    const base = contexts.builder!;
+    const changes = editRole(NO_ROLE_CHANGES, base.role.id, { ...draftOf(base.role), instructions: "Build the approved change." });
+    const roles = libraryRoles(changes);
+    const edited = roles.find((role) => role.id === base.role.id)!;
+    for (const role of [base.role, edited]) for (const fixing of [false, true]) for (const render of [buildPrompt, continuePrompt]) {
+      const prompt = render({ ...base, roles, role, task: { ...base.task, fixing } });
+      expect(prompt.split("Required EXTRA full-suite validation")).toHaveLength(2);
+      expect(prompt).toContain("Petrina's validation.run request with a durable reference and a prepared local Linux image");
+      expect(prompt).toContain("never poll other runs, pause the pool to reserve room or start a competing full suite");
+      expect(prompt).toContain("tests Petrina's last saved commit/tree and excludes working edits");
+      expect(prompt).toContain("hand new work back first, without committing or publishing it yourself");
+      expect(prompt).toContain("Without Petrina's command tools, ask the coordinator to arrange it");
+      expect(prompt).toContain("Focused tests (including Linux/container regressions) and preparing a local image stay allowed under existing cleanup and tool permissions");
+      expect(prompt).toContain("Extra evidence never replaces the full configured delivery checks or permits lower worker counts, concealed failures or retries to manufacture a pass");
+      expect(prompt).toContain("Petrina runs them on the finished work before review");
+    }
+  });
   it("uses saved wording and keeps fixed planner rules after it", () => {
     const changes = editRole(NO_ROLE_CHANGES, "planner", { ...draftOf(contexts.planner!.role), instructions: "Make a short plan." });
     const roles = libraryRoles(changes);

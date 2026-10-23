@@ -281,6 +281,7 @@ export interface JourneyAsk {
 export interface JourneyStep {
   /** Complete shortened review entries, once per frozen round. Retained after working-file cleanup. */
   reviewHistory?: { file: string; digest: string; body: string; roundId?: Id };
+  extraValidations?: readonly import("./extra-validation.js").ExtraValidation[];
   /** The immutable blind-review input shared by this round, retained after temporary review state ends. */
   reviewInput?: NonNullable<Hunt["input"]>;
   /** Unique within the task. Timeline and session lines carry it. */
@@ -1181,6 +1182,8 @@ export interface CheckRun {
   /** Whether both output pipes reached their end before the command settled. Absent on older runs. */
   logComplete?: boolean;
   interrupted?: boolean;
+  /** The local command was ended by a signal, rather than reporting an ordinary exit. */
+  exitSignal?: string;
   timedOut?: boolean;
   /** Petrina could not obtain a process-tree snapshot while stopping this command. */
   cleanupIncomplete?: boolean;
@@ -1255,6 +1258,8 @@ export interface Terminal {
 }
 
 export interface State {
+  /** Durable ownership, independent of task archive retention. Removed after confirmed cleanup. */
+  extraValidations?: readonly import("./extra-validation.js").ExtraValidation[];
   routines?: readonly import("./routines.js").Routine[];
   /** Short engine-owned conversations, counted in the same pool as task agents. Cleared on restart. */
   backgroundAgents?: readonly { id: Id; roleId: Id; profileId: Id; label: string; since: number }[];

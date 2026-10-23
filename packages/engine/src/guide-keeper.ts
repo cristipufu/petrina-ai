@@ -126,6 +126,7 @@ export class GuideKeeper {
       return;
     }
     await git.commitAll(repository.worktree, `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`);
+    await this.k.rememberVersion(scope);
     for (const line of due) line.writtenOn = task.id;
     this.k.log(scope, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);
     this.k.commit();

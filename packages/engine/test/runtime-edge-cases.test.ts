@@ -154,27 +154,49 @@ it("handles and logs rejected PR polls while keeping the background work registr
 });
 
 it("contains a step-clock save failure and lets the next clock checkpoint save again", async () => {
-  const actual = globalThis.setInterval;
-  let clock: (() => void) | undefined;
-  const intervals = spyOn(globalThis, "setInterval").mockImplementation((...parameters: Parameters<typeof setInterval>) => {
-    const [callback, milliseconds, ...args] = parameters;
-    if (milliseconds === 15_000) clock = () => { if (typeof callback === "function") callback(...args); };
-    return actual(...parameters);
-  });
-  let fixtureResult: Awaited<ReturnType<typeof fixture>>;
-  try { fixtureResult = await fixture(); } finally { intervals.mockRestore(); }
-  const { engine, task } = fixtureResult;
+  const { engine, task } = await fixture();
   task.stepClock = { roleId: "builder", repeat: false, worked: 0, since: Date.now() };
   const save = spyOn(engine, "save").mockImplementationOnce(() => { throw new Error("Disk unavailable"); });
   const log = spyOn(console, "error").mockImplementation(() => {});
   try {
-    expect(clock).toBeDefined();
-    expect(() => clock!()).not.toThrow();
+    expect(() => engine["checkpointStepTimes"]()).not.toThrow();
     expect(log).toHaveBeenCalledWith("Could not save step times:", expect.objectContaining({ message: "Disk unavailable" }));
-    expect(() => clock!()).not.toThrow();
+    expect(() => engine["checkpointStepTimes"]()).not.toThrow();
     expect(save).toHaveBeenCalledTimes(2);
     expect(engine.store.load()!.tasks.find(entry => entry.id === task.id)!.stepClock).toBeDefined();
   } finally { save.mockRestore(); log.mockRestore(); await engine.shutdown(); }
+});
+
+it("registers the periodic step-clock checkpoint separately from other 15-second timers", async () => {
+  const callbacks: (() => void)[] = [], interval = globalThis.setInterval;
+  const timer = spyOn(globalThis, "setInterval").mockImplementation(((...args: Parameters<typeof globalThis.setInterval>) => {
+    if (args[1] === 15_000) callbacks.push(args[0] as () => void);
+    return interval(...args);
+  }) as typeof globalThis.setInterval);
+  let engine: Engine | undefined;
+  try {
+    ({ engine } = await fixture());
+    const checkpoint = spyOn(engine as unknown as { checkpointStepTimes(): void }, "checkpointStepTimes");
+    try {
+      for (const callback of callbacks) callback();
+      await engine.extraValidations.retryCleanup();
+      expect(checkpoint).toHaveBeenCalledTimes(1);
+    } finally { checkpoint.mockRestore(); }
+  } finally { timer.mockRestore(); await engine?.shutdown(); }
+});
+
+it("checkpoints step times only while a clock is active and the engine is running", async () => {
+  const { engine, task } = await fixture();
+  const save = spyOn(engine, "save");
+  try {
+    engine["checkpointStepTimes"](); expect(save).not.toHaveBeenCalled();
+    task.stepClock = { roleId: "builder", repeat: false, worked: 0, since: Date.now() };
+    engine["checkpointStepTimes"](); expect(save).toHaveBeenCalledTimes(1);
+    delete task.stepClock.since;
+    engine["checkpointStepTimes"](); expect(save).toHaveBeenCalledTimes(1);
+    await engine.shutdown(); save.mockClear();
+    engine["checkpointStepTimes"](); expect(save).not.toHaveBeenCalled();
+  } finally { save.mockRestore(); await engine.shutdown(); }
 });
 
 it("keeps clean archives out of general commits and eviction, while persisting decisions on archived offers", async () => {

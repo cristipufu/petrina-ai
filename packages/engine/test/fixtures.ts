@@ -350,8 +350,8 @@ export const noMachineRecords: MachineRecords = async () => "";
  * Production's check runs, except that sleep evidence comes from the records a test passes, else none.
  * A test that needs this Mac's real power log passes `livePowerRecords` explicitly.
  */
-export function runChecks(...[cwd, checks, env, timeoutMs, signal, logDirectory, processList, onProgress, machineRecords = noMachineRecords]: Parameters<typeof runProductChecks>): ReturnType<typeof runProductChecks> {
-  return runProductChecks(cwd, checks, env, timeoutMs, signal, logDirectory, processList, onProgress, machineRecords);
+export function runChecks(...[cwd, checks, env, timeoutMs, signal, logDirectory, processList, onProgress, machineRecords = noMachineRecords, ...callbacks]: Parameters<typeof runProductChecks>): ReturnType<typeof runProductChecks> {
+  return runProductChecks(cwd, checks, env, timeoutMs, signal, logDirectory, processList, onProgress, machineRecords, ...callbacks);
 }
 
 /** A macOS power-log line recording sleep from `at` for `seconds`, for a test's own records. */

@@ -10,7 +10,7 @@ import { coordinationCli, exitCode } from "../src/coordination-cli.js";
 import { mcpRequest } from "../src/mcp.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
-import { removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
+import { makeProduct, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];
@@ -272,7 +272,7 @@ for (const ending of ["completed", "failed"] as const) it(`persists ${ending} fo
   } finally { store.close(); }
 });
 
-for (const step of ["delivery", "checks", "agent"]) it(`releases a ${step} reservation when pause arrives during preparation, and resumes it exactly once`, async () => {
+for (const step of ["delivery", "agent"]) it(`releases a ${step} reservation when pause arrives during preparation, and resumes it exactly once`, async () => {
   const { e, home, taskId, task, c } = fixture();
   // Startup cleanup also belongs to a drain. Finish it before isolating the admitted step's reservation.
   await e.waitUntilReady(); await Promise.all([...e.backgroundWork]);
@@ -299,8 +299,7 @@ for (const step of ["delivery", "checks", "agent"]) it(`releases a ${step} reser
       attempts++;
       if (attempts === 1) {
         await hold;
-        if (step === "checks") { const done = await e["checks"]["turnToRun"](current, signal); done(); }
-        else await e["turns"].turn(current, "builder", "opus-high", async () => [], z.object({}), signal);
+        await e["turns"].turn(current, "builder", "opus-high", async () => [], z.object({}), signal);
       }
       return finish();
     };
@@ -323,4 +322,72 @@ for (const step of ["delivery", "checks", "agent"]) it(`releases a ${step} reser
     expect(attempts).toBe(2);
     expect(published).toBe(step === "delivery" ? 1 : 0);
   } finally { release(); }
+});
+
+it("releases the agent reservation when pause arrives during check preparation, retaining one pending attempt for resume", async () => {
+  const { e, home, taskId, task, c } = fixture();
+  await e.waitUntilReady(); await Promise.all([...e.backgroundWork]);
+  e.schedule = () => { e.checkQueue.pump(); e["driver"].schedule(); };
+  e["driver"]["prepare"] = async () => {};
+  e.tidy = () => {};
+  const product = await makeProduct(home);
+  e.s.products[0]!.path = product;
+  executionFor(task).work.worktree = product;
+  task.plan = { stages: [{ id: "step", title: "Work", kind: "do", roleId: "builder", profileIds: ["opus-high"] }], rationale: "Do the work", plannerProfileId: "opus-high" };
+  task.stageIndex = 0;
+  task.state = "running";
+  task.holdsSlot = true;
+  task.agent = { roleId: "builder", profileId: "opus-high", since: 1, step: 1 };
+  let release!: () => void, preparing!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const prepared = new Promise<void>(resolve => { preparing = resolve; });
+  const checks = e["checks"];
+  const captureState = checks["captureState"].bind(checks);
+  let captures = 0, attempts = 0;
+  checks["captureState"] = async (...args: Parameters<typeof captureState>) => {
+    const state = await captureState(...args);
+    if (++captures === 1) { preparing(); await hold; }
+    return state;
+  };
+  e["work"].runDo = async (scope, _stage, signal) => {
+    attempts++;
+    await checks.runProductChecks(scope, [{ name: "Prepared check", argv: [process.execPath, "-e", "console.log('prepared check passed')"] }], signal);
+    task.state = "done"; task.holdsSlot = false; delete task.agent; e.commit();
+    return "stop";
+  };
+  try {
+    e.s.pool.paused = false;
+    e.startDriver(taskId, true);
+    let ended = false;
+    const driving = e.settling.get(taskId)!.finally(() => { ended = true; });
+    await Promise.race([prepared, driving.then(() => { throw new Error(`The step ended before preparing its checks: ${task.statusLine}`); })]);
+    e.setPoolPaused(true);
+    release();
+    await waitFor(() => {
+      if (ended) throw new Error(`The paused attempt ended instead of queueing: ${task.statusLine}`);
+      return e.waitingChecks.has(taskId);
+    }, "prepared checks to keep their queue entry during the pause");
+    expect(task.holdsSlot).toBe(false);
+    expect(task.agent).toBeUndefined();
+    expect(e.drivers.has(taskId)).toBe(true);
+    expect(e.checkQueue.waiting).toBe(1);
+    expect(e.checkQueue.running).toBe(0);
+    expect((await c.call("pool.inspect", {})).drained).toBe(true);
+    const step = task.journey!.at(-1)!;
+    expect(step.productChecks).toHaveLength(1);
+    expect(step.productChecks![0]!.result).toBe("pending");
+    expect(step.productChecks![0]!.startedAt).toBeUndefined();
+    expect(step.checkAttempts).toBeUndefined();
+    e.setPoolPaused(false);
+    expect(e.checkQueue.waiting).toBe(0);
+    expect(e.checkQueue.running).toBe(1);
+    await driving;
+    expect(e.task(taskId)?.state).toBe("done");
+    expect(attempts).toBe(1);
+    expect(step.productChecks).toHaveLength(1);
+    expect(step.productChecks![0]!.result).toBe("pass");
+    expect(step.checkAttempts).toHaveLength(1);
+    expect(e.checkQueue.running).toBe(0);
+    expect(e.waitingChecks.size).toBe(0);
+  } finally { release(); checks["captureState"] = captureState; }
 });

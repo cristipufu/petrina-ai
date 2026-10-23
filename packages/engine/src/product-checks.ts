@@ -3,7 +3,7 @@ import { beginRepair, acceptanceVersion } from "./repositories.js";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import { beginPetrinaStep, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
+import { beginPetrinaStep, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, runtimeWaitHolds, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
 import { livePowerRecords, powerInterruption, readMachineRecords, type MachineRecords } from "./check-interruption.js";
 import * as git from "./git.js";
 import { CheckFinderResult } from "./roles.js";
@@ -45,8 +45,6 @@ export class ProductChecks {
    * Task check runs take turns: each can start a full parallel test suite and build, so overlapping them
    * multiplies CPU and memory pressure and can make both slower or cause timeouts.
    */
-  private running = 0;
-  private readonly line: (() => void)[] = [];
   private readonly preparations = new Set<Id>();
 
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
@@ -99,59 +97,62 @@ export class ProductChecks {
 
   releasePreparation(taskId: Id): void { this.preparations.delete(taskId); }
 
-  private async turnToRun(scope: RepositoryContext, signal: AbortSignal): Promise<(() => void) & { waited: boolean }> {
+  private async turnToRun(scope: RepositoryContext, signal: AbortSignal, order = this.k.checkQueue.reserveOrder()): Promise<(() => void) & { waited: boolean }> {
     const { task } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
-    if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-    const most = this.k.options.checkRuns ?? 1;
-    const waited = this.running >= most;
-    if (waited) {
-      task.statusLine = "Waiting to run the checks: another task's run comes first";
+    if (runtimeWaitHolds(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+    // A task's prerequisite wait leaves the shared line; a pool pause retains its FIFO place.
+    // Stop listening at handoff so an already-admitted batch can finish normally.
+    const prerequisite = new AbortController();
+    const admissionSignal = AbortSignal.any([signal, prerequisite.signal]);
+    const unsubscribe = this.k.subscribe(() => { if (runtimeWaitHolds(task)) prerequisite.abort(); });
+    let waitingForPool = false;
+    const resume = (words: string) => {
+      const wasPaused = waitingForPool && task.state === "waiting";
+      waitingForPool = false;
+      if (!wasPaused && task.statusLine === words) return;
+      if (wasPaused) { task.state = "running"; task.column = this.k.columnFor(task); }
+      task.statusLine = words;
       this.k.commit();
-      await new Promise<void>((resolve, reject) => {
-        let unsubscribe = () => {};
-        const clean = () => { signal.removeEventListener("abort", stop); unsubscribe(); };
-        const go = () => { clean(); resolve(); };
-        const stop = () => {
-          const index = this.line.indexOf(go);
-          if (index >= 0) this.line.splice(index, 1);
-          clean();
-          reject(new Aborted());
-        };
-        const hold = () => {
-          if (!this.k.taskAdmissionsClosed(task)) return;
-          const index = this.line.indexOf(go);
-          if (index < 0) return;
-          this.line.splice(index, 1);
-          clean();
-          reject(new WaitingForUsage(this.k.taskAdmissionWait(task)));
-        };
-        this.line.push(go);
-        unsubscribe = this.k.subscribe(hold);
-        hold();
-        if (signal.aborted) stop();
-        else signal.addEventListener("abort", stop, { once: true });
-      });
-    } else this.running += 1;
-    let done = false;
-    const finished = () => {
-      if (done) return;
-      done = true;
-      const next = this.line.shift();
-      // Reserve this place for the waiter before its promise resumes. New arrivals must stay in line.
-      if (next) next();
-      else this.running -= 1;
     };
-    // Cancellation can arrive after the handoff but before this continuation gets its turn.
-    if (signal.aborted || this.k.stopped) {
-      finished();
-      throw new Aborted();
+    const onWait = (closed?: string) => {
+      if (signal.aborted || this.k.stopped || runtimeWaitHolds(task) || !["running", "waiting"].includes(task.state)) return;
+      if (closed) {
+        waitingForPool = true;
+        if (task.state !== "waiting" || task.statusLine !== closed) this.k.waitForUsage(task, closed);
+      } else resume(this.k.extraCheckBlocker?.() ?? "Waiting to run the checks: another task's run comes first");
+    };
+    let waited = false;
+    this.k.waitingChecks.set(task.id, (this.k.waitingChecks.get(task.id) ?? 0) + 1);
+    try {
+      for (;;) {
+        const finished = await this.k.checkQueue.acquire(admissionSignal, false, order, onWait);
+        waited ||= finished.waited;
+        // Cancellation can arrive after handoff but before this continuation gets its turn.
+        if (signal.aborted || this.k.stopped) {
+          finished();
+          throw new Aborted();
+        }
+        if (!this.k.taskAdmissionsClosed(task)) {
+          if (waitingForPool) resume("Preparing the product's checks");
+          return Object.assign(finished, { waited });
+        }
+        finished();
+        if (runtimeWaitHolds(task) || this.k.draining) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+        // A pause during handoff returns capacity, then waits at the same FIFO position.
+        // No command started, so the original pending evidence remains the same attempt.
+        waited = true;
+      }
+    } catch (error) {
+      if (prerequisite.signal.aborted && !signal.aborted && !this.k.stopped) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+      throw error;
+    } finally {
+      unsubscribe();
+      const left = this.k.waitingChecks.get(task.id)! - 1;
+      if (left) this.k.waitingChecks.set(task.id, left);
+      else this.k.waitingChecks.delete(task.id);
+      this.k.syncIdleSleep();
     }
-    if (this.k.taskAdmissionsClosed(task)) {
-      finished();
-      throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-    }
-    return Object.assign(finished, { waited });
   }
 
   /**
@@ -244,10 +245,13 @@ export class ProductChecks {
     const { task, work: repository } = scope;
     if (!repository.worktree) return 0;
     let state = prepared ?? await this.captureState(scope, checks);
-    if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
     const hooks = state.hooks;
     const nothing = nothingToRun(checks, hooks);
+    // Prepared, unstarted commands retain one pending attempt through a pool pause.
+    // Task prerequisites, draining and empty batches still return to ordinary admission.
+    const queueWhilePaused = () => !nothing && this.k.s.pool.paused && !this.k.draining && !this.k.stopped && !runtimeWaitHolds(task);
+    if (this.k.taskAdmissionsClosed(task) && !queueWhilePaused()) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
     // to the same step's timeline: they do not complete the notes or start another agent step.
     const open = openStep(task);
@@ -273,20 +277,26 @@ export class ProductChecks {
     this.k.commit();
     let finished: Awaited<ReturnType<ProductChecks["turnToRun"]>> | undefined;
     let complete = false;
+    const order = nothing ? undefined : this.k.checkQueue.reserveOrder();
     try {
-      finished = nothing ? undefined : await this.turnToRun(scope, signal);
-      if (finished?.waited) {
-        state = await this.captureState(scope, checks);
-        // Another run held the lane. Files and external hook inputs may have changed while waiting.
-        kept = await this.savedProductResults(scope, checks, state);
-        for (const [id, entry] of entries) if (id.startsWith("hook-") && !state.hooks.includes(id.slice(5))) entry.result = "skipped";
-        for (const hook of state.hooks) if (!entries.has(`hook-${hook}`)) {
-          const entry: DeepMutable<JourneyProductCheck> = { ...attempt, id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" };
-          entries.set(`hook-${hook}`, entry);
-          if (step) step.productChecks = [...(step.productChecks ?? []), entry];
+      for (;;) {
+        finished = nothing ? undefined : await this.turnToRun(scope, signal, order);
+        if (finished?.waited) {
+          state = await this.captureState(scope, checks);
+          // Another run held the lane. Files and external hook inputs may have changed while waiting.
+          kept = await this.savedProductResults(scope, checks, state);
+          for (const [id, entry] of entries) if (id.startsWith("hook-") && !state.hooks.includes(id.slice(5))) entry.result = "skipped";
+          for (const hook of state.hooks) if (!entries.has(`hook-${hook}`)) {
+            const entry: DeepMutable<JourneyProductCheck> = { ...attempt, id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" };
+            entries.set(`hook-${hook}`, entry);
+            if (step) step.productChecks = [...(step.productChecks ?? []), entry];
+          }
         }
+        if (!this.k.taskAdmissionsClosed(task)) break;
+        if (!queueWhilePaused()) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+        // A pause during asynchronous recapture returns the place without replacing evidence or FIFO order.
+        finished?.(); finished = undefined;
       }
-      if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
       if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
       const failures = await this.runAll(scope, checks, state, signal, entries, kept, attempt.attemptId);
       complete = true;

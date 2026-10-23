@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { copyNoLongerNeeded, displayTask, finishedTask, type Id, type State, type Task } from "@petrina/core";
+import { copyNoLongerNeeded, displayTask, finishedTask, type ExtraValidation, type Id, type State, type Task, type TimelineEntry } from "@petrina/core";
 import { TaskHistory } from "./history-store.js";
 import { logSqlExecutions, SqlExecutionLog } from "./sql-log.js";
 
@@ -38,6 +38,7 @@ export class Store {
     this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
     this.activeIds = this.readActiveIds();
     this.history = new TaskHistory(this.db);
+    this.db.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
     this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
   }
 
@@ -111,6 +112,33 @@ export class Store {
       this.history.reloadMetadata();
       throw error;
     }
+  }
+
+  /** Late owned cleanup cannot checkpoint other tasks' post-shutdown mutations or clocks. */
+  saveExtraValidationOwnership(records: State["extraValidations"], sequence: number): void {
+    const row = this.db.query<{ value: string }, []>("SELECT value FROM kv WHERE key = 'state'").get();
+    if (!row) throw new Error("The saved shutdown state is unavailable for extra validation cleanup.");
+    const saved = JSON.parse(row.value) as State;
+    this.db.query("UPDATE kv SET value = ? WHERE key = 'state'").run(JSON.stringify({ ...saved,
+      extraValidations: records, seq: Math.max(saved.seq, sequence) }));
+  }
+
+  /** Atomically merge this run's evidence and ownership into the shutdown snapshot, including an uncached archive. */
+  saveExtraValidationEvidence(record: ExtraValidation, line: TimelineEntry, timelineLimit: number, records: State["extraValidations"], sequence: number): void {
+    try {
+      this.db.transaction(() => {
+        const active = this.db.query<{ body: string }, [string]>("SELECT body FROM active_tasks WHERE id = ?").get(record.taskId);
+        const task = active ? JSON.parse(active.body) as Task : this.history.get(record.taskId);
+        if (!task) throw new Error("The saved task is unavailable for extra validation cleanup.");
+        const updated: Task = { ...task,
+          journey: task.journey?.map(node => node.id !== record.nodeId ? node : { ...node,
+            extraValidations: [...(node.extraValidations ?? []).filter(run => run.id !== record.id), record] }),
+          timeline: [...task.timeline.filter(entry => entry.id !== line.id), line].slice(-timelineLimit) };
+        if (active) this.db.query("UPDATE active_tasks SET body = ? WHERE id = ?").run(JSON.stringify(updated), task.id);
+        if (!active || finishedTask(task)) this.history.put([updated]);
+        this.saveExtraValidationOwnership(records, sequence);
+      }).immediate();
+    } catch (error) { this.history.reloadMetadata(); throw error; }
   }
 
   /** The product and its finished history disappear together with the approved current snapshot. */

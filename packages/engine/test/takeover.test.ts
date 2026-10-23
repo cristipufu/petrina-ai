@@ -133,6 +133,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(task.driving!.saved?.files).toEqual(["notes.txt"]);
     expect(await git(task.worktree!, "log", "-1", "--format=%s", task.driving!.saved!.sha)).toBe("Add a greeting (unfinished work)");
     expect(task.driving!.head).toBe(await git(task.worktree!, "rev-parse", "HEAD"));
+    expect(task.savedVersion).toEqual({ commit: task.driving!.head, tree: await git(task.worktree!, "rev-parse", "HEAD^{tree}") });
     expect(task.timeline.some((entry) => entry.text === "Saved the Builder's unfinished work as one commit (1 file)")).toBe(true);
 
     // Pause and Cancel wait for the hand back; pausing the pool changes nothing.
@@ -171,6 +172,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     await engine.handBack(run.taskId, "Fixed the colour by hand");
     task = run.task();
     expect(task.driving).toBeUndefined();
+    expect(task.savedVersion).toEqual({ commit: await git(task.worktree!, "rev-parse", "HEAD"), tree: await git(task.worktree!, "rev-parse", "HEAD^{tree}") });
     expect(engine.getState().inbox.some((entry) => entry.kind === "driving")).toBe(false);
     expect(existsSync(takeoverDir(run.data, run.taskId))).toBe(false);
     expect(await git(task.worktree!, "log", "-1", "--format=%s")).toBe("Add a greeting (changes made by hand)");

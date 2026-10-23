@@ -60,10 +60,10 @@ export function readProcessList(timeout: number): Promise<string | undefined> {
  * A list counts only once its output ended: at its own timeout the runtime closes the output before
  * signalling, and a helper that still exits cleanly is reported as a success with its list cut short.
  */
-export function processList(args: readonly string[], timeout: number, maxBuffer?: number): Promise<string | undefined> {
+export function processList(args: readonly string[], timeout: number, maxBuffer?: number, env?: NodeJS.ProcessEnv): Promise<string | undefined> {
   return new Promise<string | undefined>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const child = execFile("ps", [...args], { timeout, ...(maxBuffer ? { maxBuffer } : {}) }, (error, stdout) => {
+    const child = execFile("ps", [...args], { timeout, ...(maxBuffer ? { maxBuffer } : {}), ...(env ? { env } : {}) }, (error, stdout) => {
       // Settle before cancelling the fallback, so nothing here can leave the read unsettled.
       resolve(error || child.stdout?.readableEnded === false ? undefined : stdout);
       clearTimeout(timer);

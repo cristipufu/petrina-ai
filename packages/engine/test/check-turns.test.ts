@@ -91,7 +91,7 @@ describe("tasks' checks take turns on one machine", () => {
     }
   });
 
-  for (const draining of [false, true]) it(`releases a reserved check place when ${draining ? "draining" : "paused"} during its handoff`, async () => {
+  for (const draining of [false, true]) it(`${draining ? "releases" : "requeues"} a reserved check place when ${draining ? "draining" : "paused"} during its handoff`, async () => {
     const root = tempDir("petrina-check-admission-");
     roots.push(root);
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null },  });
@@ -105,21 +105,37 @@ describe("tasks' checks take turns on one machine", () => {
       const acquire = () => engine["checks"]["turnToRun"](executionFor(task), new AbortController().signal);
       const release = await acquire();
       held.push(release);
-      const waiting = acquire().then(() => "started", (error) => error);
-      const follower = acquire().then(() => "started", (error) => error);
+      const starts: string[] = [];
+      const waiting = acquire().then(place => { starts.push("waiting"); held.push(place); return place; }, error => error);
+      const follower = acquire().then(place => { starts.push("follower"); held.push(place); return place; }, error => error);
       release();
       // The queue has reserved the released place, but the next check has not been admitted.
-      if (draining) engine.draining = true;
+      if (draining) { engine.draining = true; engine.checkQueue.pump(); }
       else engine.setPoolPaused(true);
-      expect(await waiting).toBeInstanceOf(WaitingForUsage);
-      expect(await follower).toBeInstanceOf(WaitingForUsage);
+      if (draining) {
+        expect(await waiting).toBeInstanceOf(WaitingForUsage);
+        expect(await follower).toBeInstanceOf(WaitingForUsage);
+      } else {
+        await Promise.resolve();
+        expect(starts).toEqual([]);
+        expect(engine.checkQueue.running).toBe(0);
+        expect(engine.checkQueue.waiting).toBe(2);
+        engine.setPoolPaused(false);
+        const first = await waiting;
+        expect(starts).toEqual(["waiting"]);
+        expect(first.waited).toBe(true);
+        first();
+        const next = await follower;
+        expect(starts).toEqual(["waiting", "follower"]);
+        next();
+      }
       release();
       engine.draining = false;
       engine.setPoolPaused(false);
       held.push(await acquire());
-      expect(engine["checks"]["running"]).toBe(1);
+      expect(engine.checkQueue.running).toBe(1);
       held.at(-1)!();
-      expect(engine["checks"]["running"]).toBe(0);
+      expect(engine.checkQueue.running).toBe(0);
     } finally {
       for (const release of held) release();
       await engine.shutdown();

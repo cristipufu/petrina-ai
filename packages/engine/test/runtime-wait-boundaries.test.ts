@@ -98,7 +98,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
     }
   });
 
-  it("does not begin an empty batch if a wait arrives during check preparation", async () => {
+  for (const action of ["prerequisite", "pool pause", "drain"] as const) it(`does not begin an empty batch if ${action} arrives during check preparation`, async () => {
     const { engine, first, hold, checks } = await fixture();
     const capture = checks["captureState"].bind(checks);
     let captured!: () => void, proceed!: () => void;
@@ -108,11 +108,50 @@ while (!existsSync(release)) await Bun.sleep(10);`);
     let work: Promise<unknown> | undefined;
     try {
       work = rejectionOf(checks.runProductChecks(executionFor(first), [], new AbortController().signal));
-      await ready; hold(); proceed();
+      await ready;
+      if (action === "prerequisite") hold();
+      else if (action === "pool pause") engine.setPoolPaused(true);
+      else engine.draining = true;
+      proceed();
       expect(await work).toBeInstanceOf(WaitingForUsage);
       expect(first.journey?.flatMap(step => step.checkAttempts ?? []) ?? []).toHaveLength(0);
       expect(executionFor(first).work.checks).toBeUndefined();
     } finally { proceed(); await work; await engine.shutdown(); }
+  });
+
+  for (const boundary of ["queued", "pool paused", "handoff"] as const) it(`removes only the prerequisite-held task from the shared check queue during ${boundary}`, async () => {
+    const { engine, first, second, hold, checks } = await fixture();
+    engine.schedule = () => engine.checkQueue.pump(); // Keep queue wakeups while excluding agent admission.
+    // An occupied shared place can belong to either an ordinary batch or an extra validation.
+    const occupied = engine.checkQueue.hold(), controller = new AbortController();
+    let waiting: Promise<unknown> | undefined, following: Promise<() => void> | undefined, releaseFollowing: (() => void) | undefined;
+    try {
+      waiting = rejectionOf(checks["turnToRun"](executionFor(first), controller.signal));
+      following = checks["turnToRun"](executionFor(second), controller.signal).then(place => { releaseFollowing = place; return place; });
+      expect(engine.checkQueue.waiting).toBe(2);
+      if (boundary === "pool paused") engine.setPoolPaused(true);
+      if (boundary === "handoff") occupied(); // Reserved, but not yet admitted by the continuation.
+      hold(first);
+      const error = await waiting;
+      expect(error).toBeInstanceOf(WaitingForUsage);
+      expect((error as WaitingForUsage).words).toBe(engine.taskAdmissionWait(first));
+      expect(engine.waitingChecks.has(first.id)).toBe(false);
+      if (boundary === "pool paused") {
+        occupied();
+        expect(engine.checkQueue.running).toBe(0);
+        expect(engine.checkQueue.waiting).toBe(1);
+        engine.setPoolPaused(false);
+      } else occupied();
+      const release = await following;
+      expect(engine.checkQueue.running).toBe(1);
+      expect(engine.checkQueue.waiting).toBe(0);
+      expect(engine.waitingChecks.size).toBe(0);
+      release();
+      expect(engine.checkQueue.running).toBe(0);
+    } finally {
+      controller.abort(); occupied(); releaseFollowing?.();
+      await Promise.allSettled([waiting, following]); await engine.shutdown();
+    }
   });
 
   for (const boundary of ["preparation", "queue handoff"] as const) it(`refreshes the required source before admitting checks after asynchronous ${boundary}`, async () => {

@@ -2,6 +2,8 @@
 
 Owns stage progression, Backlog, acceptance and review decisions. Back to [design overview](../design.md).
 
+Required extra container validations record separate version-bound evidence on the requesting journey step and never alter configured check gates, findings, repair returns, acceptance or approvals.
+
 ## Stage kinds
 
 | Kind | Behaviour |

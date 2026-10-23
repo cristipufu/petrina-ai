@@ -1,3 +1,5 @@
+import type { ExtraValidation } from "@petrina/core";
+import type { ExtraRequest } from "./extra-validations.js";
 import { messageRemovalText } from "@petrina/core";
 import { checkProblem, displayTask, originalCheck, reviewDecisionPending, roleForTask, runtimeWaitView } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
@@ -116,7 +118,7 @@ function voterPlaces(engine: Engine, task: Task) {
 }
 export function drainStatus(engine: Engine) {
   const state = engine.activeState();
-  const active = state.tasks.filter((task) => engine.settling.has(task.id) || engine.drivers.has(task.id) || task.holdsSlot);
+  const active = state.tasks.filter((task) => !engine.isPausedCheck(task.id) && (engine.settling.has(task.id) || engine.drivers.has(task.id) || task.holdsSlot));
   const blockers = state.inbox
     .filter((item) => active.some((task) => task.id === item.taskId) && (item.blocking || item.kind === "screen"))
     .map(({ id, taskId, kind, title }) => ({ id, taskId, kind, title }));
@@ -128,6 +130,9 @@ export function drainStatus(engine: Engine) {
     activeCount: active.length,
     blockers: blockers.slice(0, 100),
     blockerCount: blockers.length,
+    checkBlockers: engine.extraValidations.blockers,
+    checkBlockerCount: engine.extraValidations.blockers.length,
+    extraValidations: (state.extraValidations ?? []).map(run => ({ requestId: run.requestId, taskId: run.taskId, name: run.name, state: run.state, queuedAt: run.queuedAt, startedAt: run.startedAt })),
     screenWaiting: state.tasks
       .filter((task) => task.screen && !active.some((entry) => entry.id === task.id))
       .slice(0, 100)
@@ -262,18 +267,19 @@ export class Coordination {
           ...drainStatus(this.engine),
         };
     }
-    return serial(this.engine, async () => {
+    const applied: Result = await serial<Result>(this.engine, async () => {
       if (!spec.changes) return this.query(name, a);
       if (this.lifecycle?.receipt?.(a.requestId))
         return { outcome: "conflict", requestId: a.requestId, message: "That reference belongs to a lifecycle request." };
       const db = this.engine.store.database;
-      const hash = fingerprint([name, a]);
+      const { wait: _wait, timeoutMs: _timeout, ...details } = a;
+      const hash = fingerprint([name, name === "validation.run" ? details : a]);
       const old = db
         .query<{ fingerprint: string; result: string }, [string]>("SELECT fingerprint, result FROM coordination_receipts WHERE id = ?")
         .get(a.requestId);
       if (old)
         return old.fingerprint === hash
-          ? (JSON.parse(old.result) as Result)
+          ? (name === "validation.run" ? this.engine.extraValidations.get(a.requestId) ?? JSON.parse(old.result) as Result : JSON.parse(old.result) as Result)
           : { outcome: "conflict", requestId: a.requestId, message: "That request reference was used with different arguments." };
       // Sync decisions and their receipts commit with the state in one database transaction. Async
       // validations are serialized too; the existing commands keep their own saved request identities.
@@ -293,7 +299,10 @@ export class Coordination {
         requestId: a.requestId,
         message: error instanceof Error ? error.message : "The operation could not be applied.",
       });
-      if (name === "task.track-finding") {
+      if (name === "validation.run") {
+        try { result = await this.engine.extraValidations.submit(a as ExtraRequest, save); }
+        catch (error) { result = errorResult(error); db.transaction(() => save(result))(); }
+      } else if (name === "task.track-finding") {
         try {
           result = await this.engine.trackFinding(a.taskId, a.findingId, a.targetTaskId, link => {
             const result: Result = { outcome: "completed", ...link, requestId: a.requestId };
@@ -330,13 +339,37 @@ export class Coordination {
         })();
       }
       // Task creation and its retry receipt are durable before the first admission pass.
-      if (["task.add", "task.wait"].includes(name) && result.outcome === "completed") this.engine.schedule();
+      if ((["task.add", "task.wait"].includes(name) && result.outcome === "completed") || (name === "validation.run" && result.outcome === "pending")) this.engine.schedule();
       return clone(result);
+    });
+    if (name !== "validation.run" || !a.wait || applied.outcome !== "pending" || a.timeoutMs === 0) return applied;
+    // Waiting is outside the decision queue and belongs only to this caller.
+    return new Promise<Result>(resolve => {
+      let unsubscribe = () => {};
+      const finish = (result: Result) => { clearTimeout(timer); unsubscribe(); signal?.removeEventListener("abort", abort); resolve(result); };
+      const current = () => this.engine.extraValidations.get(a.requestId) ?? applied;
+      const check = () => { const result = current(); if (result.outcome !== "pending" || this.engine.stopped) finish(result); };
+      const abort = () => finish({ ...current(), outcome: "pending", message: "Still pending. Retry the same request reference; caller cancellation does not stop the run." });
+      const timer = setTimeout(abort, a.timeoutMs);
+      unsubscribe = this.engine.subscribe(check);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort(); else check();
     });
   }
   private async query(name: string, a: Args): Promise<Result> {
     const e = this.engine,
       s = e.activeState();
+    if (name === "validation.inspect" || name === "validation.log") {
+      const result = e.extraValidations.get(a.requestId);
+      if (!result) return { outcome: "missing", message: "That extra validation reference does not exist." };
+      if (name === "validation.inspect") return result;
+      const record = result.validation as ExtraValidation | undefined;
+      if (!record?.run) return { outcome: "unavailable", message: "This extra validation has no command log yet." };
+      if (record.run.endedAt === undefined) return { outcome: "pending", state: record.state, extraEvidence: true, message: "The original diagnostic will be available when this run and its cleanup settle." };
+      const task = { id: record.taskId, checks: { at: record.endedAt ?? record.queuedAt, results: [record.run], sha: record.commit, tree: record.tree } } as unknown as Task;
+      const log = await readCheckLog(e.dataDir, task, { index: 0, section: a.section, cursor: a.cursor, limit: a.limit });
+      return { ...log, extraEvidence: true, validationState: record.state, ...(record.run.exitSignal ? { commandOutcome: "unfinished" } : {}) };
+    }
     if (name === "watch.event") return e.events.log.read(a.eventId, a);
     // Before the shared checks: a continuation reports its read's time even when the task or product is gone.
     if (name === "analytics.inspect") return readAnalytics(e, a as Parameters<typeof readAnalytics>[1]);

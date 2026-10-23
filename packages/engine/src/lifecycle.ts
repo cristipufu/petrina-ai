@@ -182,6 +182,7 @@ export class EngineLifecycle implements LifecycleControl {
           e.drainReason = name;
           e.draining = true;
           e.stopRequested.abort();
+          e.checkQueue.pump();
           e.commitNow();
         }
       });

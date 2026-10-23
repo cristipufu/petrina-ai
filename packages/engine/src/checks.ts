@@ -132,6 +132,10 @@ export async function runChecks(
   onProgress?: (event: CheckProgress) => void,
   // Where a failed check's sleep evidence comes from: the engine's own source. Absent, the Mac's power log.
   machineRecords: MachineRecords = livePowerRecords,
+  onSpawn?: (pid: number) => void,
+  onLog?: (facts: Pick<CheckRun, "logPath" | "logFileIdentity" | "logFileLength" | "logFileBeginning">) => void,
+  // Extra runs recheck admission after log creation, immediately before synchronous spawn.
+  beforeStart?: () => boolean,
 ): Promise<CheckRun[]> {
   if (signal?.aborted) return [];
   const ordered = checks.map((check, index) => ({ check, index })).filter(({ check }) => check.argv.length);
@@ -141,21 +145,29 @@ export async function runChecks(
   for (const { check, index } of [...ordered.filter(({ check }) => staticCheck(check)), ...ordered.filter(({ check }) => !staticCheck(check))]) {
       if (signal?.aborted) break;
       const log = logDirectory ? await checkLog(logDirectory) : undefined;
+      let admitted = true;
+      try {
+        admitted = beforeStart?.() ?? true;
+        if (admitted && log) onLog?.(log.created);
+      } catch (error) { await log?.close(); throw error; }
+      if (!admitted) { await log?.close(); break; }
       const started = Date.now();
       onProgress?.({ kind: "started", index, at: started });
-      const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList);
+      const run = await runOne(check.argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
       const endedAt = Date.now();
       const result = { name: check.name, command: commandText(check.argv), startedAt: started, endedAt, ms: endedAt - started, ...await log?.close() };
       const output = [
-        run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.exitUnreported ? `${run.output}\n${CHECK_EXIT_UNREPORTED}` : run.output,
+        run.postStartError !== undefined ? [run.output, `Stopped after launch: ${run.postStartError}`, "The command outcome was not recorded."].filter(Boolean).join("\n")
+          : run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.exitUnreported ? `${run.output}\n${CHECK_EXIT_UNREPORTED}` : run.output,
         ...(run.cleanupIncomplete ? [CLEANUP_INCOMPLETE] : []),
       ].filter(Boolean).join("\n");
       const finished: CheckRun = {
         ...result,
-        ok: !run.error && !run.timedOut && !signal?.aborted && run.code === 0,
+        ok: !run.error && run.postStartError === undefined && !run.timedOut && !signal?.aborted && run.code === 0,
         ...(log ? { logComplete: run.outputComplete && !result.logError } : {}),
-        ...(signal?.aborted ? { interrupted: true } : {}),
+        ...(signal?.aborted || run.postStartError !== undefined ? { interrupted: true } : {}),
         ...(run.timedOut ? { timedOut: true } : {}),
+        ...(run.exitSignal ? { exitSignal: run.exitSignal } : {}),
         ...(run.cleanupIncomplete ? { cleanupIncomplete: true } : {}),
         output: tidyOutput(output),
       };
@@ -171,6 +183,7 @@ export async function runChecks(
 }
 
 interface CheckLog {
+  created: Pick<CheckRun, "logPath" | "logFileIdentity" | "logFileLength" | "logFileBeginning">;
   write(bytes: Uint8Array): Promise<void>;
   close(): Promise<Pick<CheckRun, "logPath" | "logFileIdentity" | "logFileLength" | "logFileBeginning" | "logError">>;
 }
@@ -198,12 +211,14 @@ async function checkLog(directory: string): Promise<CheckLog> {
     // Exclusive and private. Read access lets close() fingerprint this same file.
     file = await open(path, "wx+", 0o600);
   } catch (error) {
-    return { write: async () => {}, close: async () => ({ logError: String(error) }) };
+    return { created: {}, write: async () => {}, close: async () => ({ logError: String(error) }) };
   }
   const handle = file;
+  const created = await handle.stat({ bigint: true });
   let pending = Promise.resolve();
   let logError: string | undefined;
   return {
+    created: { logPath: path, logFileIdentity: { device: created.dev.toString(), inode: created.ino.toString() }, logFileLength: 0, logFileBeginning: createHash("sha256").update("").digest("hex") },
     write(bytes) {
       // stdout and stderr share one file position. Serialize writes and apply backpressure
       // to their readers, rather than collecting an unbounded queue of output in memory.
@@ -234,7 +249,7 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; exitUnreported?: boolean; error?: string }> {
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }> {
   return new Promise((resolve) => {
     const windows = process.platform === "win32";
     let kept = "";
@@ -254,12 +269,16 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     const finish = (code: number | null, error?: string) => {
       if (done) return;
       done = true;
+      // A callback or observation can fail after spawn succeeded. That is owned work
+      // with an unknown outcome: stop it before returning, preserving the actual error.
+      const afterLaunch = error !== undefined && child !== undefined;
+      if (afterLaunch) stopping ??= stopAll(child!.pid, windows, processList);
       clearTimeout(timer);
       clearTimeout(grace);
       watch.abort();
       signal?.removeEventListener("abort", stop);
       for (const reader of readers) void reader.cancel().catch(() => undefined);
-      const result = { code, output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete, ...(exitUnreported ? { exitUnreported: true } : {}), ...(error ? { error } : {}) };
+      const result = { code, ...(child?.signalCode ? { exitSignal: child.signalCode } : {}), output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete, ...(exitUnreported ? { exitUnreported: true } : {}), ...(error !== undefined ? afterLaunch ? { postStartError: error } : { error } : {}) };
       // The parent can exit before detached workers. Do not release the working copy until their stop settles.
       void (stopping ?? Promise.resolve(true)).then((clean) => resolve({ ...result, ...(!clean ? { cleanupIncomplete: true } : {}) }));
     };
@@ -275,6 +294,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     }, timeoutMs);
     try {
       child = Bun.spawn([...argv], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !windows, windowsHide: true });
+      onSpawn?.(child.pid);
     } catch (error) {
       finish(null, error instanceof Error ? error.message : String(error));
       return;

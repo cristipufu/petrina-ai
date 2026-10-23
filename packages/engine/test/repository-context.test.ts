@@ -507,6 +507,7 @@ describe("explicit repository execution contexts", () => {
     try {
       const tested = await engine["shipping"]["releases"]["setVersion"](scope, files);
       expect(tested).not.toBe(start);
+      expect(scope.work.savedVersion).toEqual({ commit: tested, tree: await git(path, "rev-parse", "HEAD^{tree}") });
       for (const file of files) {
         expect(read.mock.calls.filter(([, sha, name]) => sha === start && name === file.file)).toHaveLength(0);
         expect(read.mock.calls.filter(([, sha, name]) => sha === tested && name === file.file)).toHaveLength(1);
@@ -675,7 +676,7 @@ describe("explicit repository execution contexts", () => {
       const signal = new AbortController().signal;
       release = await checks["turnToRun"](second, signal);
       pending = checks.runProductChecks(first, [{ name: "First product only", argv: [process.execPath, "-e", "console.error('Failure from the first product'); process.exit(1)"] }], signal);
-      await waitFor(() => checks["line"].length === 1, "the first product's check to queue");
+      await waitFor(() => engine.checkQueue.waiting === 1, "the first product's check to queue");
       writeFileSync(join(first.work.worktree!, "queued-change.txt"), "Committed while checks waited\n");
       await git(first.work.worktree!, "add", "."); await git(first.work.worktree!, "commit", "-qm", "Keep the change made while checks waited");
       const queuedHead = await gitOps.head(first.work.worktree!);

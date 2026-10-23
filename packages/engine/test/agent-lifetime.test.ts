@@ -3,7 +3,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import * as processes from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_CLEANUP_NOTE, AgentRun, presentStates, stopAll } from "../src/acp-run.js";
 import { AgentBrowser, type ObservedProcess } from "../src/browser.js";
@@ -217,15 +217,16 @@ it("does not retain completed turns on the live agent's process", async () => {
   } finally { await run.stop(); }
 });
 
-const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(listedLate => ({ firstTimesOut, listedLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: false })));
+const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(listedLate => ({ firstTimesOut, listedLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: false, overrun: 0 })));
 stopCases.push(
-  { firstTimesOut: true, listedLate: false, stubborn: false, delay: 0, workerStubborn: true, cancel: true, firstRunning: false },
-  { firstTimesOut: false, listedLate: false, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false },
-  { firstTimesOut: false, listedLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false },
-  { firstTimesOut: false, listedLate: false, stubborn: false, delay: 3_800, workerStubborn: false, cancel: false, firstRunning: false },
-  { firstTimesOut: false, listedLate: false, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: true },
+  { firstTimesOut: true, listedLate: false, stubborn: false, delay: 0, workerStubborn: true, cancel: true, firstRunning: false, overrun: 0 },
+  { firstTimesOut: false, listedLate: false, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false, overrun: 0 },
+  { firstTimesOut: false, listedLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false, overrun: 0 },
+  { firstTimesOut: false, listedLate: false, stubborn: false, delay: 3_800, workerStubborn: false, cancel: false, firstRunning: false, overrun: 0 },
+  { firstTimesOut: false, listedLate: false, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: true, overrun: 0 },
+  { firstTimesOut: false, listedLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false, overrun: 700 },
 );
-for (const { firstTimesOut, listedLate, stubborn, delay, workerStubborn, cancel, firstRunning } of stopCases) it.skipIf(process.platform === "win32")(`finds detached work ${listedLate ? "first listed during stopping" : "already listed"} within the quit limit when the first process scan ${firstTimesOut ? "times out" : firstRunning ? "still shows the owner running" : "succeeds"}${delay ? ` with consistently slow ${delay}ms listings` : ""}${stubborn ? "" : " and the agent exits gracefully"}${cancel ? " on cancellation" : ""}`, async () => {
+for (const { firstTimesOut, listedLate, stubborn, delay, workerStubborn, cancel, firstRunning, overrun } of stopCases) it.skipIf(process.platform === "win32")(`${overrun ? "warns about undiscovered work after a delayed scan exhausts the rescan allowance" : `finds detached work ${listedLate ? "first listed during stopping" : "already listed"}`} within the quit limit when the first process scan ${firstTimesOut ? "times out" : firstRunning ? "still shows the owner running" : "succeeds"}${delay ? ` with consistently slow ${delay}ms listings` : ""}${stubborn ? "" : " and the agent exits gracefully"}${cancel ? " on cancellation" : ""}`, async () => {
   const dir = tempDir("petrina-stop-scan-");
   const record = join(dir, "worker-pid");
   const workerReady = join(dir, "worker-ready");
@@ -255,6 +256,10 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
   const scanTimers = new Set<ReturnType<typeof setTimeout>>();
   let scans = 0, incomplete = 0;
   let child: ChildProcess | undefined, run: AgentRun | undefined;
+  const realNow = Date.now, realSleep = Bun.sleep;
+  let now = 0;
+  let clock: ReturnType<typeof spyOn<typeof Date, "now">> | undefined;
+  let sleep: ReturnType<typeof spyOn<typeof Bun, "sleep">> | undefined;
   const unrelated = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" });
   const signals = spyOn(process, "kill");
   const snapshot = (first: boolean) => {
@@ -282,15 +287,22 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     // Read outcomes use this fixture's ready process identities and successful signals: a
     // native ps within the remaining allowance can itself time out under suite load.
     const listed = hang ? "" : snapshot(first);
-    const timer = setTimeout(() => {
-      scanTimers.delete(timer);
+    const finishRead = () => {
       if (hang) return finish(new Error("Process list timed out"), "", "");
       // A response deliberately slower than the caller's allowance is a timeout, even if
       // the snapshot is ready; this keeps the broken split-budget control failing.
       if (delay >= options.timeout) return finish(new Error("Process list timed out"), "", "");
       finish(null, listed, "");
-    }, hang ? options.timeout : Math.min(delay, options.timeout));
-    scanTimers.add(timer);
+    };
+    if (delay) {
+      // These reads test allowance arithmetic, not timer delivery under host load. Advance
+      // exactly the scripted duration; real SIGTERM/SIGKILL and their exit waits stay real.
+      now += Math.min(delay, options.timeout) + (first ? overrun : 0);
+      queueMicrotask(finishRead);
+    } else {
+      const timer = setTimeout(() => { scanTimers.delete(timer); finishRead(); }, hang ? options.timeout : 0);
+      scanTimers.add(timer);
+    }
     return finishedHelper();
   }) as typeof processes.execFile);
   const controller = new AbortController();
@@ -302,30 +314,43 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
       writeFileSync(publishRecord, "ready");
     }
     const pid = await waitFor(workerPid, "the detached worker's complete record before stopping");
+    if (delay) {
+      clock = spyOn(Date, "now").mockImplementation(() => now);
+      sleep = spyOn(Bun, "sleep").mockImplementation(async ms => {
+        const duration = ms instanceof Date ? ms.getTime() - now : ms;
+        await realSleep(duration);
+        now += duration;
+      });
+    }
+    const wallFrom = realNow();
     const from = Date.now();
     if (cancel) controller.abort();
     const stopping = run.stop();
     const complete = await stopping;
+    expect(realNow() - wallFrom).toBeLessThan(7_000);
     expect(Date.now() - from).toBeLessThan(7_000);
-    expect([child!.pid!, pid].filter(alive)).toEqual([]);
-    expect(scanned).toEqual(firstTimesOut ? [false, true, true] : firstRunning ? [true, true, true] : workerStubborn ? [true, true] : [true]);
+    expect([child!.pid!, pid].filter(alive)).toEqual(overrun ? [pid] : []);
+    expect(scanned).toEqual(overrun ? [true, false] : firstTimesOut ? [false, true, true] : firstRunning ? [true, true, true] : workerStubborn ? [true, true] : [true]);
     expect(allowances[0]).toBe(4_000);
+    if (overrun) expect(allowances[1]).toBe(2_300);
     expect(scansRunning.size).toBe(0);
     expect(scanTimers.size).toBe(0);
-    expect(complete).toBe(true);
-    expect(incomplete).toBe(0);
+    expect(complete).toBe(!overrun);
+    expect(incomplete).toBe(overrun ? 1 : 0);
     expect(alive(unrelated.pid)).toBe(true);
     expect(signals.mock.calls.filter(([pid, signal]) => Math.abs(pid) === unrelated.pid && signal !== 0)).toEqual([]);
-    if (listedLate) {
+    if (listedLate && !overrun) {
       const term = signals.mock.calls.findIndex(([pid, signal]) => Math.abs(pid) === child!.pid && signal === "SIGTERM");
       const discovered = signals.mock.calls.findIndex(([target, signal]) => Math.abs(target) === pid && signal !== 0);
       expect(discovered).toBeGreaterThan(term);
       expect(signals.mock.calls[discovered]![1]).toBe("SIGSTOP");
     }
+    if (overrun) expect(signals.mock.calls.filter(([target, signal]) => Math.abs(target) === pid && signal !== 0)).toEqual([]);
     expectPausesReclaimed(signals);
     if (!workerStubborn) expect(signals.mock.calls.some(([, signal]) => signal === "SIGKILL")).toBe(false);
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   } finally {
+    sleep?.mockRestore(); clock?.mockRestore();
     // Reclaim the missed worker even when this regression is run against broken shutdown code.
     for (const pid of [child?.pid, workerPid()].filter((pid): pid is number => !!pid)) {
       try { process.kill(-pid, "SIGKILL"); } catch { /* Not a group leader, or already stopped. */ }
@@ -383,22 +408,53 @@ for (const failure of ["unavailable", "timeout", "unpaused"] as const) it.skipIf
  * An agent that has exited but whose exit its parent never collects, leading its own group: what a lost exit report
  * leaves. To a signal it, and its group, still look present.
  */
-async function uncollected(): Promise<{ pid: number; release(): Promise<void> }> {
-  const holder = Bun.spawn(["sh", "-c", "set -m; sleep 0.05 & echo $!; exec sleep 30"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-  const reader = holder.stdout.getReader();
-  let text = "";
-  while (!text.includes("\n")) {
-    const next = await reader.read();
-    if (next.done) break;
-    text += new TextDecoder().decode(next.value);
-  }
-  reader.releaseLock();
-  const pid = Number(text.trim());
-  if (!pid) throw new Error(`No uncollected process was started: ${JSON.stringify(text)}`);
-  return { pid, async release() { holder.kill("SIGKILL"); await holder.exited; } };
+let uncollectedId = 0;
+async function uncollected(beforeRead?: (holderPid: number) => void): Promise<{ pid: number; holderPid: number; self: string; release(): Promise<void> }> {
+  const record = join(root, `uncollected-${++uncollectedId}`);
+  const holder = Bun.spawn(["sh", "-c", 'set -m; sleep 120 & target=$!; printf "%s\\n" "$target" > "$1.tmp"; mv "$1.tmp" "$1"; exec sleep 120', "petrina-uncollected", record], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  let pid: number | undefined;
+  const release = async () => {
+    try {
+      // Publication survives an interrupted setup, even before the caller reads the number.
+      pid ??= await waitFor(() => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined, "the owned child's cleanup record", 5_000);
+      try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ }
+    } finally { holder.kill("SIGKILL"); await holder.exited; }
+    await waitFor(() => !alive(pid!) && !alive(-pid!), "the owned child and group to disappear after the holder exits", 5_000);
+    rmSync(record, { force: true });
+  };
+  try {
+    beforeRead?.(holder.pid);
+    pid = await waitFor(() => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined, "the owned child's complete process record", 5_000);
+    const target = pid;
+    // Do not depend on a short sleep beating the shell's exec: release the child only after
+    // its parent is a sleep that cannot collect it, and its own process group is established.
+    await waitFor(async () => {
+      const listed = await processList(["-A", "-o", "pid=,ppid=,pgid=,stat=,comm="], 4_000 * SLOW);
+      const rows = listed?.split("\n").map(line => line.trim().split(/\s+/));
+      const parent = rows?.find(([id]) => Number(id) === holder.pid);
+      const child = rows?.find(([id]) => Number(id) === target);
+      return parent && /(?:^|\/)sleep$/.test(parent[4] ?? "") && child && Number(child[1]) === holder.pid && Number(child[2]) === target;
+    }, "the owned holder to exec before its child exits", 10_000);
+    process.kill(target, "SIGKILL");
+    const self = await waitFor(async () => {
+      const listed = await groups(4_000 * SLOW);
+      const present = listed?.split("\n").some(line => {
+        const [id, group, state] = line.trim().split(/\s+/);
+        return Number(id) === target && Number(group) === target && state?.startsWith("Z") && alive(target);
+      });
+      return present ? listed!.split("\n").find(line => Number(line.trim().split(/\s+/)[0]) === process.pid) : undefined;
+    }, "the real owned process and its group to remain defunct", 10_000);
+    return { pid: target, holderPid: holder.pid, self, release };
+  } catch (error) { await release(); throw error; }
 }
 
 const groups = (timeout: number) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
+
+it.skipIf(process.platform === "win32")("reclaims an uncollected fixture interrupted before its process number is read", async () => {
+  let holderPid: number | undefined;
+  await expectRejection(uncollected(pid => { holderPid = pid; throw new Error("Fixture setup interrupted"); }), "Fixture setup interrupted");
+  expect(holderPid).toBeDefined(); expect(alive(holderPid!)).toBe(false);
+});
 
 // What the final list shows of a target that still answers after the forced stop (a program, or its group by its
 // negative number). Only a complete list that names it, or every member of its group, defunct shows it ended: a list
@@ -427,30 +483,70 @@ const groups = (timeout: number) => processList(["-A", "-o", "pid=,pgid=,stat="]
 
 // The stop's final second reads the process list for what is still present after the forced stop. Only a complete
 // list showing it defunct confirms the stop; an unreadable list, or one that shows it running, never does.
-for (const list of ["defunct", "unreadable", "running", "silent"] as const) it.skipIf(process.platform === "win32")(`${list === "defunct" ? "confirms" : "never confirms"} a stop whose agent exited without being collected when the final list ${list === "defunct" ? "shows it defunct" : list === "unreadable" ? "cannot be read" : list === "running" ? "shows it running" : "never names it or its group"}`, async () => {
+for (const list of ["defunct", "unreadable", "late", "throws", "running", "silent"] as const) it.skipIf(process.platform === "win32")(`${list === "defunct" ? "confirms" : "never confirms"} a stop whose agent exited without being collected when the final list ${{ defunct: "shows it defunct", unreadable: "cannot be read", late: "does not arrive by its deadline", throws: "throws an error", running: "shows it running", silent: "never names it or its group" }[list]}`, async () => {
   const agent = await uncollected();
+  const self = agent.self;
+  const complete = `${self}\n${agent.pid} ${agent.pid} Z`;
+  const ownership = `${process.pid} ${process.ppid} S\n${agent.pid} ${agent.holderPid} Z`;
+  const original = processes.execFile;
+  let ownershipReads = 0;
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (args[0] !== "ps") return Reflect.apply(original, processes, args);
+    ownershipReads++;
+    const done = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    queueMicrotask(() => done(null, ownership, ""));
+    return finishedHelper();
+  }) as typeof processes.execFile);
+  const wallNow = Date.now;
+  let now = 0;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  // This process already ended. Control only the observation window; real stop/deadline
+  // coverage below retains native clocks and reads, as do the live-agent cases above.
+  const sleep = spyOn(Bun, "sleep").mockImplementation(async ms => { now += ms instanceof Date ? ms.getTime() - now : ms; });
+  const reads: number[] = [], notes: string[] = [];
   try {
-    await waitFor(async () => (await childState(agent.pid)) === "ended", "the agent to be defunct", 10_000);
-    const notes: string[] = [];
-    const own = (line: string) => Number(line.trim().split(/\s+/)[0]) === agent.pid;
-    // What a given list shows is not about time. The running and silent lists derive from one complete native list,
-    // read beforehand with the defunct agent in it, so a busy machine's slow read cannot make them unreadable instead.
-    // The defunct list is still read live within the stop's final second.
-    const listed = list === "running" || list === "silent" ? await waitFor(async () => {
-      const text = await groups(4_000 * SLOW);
-      return text?.split("\n").some((line) => own(line) && /Z\S*\s*$/.test(line)) && text;
-    }, "a native process list showing the defunct agent") : undefined;
-    const read = list === "defunct" ? groups : list === "unreadable" ? async () => undefined
-      : list === "running" ? async () => listed!.split("\n").map((line) => own(line) ? line.replace(/Z\S*\s*$/, "S") : line).join("\n")
-      : async () => listed!.split("\n").filter((line) => !own(line)).join("\n");
+    const read = async (timeout: number) => {
+      reads.push(timeout);
+      if (list === "late") { await Bun.sleep(timeout); return undefined; }
+      if (list === "throws") throw new Error("Final process observation unavailable");
+      return list === "unreadable" ? undefined : list === "running" ? `${self}\n${agent.pid} ${agent.pid} S` : list === "silent" ? self : complete;
+    };
+    const wallFrom = wallNow();
     const from = Date.now();
     const stopped = await stopAll({ pid: agent.pid, exitCode: null, signalCode: null } as unknown as ChildProcess, 2_000, true, (line) => { notes.push(line); }, read);
+    if (stopped !== (list === "defunct")) console.error("Uncollected-agent stop evidence:", JSON.stringify({ list, pid: agent.pid, stopped, elapsed: Date.now() - from, ownershipReads, reads, notes }));
+    expect(wallNow() - wallFrom).toBeLessThan(7_000);
     expect(Date.now() - from).toBeLessThan(7_000);
+    expect(ownershipReads).toBe(2); expect(reads).toEqual([750]);
+    expect(alive(agent.pid)).toBe(true);
+    expect(alive(agent.holderPid)).toBe(true);
     expect(stopped).toBe(list === "defunct");
     if (list === "defunct") expect(notes).toEqual([]);
     else {
       expect(notes).toHaveLength(1);
-      expect(notes[0]).toMatch(new RegExp(`^${AGENT_CLEANUP_NOTE} stage=forced elapsed=\\d+ms lists=read,read processes=\\d+ shown=\\d+ omitted=0 owned=.*${agent.pid}:${{ unreadable: "unknown", running: "running", silent: "absent" }[list]}:target`));
+      expect(notes[0]).toMatch(new RegExp(`^${AGENT_CLEANUP_NOTE} stage=forced elapsed=\\d+ms lists=read,read processes=\\d+ shown=\\d+ omitted=0 owned=.*${agent.pid}:${{ unreadable: "unknown", late: "unknown", throws: "unknown", running: "running", silent: "absent" }[list]}:target`));
     }
+  } finally { sleep.mockRestore(); clock.mockRestore(); scan.mockRestore(); await agent.release(); }
+});
+
+it.skipIf(process.platform === "win32")("reports only what native observations prove when stopping an uncollected agent within the quit deadline", async () => {
+  const agent = await uncollected();
+  const notes: string[] = [], reads: { timeout: number; ms: number; listing: string | undefined }[] = [];
+  try {
+    const read = async (timeout: number) => {
+      const from = Date.now(), listing = await groups(timeout);
+      reads.push({ timeout, ms: Date.now() - from, listing }); return listing;
+    };
+    const from = Date.now();
+    const stopped = await stopAll({ pid: agent.pid, exitCode: null, signalCode: null } as unknown as ChildProcess, 2_000, true, line => notes.push(line), read);
+    const elapsed = Date.now() - from;
+    console.log("Native uncollected-agent stop evidence:", JSON.stringify({ pid: agent.pid, stopped, elapsed, notes, reads: reads.map(({ timeout, ms, listing }) => ({ timeout, ms, state: listing === undefined ? "unreadable" : presentStates(listing, [-agent.pid, agent.pid]) })) }));
+    expect(elapsed).toBeLessThan(7_000);
+    const unreadableOwnership = notes.some(note => /lists=\S*unreadable/.test(note));
+    expect(stopped).toBe(!unreadableOwnership && presentStates(reads.at(-1)?.listing, [-agent.pid, agent.pid]).ended);
+    expect(notes).toHaveLength(stopped ? 0 : 1);
+    expect(alive(agent.holderPid)).toBe(true);
+    // Setup proved the real target defunct; it cannot resume. release() confirms native
+    // disappearance after its still-live holder ends, without another timed ps assumption.
   } finally { await agent.release(); }
 });

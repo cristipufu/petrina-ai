@@ -327,8 +327,8 @@ export class Driver {
       }
       // Delivered or cancelled: now that nothing uses the working copy, it can go.
       this.k.tidy(taskId);
-      // A resumed task waits for its previous driver's file handling before starting another one.
-      this.schedule();
+      // A resumed task waits for file handling; newly landed prerequisites also release extra checks.
+      this.k.schedule();
       this.k.syncIdleSleep();
     });
   }
@@ -749,6 +749,7 @@ export class Driver {
     // Pin the commit actually checked out, before any agent starts; a shared source ref may move meanwhile.
     scope.work.baseSha = scope.work.baseSha ?? (await git.head(worktree));
     if (scope.work.source && scope.work.baseSha) scope.work.source.initialSha ??= scope.work.baseSha;
+    if (!scope.work.savedVersion) await this.k.rememberVersion(scope);
     if (own) delete own.preparingCopy;
     this.k.commit();
   }

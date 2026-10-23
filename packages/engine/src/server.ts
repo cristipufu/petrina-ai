@@ -254,7 +254,7 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
             const { name, args } = await request.json() as { name: string; args: unknown };
             // A wait stays open for its whole requested deadline, past the ordinary idle cutoff; other
             // requests keep the server's usual behavior. Disconnecting releases the wait through its signal.
-            if (typeof name === "string" && name.startsWith("watch.")) server.timeout(request, 0);
+            if (typeof name === "string" && (name.startsWith("watch.") || (name === "validation.run" && typeof args === "object" && args !== null && "wait" in args && args.wait === true))) server.timeout(request, 0);
             return Response.json(await coordination.call(name, args, request.signal));
           } catch {
             return Response.json({ outcome: "failed", message: "The coordination request could not be completed. Retry changes with their original request reference." });

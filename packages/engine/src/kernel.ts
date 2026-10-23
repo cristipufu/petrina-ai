@@ -1,3 +1,4 @@
+import { CheckQueue } from "./check-queue.js";
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator, type Selection } from "./usage-coordinator.js";
@@ -121,6 +122,10 @@ export interface EngineOptions {
   /** How many tasks' check runs may overlap (default: one full check set at a time). */
   checkRuns?: number;
   checkTimeoutMs?: number;
+  /** Tests: a controlled local container CLI and cleanup cadence. Never accepted from callers. */
+  containerTool?: readonly string[];
+  extraCleanupEveryMs?: number;
+  containerCommandTimeoutMs?: number;
   /** Tests: where programs are found, instead of the PATH. */
   which?: Which;
   /** Tests: how long one tool check may take. */
@@ -419,7 +424,18 @@ export abstract class Kernel {
     return work;
   }
 
-  get admissionsClosed(): boolean { return this.draining || this.s.pool.paused || this.stopped; }
+  readonly checkQueue = new CheckQueue(() => this.options.checkRuns ?? 1, () => this.admissionsClosed ? this.draining ? this.drainLine : "Waiting for the pool to resume" : undefined, () => this.draining || this.stopped);
+  /** Live check callers awaiting capacity; they keep their FIFO entry while the pool is paused. */
+  readonly waitingChecks = new Map<Id, number>();
+  extraRecovery = false;
+  extraCheckBlocker?: () => string | undefined;
+  extraChecksActive?: () => boolean;
+  get admissionsClosed(): boolean { return this.extraRecovery || this.draining || this.s.pool.paused || this.stopped; }
+
+  /** A quiet check waiter does not prevent pool pause completing; a stop/restart still drains its caller. */
+  isPausedCheck(taskId: Id): boolean {
+    return this.s.pool.paused && !this.draining && this.waitingChecks.has(taskId) && !this.runs.has(taskId) && !this.helperRuns.get(taskId)?.size;
+  }
 
   /** The same admission boundary as a paused pool, scoped to one task. Running work is never aborted. */
   taskAdmissionsClosed(task: MTask | Id): boolean {
@@ -467,20 +483,20 @@ export abstract class Kernel {
   /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
   inFlight(): number {
     const agents = this.runs.size + [...this.helperRuns.values()].reduce((sum, runs) => sum + runs.size, 0);
-    return agents || this.settling.size + this.copyCleanups.size + this.backgroundWork.size + this.s.tasks.filter(task => task.driving).length;
+    return agents || [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length + this.copyCleanups.size + this.backgroundWork.size + this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length;
   }
 
   /** Keep macOS awake only while this engine still owns active work or its cleanup. */
   syncIdleSleep(): void {
     const active = !this.stopped && (
-      this.drivers.size > 0 ||
-      this.settling.size > 0 ||
+      [...this.drivers.keys()].some(id => !this.isPausedCheck(id)) ||
+      [...this.settling.keys()].some(id => !this.isPausedCheck(id)) ||
       this.runs.size > 0 ||
       [...this.helperRuns.values()].some((runs) => runs.size > 0) ||
       this.screenGroups.size > 0 ||
       this.switching.size > 0 ||
       this.copyCleanups.size > 0 ||
-      this.cleanupJobs.size > 0
+      this.cleanupJobs.size > 0 || !!this.extraChecksActive?.()
     );
     this.idleSleep.setActive(active);
   }
@@ -496,6 +512,7 @@ export abstract class Kernel {
   async drain(limitMs: number, onWait?: (left: number) => void): Promise<number> {
     this.draining = true;
     this.stopRequested.abort();
+    this.checkQueue.pump();
     const started = Date.now();
     let last = -1;
     while (!this.stopped) {
@@ -537,6 +554,17 @@ export abstract class Kernel {
   historyPage = (request: HistoryQuery): HistoryPage => this.projection.historyPage(request);
   taskDetails = (id: Id): Task | undefined => this.projection.taskDetails(id);
   saveArchivedTask(task: MTask): void { this.projection.saveArchivedTask(task); }
+  /** Only saved extra-work ownership keeps the store open for late shutdown evidence. */
+  extraValidationTask(id: Id): MTask | undefined {
+    const record = this.s.extraValidations?.find(record => record.id === id);
+    return record ? this.projection.task(record.taskId, true) : undefined;
+  }
+  saveExtraValidationTask(id: Id, task: MTask, line: Task["timeline"][number]): void {
+    const record = this.s.extraValidations?.find(record => record.id === id && record.taskId === task.id);
+    if (!record) throw new Error("Extra validation no longer owns this task's cleanup.");
+    if (this.stopped) this.store.saveExtraValidationEvidence(record, line, MAX_TIMELINE, this.s.extraValidations, this.s.seq);
+    else this.projection.saveArchivedTask(task);
+  }
   forgetProductHistory(productId: Id): void { this.projection.forgetProductHistory(productId); }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -1015,8 +1043,15 @@ export abstract class Kernel {
     if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
       const sha = await git.commitAll(repository.worktree!, `${task.title}: ${role.name}`);
       if (repository.checks && (sha || repository.checks.current !== false)) repository.checks.current = repository.checks.tree === await git.treeOf(repository.worktree!);
+      await this.rememberVersion(scope);
       if (sha) this.log(scope, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
+  }
+
+  async rememberVersion(scope: RepositoryContext): Promise<void> {
+    if (!scope.work.worktree) return;
+    const version = await git.commitVersion(scope.work.worktree);
+    if (version.head && version.tree) scope.work.savedVersion = { commit: version.head, tree: version.tree };
   }
 
   columnFor(task: MTask): Column {

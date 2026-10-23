@@ -2,6 +2,8 @@
 
 Describes existing boundaries and their limits; this is not a second policy layer. Back to [design overview](../design.md).
 
+Required extra full validations use the existing command-tool permissions and an engine-owned local Linux container with only a standalone read-only saved Git copy; Petrina owns cleanup and refuses unsupported execution rather than granting a caller-managed reservation.
+
 ## Security model
 
 Agents start with full permissions inside their own working copy; the coordinator asked for that, and it keeps the squad fast. What stops them doing harm is layered, and it is important to know which layer is the boundary:

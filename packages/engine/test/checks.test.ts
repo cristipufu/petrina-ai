@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync
 import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, parseCommand } from "../src/checks.js";
+import { checkCommandOutcome } from "../src/check-log-read.js";
 import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
 import { Engine } from "./engine.js";
 import { Store } from "../src/store.js";
@@ -123,6 +124,55 @@ describe("a product's checks", () => {
     ]);
     expect(results[0]!.output).toContain("git version");
     expect(results[2]!.output).toStartWith("Could not start");
+  });
+
+  for (const mode of ["launch failure", "successful registration", "registration failure"] as const) it.skipIf(process.platform === "win32" && mode === "registration failure")(`distinguishes ${mode} at the launched-process callback`, async () => {
+    const dir = root("petrina-check-registration-");
+    const ready = join(dir, "ready"), program = join(dir, "check.ts");
+    writeFileSync(program, `import { writeFileSync, renameSync } from "node:fs";
+writeFileSync(${JSON.stringify(ready)} + ".tmp", "ready"); renameSync(${JSON.stringify(ready)} + ".tmp", ${JSON.stringify(ready)});
+console.log("Original command output");
+${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.exit(0);"}`);
+    const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
+    let pid: number | undefined, returned = false;
+    const running = runChecks(dir, [{ name: "Registered check", argv: mode === "launch failure" ? ["petrina-no-such-program"] : [process.execPath, program] }],
+      process.env, 30_000 * SLOW, undefined, join(dir, "logs"), async () => {
+        entered.resolve(); await released.promise;
+        return `${pid} ${process.pid} S\n`; // The fixture's single owned process cannot fork or finish by itself.
+      }, undefined, undefined, launched => {
+        pid = launched;
+        if (mode === "registration failure") throw new Error("Client registration unavailable");
+      }).then(runs => { returned = true; return runs; });
+    try {
+      if (mode === "registration failure") {
+        await Promise.race([entered.promise, running.then(() => { throw new Error("The runner returned before stopping its launched process"); })]);
+        await waitFor(() => existsSync(ready), "the owned command to be running while cleanup is held");
+        expect(returned).toBe(false); expect(pid).toBeDefined(); expect(() => process.kill(pid!, 0)).not.toThrow();
+        released.resolve();
+      }
+      const [run] = await running;
+      expect(run!.endedAt).toBeDefined(); expect(run!.cleanupIncomplete).toBeUndefined();
+      expect(run!.logPath).toBeDefined();
+      if (mode === "launch failure") {
+        expect(pid).toBeUndefined(); expect(run!.ok).toBe(false); expect(run!.interrupted).toBeUndefined();
+        expect(run!.output).toStartWith("Could not start:"); expect(checkCommandOutcome(run)).toBe("failed");
+      } else {
+        expect(pid).toBeDefined(); expect(await childState(pid!)).toBe("ended");
+        expect(run!.ok).toBe(mode === "successful registration");
+        expect(checkCommandOutcome(run)).toBe(mode === "successful registration" ? "passed" : "unfinished");
+        if (mode === "registration failure") {
+          expect(run!.interrupted).toBe(true); expect(run!.output).toContain("Client registration unavailable");
+          expect(run!.output).not.toContain("Could not start");
+        } else { expect(run!.logComplete).toBe(true); expect(run!.output).toContain("Original command output"); }
+      }
+    } finally {
+      released.resolve();
+      if (pid !== undefined) {
+        try { process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL"); } catch { /* The owned process already ended. */ }
+        await waitFor(async () => await childState(pid!) === "ended", "the owned registration-test process to end");
+      }
+      await running;
+    }
   });
 
   for (const code of [0, 7]) it(`keeps the output and exit code ${code} when the command ended before spawn returned`, async () => {

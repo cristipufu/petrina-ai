@@ -17,6 +17,8 @@ import { expectRejection } from "./rejections.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { checkpointView } from "../src/checkpoint-read.js";
 import { checkpointAcceptance } from "../src/checkpoint-acceptance.js";
+import { Coordination } from "../src/coordination.js";
+import type { ExtraValidation } from "@petrina/core";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -375,6 +377,76 @@ it("starts a genuinely fresh acceptance run after a pause, keeping the paused at
     expect(paused.proofRun!.restored).toBeDefined(); expect(paused.acceptanceChecks).toBeUndefined();
     expect(f.task.acceptanceUnverified).toBe(false); expect(f.task.acceptancePassed).toBe(true);
   } finally { await f.engine.shutdown(); }
+});
+
+for (const extra of [false, true]) it(`recovers Tester restoration once after shutdown${extra ? " with late extra-validation settlement" : " without extra validation"}`, async () => {
+  const fakeRoot = tempDir("petrina-acceptance-extra-close-"); roots.push(fakeRoot);
+  const service = join(fakeRoot, "container-service"); mkdirSync(service);
+  const fakes = new Fakes(fakeRoot);
+  const settings: EngineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], terminals: () => [],
+    containerTool: [process.execPath, join(import.meta.dir, "fake-extra-container.ts"), service], extraCleanupEveryMs: 60_000 };
+  const f = await fixture(false, false, fakes, settings);
+  const released = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+  let stopping: Promise<void> | undefined, driving: Promise<void> | undefined;
+  try {
+    const request = await f.request(), worktree = f.scope.work.worktree!;
+    writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
+    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    await f.engine.rememberVersion(f.scope);
+    f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
+    fakes.scenario({ reopen: "resume", tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before Petrina closes\n" }], testerProofAnswers: passes([request.id]) });
+    driving = f.drive();
+    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the real Tester to be at work");
+    let record: ExtraValidation | undefined;
+    if (extra) {
+      const reply = await new Coordination(f.engine).call("validation.run", { taskId: f.task.id, requestId: "late-shutdown-extra", name: "Required platform check", reason: "Verify shutdown evidence isolation", image: "local:ready", argv: ["probe", "hold"] });
+      expect(reply.outcome).toBe("pending"); record = reply.validation as ExtraValidation;
+      // This fixture disables automatic drivers; still use the product's real queue admission.
+      f.engine.extraValidations.pump();
+      await waitFor(() => existsSync(join(service, "started", record!.id)), "the owned extra workload to start");
+      const container = f.engine.extraValidations["container"], cleanup = container.cleanup.bind(container);
+      container.cleanup = async owned => { entered.resolve(); await released.promise; return cleanup(owned); };
+    }
+    f.engine.setPoolPaused(true); stopping = f.engine.shutdown();
+    if (extra) await entered.promise;
+    await driving;
+    const cleanup = f.task.acceptanceCleanupPending!, marker = join(f.engine.dataDir, "acceptance-restorations", `${cleanup}.json`);
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(join(worktree, "tester-edit.txt"), "utf8")).toBe("Saved before acceptance\n");
+    const warning = restoredLine("changes to project files", "Product 1", "tester-edit.txt");
+    expect(f.task.timeline.filter(line => line.text === warning)).toHaveLength(1);
+    released.resolve(); await stopping;
+    const saved = new Store(join(f.engine.dataDir, "petrina.db"));
+    try {
+      const task = saved.load()!.tasks.find(task => task.id === f.task.id)!;
+      expect(task.acceptanceCleanupPending).toBe(cleanup); expect(task.acceptanceRun!.restored).toBeUndefined();
+      expect(task.timeline.filter(line => line.text === warning)).toHaveLength(0);
+      if (record) {
+        expect(saved.load()!.extraValidations).toEqual([]);
+        const evidence = task.journey!.find(node => node.id === record!.nodeId)!.extraValidations![0]!;
+        expect(evidence.state).toBe("finished"); expect(evidence.result).toBe("stopped");
+        expect(task.timeline.filter(line => line.text.includes("Extra validation") && line.text.includes("seconds"))).toHaveLength(1);
+      }
+    } finally { saved.close(); }
+    f.engine = new Engine(f.engine.dataDir, settings); f.engine.schedule = () => {};
+    await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
+    expect(f.task.timeline.filter(line => line.text === warning)).toHaveLength(1);
+    expect(f.task.acceptanceCleanupPending).toBeUndefined(); expect(existsSync(marker)).toBe(false);
+    expect(f.task.acceptanceRun!.restored!.products).toEqual([{ productId: f.task.productId, edits: true, files: ["tester-edit.txt"] }]);
+    if (record) {
+      const result = f.engine.extraValidations.get(record.requestId)!;
+      expect(result.outcome).toBe("completed"); expect((result.validation as ExtraValidation).state).toBe("finished");
+      expect(result.validation as ExtraValidation).toEqual(f.task.journey!.find(node => node.id === record!.nodeId)!.extraValidations![0]!);
+      expect(f.engine.s.extraValidations).toEqual([]); expect(existsSync(record.snapshot)).toBe(false);
+      expect(fs.readdirSync(join(service, "containers"))).toEqual([]);
+    }
+    fakes.scenario({ reopen: "resume", tester: "work", testerProofAnswers: passes([request.id]) });
+    await f.engine["work"].runDo(f.scope, f.tester, signal());
+    expect(f.task.timeline.filter(line => line.text === warning)).toHaveLength(1);
+    expect(f.task.acceptancePassed).toBe(false); expect(f.task.acceptanceUnverified).toBe(true);
+    expect(f.task.proofRequests![0]).toMatchObject({ status: "unverified", proof: { result: "blocked", reason: ACCEPTANCE_RESTORED } });
+    expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
+  } finally { released.resolve(); await stopping; await driving; await f.engine.shutdown(); }
 });
 
 // Closing saves the state before the Tester's step has cleaned up. "kept": the cleanup's record of the undone edit

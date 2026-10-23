@@ -1,3 +1,4 @@
+import { ExtraValidations } from "./extra-validations.js";
 import { ProfileChoiceReader } from "./profile-choices.js";
 import { completeAll } from "./parallel.js";
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, validateRuntimeWait, changeRuntimeWait, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
@@ -103,6 +104,7 @@ export class Engine extends Kernel implements Commands {
   private readonly guide: GuideKeeper;
   private readonly context: Context;
   private readonly checks: ProductChecks;
+  readonly extraValidations: ExtraValidations;
   private readonly shipping: Shipping;
   private readonly connections: Connections;
   private readonly updates: Updates;
@@ -145,7 +147,7 @@ export class Engine extends Kernel implements Commands {
     this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections, this.sources);
     this.cleanup = new Cleanup(this);
     this.followUps = new FollowUps(this);
-    this.onTaskDone = (task) => { void this.followUps.noteDone(task); };
+    this.onTaskDone = (task) => { this.extraValidations?.cancelTask(task.id); void this.followUps.noteDone(task); };
     this.beforeCaptureRemoval = (task) => this.followUps.beforeRemoval(task);
     this.acceptedPoints = new AcceptedPoints(this);
     // Tasks from before journeys were recorded: one step per finished stage, and the step under way, so new steps follow on from there.
@@ -153,6 +155,7 @@ export class Engine extends Kernel implements Commands {
     // Deliveries a Petrina from before this version left halfway: never acted on by themselves.
     this.shipping.carryOverShipping();
     for (const task of this.s.tasks) recoverMessages(task);
+    this.extraValidations = new ExtraValidations(this);
     this.driver.recover();
     void this.trackWork(this.checks.restoreEvidence().catch(() => undefined));
     // Recovered Builders get a short login check on their saved tool before fallback selection.
@@ -179,15 +182,7 @@ export class Engine extends Kernel implements Commands {
       }, CODEX_USAGE_EVERY_MS),
     );
     // A long command may send no activity. Save its working time too, so a forced stop loses little of it.
-    this.timers.push(
-      setInterval(() => {
-        try {
-          if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
-        } catch (error) {
-          console.error("Could not save step times:", error);
-        }
-      }, 15_000),
-    );
+    this.timers.push(setInterval(() => this.checkpointStepTimes(), 15_000));
     this.shipping.monitor.settleCancelledTasks();
     this.pollPullRequests();
     this.schedule();
@@ -196,6 +191,16 @@ export class Engine extends Kernel implements Commands {
     void this.trackWork(this.followUps.catchUp().catch(() => undefined).then(() => this.cleanup.sweep()));
     void this.trackWork(this.acceptedPoints.sweep());
   }
+
+  private checkpointStepTimes(): void {
+    try {
+      if (!this.stopped && this.s.tasks.some((task) => task.stepClock?.since !== undefined || Object.values(task.hunt?.work ?? {}).some((work) => work.clock?.since !== undefined))) this.save();
+    } catch (error) {
+      console.error("Could not save step times:", error);
+    }
+  }
+
+  override async waitUntilReady(): Promise<void> { await super.waitUntilReady(); await this.extraValidations.ready; }
 
   profileChoices({ toolId, modelId, refresh = false }: library.ProfileChoiceRequest) { return this.profileReader.read(toolId, modelId, refresh); }
   async saveProfile(draft: library.ProfileDraft, clientId: Id, profileId?: Id): Promise<Id> {
@@ -282,8 +287,13 @@ export class Engine extends Kernel implements Commands {
       this.startupSchedulePending = true;
       return;
     }
+    this.extraValidations.pump();
+    this.checkQueue.pump();
+    if (this.extraRecovery) return;
     this.pollRoutines();
     this.driver.schedule();
+    // That pass may release task prerequisites; their saved extra requests join immediately.
+    this.extraValidations.pump();
   }
 
   private pollPullRequests(): void {
@@ -327,19 +337,26 @@ export class Engine extends Kernel implements Commands {
     this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
-    // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
-    this.s.now = Date.now();
-    for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }
-    try {
-      this.save();
-    } catch (error) {
-      console.error("Could not save while stopping:", error);
-    } finally {
-      // Turns still running stay unfinished in the log: the next start marks them lost.
-      this.tracking.close();
-      this.store.close();
-    }
+    this.shutdownDone = Promise.allSettled([this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
+    const saveAndCloseLog = () => {
+      // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
+      this.s.now = Date.now();
+      for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); }
+      try {
+        this.save();
+      } catch (error) {
+        console.error("Could not save while stopping:", error);
+      } finally {
+        // Turns still running stay unfinished in the log: the next start marks them lost.
+        this.tracking.close();
+      }
+    };
+    // Ordinary state and interrupted-turn semantics never wait behind container cleanup.
+    saveAndCloseLog();
+    // Only outstanding extra work may still write ownership/evidence. Its initial ownership
+    // is already saved above, so a forced exit during cleanup remains recoverable.
+    if (this.s.extraValidations?.length) this.shutdownDone = this.shutdownDone.finally(() => this.store.close());
+    else this.store.close();
     return this.shutdownDone;
   }
 
@@ -481,6 +498,8 @@ export class Engine extends Kernel implements Commands {
   }
 
   removeProduct(productId: Id): void {
+    const outstanding = this.extraValidations.outstanding(productId);
+    if (outstanding) throw new Error(`Extra validation “${outstanding.name}” still needs this product for cleanup. Wait for it to finish and cleanup to be confirmed before removing the product.`);
     const { unfinished } = productHistory(this.s.tasks, productId);
     if (unfinished) throw new Error(`${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`);
     const product = this.s.products.find((entry) => entry.id === productId);
@@ -880,6 +899,7 @@ export class Engine extends Kernel implements Commands {
     const scope = task ? executionFor(task) : undefined;
     this.takeover.notDriving(task);
     if (!task || !["running", "needs-you", "waiting"].includes(task.state)) return;
+    this.extraValidations.cancelTask(taskId);
     this.stopDriver(taskId);
     pauseTaskState(task, scope!.work, Date.now());
     this.discardScreenTurns(task);
@@ -903,6 +923,7 @@ export class Engine extends Kernel implements Commands {
     const scope = task ? executionFor(task) : undefined;
     if (!task) return;
     this.takeover.notDriving(task);
+    this.extraValidations.cancelTask(taskId);
     this.stopDriver(taskId);
     this.tracking.cancelled(task);
     cancelTaskState(task, scope!.work, Date.now());

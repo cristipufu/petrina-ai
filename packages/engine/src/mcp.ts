@@ -62,7 +62,7 @@ export async function mcpRequest(message: Record<string, any>, client: EngineCli
       capabilities: { tools: {} },
       serverInfo: { name: "petrina", version: "0.1.0" },
       instructions:
-        "Coordinate the existing local Petrina engine. Inspect requests before decisions and return their revision. Save a requestId before every change and reuse it after a lost reply. Connecting does not launch an engine. Source editing, Git, development tests and product repairs belong to normal coding tools. Petrina never merges pull requests.",
+        "Coordinate the existing local Petrina engine. Inspect requests before decisions and return their revision. Save a requestId before every change and reuse it after a lost reply. Connecting does not launch an engine. Source editing, Git, development tests and product repairs belong to normal coding tools. Petrina never merges pull requests. Required extra full-suite validation uses validation.run with a request reference and a prepared local Linux image, sharing the check queue; never pause the pool or poll for room. It tests only Petrina's last saved commit/tree, excluding working edits: hand new work back first. No native, remote or detached extra execution. Focused tests and image preparation remain coding-tool work. Extra evidence never replaces configured full checks. Product removal is refused while an extra run still needs cleanup ownership; held cleanup needs the container service available or the named container stopped.",
     });
   if (message.method === "ping") return reply({});
   if (message.method === "tools/list") return reply({ tools: mcpTools() });

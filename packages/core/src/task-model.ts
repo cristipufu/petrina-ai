@@ -6,6 +6,8 @@ import type { ReadinessWait } from "./readiness.js";
 
 /** Execution state owned by exactly one product repository. */
 export interface RepositoryState {
+  /** Last committed version recorded by Petrina, never an agent's working edits. */
+  savedVersion?: { commit: string; tree: string };
   workChoice?: WorkChoice;
   workProduct?: TaskSource["product"];
   source?: TaskSource;
@@ -99,7 +101,7 @@ export interface RepositoryState {
 
 /** These fields belong to one repository, never to a whole shared task. */
 export const REPOSITORY_FIELDS = [
-  "productId", "workChoice", "workProduct", "source", "prBackground", "delivery",
+  "savedVersion", "productId", "workChoice", "workProduct", "source", "prBackground", "delivery",
   "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
   "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",

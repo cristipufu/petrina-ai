@@ -17,6 +17,7 @@ import { runtimeWaitView, type RuntimeWaitTask } from "./runtime-wait.js";
 export const WORKFLOW_EVENT_KINDS = [
   "task.created", "task.state", "task.waiting", "task.finished",
   "node.started", "node.finished", "seat.started", "seat.finished",
+  "extra.queued", "extra.started", "extra.stopping", "extra.held", "extra.finished",
   "check.queued", "check.started", "check.finished", "check.reused",
   "coordinator.request", "coordinator.decision",
   "repair.returned", "retry", "profile.replaced", "review.finished", "publishing.result",
@@ -651,7 +652,7 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
     const published = results.filter((entry) => ["released", "merged", "committed", "pull-request-open", "pull-request-closed"].includes(entry.result.kind));
     push({ at: ctx.now, kind: "task.finished", ...(next.finishedAt !== undefined ? { finishedAt: next.finishedAt } : {}), summary: next.state === "cancelled" ? `Cancelled${next.combinedInto ? `: combined into ${next.combinedInto}` : published.length ? `; already out: ${published.map((entry) => `${entry.productName} ${publishingWords(entry.result)}`).join("; ")}` : ""}` : `Finished: ${next.history ?? next.landing}${results.length ? ` (${results.map((entry) => `${entry.productName}: ${publishingWords(entry.result)}`).join("; ")})` : ""}`, state: next.state, landing: next.landing, ...(next.shared ? { shared: next.shared } : {}), ...(next.history ? { history: next.history } : {}), ...(next.combinedInto ? { combinedInto: next.combinedInto } : {}), products: results });
   }
-  const order = { "task.created": 0, "node.started": 1, "seat.started": 2, "profile.replaced": 3, "check.queued": 4, "check.started": 5, "check.finished": 6, "check.reused": 6, "seat.finished": 7, "node.finished": 8, "review.finished": 9, "coordinator.decision": 10, "coordinator.request": 11, "repair.returned": 12, "retry": 13, "publishing.result": 14, "task.waiting": 15, "task.state": 15, "task.finished": 16 } as const;
+  const order = { "task.created": 0, "node.started": 1, "seat.started": 2, "profile.replaced": 3, "extra.queued": 4, "extra.started": 5, "extra.stopping": 6, "extra.held": 6, "extra.finished": 6, "check.queued": 4, "check.started": 5, "check.finished": 6, "check.reused": 6, "seat.finished": 7, "node.finished": 8, "review.finished": 9, "coordinator.decision": 10, "coordinator.request": 11, "repair.returned": 12, "retry": 13, "publishing.result": 14, "task.waiting": 15, "task.state": 15, "task.finished": 16 } as const;
   return drafts.map((draft, index) => ({ draft, index })).sort((a, b) => a.draft.at - b.draft.at || order[a.draft.kind] - order[b.draft.kind] || a.index - b.index).map(({ draft }) => draft);
 }
 

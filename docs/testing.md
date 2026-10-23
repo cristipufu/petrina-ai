@@ -11,7 +11,7 @@ bun run typecheck
 bun run test
 ```
 
-Core and desktop use Vitest; engine tests use Bun. Keep the required engine suite fully parallel. Before a full run, check whether another full suite is already running on the machine; investigate with focused runs while it finishes. An isolated timing failure passing alone does not rule out a race.
+Core and desktop use Vitest; engine tests use Bun. Keep the required engine suite fully parallel. A genuinely required extra full-suite validation (such as explicit Linux acceptance) must use [the shared validation queue](coordination.md#required-extra-full-validation), never a competing full suite or polling other processes. It runs only Petrina's last saved commit and tree, excluding working edits: hand new work back for Petrina to save, then request that version. Agents never commit or publish it themselves. Without Petrina's command tools, ask the coordinator. Focused tests, focused container regressions and preparing a local image remain allowed under existing fixture, cleanup and tool-permission rules. An isolated timing failure passing alone does not rule out a race.
 
 `bun run test` takes no arguments. File selectors and options fail before repository scanning, reports or suite launches; `--help` or `-h` alone prints usage without running tests or writing a report. For a focused run, use a workspace command below; focused results never replace this required full check.
 
@@ -133,6 +133,16 @@ Scripted browser tests cover isolated storage, capture paths, image validation, 
 When changing a connector, also verify the installed tool's model/effort selection, existing login, resume/load and a real headless page interaction. Opening ACP alone does not prove browser execution. Check new, resumed and replacement conversations, capture names/locations and cleanup. Report an unavailable browser or sandbox check as incomplete. Stop all verification processes.
 
 Claude Code's Mac sandbox can refuse `ps`, even when local test servers work; its session settings cannot grant that access. Agents rely on Petrina's own checks for the full engine suite. Installed connector/SDK sources can be inspected in Bun's package cache rather than downloaded again.
+
+## Required extra Linux validation
+
+`validation run` supports only an engine-owned local Linux container on a Mac or Linux host; other hosts are refused before queueing because this path requires owned process groups. Prepare an image locally with the required tools first (for this repository: Git, Bun and Node 22); Petrina never builds or downloads images. Image preparation is an ordinary coding-tool action under that tool's permissions. The container gets a standalone one-commit Git copy mounted read-only at `/petrina`, not a linked working copy. Its command should make a writable clone inside the container before installing packages and running the full configured suite, keeping normal worker counts, assertions and deadlines. Setup and execution share the existing check time limit. The reply and evidence name the exact commit/tree, image ID, container platform and host; do not claim x86 GitHub-runner parity from arm64 Linux evidence. Full configured product checks remain mandatory for delivery.
+
+Focused manual Linux process-cleanup tests in containers also need an init/reaper: Docker's `--init` forwards signals and reaps child processes. The owned full-validation path already sets it.
+
+Report timings with the actual OS/architecture, CPU quota and VM CPU allocation where applicable, and keep Linux VM and Mac host load observations separate. `fixtures.SLOW` reads `os.loadavg()` in the OS running the fixtures, so a Linux VM's reading need not reflect a busy Mac. Use focused timing probes; never run competing full-suite comparisons.
+
+The default extra-validation regressions use a private stand-in container service, immutable fixture seeds, independent writable repositories and explicit release signals. Real-container controls opt in with `PETRINA_CONTAINER_CHECK=1 PETRINA_CONTAINER_IMAGE=<prepared-local-image>` and run `test/extra-container-real.test.ts` through the engine test runner. These tiny controls require local container and process-list access; they never run a full suite or prepare an image. They verify Git identity/read-only copies, a writable clone under a different user, cancellation, timeout and recovery after an abrupt engine stop. Report unavailable native controls as incomplete.
 
 ## Manual platform checks
 

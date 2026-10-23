@@ -599,6 +599,7 @@ export class Shipping {
     const start = repository.shipping?.start;
     const tip = await this.branchTip(scope);
     if (start && tip && tip !== start && (await this.releases.isVersionCommit(worktree, tip, start))) await git.resetTo(worktree, start);
+    await this.k.rememberVersion(scope);
     if (!repository.release && !repository.shipping?.pushed) delete repository.proofRelease;
   }
 

@@ -15,7 +15,7 @@ const MAX_LOG = 200;
 function says(entries: readonly { file: string; version?: string }[]): string {
   return entries.map((entry) => `${entry.file} says ${entry.version ?? "something Petrina cannot read"}`).join(", ");
 }
-type ReleaseHost = Pick<Kernel, "repositoryOf" | "finishStep" | "commitNow" | "options">;
+type ReleaseHost = Pick<Kernel, "repositoryOf" | "finishStep" | "commitNow" | "options" | "rememberVersion">;
 export class ReleasePrep {
   constructor(private readonly k: ReleaseHost, private readonly turns: Turns, private readonly connections: Connections) {}
 
@@ -131,6 +131,7 @@ export class ReleasePrep {
       await git.resetTo(worktree, start);
       stop(more.length ? `the change in ${more.join(", ")} would be more than the version` : `${says(wrong)}`);
     }
+    await this.k.rememberVersion(scope);
     return tested;
   }
 

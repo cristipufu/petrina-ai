@@ -60,7 +60,8 @@ export class StateProjection {
       return item ? [item] : [];
     }) };
     const dependencies = this.dependencies.items;
-    return { ...this.k.activeState(), tasks, ...(Object.keys(usageReads).length ? { pool: { ...this.k.s.pool, usageReads } } : {}), history: { ...this.k.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
+    const { extraValidations: _extraOwnership, ...visible } = this.k.activeState();
+    return { ...visible, tasks, ...(Object.keys(usageReads).length ? { pool: { ...this.k.s.pool, usageReads } } : {}), history: { ...this.k.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
   };
 
   historyPage = (request: HistoryQuery): HistoryPage => {
@@ -90,7 +91,7 @@ export class StateProjection {
     return this.k.s.tasks.filter((task) => settledHistoryTask(task as Task) && !this.k.drivers.has(task.id) && !this.k.settling.has(task.id) && !this.k.switching.has(task.id) && !this.k.copyCleanups.has(task.id) && !this.k.followsUpHeld(task.id)).map((task) => task.id);
   }
 
-  task(id: Id): MTask | undefined {
+  task(id: Id, ownedCleanup = false): MTask | undefined {
     const live = this.k.s.tasks.find((task) => task.id === id);
     if (live) return live;
     const cached = this.archiveCache.get(id);
@@ -99,7 +100,7 @@ export class StateProjection {
       this.archiveCache.set(id, cached);
       return cached;
     }
-    if (this.k.stopped) return undefined;
+    if (this.k.stopped && !ownedCleanup) return undefined;
     const saved = this.k.store.history.get(id) as MTask | undefined;
     if (!saved) return undefined;
     restoreRepositoryState(saved);

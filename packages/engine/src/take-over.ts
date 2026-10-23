@@ -68,6 +68,7 @@ export class TakeOver {
             ? await git.commitAll(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(role.id, profile.id)}`)
             : undefined;
           if (sha) saved = { sha, files };
+          if (worktree === scope!.work.worktree) await this.k.rememberVersion(scope!);
           head = sha ?? before;
         } else {
           await this.k.undoReadOnly(current, role.id, worktree);
@@ -209,6 +210,7 @@ export class TakeOver {
         // until every advance succeeds, so a partial failure remains visible on the next hand-back.
         await completeAll(prepared.map(async kept => {
           await git.moveTo(kept.work.worktree!, kept.sha);
+          await this.k.rememberVersion({ task, work: kept.work });
           changedProducts.add(kept.work.productId);
           if (kept.work.checks) kept.work.checks.current = false;
           delete kept.work.reviewedTree;
@@ -230,6 +232,7 @@ export class TakeOver {
         await git.moveTo(scope!.work.worktree!, kept);
       }
 
+      await this.k.rememberVersion(scope!);
       this.k.say(task, "system", `You handed back to the ${role.name}`, role.id, driving.profileId);
       this.k.say(task, "you", text);
       const changed = files.length ? `${files.length} file${files.length === 1 ? "" : "s"} changed in ${commits + (leftovers ? 1 : 0)} commit${commits + (leftovers ? 1 : 0) === 1 ? "" : "s"}` : "nothing changed";

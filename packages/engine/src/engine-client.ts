@@ -59,7 +59,8 @@ export class EngineClient {
     if (!connection) return { outcome: "disconnected", message: "The engine has no local connection. Use engine start explicitly." };
     try {
       // A wait's connection deadline leaves the engine room to return its bounded batch after its own deadline.
-      const deadline = AbortSignal.timeout(name.startsWith("watch.") ? Number(args.timeoutMs ?? 30000) + 5000 : 10000);
+      const waiting = name.startsWith("watch.") || (name === "validation.run" && args.wait === true);
+      const deadline = AbortSignal.timeout(waiting ? Number(args.timeoutMs ?? 30000) + 5000 : 10000);
       const response = await fetch(`${connection.api}/api/coordinate`, {
         method: "POST",
         headers: { authorization: `Bearer ${connection.token}`, "content-type": "application/json" },
@@ -93,6 +94,7 @@ export class EngineClient {
     if (name === "watch.wait") return this.watch(args, options.signal);
     // One request per batch: the engine keeps it open until a batch, its deadline or cancellation.
     if (name === "watch.events") return this.request(name, args, options.signal);
+    if (name === "validation.run") return this.request(name, args, options.signal);
     let result = await this.request(name, args);
     if (name.startsWith("engine.") && result.outcome === "disconnected") {
       mkdirSync(this.home, { recursive: true, mode: 0o700 });

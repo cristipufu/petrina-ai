@@ -283,6 +283,7 @@ async function kept(f: Fixture, expected: string) {
   expect(await f.update()).toBe("moved");
   expect(f.scope().work.updating).toBeUndefined();
   expect(await f.file()).toBe(expected);
+  expect(f.scope().work.savedVersion).toEqual({ commit: await git(f.copy, "rev-parse", "HEAD"), tree: await git(f.copy, "rev-parse", "HEAD^{tree}") });
   expect(await git(f.copy, "rev-parse", "HEAD~1")).toBe(main);
   expect(await git(f.copy, "status", "--porcelain")).toBe("");
   // Every other file is the clean combination: main's, plus the task's own change.

@@ -2,6 +2,8 @@
 
 Owns process lifecycle, command boundaries, work admission and recovery. Back to [design overview](../design.md).
 
+Required extra full validations in owned local Linux containers share this FIFO and limit; unconfirmed cleanup holds capacity across restarts, separately from agent admission.
+
 ## Architecture
 
 ```
@@ -89,7 +91,7 @@ A replacement agent gets a new step, keeping the first agent's tool, elapsed tim
 - Lowering a limit never stops a running agent. Each finishes, and its successor waits if the other tasks still fill the new limit. Pausing the pool also holds tasks between agents.
 - On macOS, active engine work holds an idle-sleep assertion and, on AC power, a system-sleep assertion so maintenance sleep does not suspend agents or checks. The display can still sleep. The assertion follows this engine process and is released when work and cleanup drain, including after a pause, or when the engine stops. Other platforms need no helper.
 
-Product check runs use a separate queue, admitting one task’s run at a time by default. Commands within that run execute serially, static checks first; check preparation is bounded by the agent pool and does not block planners from using free slots. The check queue owns no model slots.
+Product check runs use a separate queue, admitting one task’s run at a time by default. Commands within that run execute serially, static checks first; check preparation is bounded by the agent pool and does not block planners from using free slots. The check queue owns no model slots. A pool pause keeps product checks and extra validations in arrival order, including when capacity frees during the pause or the pause arrives during handoff; tasks awaiting product checks show “Waiting for the pool to resume”, and quiet queued checks neither delay the pause nor keep the Mac awake. Active work and cleanup still prevent sleep. A stop or restart drains waiting ordinary check attempts; never-started extra requests remain saved for the next start. A task prerequisite hold defers its never-started extra requests without holding a check place or changing their recorded version. The reply and timeline name that wait instead of a numbered place; when scheduling observes the prerequisites landed, the request joins the line in that same pass. An already-running container finishes normally.
 
 A runtime prerequisite hold closes new admission for its task at the same boundaries as a paused pool: before agents, parallel participants, third answers, replacements, tool readiness rechecks, check preparation, check batches and publishing. An already-running readiness recheck may finish, but it holds no model place once the working agents settle; an unused recheck stays unspent while held. Asynchronous readiness, agent input preparation, parallel review preparation and check preparation recheck both the hold and any owed source update before admitting new work. A parallel participant is admitted before its copy setup; an unopened group returns through source updates and prepares its snapshot again. Agents and their native in-session helpers, check batches and deliveries already admitted finish under their existing rules. Partial review and vote results remain saved and never become a completed review. After admitted work settles, the task releases its slots and waits without reserving room in the pool; other tasks on any of its products remain eligible. Open Inbox checkpoints stay answerable with the same revision. Try again and terminal hand-back retain the hold.
 
