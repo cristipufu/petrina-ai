@@ -35,6 +35,7 @@ const noRelease = (result: RunResult) => /^release not found$/im.test(result.std
 export async function canSee(repo: string, cmd: Gh = GH): Promise<Check<void>> {
   if (!isRepoName(repo)) return { ok: false, error: `not a GitHub repository: ${repo}` };
   const result = await run([...cmd, "repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"], tmpdir(), undefined, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
+  if (result.startFailure) return { ok: false, error: `Petrina couldn't start the repository check for ${repo} (${commandFailure(result).error})` };
   if (result.code !== 0) return { ok: false, error: `your GitHub login cannot see ${repo} (${commandFailure(result).error})` };
   return result.stdout.toLowerCase() === repo.toLowerCase() ? { ok: true, value: undefined } : { ok: false, error: `GitHub answered for ${result.stdout || "another repository"}, not ${repo}` };
 }

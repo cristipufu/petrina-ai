@@ -225,6 +225,7 @@ export async function fileAt(root: string, ref: string, path: string, timeoutMs 
   if (ref.startsWith("-") || path.startsWith("-")) return undefined;
   const result = await run(["git", "cat-file", "blob", `${ref}:${path}`], root, undefined, { timeoutMs, rawOutput: true });
   if (result.timedOut) throw new Error("Git did not finish reading the repository's saved files");
+  if (result.startFailure) throw new Error(`Git could not read the repository's saved files: ${result.startFailure.message}`, { cause: result.startFailure });
   if (result.code === 127) throw new Error("Git could not read the repository's saved files");
   return result.code === 0 ? result.stdout : undefined;
 }
