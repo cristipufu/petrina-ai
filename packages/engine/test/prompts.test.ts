@@ -74,11 +74,47 @@ describe("prompts", () => {
       expect(prompt).toContain("The coordinator approves every line before it joins AGENTS.md");
     }
   });
-  it("states the focused verification rules on fresh turns without repeating them on confirmed continuations", () => {
-    for (const role of BUILT_IN_ROLES) {
-      expect(promptFor(role)).toContain(FOCUSED_VERIFICATION);
-      expect(continuePrompt(context(role))).not.toContain(FOCUSED_VERIFICATION);
+  it("gives built-in and Library-added roles the shared testing rule once, on any product, without repeating it on continuations", () => {
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find(entry => entry.id === "copywriter")!.draft);
+    const roles = libraryRoles(added.changes);
+    const loadRule = "Deliberately loading the shared computer to provoke failure";
+    for (const role of roles) for (const product of DEMO_PRODUCTS.slice(0, 2)) {
+      const ctx = { ...context(role), roles, product };
+      const fresh = buildPrompt(ctx);
+      expect(fresh.split(FOCUSED_VERIFICATION)).toHaveLength(2);
+      expect(fresh.split(loadRule)).toHaveLength(2);
+      for (const continued of [continuePrompt(ctx), continuePrompt(ctx, { refreshRole: true })]) {
+        expect(continued).not.toContain(FOCUSED_VERIFICATION);
+        expect(continued).not.toContain(loadRule);
+      }
     }
+    for (const continued of [restartPrompt({ stage: "Build", role: "Builder", done: [] }, { messages: [] }), screenPrompt("Check the app", []), handBackPrompt("Checked the app", [])]) {
+      expect(continued).not.toContain(loadRule);
+    }
+  });
+  it("separates ordinary checks from intentional shared-host load and keeps diagnostics bounded and evidential", () => {
+    for (const meaning of [
+      "Ordinary focused tests and diagnostics, Petrina's own required checks and the normal parallel full run need no extra permission",
+      "CPU busy loops, memory or disk fillers, process floods, many concurrent test copies",
+      "controlled release signals, fault injection",
+      "hard CPU, memory and process limits",
+      "preserve real native deadline and process-cleanup coverage",
+      "If only real load on this computer can prove it",
+      "existing needsInput Inbox question and wait for an agreed window",
+      "resource, load and process limits, duration, cleanup, effects on other work and what safer approaches cannot prove",
+      "Do not poll other tasks' processes to claim capacity",
+      "a quiet process list or low load is never permission",
+      "Every diagnostic helper needs its own deadline, a fixed process cap, ownership by your command",
+      "cleanup if the command or your turn is interrupted",
+      "parent-liveness watcher or interrupt cleanup as well as its deadline",
+      "Also apply the command tool's execution deadline; its timeout alone may leave children running",
+      "Confirm all helpers stopped after success, failure, timeout or interruption",
+      "report unconfirmed cleanup and stop only processes you started",
+      "Diagnostic runs, passing repeats and host-load readings are evidence only",
+      "neither turn a failed required check into a pass nor by themselves prove a failure's cause",
+      "Never enlarge production deadlines",
+      "Never kill another task's processes, retry an unchanged hang, skip failing tests, lower test parallelism or shorten a legitimate full-suite budget",
+    ]) expect(FOCUSED_VERIFICATION).toContain(meaning);
   });
   it("refreshes role purpose and handoff details when the continued context scope changed", () => {
     const role = { ...BUILT_IN_ROLES.find((entry) => entry.id === "builder")!, purpose: "A changed purpose", handsBack: "A changed handoff" };

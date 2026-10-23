@@ -8,6 +8,27 @@ import { formatFindings } from "../src/prompts.js";
 import { Cleanup } from "../src/cleanup.js";
 import { makeWorld, removeDir, tempDir } from "./support.js";
 
+it("keeps complete instructions without a saved packet when context storage is unavailable, and recovers when it returns", async () => {
+  const root = tempDir("context-storage-unavailable-");
+  try {
+    const task = createDemoState(1_000_000_000).tasks[0]!;
+    const role = BUILT_IN_ROLES.find(entry => entry.id === "code-reviewer")!;
+    const sections = [{ title: "Design brief", body: "Keep the complete requirement." }];
+    // A file in place of the packet directory makes storage fail without touching other tests.
+    const blocked = join(root, "contexts");
+    await writeFile(blocked, "Unavailable context storage");
+    const unavailable = await builderContext(root, task, role, "own-review", sections);
+    expect(unavailable.sections).toEqual(sections);
+    expect(unavailable.snapshot).toBeUndefined();
+    await rm(blocked);
+    const recovered = await builderContext(root, task, role, "own-review", sections);
+    expect(recovered.sections).toEqual(sections);
+    expect(await readFile(recovered.snapshot!.file, "utf8")).toContain(sections[0]!.body);
+    const continued = await builderContext(root, task, role, "own-review", sections, recovered.snapshot);
+    expect(continued.sections.map(section => section.title)).toEqual(["Current authoritative task context"]);
+  } finally { removeDir(root); }
+});
+
 it("keeps complete repair evidence for fresh Builders and sends only changed repair records on continuation", async () => {
   const root = tempDir("builder-repair-evidence-");
   try {

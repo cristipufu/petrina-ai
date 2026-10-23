@@ -20,7 +20,7 @@ Do not add Petrina security or sandboxing mechanisms unless the task is about th
 
 - `bun run typecheck` and `bun run test` must pass.
 - UI changes: check light and dark, and `?demo`, `?demo=portfolio`, `?demo=first-run`.
-- Full suites run inside tasks' automated checks. Use focused tests while investigating, and avoid overlapping full runs on this machine. Commands, fixtures and platform notes are in [docs/testing.md](docs/testing.md).
+- Full suites run inside tasks' automated checks. Use focused tests while investigating, avoid overlapping full runs on this machine, and follow the [shared-host load rules](docs/testing.md#shared-host-load-diagnostics) before deliberate stress. Commands, fixtures and platform notes are in that guide.
 - Use the isolated `test/engine.ts` fixture for engine tests and `test/fixtures.ts` for lightweight helpers; native accounts and services require explicit integration opt-in. `bun run test:conventions` enforces the fixture and Bun assertion rules. Affected-test reports are observations only: delivery still needs the full configured checks on its current integrated tree.
 - Exercise the smallest workflow that proves the behavior. Keep full-path coverage where the interaction is what is being tested; omit unrelated design, planning or check discovery from focused regression fixtures.
 - Reuse immutable fixture data through existing helpers, with separate writable repositories and engine state per test. Use controlled clocks, signals or release events for time-independent decisions; keep real waits for assertions about deadlines and process termination.

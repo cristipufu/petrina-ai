@@ -21,6 +21,16 @@ Petrina runs this as one Tests check. A failed quick phase is an ordinary failed
 
 UI changes also need light and dark and all three demos: `?demo`, `?demo=portfolio`, `?demo=first-run`.
 
+## Shared-host load diagnostics
+
+Ordinary focused tests and diagnostics, Petrina's required checks and the normal parallel full run need no extra permission. Deliberate host stress does: CPU busy loops, memory or disk fillers, process floods or many concurrent copies of a test can disrupt every task on the computer, even when investigating one focused test and bounded in time. The default test run must never deliberately saturate the host. A test needing real contention uses an isolated environment with hard CPU, memory and process limits (and relevant disk/I/O limits), or an explicit opt-in like the native browser tests' `PETRINA_BROWSER_CHECK`; opting in does not authorize host stress.
+
+Prefer controlled release signals, fault injection or that hard-limited isolation when they prove the same behavior. Keep real native deadline and process-cleanup coverage where it is needed; fake-only success cannot replace it. If only real load on this computer can prove the behavior, ask through the existing `needsInput` Inbox question and wait for the coordinator to arrange a suitable window. State what resources will be loaded, the load and process caps, duration, cleanup, what else could slow down and what the safer approaches cannot prove. Never poll other tasks' processes to claim spare capacity or treat a quiet process list or low load as permission.
+
+Every diagnostic helper must have its own deadline and a fixed process cap, remain owned by the invoking command, and stop if that command or the agent's turn is interrupted. Arrange parent-liveness watching or interrupt cleanup as well as the helper's own deadline: some command tools leave children running after timeout. Also apply the command tool's execution deadline, following [focused command limits](#engine-test-time-limits). Confirm all owned helpers stopped after success, failure, timeout or interruption, before trying changed work; report any cleanup that could not be confirmed. Never stop processes you did not start.
+
+A diagnostic run, passing repeat or host-load reading stays diagnostic evidence: it never turns a failed mandatory check into a pass and does not by itself prove what caused a failure. Keep required-suite workers, test cases and production deadlines; do not retry until green. These are agent instructions, with no host reservation or automatic stress detection or cleanup. Coordinator handling of requests is in [the coordinator guide](coordinator.md#requests-to-load-the-shared-computer).
+
 ## Keep checks fast without losing coverage
 
 Every full run adds to task and review-loop duration. Use direct core tests for decisions and focused engine fixtures for effects. Run a complete workflow when its interactions are what the test proves; do not send every reviewer regression through unrelated design or check discovery.
