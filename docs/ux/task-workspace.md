@@ -206,6 +206,8 @@ Prerequisites mean waiting for delivery to land, such as a merged pull request o
 
 Overview links every saved prerequisite, with its outcome and whether it still blocks. Backlog and never-started queued tasks offer the same editor with Save changes and Cancel; card and sheet More menus offer Start after other tasks…. Opening the editor never holds work. Once work starts, the list is read-only; if work starts during editing, attempted choices remain visible with the reason they cannot be saved. A definite refusal keeps choices editable with a fix; an uncertain reply offers Retry confirmation for the same choices.
 
+For a prerequisite discovered after work starts, Overview shows a separate read-only “Wait for other tasks to land” section next to the pre-start list. It shows the coordinator's reason, links to the awaited tasks with their current outcome, whether the hold is active or begins after the current work, and whether a coordinator decision is needed. Changes show their times, previous and new lists, reasons and request references; the record stays visible after release and in History. The journey's waiting box shows the reason, awaited tasks and their states, then says how the wait ended. Runtime waits are set, revised and cleared through the command line or MCP; the app adds no editing control.
+
 Creation saves each request and its prerequisites together before scheduling. Retry confirmation reuses that request’s reference, including after an engine restart; pasted titles share the selection and partial-batch retries retain it. Add another keeps scheduling choices with a fresh request.
 
 ### Plan

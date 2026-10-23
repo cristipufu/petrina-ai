@@ -62,6 +62,9 @@ describe("schema-derived coordination help", () => {
       ["task", "list", "--states", '"backlog"'],
       ["task", "list", "--limit", "NaN"],
       ["engine", "pause", "--wait=perhaps"],
+      ["task", "wait", "--reason", "null"],
+      ["task", "wait", "--after", '"task-id"'],
+      ["task", "wait", "--after", "[false]"],
     ]) {
       expect(await coordinationCli([...argv, "--json"], client)).toBe(2);
       const result = JSON.parse(output.mock.calls.at(-1)![0] as string);

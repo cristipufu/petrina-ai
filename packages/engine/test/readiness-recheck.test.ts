@@ -289,6 +289,127 @@ describe.concurrent("a review group's pending readiness decision", () => {
   }
   const firstOf = async (f: Awaited<ReturnType<typeof fixture>>, before: number) => (await waitFor(() => f.fakes.received().slice(before)[0], "the first reviewer's turn")).session;
 
+  for (const how of ["held", "clear", "landed", "none"] as const) it(`releases only an idle group's readiness reservation inside its real driver (${how})`, async () => {
+    const { f, saved } = await twoSeats();
+    const held = f.holdCheck("grok");
+    let drive: Promise<void> | undefined;
+    try {
+      f.task.startedAt = Date.now();
+      f.task.rounds[f.stage.id] = 2;
+      f.task.hunt = { stageId: f.stage.id, round: 2, reported: {} };
+      f.task.plan!.stages.push({ id: "finished", title: "Review finished", kind: "gate", gate: "design", roleId: "coordinator", profileIds: [] });
+      const product = f.engine.s.products[0]!;
+      Object.assign(product, { defaultBranch: "main", remoteRefused: "Local delivery only", checks: [], checksBy: "coordinator" });
+      // Keep the source identity on which round 1 saved its conversations.
+      f.scope.work.delivery = "local";
+      f.engine.s.pool.limit = 1;
+      const prerequisite = f.engine.addTask({ productId: "p", title: "Finish the required source", backlog: true });
+      const before = f.fakes.received().length;
+      f.engine.startDriver(f.task.id);
+      drive = f.engine.settling.get(f.task.id)!;
+      const first = await firstOf(f, before);
+      writeFileSync(join(f.fakes.dir, `release-${first}`), "go");
+      await waitFor(() => f.checks().length || f.task.state === "failed" || !f.engine.drivers.has(f.task.id) || f.fakes.received().length > before + 1, "readiness to start after the first reviewer finishes");
+      expect(f.task.error).toBeUndefined();
+      expect(f.engine.drivers.has(f.task.id)).toBe(true);
+      expect(f.checks()).toHaveLength(1);
+      await held.reached();
+      await waitFor(() => f.task.hunt?.reported["0"] && f.task.agent?.reviewKey === "reviewer:1" || f.task.state === "failed" || !f.engine.drivers.has(f.task.id), "the idle group to retain its returning peer's reservation");
+      expect(f.task.error).toBeUndefined();
+      expect(f.engine.drivers.has(f.task.id)).toBe(true);
+      expect(f.ours()).toEqual([expect.objectContaining({ toolId: "grok" })]);
+      const queued = f.engine.addTask({ productId: "p", title: "Use the group's freed place" });
+      f.engine["driver"].schedule();
+      expect(f.engine.task(queued)!.state).toBe("queued");
+      if (how !== "none") {
+        f.engine.setRuntimeWait(f.task.id, [prerequisite], "Finish the required source before new review work", "hold-idle-group");
+        f.engine["driver"].syncRuntimeWaits();
+        // The live driver is still registered: the readiness owner itself must release its idle place.
+        expect(f.ours()).toEqual([]);
+        expect(f.task.state).toBe("waiting");
+        expect(f.task.agent).toBeUndefined();
+        expect(f.engine["tools"].running("grok")).toBeDefined();
+        await drive;
+        f.engine["driver"].schedule();
+        await waitFor(() => f.fakes.received("planner").length === 1, "queued work to use the idle group's place before readiness replies");
+        expect(slotUses(f.engine.activeState()).map(use => use.taskId)).toEqual([queued]);
+        if (how === "clear") f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved finishing the review", "clear-idle-group");
+        else if (how === "landed") {
+          const required = f.engine.task(prerequisite)!;
+          required.repository!.delivery = "local";
+          required.repository!.landed = { branch: "main", sha: f.scope.work.baseSha! };
+          required.state = "done";
+          f.engine["driver"].syncRuntimeWaits();
+        }
+      }
+      held.release();
+      await waitFor(() => f.check("grok").status === "ready" && !f.engine["tools"].running("grok"), "the shared readiness reply");
+      if (how === "none") {
+        await drive;
+        expect(f.task.stageIndex).toBe(1);
+        expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new", "resume"]);
+      } else {
+        f.engine["driver"].schedule();
+        // A late answer is not a fresh reservation: queued work still owns the only place.
+        expect(f.ours()).toEqual([]);
+        expect(f.task.hunt?.reported).toEqual({ "0": true });
+        expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new"]);
+        if (how === "held") f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved finishing the review", "clear-idle-group");
+        f.engine.pause(queued);
+        await waitFor(() => !f.engine.drivers.has(queued) && !f.engine.settling.has(queued), "queued work to finish its pause cleanup");
+        f.engine["driver"].schedule();
+        await waitFor(() => f.task.stageIndex === 1 && !f.engine.drivers.has(f.task.id) && !f.engine.settling.has(f.task.id), "only the missing reviewer to finish through normal admission");
+        expect(f.task.error).toBeUndefined();
+        expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new", "resume"]);
+        expect(f.task.rounds[f.stage.id]).toBe(2);
+        expect(f.task.journey!.filter(step => step.roleId === "code-reviewer").at(-1)!.agentResults).toHaveLength(2);
+        expect(f.task.runtimeWait?.refreshPending).toBeUndefined();
+      }
+      expect(f.checks()).toHaveLength(1);
+      expect(f.fakes.received().filter(entry => entry.session === first)).toHaveLength(1);
+    } finally { held.release(); f.release(); await f.engine.shutdown(); await drive; }
+  });
+
+  it("keeps an actually working peer's place when a hold interrupts the group's readiness decision", async () => {
+    const { f, saved } = await twoSeats();
+    const held = f.holdCheck("grok");
+    let drive: Promise<void> | undefined;
+    try {
+      f.task.startedAt = Date.now();
+      f.task.rounds[f.stage.id] = 2;
+      f.task.hunt = { stageId: f.stage.id, round: 2, reported: {} };
+      f.engine.s.pool.limit = 2;
+      const prerequisite = f.engine.addTask({ productId: "p", title: "Finish the required source", backlog: true });
+      const before = f.fakes.received().length;
+      f.engine.startDriver(f.task.id); drive = f.engine.settling.get(f.task.id)!;
+      const first = await firstOf(f, before);
+      await held.reached();
+      f.engine.setRuntimeWait(f.task.id, [prerequisite], "No new peer until the required fix lands", "hold-working-group");
+      f.engine["driver"].syncRuntimeWaits();
+      expect(f.engine.drivers.has(f.task.id)).toBe(true);
+      expect(f.task.state).toBe("running");
+      expect(f.task.holdsSlot).toBe(true);
+      expect(f.task.agent?.reviewKey).toBe("reviewer:0");
+      expect(f.ours()).toEqual([expect.objectContaining({ toolId: "claude-code" })]);
+      expect(f.engine["tools"].running("grok")).toBeDefined();
+      const queued = f.engine.addTask({ productId: "p", title: "Use only the place that is free" });
+      f.engine["driver"].schedule();
+      await waitFor(() => f.fakes.received("planner").length === 1, "queued work beside the admitted peer");
+      expect(slotUses(f.engine.activeState()).map(use => use.taskId).sort()).toEqual([f.task.id, queued].sort());
+      held.release();
+      await waitFor(() => f.check("grok").status === "ready", "the shared readiness answer beside the working peer");
+      expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new"]);
+      writeFileSync(join(f.fakes.dir, `release-${first}`), "go");
+      await drive;
+      expect(f.task.state).toBe("waiting");
+      expect(f.task.hunt?.reported).toEqual({ "0": true });
+      expect(f.ours()).toEqual([]);
+      expect(slotUses(f.engine.activeState()).map(use => use.taskId)).toEqual([queued]);
+      expect(f.task.rounds[f.stage.id]).toBe(2);
+      expect(f.checks()).toHaveLength(1);
+    } finally { held.release(); f.release(); await f.engine.shutdown(); await drive; }
+  });
+
   it("rechecks the second reviewer while the first works, adding no place until it reopens", async () => {
     const { f, saved, seen } = await twoSeats();
     try {
@@ -312,6 +433,74 @@ describe.concurrent("a review group's pending readiness decision", () => {
       const results = f.task.journey!.flatMap((step) => step.agentResults ?? []).filter((result) => result.at >= second.at!);
       expect(results.map((result) => result.profileId)).toEqual([saved["1"]!.profileId, "opus-high"]);
       expect(f.checks()).toHaveLength(1);
+    } finally { f.release(); await f.engine.shutdown(); }
+  });
+
+  it("frees the group's place after admitted reviewers finish under a prerequisite wait, then resumes only the missing seat", async () => {
+    const { f, saved } = await twoSeats();
+    const held = f.holdCheck("grok");
+    try {
+      f.task.startedAt = Date.now();
+      const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
+      const before = f.fakes.received().length;
+      const round = f.round(2);
+      const interrupted = rejectionOf(round);
+      const first = await firstOf(f, before);
+      await held.reached();
+      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-review");
+      // This private hunt skips scheduling; the public wait command records admitted work there.
+      f.engine["driver"].syncRuntimeWaits();
+      writeFileSync(join(f.fakes.dir, `release-${first}`), "go");
+      await waitFor(() => f.task.hunt?.reported["0"] && !f.task.holdsSlot, "the admitted reviewer's report and released place");
+      expect(f.task.state).toBe("waiting");
+      expect(f.task.statusLine).toBe("Waiting for “Fix the capacity tests” to land");
+      expect(f.task.agent).toBeUndefined();
+      expect(f.task.helpers).toBeUndefined();
+      expect(f.ours()).toEqual([]);
+      const step = f.task.journey!.at(-1)!;
+      const stepId = step.id;
+      expect(step.endedAt).toBeUndefined();
+      expect(step.agentResults).toHaveLength(1);
+      expect(step.agentInputs?.map(input => input.reviewerKey)).toEqual(["0"]);
+      expect(f.task.rounds[f.stage.id]).toBe(2);
+      // The admitted tool check finishes, but its answer admits no new reviewer while the task waits.
+      held.release();
+      expect(await interrupted).toBeInstanceOf(WaitingForUsage);
+      await waitFor(() => f.check("grok").status === "ready", "the shared readiness answer after the group released its place");
+      expect(f.check("grok").status).toBe("ready");
+      expect(f.task.hunt?.reported).toEqual({ "0": true });
+      expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new"]);
+      f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved finishing this review", "clear-review");
+      f.seated();
+      await f.engine["reviews"]["hunt"](f.task, f.stage, [{ key: "1", profileId: "grok-high" }], new AbortController().signal);
+      const resumed = f.task.journey!.at(-1)!;
+      expect(resumed.id).toBe(stepId);
+      expect(resumed.agentResults).toHaveLength(2);
+      expect(resumed.agentInputs?.map(input => input.reviewerKey)).toEqual(["0", "1"]);
+      expect(resumed.agentInputs?.find(input => input.reviewerKey === "1")).toEqual(expect.objectContaining({ mode: "continued", sessionId: saved["1"]!.sessionId }));
+      expect(f.task.hunt?.reported).toEqual({ "0": true, "1": true });
+      expect(f.task.rounds[f.stage.id]).toBe(2);
+      expect(f.checks()).toHaveLength(1);
+      expect(f.fakes.received().filter(entry => entry.session === first)).toHaveLength(1);
+      expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new", "resume"]);
+    } finally { held.release(); f.release(); await f.engine.shutdown(); }
+  });
+
+  it("starts no readiness probe or reviewer when a prerequisite wait already holds the group", async () => {
+    const { f, saved } = await twoSeats();
+    try {
+      f.task.startedAt = Date.now();
+      const prerequisite = f.engine.addTask({ productId: "p", title: "Finish the required fix", backlog: true });
+      const before = f.fakes.received().length;
+      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The required fix must land first", "hold-before-review");
+      expect(await rejectionOf(f.round(2))).toBeInstanceOf(WaitingForUsage);
+      expect(f.checks()).toEqual([]);
+      expect(f.fakes.received()).toHaveLength(before);
+      expect(f.task.reviewSessions![f.stage.id]!["1"]!.readinessWait).toBeUndefined();
+      expect(f.fakes.opens().filter(open => open.session === saved["1"]!.sessionId).map(open => open.how)).toEqual(["new"]);
+      expect(f.task.holdsSlot).toBe(false);
+      expect(f.task.state).toBe("waiting");
+      expect(f.task.statusLine).toBe("Waiting for “Finish the required fix” to land");
     } finally { f.release(); await f.engine.shutdown(); }
   });
 
@@ -450,11 +639,74 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
     ] };
     Object.assign(f.task, { stageIndex: 0, fixing: true, state: "running", holdsSlot: true, agent: { roleId: "code-reviewer", profileId: "opus-high", since: Date.now(), step: 0 } });
     f.scope.work.builderSession = { stageId: "build", profileId: "sol-high", plannedProfileId: "opus-high", toolId: "codex", model: "gpt-6.1-sol", sessionId: "saved-builder" };
+    f.scope.work.delivery = "local";
     f.engine.s.pool.limit = 2;
     f.busy("other", "grok-high");
     f.uncertain("codex");
     return f;
   }
+
+  it("starts no readiness probe for a returning Builder under a prerequisite wait", async () => {
+    const f = await fixRound();
+    const held = f.holdCheck("codex");
+    try {
+      f.task.startedAt = Date.now();
+      const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
+      const saved = structuredClone(f.scope.work.builderSession!);
+      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-before-builder");
+      expect(f.engine["driver"]["reserveAgent"](f.task)).toBe(false);
+      expect(await f.engine["driver"]["admitNext"](f.task, new AbortController().signal)).toBe(false);
+      expect(f.checks()).toEqual([]);
+      expect(f.scope.work.builderSession!.readinessWait).toBeUndefined();
+      expect(f.task.state).toBe("waiting");
+      expect(f.task.statusLine).toBe("Waiting for “Fix the capacity tests” to land");
+      expect(f.ours()).toEqual([]);
+      f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved continuing", "clear-before-builder");
+      await f.engine["driver"]["refreshAfterWait"](f.task, new AbortController().signal);
+      f.seated();
+      const admitted = f.engine["driver"]["admitNext"](f.task, new AbortController().signal);
+      await held.reached();
+      held.release();
+      expect(await admitted).toBe(true);
+      expect(f.task.agent).toEqual(expect.objectContaining({ roleId: "builder", profileId: saved.profileId }));
+      expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
+      expect(f.engine.choose("opus-high", f.task, "builder", () => true)).toEqual(expect.objectContaining({ profile: expect.objectContaining({ id: saved.profileId }), readiness: expect.objectContaining({ outcome: "ready" }) }));
+      expect(f.checks()).toHaveLength(1);
+    } finally { held.release(); await f.engine.shutdown(); }
+  });
+
+  it("releases a returning Builder's unused place when a prerequisite wait interrupts readiness", async () => {
+    const f = await fixRound();
+    const held = f.holdCheck("codex");
+    try {
+      f.task.startedAt = Date.now();
+      const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
+      const saved = structuredClone(f.scope.work.builderSession!);
+      const admitted = f.engine["driver"]["admitNext"](f.task, new AbortController().signal);
+      await held.reached();
+      const wait = structuredClone(f.scope.work.builderSession!.readinessWait!);
+      f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-during-builder-check");
+      f.engine["driver"].syncRuntimeWaits();
+      expect(await admitted).toBe(false);
+      expect(f.task.state).toBe("waiting");
+      expect(f.task.statusLine).toBe("Waiting for “Fix the capacity tests” to land");
+      expect(f.ours()).toEqual([]);
+      expect(f.fakes.received()).toEqual([]);
+      expect(f.scope.work.builderSession!.readinessWait).toEqual(wait);
+      expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
+      expect(f.ours()).toEqual([]);
+      expect(f.engine["tools"].running("codex")).toBeDefined();
+      held.release();
+      await waitFor(() => f.check("codex").status === "ready", "the shared readiness answer after the place was released");
+      f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved continuing", "clear-after-builder-check");
+      await f.engine["driver"]["refreshAfterWait"](f.task, new AbortController().signal);
+      expect(await f.engine["driver"]["admitNext"](f.task, new AbortController().signal)).toBe(true);
+      expect(f.task.agent).toEqual(expect.objectContaining({ roleId: "builder", profileId: saved.profileId }));
+      expect(f.scope.work.builderSession!.readinessWait).toEqual(wait);
+      expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
+      expect(f.checks()).toHaveLength(1);
+    } finally { held.release(); await f.engine.shutdown(); }
+  });
 
   it("keeps the spent recheck with a reopened Builder through another interruption, so a later uncertain answer gets no second check", async () => {
     const f = await fixture();

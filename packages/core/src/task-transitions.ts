@@ -8,12 +8,13 @@ import type { WorkChoice } from "./source.js";
 import { blocksDependents } from "./repositories.js";
 import { reviewerAt } from "./roles.js";
 import { clearRunningTools, MAX_STEP_RECORDS, stepRecord } from "./summary.js";
+import { cancelRuntimeWait, runtimeWaitHolds, type DependencyNode } from "./runtime-wait.js";
 
 type MutableTask = DeepMutable<TaskState>;
-type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "conversation" | "sideStep">>;
+type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "editAttempt" | "conversation" | "sideStep">>;
 
 /** One request shape for coordinator-created real and scripted tasks. */
-export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: { id: Id; timelineId: Id; now: number; priority: number; area?: string }, find: (id: Id) => Pick<TaskState, "id" | "after"> | undefined = () => undefined): MutableTask {
+export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: { id: Id; timelineId: Id; now: number; priority: number; area?: string }, find: (id: Id) => DependencyNode | undefined = () => undefined): MutableTask {
   const selected = input.worksOn ?? (input.productId ? [{ productId: input.productId, startFrom: input.startFrom ?? { kind: "default" as const }, delivery: input.delivery ?? products.find((entry) => entry.id === input.productId)?.delivery ?? "pull-request" }] : []);
   if (selected.some((choice) => !products.some((entry) => entry.id === choice.productId))) throw new Error("Choose registered products.");
   if (new Set(selected.map((entry) => entry.productId)).size !== selected.length) throw new Error("Choose each product once.");
@@ -81,7 +82,7 @@ export function assertTaskDependenciesEditable(task: Pick<TaskState, "state" | "
 }
 
 /** Validate the complete dependency graph before changing the task. Archived records can be looked up lazily. */
-export function validateTaskDependencies(taskId: Id, after: readonly Id[], find: (id: Id) => Pick<TaskState, "id" | "after"> | undefined): Id[] {
+export function validateTaskDependencies(taskId: Id, after: readonly Id[], find: (id: Id) => DependencyNode | undefined): Id[] {
   if (!find(taskId)) throw new Error("Unknown task");
   const ids = [...new Set(after)];
   if (ids.length > 20) throw new Error("Choose up to 20 prerequisites. Remove a task before adding another.");
@@ -93,7 +94,10 @@ export function validateTaskDependencies(taskId: Id, after: readonly Id[], find:
     if (from === taskId) return true;
     if (seen.has(from)) return false;
     seen.add(from);
-    return (find(from)?.after ?? []).some((next) => reaches(next, seen));
+    const task = find(from);
+    if (task?.state === "done" || task?.state === "cancelled") return false;
+    const runtime = task && runtimeWaitHolds(task) ? task.runtimeWait!.after : [];
+    return [...(task?.after ?? []), ...runtime].some((next) => reaches(next, seen));
   };
   if (ids.some((id) => reaches(id))) throw new Error("Those tasks would wait for each other. Remove a prerequisite that already waits on this task.");
   return ids;
@@ -134,7 +138,7 @@ export function stopTaskActivity(task: MutableTask): void {
 }
 
 export function clearTaskStep(task: MutableTask, execution: Execution): void {
-  delete task.stepNotes; delete execution.stepAttempts; delete execution.conversation;
+  delete task.stepNotes; delete execution.stepAttempts; delete execution.conversation; delete execution.editAttempt;
   stopTaskActivity(task);
 }
 
@@ -161,6 +165,7 @@ export function resumeTaskState(task: MutableTask, hasGate: boolean): boolean {
 }
 
 export function cancelTaskState(task: MutableTask, execution: Execution, now: number): void {
+  cancelRuntimeWait(task, now);
   task.state = "cancelled"; task.column = "done"; task.holdsSlot = false;
   task.finishedAt = now; task.statusLine = "Cancelled";
   delete task.agent; delete task.helpers; delete execution.conversation;
@@ -168,6 +173,7 @@ export function cancelTaskState(task: MutableTask, execution: Execution, now: nu
   delete task.reviewFreshReasons;
   delete task.reviewDecision;
   delete execution.sideStep;
+  delete execution.editAttempt;
   stopTaskActivity(task); stopCheckProgress(task, now);
   endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? W.stopped : W.cancelled, end: "cancelled" }, now);
 }

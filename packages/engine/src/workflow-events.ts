@@ -148,6 +148,7 @@ export interface WorkflowEventsHost {
   readonly stopped: boolean;
   /** Whether a task is in the product's scope, including retained shared products. */
   readonly taskInvolves: (taskId: Id, productId: Id) => boolean;
+  readonly taskDetails?: (taskId: Id) => import("@petrina/core").Task | undefined;
   readonly s: { readonly roles: WorkflowContext["roles"]; readonly profiles: WorkflowContext["profiles"]; readonly retiredProfiles?: WorkflowContext["profiles"]; readonly inbox: WorkflowContext["inbox"]; readonly products: WorkflowContext["products"]; readonly pool: { readonly limited?: WorkflowContext["limited"] }; readonly tasks: readonly TaskState[] };
 }
 
@@ -162,7 +163,7 @@ export class WorkflowEvents {
   }
 
   private context(): WorkflowContext {
-    return { roles: this.k.s.roles, profiles: [...this.k.s.profiles, ...(this.k.s.retiredProfiles ?? [])], inbox: this.k.s.inbox, products: this.k.s.products, limited: this.k.s.pool.limited, now: Date.now() };
+    return { roles: this.k.s.roles, profiles: [...this.k.s.profiles, ...(this.k.s.retiredProfiles ?? [])], inbox: this.k.s.inbox, products: this.k.s.products, limited: this.k.s.pool.limited, now: Date.now(), findTask: (id) => this.k.s.tasks.find((task) => task.id === id) ?? this.k.taskDetails?.(id) };
   }
 
   /** The engine's starting state produces no events. */

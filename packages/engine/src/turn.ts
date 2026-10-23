@@ -18,7 +18,7 @@ import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, ModelAtCap
 import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
-import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
+import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "./worklog.js";
 import { isAuthRequired } from "./setup.js";
@@ -122,7 +122,7 @@ export class Turns {
     if (!this.k.role(roleId, task) || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId)) || (this.k.role(roleId, task)?.result !== "plan" && !this.k.productOf(scope))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
     let stopped: { profileId: Id; error: UsageLimited | ModelAtCapacity; at: number } | undefined;
     for (;;) {
-      if (this.k.admissionsClosed) throw new WaitingForUsage("Waiting for the pool to resume");
+      if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
       // A screen request keeps the profile whose conversation asked, even if its planned tool is free again.
       const wanted = task.screen?.roleId === roleId ? task.screen.profileId : plannedId;
       const room = options.room ?? ((toolId: Id, profile: AgentProfile) => !slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId }));
@@ -131,11 +131,13 @@ export class Turns {
         // Only a saved participant's uncertain tool stands in the way. A step holding its place keeps it for the
         // bounded decision and chooses again; otherwise the check starts or is joined and the task waits as usual.
         if (!options.member && this.k.readiness.hold(task, choice.readiness)) {
-          await this.k.readiness.resolve(choice.readiness, signal);
+          const kept = await this.k.readiness.resolveHeld(choice.readiness, signal);
           if (signal.aborted) throw new Aborted();
+          if (!kept) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+          if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
           continue;
         }
-        if (!this.k.admissionsClosed) void this.k.readiness.resolve(choice.readiness);
+        if (!this.k.taskAdmissionsClosed(task)) void this.k.readiness.resolve(choice.readiness);
       }
       if (choice.kind === "none") {
         // A full model, with nothing else to take the step, retries the same conversation. It is not a usage limit,
@@ -360,8 +362,11 @@ export class Turns {
     const forScreen = screen && !screen.heard ? screen : undefined;
     // Only the agent that has the screen is told it may use it.
     const screenWords = screen ? { reason: screen.reason } : mayAskScreen(role) ? ("ask" as const) : undefined;
+    if (signal.aborted) throw new Aborted();
+    if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
     if (!task.holdsSlot || this.k.profile(task.agent?.profileId ?? "")?.toolId !== profile.toolId) {
-      const waiting = this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : slotWait(this.k.activeState(), { ...profile, taskId, toolId: profile.toolId });
+      const waiting = this.k.taskAdmissionsClosed(task) ? (this.k.taskAdmissionWait(task)) : slotWait(this.k.activeState(), { ...profile, taskId, toolId: profile.toolId });
       if (waiting) {
         this.k.pendingAgentAdmissions.set(taskId, { step, roleId, profileId });
         throw new WaitingForUsage(waiting);
@@ -403,6 +408,9 @@ export class Turns {
       task.statusLine = options.status ?? `${role.name} is starting`;
     }
     if (same) { same.role = role; same.access = access; }
+    // This attempt has crossed the source and slot gates. Save editable ownership before
+    // native startup can wait or fail, even when no prerequisite wait exists yet.
+    if (role.canEdit && repository.worktree) repository.editAttempt = { step };
     this.k.commitNow(scope);
 
     const live = () => this.k.task(taskId);
@@ -658,7 +666,7 @@ export class Turns {
     // Partners of one step share the read the group just did. A usage replacement is another attempt and reads again.
     let refresh = options.refresh !== false;
     for (;;) {
-      if (!first && this.k.admissionsClosed) throw new WaitingForUsage("Waiting for the pool to resume");
+      if (!first && this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
       const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
       first = false;
       let profile: AgentProfile;
@@ -673,7 +681,7 @@ export class Turns {
         if (!choice) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
         if (choice.kind === "none") {
           // A member adds no place for a readiness check: the check starts or is joined, and the group waits as usual.
-          if (choice.readiness && !this.k.admissionsClosed) void this.k.readiness.resolve(choice.readiness);
+          if (choice.readiness && !this.k.taskAdmissionsClosed(task)) void this.k.readiness.resolve(choice.readiness);
           // The group waits. A full model is not a usage limit: peers finish, and this seat stays for the same profile.
           // When the account is out as well, the wait is that limit's.
           if (stopped?.error instanceof ModelAtCapacity) {

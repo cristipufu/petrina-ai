@@ -2,7 +2,7 @@ import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator, type Selection } from "./usage-coordinator.js";
 import type { Readiness } from "./readiness.js";
-import { blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, OTHERS_CONTINUE, stopTaskActivity } from "@petrina/core";
+import { runtimeWaitHolds, runtimeWaitView, runtimeWaitWords, blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, OTHERS_CONTINUE, stopTaskActivity } from "@petrina/core";
 import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
@@ -146,6 +146,8 @@ export interface EngineOptions {
 }
 
 export class Aborted extends Error {}
+/** No input was admitted: return to the driver to prepare the newly required source. */
+export class SourceRefreshRequired extends Error {}
 export class MaintenanceProfileProblem extends Error {}
 
 /** Stop waiting promptly, and remove the abort listener on either outcome. */
@@ -398,6 +400,49 @@ export abstract class Kernel {
 
   get admissionsClosed(): boolean { return this.draining || this.s.pool.paused || this.stopped; }
 
+  /** The same admission boundary as a paused pool, scoped to one task. Running work is never aborted. */
+  taskAdmissionsClosed(task: MTask | Id): boolean {
+    const current = typeof task === "string" ? this.task(task) : task;
+    return this.admissionsClosed || !!current && runtimeWaitHolds(current);
+  }
+
+  taskAdmissionWait(task: MTask): string {
+    if (runtimeWaitHolds(task)) return runtimeWaitWords(runtimeWaitView(task, id => this.taskDetails(id))!);
+    return this.draining ? this.drainLine : "Waiting for the pool to resume";
+  }
+
+  /** Saved history defers catch-up only for work that can actually continue on that version. */
+  taskStepStarted(task: MTask): boolean {
+    const step = openStep(task);
+    const stage = task.plan?.stages[task.stageIndex];
+    // A parallel seat is admitted before its copy is made. A driver's readiness placeholder is not.
+    const group = this.screenGroups.get(task.id);
+    const reserved = group?.recipients().some(member => group.running(member));
+    // Release notes never reopen. An interrupted delivery agent's box remains attempt history,
+    // but does not make its next fresh preparation wait for itself to finish.
+    const recorded = this.role(step?.roleId ?? "", task)?.result !== "delivery" && step?.kind === "agent"
+      && step.stageId === stage?.id && step.round === (stage ? task.rounds[stage.id] ?? 1 : 1)
+      && !!(step.agentInputs?.length || step.agentResults?.length);
+    return !!task.driving || !!reserved || !!recorded || scopesFor(task).some(({ work }) => work.conversation?.step === stepKey(task) || work.editAttempt?.step === stepKey(task) && !work.editAttempt.failed)
+      || !!task.hunt && Object.keys(task.hunt.reported).length > 0;
+  }
+
+  /** A readiness reservation is no input. Every new admission must cross any source boundary now owed. */
+  taskSourceRefreshDue(task: MTask): boolean {
+    const wait = task.runtimeWait;
+    if (!wait?.refreshPending || runtimeWaitHolds(task)) return false;
+    if (wait.refreshAfterStep === stepKey(task) && this.taskStepStarted(task)) return false;
+    // Editable admission owns its version before startup and independently of a wait. Failed
+    // attempts first get a clean-copy check in the driver; dirty partial work still belongs to them.
+    if (executionFor(task).work.editAttempt?.step === stepKey(task)) return false;
+    const scopes = scopesFor(task);
+    const delivered = (work: RepositoryContext["work"]) => !!task.repositories && !!(work.pr || work.release || work.landed);
+    // Planning may still have to confirm the source before any working copies can be made.
+    if (!scopes.length || scopes.some(({ work }) => !work.worktree && !delivered(work))) return false;
+    return !wait.refreshProducts || !wait.refreshProducts.length || scopes.some(({ work }) => wait.refreshProducts!.includes(work.productId)
+      && (delivered(work) || !(work.updating || work.shipping?.step || work.shipping?.pushed)));
+  }
+
   /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
   inFlight(): number {
     const agents = this.runs.size + [...this.helperRuns.values()].reduce((sum, runs) => sum + runs.size, 0);
@@ -561,6 +606,7 @@ export abstract class Kernel {
     const task = this.task(taskId);
     const scope = task ? executionFor(task) : undefined;
     if (!task) return;
+    if (scope!.work.editAttempt?.step === stepKey(task)) scope!.work.editAttempt.failed = true;
     this.stopHelpers(taskId);
     delete task.helpers;
     const message = error instanceof Error ? error.message : String(error);

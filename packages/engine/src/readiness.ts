@@ -2,7 +2,7 @@
 // Selection only reports the need. Scheduling, a live step and a running review group record the first wait
 // here, start or join the tool's one shared check, and choose again once it answers or the wait's limit passes.
 
-import { CHECK_NAMES, checkOf, slotWait, type CheckId, type Id, type ReadinessWait } from "@petrina/core";
+import { runtimeWaitHolds, CHECK_NAMES, checkOf, slotWait, type CheckId, type Id, type ReadinessWait } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
 import type { RepositoryContext } from "./repository-context.js";
 import { readinessLimitMs, type ToolChecks } from "./tool-checks.js";
@@ -25,6 +25,8 @@ export class Readiness {
   private readonly waits = new Map<string, Promise<void>>();
   /** Ends every open wait at shutdown. */
   private readonly ends = new Set<() => void>();
+  /** Admission owners retaining a main place; releasing one never stops the tool's shared check. */
+  private readonly held = new Map<Id, Set<() => boolean>>();
 
   constructor(private readonly k: Kernel, private readonly tools: ToolChecks) {}
 
@@ -46,7 +48,7 @@ export class Readiness {
    */
   resolve(need: ReadinessNeed, owner?: AbortSignal): Promise<void> {
     const signal = owner && AbortSignal.any([owner, this.k.stopRequested.signal]);
-    if (this.k.stopped || signal?.aborted) return Promise.resolve();
+    if (this.k.stopped || signal?.aborted || runtimeWaitHolds(need.scope.task)) return Promise.resolve();
     if (!need.saved.readinessWait) {
       const check = checkOf(this.k.s.setup?.checks, need.toolId);
       const wait: ReadinessWait = { at: Date.now(), toolId: need.toolId, previous: { status: check.status, ...(check.at !== undefined ? { at: check.at } : {}) }, check: check.checking ? "joined" : "started" };
@@ -71,12 +73,40 @@ export class Readiness {
     });
   }
 
+  /** A retained place belongs to this admission attempt, even if the shared check outlives a task hold.
+   * Groups reconcile their working peers before reporting whether the task's last place was released. */
+  async resolveHeld(need: ReadinessNeed, owner: AbortSignal, yieldPlace?: () => boolean): Promise<boolean> {
+    const taskId = need.scope.task.id;
+    const interrupted = new AbortController();
+    const end = () => { interrupted.abort(); return yieldPlace?.() ?? true; };
+    const waits = this.held.get(taskId) ?? new Set<() => boolean>();
+    waits.add(end);
+    this.held.set(taskId, waits);
+    try {
+      if (runtimeWaitHolds(need.scope.task)) return false;
+      await this.resolve(need, AbortSignal.any([owner, interrupted.signal]));
+      return !interrupted.signal.aborted;
+    } finally {
+      waits.delete(end);
+      if (!waits.size) this.held.delete(taskId);
+    }
+  }
+
+  /** The task waits without a place now; its next admission must qualify again after the hold. */
+  yieldHeld(task: MTask): boolean {
+    const waits = this.held.get(task.id);
+    if (!waits?.size) return false;
+    let released = false;
+    for (const end of waits) released = end() || released;
+    return released;
+  }
+
   /**
    * A step that already holds its main place keeps it for one open decision, charged once to the saved profile's tool
    * where the pool and that tool's cap allow it. False when it cannot: the step waits without a place, as before.
    */
   hold(task: MTask, need: ReadinessNeed): boolean {
-    if (!task.holdsSlot || this.k.admissionsClosed || !this.open(need) || !this.charge(task, need)) return false;
+    if (!task.holdsSlot || this.k.taskAdmissionsClosed(task) || !this.open(need) || !this.charge(task, need)) return false;
     task.state = this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking) ? "needs-you" : "running";
     task.statusLine = need.words;
     task.column = this.k.columnFor(task);
@@ -90,7 +120,7 @@ export class Readiness {
    */
   charge(task: MTask, need: ReadinessNeed, reviewKey?: string): boolean {
     const profile = this.k.profile(need.profileId);
-    if (!profile || slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId: profile.toolId })) return false;
+    if (runtimeWaitHolds(task) || !profile || slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId: profile.toolId })) return false;
     const same = task.agent?.roleId === need.roleId && task.agent.profileId === need.profileId && task.agent.reviewKey === reviewKey;
     if (!same) task.agent = { roleId: need.roleId, profileId: need.profileId, since: Date.now(), step: 0, ...(reviewKey !== undefined ? { reviewKey } : {}) };
     delete task.helpers;

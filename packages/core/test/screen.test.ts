@@ -4,7 +4,7 @@ import { BUILT_IN_ROLES, DEFAULT_PROFILES, KNOWN_TOOLS } from "../src/library.js
 import type { State, Task } from "../src/model.js";
 import { inboxOrder } from "../src/navigation.js";
 import { slotUses, startsNextCount } from "../src/scheduler.js";
-import { onScreen, SCREEN_HOUR_MS, screenMode, screenOn, screenReason, screenWait } from "../src/screen.js";
+import { onScreen, SCREEN_HOUR_MS, screenMode, screenNext, screenOn, screenQueue, screenReason, screenWait } from "../src/screen.js";
 import { MemoryWorkLog } from "../src/worklog.js";
 import { Simulator } from "../src/sim.js";
 
@@ -55,6 +55,43 @@ function tickUntil(sim: Simulator, done: () => boolean, limit = 300): void {
 }
 
 describe("the screen switch", () => {
+  it.each(["waiting", "needs-you"] as const)("keeps an unapproved held request answerable while %s without putting it in the screen line", (taskState) => {
+    const { sim, ids } = screenSim(1);
+    tickUntil(sim, () => asking(sim, ids[0]!));
+    const state = sim.getState();
+    const held = state.tasks.find(task => task.id === ids[0])!;
+    held.state = taskState;
+    held.runtimeWait = { after: ["fix"], reason: "Wait for the fix", changes: [] };
+    expect(screenWait(held, state, state.now)).toBe("ask");
+    expect(screenQueue(state.tasks)).toEqual([]);
+    expect(screenNext(state, state.now)).toBeUndefined();
+    held.screen!.allowed = true;
+    expect(screenWait(held, state, state.now)).toBeUndefined();
+    expect(screenQueue(state.tasks)).toEqual([]);
+    expect(screenNext(state, state.now)).toBeUndefined();
+    held.runtimeWait.releasedAt = state.now;
+    expect(screenNext(state, state.now)).toBe(held.id);
+  });
+
+  it("keeps a held request out of the screen line and restores its saved place when released", () => {
+    const { sim, ids } = screenSim(2);
+    tickUntil(sim, () => ids.every(id => asking(sim, id)));
+    const initial = sim.getState();
+    const state = { ...initial, tasks: initial.tasks.map(task => ({ ...task })), pool: { ...initial.pool, screen: { mode: "on" as const } } };
+    const [first, second] = screenQueue(state.tasks);
+    expect(screenNext(state, state.now)).toBe(first!.id);
+    Object.assign(first!, { runtimeWait: { after: ["fix"], reason: "Wait for the fix", changes: [] } });
+    expect(screenQueue(state.tasks).map(task => task.id)).toEqual([second!.id]);
+    expect(screenNext(state, state.now)).toBe(second!.id);
+    expect(screenWait(first!, state, state.now)).toBeUndefined();
+    Object.assign(first!.runtimeWait!, { releasedAt: state.now });
+    expect(screenNext(state, state.now)).toBe(first!.id);
+    // A currently admitted screen agent retains exclusive use until the engine records its boundary.
+    Object.assign(first!, { state: "running", runtimeWait: { after: ["fix"], reason: "Wait for the fix", changes: [] }, screen: { ...first!.screen!, granted: true } });
+    expect(onScreen(state.tasks)?.id).toBe(first!.id);
+    expect(screenNext(state, state.now)).toBeUndefined();
+  });
+
   it("is Off unless turned on, and For an hour turns itself off when it runs out", () => {
     const state = emptyState(2);
     expect(screenMode(state.pool, 0)).toBe("off");

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { Engine } from "./engine.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
-import { readProcessList } from "../src/process-tree.js";
+import { parseChildState, readProcessList } from "../src/process-tree.js";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor, waitForFile } from "./support.js";
 
 // Conversations started here keep their browsers, in this file's own browser folder.
@@ -137,10 +137,12 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     const killed = join(dir, "killed");
     const buildPids = join(dir, "build-pids");
     const snapshot = join(dir, "process-list");
+    const finalLists = join(dir, "final-lists");
     const stops = join(dir, "stops");
     const bin = join(dir, "bin");
     mkdirSync(bin);
-    // Delay delivery of a controlled list, not native ps startup with only ~100ms left.
+    // The first delayed/killed helper is real. Recovery and final confirmation use scripted
+    // reads in the engine, without starting another helper inside a shrinking read allowance.
     // The separate native case covers real discovery, pausing and stopping with no injected delay.
     // Recovery belongs to the next invocation, even if the first helper never runs its TERM trap.
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -180,19 +182,33 @@ exec /bin/ps "$@"
     }
     const launcher = join(dir, "engine.ts");
     writeFileSync(launcher, `import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-${native ? "" : `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH;
-const kill = process.kill.bind(process), paused = new Set(), owners = new Map(), agents = new Set();
+${native ? "" : `import * as processes from "node:child_process";
+import { spyOn } from "bun:test";
+import { finishedHelper, runCommand } from ${JSON.stringify(join(import.meta.dir, "fixtures.ts"))};
+// Before the timed stop, read the engine's inherited group for complete final snapshots.
+const ownGroup = Number((await runCommand(["/bin/ps", "-o", "pgid=", "-p", String(process.pid)])).stdout.trim());
+if (!ownGroup) throw new Error("Could not read the fixture engine's process group");
+process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH;
+const kill = process.kill.bind(process), paused = new Set(), owners = new Map(), agents = new Set(), forced = new Set();
 const live = pid => { try { kill(pid, 0); return true; } catch { return false; } };
+const listing = groups => [
+  { pid: process.pid, parent: process.ppid, group: ownGroup },
+  // The agent and its detached workers each lead their own process group.
+  ...[...owners].map(([pid, parent]) => ({ pid, parent, group: pid })),
+].filter(({ pid }) => live(pid) || (${killFirst} && agents.has(pid) && forced.has(pid))).map(({ pid, parent, group }) =>
+  pid + " " + (groups ? group : parent) + " " + (forced.has(pid) ? "Z" : paused.has(pid) ? "T" : "S")).join("\\n") + "\\n";
 const publish = () => {
-  const listed = [...owners].filter(([pid]) => live(pid)).map(([pid, parent]) =>
-    pid + " " + parent + " " + (paused.has(pid) ? "T" : "S")).join("\\n") + "\\n";
-  writeFileSync(${JSON.stringify(snapshot + ".tmp")}, listed);
+  writeFileSync(${JSON.stringify(snapshot + ".tmp")}, listing(false));
   renameSync(${JSON.stringify(snapshot + ".tmp")}, ${JSON.stringify(snapshot)});
 };
 // Scripted states follow successful real signals to this fixture's known processes.
 // Native late-fork tests and the native case below check the actual OS pause barrier.
 process.kill = function(pid, signal) {
+  // The killed-helper case also keeps a forced agent's number present until collection.
+  // Only the final process-group snapshot can then confirm its completed stop.
+  if (${killFirst} && signal === 0 && agents.has(Math.abs(pid)) && forced.has(Math.abs(pid))) return true;
   const result = kill(pid, signal);
+  if (signal === "SIGKILL" && owners.has(Math.abs(pid)) && existsSync(${JSON.stringify(slow)})) forced.add(Math.abs(pid));
   if (signal === "SIGSTOP" && agents.has(Math.abs(pid)) && existsSync(${JSON.stringify(slow)}) && existsSync(${JSON.stringify(buildPids)})) {
     const workers = readFileSync(${JSON.stringify(buildPids)}, "utf8").split("\\n").map(Number).filter(pid => pid > 0 && live(pid));
     for (const worker of workers) owners.set(worker, Math.abs(pid));
@@ -201,15 +217,28 @@ process.kill = function(pid, signal) {
   if (signal === "SIGCONT") paused.delete(Math.abs(pid));
   if (signal === "SIGSTOP" || signal === "SIGCONT") publish();
   return result;
-};`}
-const { AgentRun } = await import(${JSON.stringify(join(import.meta.dir, "../src/acp-run.ts"))});
-${native ? "" : `const start = AgentRun.start;
+};
+const original = processes.execFile;
+spyOn(processes, "execFile").mockImplementation((...args) => {
+  if (args[0] !== "ps" || !existsSync(${JSON.stringify(slow)}) || !existsSync(${JSON.stringify(scanned)})) return Reflect.apply(original, processes, args);
+  const groups = args[1].some(arg => arg.includes("pgid="));
+  const listed = listing(groups), timeout = args[2].timeout, done = args.at(-1);
+  writeFileSync(${JSON.stringify(recover)}, "");
+  if (groups) appendFileSync(${JSON.stringify(finalLists)}, JSON.stringify(listed) + "\\n");
+  setTimeout(() => done(timeout <= 100 ? new Error("Process list timed out") : null, timeout <= 100 ? "" : listed, ""), Math.min(100, timeout));
+  return finishedHelper();
+});`}
+const { AgentRun, AGENT_CLEANUP_NOTE } = await import(${JSON.stringify(join(import.meta.dir, "../src/acp-run.ts"))});
+const start = AgentRun.start;
 AgentRun.start = function(options) {
-  return start.call(this, { ...options, onProcess(child) {
+  return start.call(this, { ...options, callbacks: { ...options.callbacks, onLog(text) {
+    if (text.includes(AGENT_CLEANUP_NOTE)) console.error(text.trim());
+    options.callbacks.onLog?.(text);
+  } }, ${native ? "" : `onProcess(child) {
     agents.add(child.pid); owners.set(child.pid, process.pid); publish();
     options.onProcess?.(child);
-  } });
-};`}
+  }`} });
+};
 const stop = AgentRun.prototype.stop;
 const observed = new WeakSet();
 AgentRun.prototype.stop = function(...args) {
@@ -278,8 +307,16 @@ await import(${JSON.stringify(HARNESS)});`);
           expect(existsSync(copy)).toBe(true);
         }
         const recorded = readFileSync(stops, "utf8").trim().split("\n").map(line => JSON.parse(line) as { pid: number; complete: boolean });
+        if (agents.some(pid => !recorded.find(stop => stop.pid === pid)?.complete)) console.error("Incomplete agent stop evidence:", JSON.stringify({ end, native, stubborn, killFirst, agents, recorded, log: readFileSync(join(home, "engine.log"), "utf8").split("\n").slice(-40) }));
         for (const pid of agents) expect(recorded.find(stop => stop.pid === pid)?.complete).toBe(true);
-        if (killFirst) expect(existsSync(killed)).toBe(true);
+        if (killFirst) {
+          expect(existsSync(killed)).toBe(true);
+          const final = readFileSync(finalLists, "utf8").trim().split("\n").map(line => JSON.parse(line) as string);
+          for (const pid of agents) expect(final.some(listed => listed.split("\n").includes(`${pid} ${pid} Z`))).toBe(true);
+        }
+        // Outside the stop's allowance, verify real processes even when all scripted reads passed.
+        const after = await waitFor(() => readProcessList(4_000), "a native process list after the build stopped");
+        expect([...pids, ...agents].filter(pid => parseChildState(after, pid) !== "ended")).toEqual([]);
         if (existsSync(recover)) console.info(`Used the recovery process lookup during ${end} (stubborn: ${stubborn}, first killed: ${killFirst}).`);
       }
     } finally {

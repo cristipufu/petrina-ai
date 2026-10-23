@@ -5,9 +5,9 @@ import { executionFor, scopesFor, type RepositoryContext } from "./repository-co
 import { changesOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, sameVersions } from "@petrina/core";
 import { join } from "node:path";
-import { AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
+import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "./git.js";
-import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait, stepKey } from "./kernel.js";
+import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired, stepKey } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Sources } from "./sources.js";
 import type { Planning } from "./planning.js";
@@ -74,8 +74,27 @@ export class Driver {
       || (stage?.kind === "review-chain" && (task.hunt?.stageId !== stage.id || task.hunt.round !== (task.rounds[stage.id] ?? 1)));
   }
 
+  syncRuntimeWaits(): void {
+    for (const task of this.k.s.tasks) {
+      if (!task.runtimeWait) continue;
+      if (runtimeWaitHolds(task) && !task.runtimeWait.refreshAfterStep && this.k.taskStepStarted(task)) task.runtimeWait.refreshAfterStep = stepKey(task);
+      syncRuntimeWait(task, id => this.k.taskDetails(id), Date.now());
+      const yieldedReadiness = runtimeWaitHolds(task) && this.k.readiness.yieldHeld(task);
+      if (runtimeWaitHolds(task) && (yieldedReadiness || !this.k.drivers.has(task.id) && !this.k.settling.has(task.id) && !task.driving) && ["running", "waiting"].includes(task.state)) {
+        if (yieldedReadiness) this.k.pauseStep(task);
+        task.state = "waiting";
+        task.holdsSlot = false;
+        delete task.agent;
+        task.statusLine = this.k.taskAdmissionWait(task);
+        task.column = this.k.columnFor(task);
+        syncRuntimeWait(task, id => this.k.taskDetails(id), Date.now());
+      }
+    }
+  }
+
   schedule(): void {
     if (this.k.stopped) return;
+    this.syncRuntimeWaits();
     for (const id of this.preparedTesters.keys()) {
       const task = this.k.s.tasks.find((task) => task.id === id);
       if (!task || !["running", "waiting"].includes(task.state)) this.preparedTesters.delete(id);
@@ -84,7 +103,7 @@ export class Driver {
       // Settings and permission answers still update the app while admissions are closed.
       this.k.syncScreen();
       for (const task of this.k.s.tasks) {
-        if (task.state === "waiting" && screenReady(task as Task, this.k.activeState(), Date.now())) {
+        if (task.state === "waiting" && !runtimeWaitHolds(task) && screenReady(task as Task, this.k.activeState(), Date.now())) {
           task.statusLine = this.k.draining ? this.k.drainLine : "Waiting for the pool to resume";
         }
       }
@@ -118,7 +137,7 @@ export class Driver {
       // group is that same driver: skipping it leaves an allowed reviewer beside a peer forever.
       const liveScreen = !!(task.screen?.member && this.k.screenGroups.has(task.id));
       if ((this.k.settling.has(task.id) || this.k.drivers.has(task.id)) && !liveScreen) continue;
-      if (blocked(task)) continue;
+      if (runtimeWaitHolds(task) || blocked(task)) continue;
       // A screen request also has to be allowed and first in line.
       if (!screenReady(task as Task, this.k.activeState(), now)) continue;
       if (!grantedResume(task) && (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT))) task.statusLine = "Waiting for a free slot";
@@ -153,7 +172,7 @@ export class Driver {
     for (const task of queueOf(this.k.s.tasks as Task[])) {
       if (this.k.drivers.has(task.id) || this.k.settling.has(task.id)) continue;
       // On hold too, a task stops waiting the moment the tasks it waits for land; it just does not start.
-      if (blocked(task as MTask)) continue;
+      if (runtimeWaitHolds(task) || blocked(task as MTask)) continue;
       // What it waited for landed or was cancelled: back to plain queue words.
       if (task.statusLine.startsWith("Waiting for “") || task.statusLine.startsWith(USAGE_WAIT)) (task as MTask).statusLine = "In the queue";
       if (task.held) continue;
@@ -219,20 +238,23 @@ export class Driver {
 
   /** A saved participant's uncertain tool: record its first wait and start or join the shared check, never while admissions are closed. */
   private resolveReadiness(need: ReadinessNeed | undefined): void {
-    if (need && !this.k.admissionsClosed) void this.k.readiness.resolve(need);
+    if (need && !this.k.taskAdmissionsClosed(need.scope.task)) void this.k.readiness.resolve(need);
   }
 
   /**
    * The live step's next participant. A step that already holds its main place keeps it, charged to the saved
    * participant's tool, while that participant's bounded readiness decision settles, then qualifies again from there.
-   * Retention never outlasts the decision's limit: the step then waits without a place, as any other.
+   * Retention ends with the decision's limit or a task hold: the step then waits without a place, as any other.
    */
-  private async admitNext(task: MTask, signal: AbortSignal): Promise<boolean> {
+  private async admitNext(task: MTask, signal: AbortSignal): Promise<boolean | "refresh"> {
     for (;;) {
+      if (this.k.taskAdmissionsClosed(task)) return this.reserveAgent(task);
+      if (this.k.taskSourceRefreshDue(task)) return "refresh";
       const need = this.seatFor(task).readiness;
       if (!need || !this.k.readiness.hold(task, need)) return this.reserveAgent(task);
-      await this.k.readiness.resolve(need, signal);
+      const kept = await this.k.readiness.resolveHeld(need, signal);
       if (signal.aborted) throw new Aborted();
+      if (!kept) return false;
     }
   }
 
@@ -240,7 +262,7 @@ export class Driver {
   private reserveAgent(task: MTask): boolean {
     const { agent: next, toolId, waiting: noOne, readiness } = this.seatFor(task);
     const preparing = this.needsCheckPreparation(task);
-    let waiting = noOne ?? (this.k.admissionsClosed ? (this.k.draining ? this.k.drainLine : "Waiting for the pool to resume") : next ? slotWait(this.k.activeState(), { ...this.k.profile(next.profileId), taskId: task.id, toolId }) : undefined);
+    let waiting = runtimeWaitHolds(task) ? this.k.taskAdmissionWait(task) : noOne ?? (this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : next ? slotWait(this.k.activeState(), { ...this.k.profile(next.profileId), taskId: task.id, toolId }) : undefined);
     if (!waiting && preparing && !this.checks.claimPreparation(task.id)) waiting = "Waiting for room to prepare the product checks";
     if (!preparing) this.checks.releasePreparation(task.id);
     if (waiting) {
@@ -331,12 +353,17 @@ export class Driver {
         if (signal.aborted) throw new Aborted();
         const current = task();
         let scope = executionFor(current);
+        if (runtimeWaitHolds(current)) {
+          this.k.waitForUsage(current, this.k.taskAdmissionWait(current));
+          return;
+        }
         if (current.reviewDecision?.accepted === false) { this.k.gate(current, "delivery"); return; }
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         if (!stage || this.k.role(stage.roleId, current)?.result !== "checks") this.preparedTesters.delete(taskId);
         // A restart can find the working copy detached by an interrupted commit hook. Put it back before
         // review or delivery reads that original starting version as the task's work.
         if (scope.work.worktree && scope.work.hooking) await this.recoverHook(scope);
+        if (await this.refreshAfterWait(current, signal)) continue;
         // The copy waits until the starting point is confirmed. While the plan check is still open it waits
         // too, including for the default branch, so that check can still change the product, the start or the delivery.
         if (current.repositories && !current.confirmWork && current.stageIndex >= 0) {
@@ -364,6 +391,9 @@ export class Driver {
           this.k.commitNow(current);
         }
         if (!scope.work.worktree && this.sourceSettled(current) && (current.stageIndex >= 0 || !current.approvePlan)) await this.prepare(scope, signal);
+        // A release can precede the first working copy. Preparation must not admit the next step
+        // until every owner has also crossed the strict post-wait source boundary.
+        if (await this.refreshAfterWait(current, signal)) continue;
         if (current.stageIndex >= 0 && !scope.work.worktree) { this.k.gate(current, "plan"); return; }
         // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
         if (stage && current.handChanges && (stage.gate === "delivery" || this.k.role(stage.roleId, current)?.result === "delivery")) {
@@ -400,12 +430,12 @@ export class Driver {
           }
           delete current.returnToCheck;
           if (stage.gate === "delivery") {
-            if (this.k.s.pool.paused || this.k.draining) {
+            if (this.k.taskAdmissionsClosed(current)) {
               current.state = "waiting";
               current.holdsSlot = false;
               delete current.agent;
               current.column = this.k.columnFor(current);
-              current.statusLine = this.k.draining ? this.k.drainLine : "Waiting for the pool to resume";
+              current.statusLine = this.k.taskAdmissionWait(current);
               this.k.commit();
               return;
             }
@@ -486,20 +516,21 @@ export class Driver {
           return;
         }
         // Petrina is stopping: the step waits for the restart instead of starting an agent it would cut short.
-        if (this.k.admissionsClosed) {
+        if (this.k.taskAdmissionsClosed(current)) {
           current.state = "waiting";
           current.holdsSlot = false;
           delete current.agent;
           current.column = this.k.columnFor(current);
-          current.statusLine = this.k.draining ? this.k.drainLine : "Waiting for the pool to resume";
+          current.statusLine = this.k.taskAdmissionWait(current);
           this.k.commit();
           return;
         }
         // Running agents finish; every following agent must qualify again, even on the same tool.
         if (resume) resume = false;
-        else if (!await this.admitNext(current, signal)) {
-          this.k.commit();
-          return;
+        else {
+          const admission = await this.admitNext(current, signal);
+          if (admission === "refresh" || this.k.taskSourceRefreshDue(current)) continue;
+          if (!admission) { this.k.commit(); return; }
         }
         this.k.commit();
         // The stage (or planning) is under way from here: a slot is held for it, or it needs none.
@@ -564,6 +595,10 @@ export class Driver {
       }
     } catch (error) {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) return;
+      if (error instanceof SourceRefreshRequired) {
+        this.k.waitForUsage(task(), "Waiting to bring the work onto the required source");
+        return;
+      }
       if (this.k.task(taskId)?.maintenance?.settingsDecision && !this.k.task(taskId)?.maintenance?.settingsDecision?.choice) return;
       if (error instanceof WaitingForUsage) {
         // Admission may close during an awaited preparation step. Every such exit must
@@ -588,6 +623,57 @@ export class Driver {
       // Cancelled during a publishing step: what went out is looked up and kept.
       if (signal.aborted && !this.k.stopped) await this.shipping.monitor.settleCancelled(taskId, true);
     }
+  }
+
+  /** Reuse ordinary source updates and evidence gates; waiting itself changes no conversations or rounds. */
+  private async refreshAfterWait(task: MTask, signal: AbortSignal): Promise<boolean> {
+    const wait = task.runtimeWait;
+    if (!wait?.refreshPending || runtimeWaitHolds(task)) return false;
+    const scopes = scopesFor(task);
+    const own = executionFor(task).work;
+    const recovery = own.editAttempt;
+    if (recovery?.failed) {
+      if (recovery.step !== stepKey(task) || !own.worktree || await git.isClean(own.worktree)) {
+        delete own.editAttempt;
+        this.k.commitNow();
+      }
+      if (signal.aborted) throw new Aborted();
+    }
+    if (!this.k.taskSourceRefreshDue(task)) return false;
+    if (!scopes.length || scopes.some(({ work }) => !work.worktree && !(task.repositories && (work.pr || work.release || work.landed)))) return false;
+    // Persist each owner's unfinished work before I/O. A port keeps its own version until its
+    // Builder finishes, while every companion still owes the strict source check now.
+    wait.refreshProducts ??= scopes.map(({ work }) => work.productId);
+    this.k.commitNow();
+    // Preparation with no admitted reviewer is disposable; its round number and conversations are kept.
+    if (task.hunt && !this.k.taskStepStarted(task)) delete task.hunt;
+    let conflict = false;
+    for (const scope of scopes) {
+      if (signal.aborted) throw new Aborted();
+      const { work } = scope;
+      if (!wait.refreshProducts.includes(work.productId)) continue;
+      const delivered = task.repositories && (work.pr || work.release || work.landed);
+      // Existing ports and admitted publishing retain their exact saved version and recovery rules.
+      if (!delivered && (work.updating || work.shipping?.step || work.shipping?.pushed)) continue;
+      if (!delivered) {
+        // A prepared delivery is bound to its old checked commit. Restore any release version
+        // before folding, then let ordinary delivery preparation recheck and approve the candidate.
+        await this.shipping.clearUnpublishedVersion(scope, true);
+        const result = await this.updates.upToDate(scope, signal, true, true);
+        if (signal.aborted) throw new Aborted();
+        if (result === "conflict") { conflict = true; continue; }
+      }
+      wait.refreshProducts = wait.refreshProducts.filter(id => id !== work.productId);
+      this.k.commitNow();
+    }
+    if (!wait.refreshProducts.length) {
+      delete wait.refreshPending;
+      delete wait.refreshProducts;
+      delete wait.refreshAfterStep;
+      this.k.log(task, "milestone", "The prerequisite wait ended; source checks are complete for the remaining work");
+      this.k.commitNow();
+    }
+    return conflict;
   }
 
   /** An interrupted commit hook left the working copy detached. The task's commit is still on its branch. */

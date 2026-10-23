@@ -109,11 +109,12 @@ describe("shared step lifetime rules", () => {
     task.toolActivity = { actionCount: 1, lastActivity: "Running a command", runningTool: { id: "call", description: "Running a command", startedAt: 100 } };
     task.journey = [{ id: "tools", kind: "agent", startedAt: 100, round: 1, sub: 0, toolActivity: { builder: task.toolActivity }, toolInvocations: [{ id: "call", turnId: "turn", toolCallId: "call", seat: "builder", roleId: "builder", profileId: "sol-high", productId: "a", description: "Running a command", kind: "execute", startedAt: 100, updatedAt: 100 }] }];
     task.queued = [{ id: "message", text: "Check narrow screens", at: 150 }];
-    const execution = { conversation: { step: "build", roleId: "builder", startedAt: 100, sessionId: "session", profileId: "sol-high", toolId: "codex", model: "sol" } };
+    const execution = { editAttempt: { step: "build", failed: true }, conversation: { step: "build", roleId: "builder", startedAt: 100, sessionId: "session", profileId: "sol-high", toolId: "codex", model: "sol" } };
     expect(pauseTaskState(task, execution, 200)).toBe(true);
     expect(task.holdsSlot).toBe(false);
     expect(task.agent).toBeUndefined(); expect(task.helpers).toBeUndefined(); expect(task.todo).toBeUndefined();
     expect(execution.conversation).toBeUndefined();
+    expect(execution.editAttempt).toEqual({ step: "build", failed: true });
     expect(task.toolActivity).toBeUndefined();
     expect(task.journey[0]!.toolActivity!.builder!.runningTool).toBeUndefined();
     expect(task.journey[0]!.toolInvocations![0]!.status).toBeUndefined();
@@ -125,15 +126,17 @@ describe("shared step lifetime rules", () => {
     cancelTaskState(task, execution, 300);
     expect(task.finishedAt).toBe(300);
     expect(task.state).toBe("cancelled");
+    expect(execution.editAttempt).toBeUndefined();
   });
 
   it("records one completed step but never learns durations from a restarted step", () => {
     const task = request();
-    const execution = { stepAttempts: 1 };
+    const execution = { stepAttempts: 1, editAttempt: { step: "build" } };
     task.stepClock = startClock(task, "builder", 100);
     finishTaskStep(task, execution, 1100);
     expect(task.steps).toHaveLength(1);
     expect(task.stepClock).toBeUndefined();
+    expect(execution.editAttempt).toBeUndefined();
     task.stepClock = startClock(task, "builder", 1200); execution.stepAttempts = 2;
     finishTaskStep(task, execution, 9000);
     expect(task.steps).toHaveLength(1);

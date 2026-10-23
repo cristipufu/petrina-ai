@@ -3,6 +3,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { slotUses, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";
@@ -466,6 +467,67 @@ describe.concurrent("a full model beside a working peer", () => {
 });
 
 describe.concurrent("a full model when the group stops or ends", () => {
+  it("keeps a capacity reviewer out during a prerequisite wait, then continues only its missing report in the same round", async () => {
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] });
+    const owned: ChildProcess[] = [];
+    try {
+      await run.paused("review-1", "sol-high", 1);
+      const opus = await heldOne(run, "code reviewer");
+      const sol = await sessionOn(run, "code reviewer", SOL);
+      const group = run.engine.screenGroups.get(run.taskId)!;
+      owned.push(...[...(run.engine.helperRuns.get(run.taskId) ?? [])].map((agent) => agent["child"]));
+      const input = structuredClone(run.task().hunt!.input);
+      const prerequisite = run.engine.addTask({ productId: run.productId, title: "Fix the capacity checks", backlog: true });
+      run.engine.setRuntimeWait(run.taskId, [prerequisite], "Wait for the capacity checks to land", "hold-capacity-review");
+      const message = "Keep the completed report and check the guest view";
+      run.engine.sendMessage(run.taskId, message);
+      for (const entry of run.task().modelCapacity ?? []) if (entry.modelId === SOL) entry.until = Date.now() - 1;
+      // Both the scheduler preview and its callback must respect the task's hold, even with a seat available.
+      expect(group.returning!()).toEqual([]);
+      group.rejoin!();
+      run.engine.schedule();
+      expect(group.running("review-1")).toBe(false);
+      expect(run.prompts("code reviewer", sol)).toHaveLength(1);
+      expect(group.running("review-0")).toBe(true);
+      expect(slotUses(run.engine.activeState()).filter((use) => use.taskId === run.taskId)).toHaveLength(1);
+      run.release(opus);
+      const waiting = await waitFor(() => {
+        const current = run.task();
+        return current.state === "waiting" && !run.engine.drivers.has(run.taskId) && !run.engine.settling.has(run.taskId) && current;
+      }, "the admitted report to settle before the prerequisite wait");
+      expect(waiting.statusLine).toContain("Fix the capacity checks");
+      expect(waiting.hunt?.reported).toEqual({ "0": true });
+      expect(waiting.hunt?.input).toEqual(input);
+      expect(waiting.holdsSlot).toBe(false);
+      expect(slotUses(run.engine.activeState()).filter((use) => use.taskId === run.taskId)).toHaveLength(0);
+      expect(roundOf(waiting as Task)).toBe(1);
+      expect(run.prompts("code reviewer", sol)).toHaveLength(1);
+      const peerPrompts = run.prompts("code reviewer", opus);
+      const peerOpens = run.opens(opus);
+      run.engine.setRuntimeWait(run.taskId, [], "The coordinator resolved the prerequisite", "release-capacity-review");
+      run.engine.schedule();
+      const task = await run.done();
+      expect(roundOf(task)).toBe(1);
+      expect(run.prompts("code reviewer", opus)).toEqual(peerPrompts);
+      expect(run.opens(opus)).toEqual(peerOpens);
+      expect(peerPrompts.filter((prompt) => prompt.text.includes(message))).toHaveLength(1);
+      const resumed = run.prompts("code reviewer", sol);
+      expect(resumed).toHaveLength(2);
+      expectShortContinues(resumed.slice(1));
+      expect(resumed.filter((prompt) => prompt.text.includes(message))).toHaveLength(1);
+      expect(run.opens(sol)).toEqual(["new", "resume"]);
+      expect(run.fakes.received("builder")).toHaveLength(1);
+      const verdicts = run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["verdict"] });
+      for (const profileId of ["opus-high", "sol-high"]) {
+        expect(verdicts.filter((entry) => entry.profileId === profileId)).toHaveLength(1);
+        expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
+      }
+    } finally {
+      await run.engine.shutdown();
+      expect(owned.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+    }
+  });
+
   it("shows the capacity wait once every peer finished first, waits out a paused pool, then continues the same conversation", async () => {
     const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] });
     try {

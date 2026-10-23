@@ -120,6 +120,13 @@ export const OPERATIONS = [
     true,
   ),
   op(
+    "task.wait",
+    "Let a started task wait for the complete prerequisite list to land, with a saved reason. Admitted work finishes; no new work starts. An empty list explicitly clears the wait. Never-started tasks use task.dependencies instead.",
+    // Keep input shapes strict; the shared wait rules explain semantic limits in plain language.
+    { ...task, after: z.array(id).describe("Complete list of up to 20 prerequisites. An empty list clears the wait."), reason: z.string().describe("Required reason between 1 and 1,000 characters.") },
+    true,
+  ),
+  op(
     "task.track-finding",
     "Record that a complete confirmed older report left Not tracked is tracked in an existing bug task, including from History. Waits for automatic linking; never runs agents or creates a task.",
     { ...task, findingId: id, targetTaskId: id },

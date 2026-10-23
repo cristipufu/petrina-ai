@@ -56,8 +56,16 @@ function profilesOf(node: JourneyNode, find: Lookup) {
 
 /** Tool and model, or the tasks a waiting step waits for. */
 function toolLine(node: JourneyNode, find: Lookup): string | undefined {
-  if (node.kind === "wait") return node.waitsOn?.length ? quoteTitles(node.waitsOn.map((entry) => entry.title)) : undefined;
-  return profilesOf(node, find).map((profile) => `${node.legacy ? "Planned: " : ""}${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profileModelName(profile)}`).join("\n") || undefined;
+  let line: string | undefined;
+  if (node.kind === "wait") {
+    line = node.waitStates ? node.waitsOn?.map((entry) => {
+      const state = node.waitStates?.find((saved) => saved.id === entry.id)?.state;
+      return `“${entry.title}”${state ? ` · ${state}` : ""}`;
+    }).join(", ") : node.waitsOn?.length ? quoteTitles(node.waitsOn.map((entry) => entry.title)) : undefined;
+  } else {
+    line = profilesOf(node, find).map((profile) => `${node.legacy ? "Planned: " : ""}${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profileModelName(profile)}`).join("\n");
+  }
+  return [line, node.waitReason].filter(Boolean).join("\n") || undefined;
 }
 
 /** The last line of a box: its time and how it ended, or what it is doing now. Your steps say it in two short lines. */
@@ -130,6 +138,7 @@ export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: 
   const parts = [`${index + 1}. ${name}`, stateWords(node)];
   for (const profile of profilesOf(node, find)) parts.push(`${node.legacy ? "Planned: " : ""}${profileText(profile, find, true)}`);
   if (node.kind === "wait" && node.waitsOn?.length) parts.push(`Waits for ${quoteTitles(node.waitsOn.map((entry) => entry.title))}`);
+  if (node.waitReason) parts.push(`Reason for waiting: ${node.waitReason}`);
   const time = timeOf(node, now);
   if (time) parts.push(node.kind === "you" ? (node.endedAt === undefined ? `Waiting ${time} so far` : `Waited ${time}`) : node.endedAt === undefined ? `${time} elapsed so far` : `${time} elapsed`);
   const outcome = reviewOutcome(node, find.role(node.roleId));
@@ -615,15 +624,17 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
               <dd>{profiles.map((profile) => <span key={profile.id} className="journey-agent-profile"><ToolIcon toolId={profile.toolId} /><span>{profileText(profile, find, true)}</span></span>)}</dd>
             </>
           )}
-          {node.kind === "wait" && node.waitsOn?.length ? (
+          {node.waitReason && <><dt>Reason for waiting</dt><dd className="prose">{node.waitReason}</dd></>}
+          {node.waitsOn?.length ? (
             <>
               <dt>Waits for</dt>
               <dd>
                 {node.waitsOn.map((entry) => {
                   const other = find.task(entry.id) ?? find.finishedTask(entry.id);
+                  const recorded = node.waitStates?.find((saved) => saved.id === entry.id);
                   return (
                     <span key={entry.id} className="journey-waits">
-                      “{other?.title ?? entry.title}” <span className="quiet-text">{other ? LANDING_WORDS[dependencyLanding(other)] : "no longer on the board"}</span>
+                      “{other?.title ?? entry.title}” <span className="quiet-text">{recorded ? `${recorded.state}${recorded.decisionNeeded ? " · your decision is needed" : ""}` : other ? LANDING_WORDS[dependencyLanding(other)] : "no longer on the board"}</span>
                     </span>
                   );
                 })}

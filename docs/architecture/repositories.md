@@ -43,6 +43,8 @@ Right before the delivery check, and again right before it gets the delivery rea
 
 Overlapping: the working copy is put on main with the change applied, conflict markers and all, and the builder brings it up to date (it learns what main changed from its commits, ports the change, leaves no markers, runs every check). The same happens at the start of every review round, so a conflict is found before any reviewer spends time and a port after a review stays the exception.
 
+When an update after a prerequisite wait reaches a pending Builder repair, that turn both resolves the conflicts and answers its owed findings. It keeps the repair's product order, return step, allowances and ordinary conversation rules. Each owner retains its repair reason: a companion added only for a conflict remains a port, with its saved conversation and focused port review where applicable. Pending findings repairs still need the full planned review, even when their edits touch only conflicting files.
+
 One overlap Petrina settles itself: both sides only added approved [learnings](agents.md#learnings-in-agentsmd) (`keptLearnings` in `packages/engine/src/learnings.ts`). Every condition must hold, or the ordinary path above runs unchanged:
 
 - The work is updated onto the product's own main, not a starting branch or pull request. AGENTS.md is the only conflicting file, a plain file in the shared starting version (the merge base), on main and in the task, and its Learnings section already existed at the starting point.

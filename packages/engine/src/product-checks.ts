@@ -15,7 +15,7 @@ import { namedCheckFailures } from "./related-check-evidence.js";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { withoutCredentials } from "./env.js";
-import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait, type MTask } from "./kernel.js";
+import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait, SourceRefreshRequired, type MTask } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -92,7 +92,7 @@ export class ProductChecks {
   }
 
   claimPreparation(taskId: Id): boolean {
-    if (this.k.admissionsClosed || !this.canPrepare(taskId)) return false;
+    if (this.k.taskAdmissionsClosed(taskId) || !this.canPrepare(taskId)) return false;
     this.preparations.add(taskId);
     return true;
   }
@@ -102,22 +102,33 @@ export class ProductChecks {
   private async turnToRun(scope: RepositoryContext, signal: AbortSignal): Promise<(() => void) & { waited: boolean }> {
     const { task } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
+    if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
     const most = this.k.options.checkRuns ?? 1;
     const waited = this.running >= most;
     if (waited) {
       task.statusLine = "Waiting to run the checks: another task's run comes first";
       this.k.commit();
       await new Promise<void>((resolve, reject) => {
-        const go = () => {
-          signal.removeEventListener("abort", stop);
-          resolve();
-        };
+        let unsubscribe = () => {};
+        const clean = () => { signal.removeEventListener("abort", stop); unsubscribe(); };
+        const go = () => { clean(); resolve(); };
         const stop = () => {
           const index = this.line.indexOf(go);
           if (index >= 0) this.line.splice(index, 1);
+          clean();
           reject(new Aborted());
         };
+        const hold = () => {
+          if (!this.k.taskAdmissionsClosed(task)) return;
+          const index = this.line.indexOf(go);
+          if (index < 0) return;
+          this.line.splice(index, 1);
+          clean();
+          reject(new WaitingForUsage(this.k.taskAdmissionWait(task)));
+        };
         this.line.push(go);
+        unsubscribe = this.k.subscribe(hold);
+        hold();
         if (signal.aborted) stop();
         else signal.addEventListener("abort", stop, { once: true });
       });
@@ -136,9 +147,9 @@ export class ProductChecks {
       finished();
       throw new Aborted();
     }
-    if (this.k.admissionsClosed) {
+    if (this.k.taskAdmissionsClosed(task)) {
       finished();
-      throw new WaitingForUsage(this.k.draining ? this.k.drainLine : "Waiting for the pool to resume");
+      throw new WaitingForUsage(this.k.taskAdmissionWait(task));
     }
     return Object.assign(finished, { waited });
   }
@@ -193,8 +204,8 @@ export class ProductChecks {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
       this.k.releaseScreen(task);
       restore();
-      // Everyone who could work it is out of usage: the task waits, and the finder runs when one is back.
-      if (error instanceof WaitingForUsage) throw error;
+      // Admission waits leave discovery pending; neither usage nor source catch-up is a failed finder.
+      if (error instanceof WaitingForUsage || error instanceof SourceRefreshRequired) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
       this.k.tracking.failed(scope, error, { roleId: "check-finder", profileId: ran });
       endAgentStep(task, { outcome: W.couldNotFinish, reason: W.checksAsBefore }, Date.now());
@@ -223,7 +234,7 @@ export class ProductChecks {
       task.holdsSlot = false;
       delete task.agent;
     }
-    if (!this.claimPreparation(task.id)) throw new WaitingForUsage("Waiting for room to prepare the product checks");
+    if (!this.claimPreparation(task.id)) throw new WaitingForUsage(this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : "Waiting for room to prepare the product checks");
     this.k.schedule();
     try { return await this.runPreparedChecks(scope, checks, signal, kept, prepared); }
     finally { this.releasePreparation(task.id); }
@@ -233,6 +244,8 @@ export class ProductChecks {
     const { task, work: repository } = scope;
     if (!repository.worktree) return 0;
     let state = prepared ?? await this.captureState(scope, checks);
+    if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
     const hooks = state.hooks;
     const nothing = nothingToRun(checks, hooks);
     // Resuming unfinished release notes revalidates the preparation first. Those repeated checks belong
@@ -273,6 +286,8 @@ export class ProductChecks {
           if (step) step.productChecks = [...(step.productChecks ?? []), entry];
         }
       }
+      if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+      if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
       const failures = await this.runAll(scope, checks, state, signal, entries, kept, attempt.attemptId);
       complete = true;
       return failures;

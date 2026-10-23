@@ -422,6 +422,7 @@ export function withdrawAsks(task: JourneyTask, itemIds: readonly Id[], at: numb
  */
 export function syncWait(task: JourneyTask & Pick<Task, "after">, blockers: readonly Pick<Task, "id" | "title">[], find: (id: Id) => Pick<Task, "state" | "title" | "pr" | "release" | "landed" | "repository" | "repositories"> | undefined, at: number): void {
   const open = openStep(task);
+  if (open?.runtimeWait) return;
   if (blockers.length) {
     if (!open) push(task, { kind: "wait", round: 1, sub: 0, waitsOn: blockers.map(({ id, title }) => ({ id, title })), startedAt: at });
     else if (open.kind === "wait") {
@@ -447,6 +448,46 @@ export function syncWait(task: JourneyTask & Pick<Task, "after">, blockers: read
   ];
   const reason = parts.length ? parts.join("; ") : JOURNEY_WORDS.noLongerWaits;
   close(open, at, { outcome: capitalize(reason), reason });
+}
+
+/** A runtime hold keeps a part-finished group honest instead of claiming a completed review. */
+export function syncRuntimeWaitJourney(task: { journey?: JourneyStep[]; stageIndex: number; plan?: Task["plan"]; rounds: Task["rounds"]; sub: number; fixing: boolean; call?: Task["call"] }, view: { held: boolean; reason: string; phase: "active" | "after-current-work" | "released"; prerequisites: readonly { id: Id; title: string; state: string; landed: boolean; decisionNeeded: boolean }[]; releaseReason?: string }, at: number): boolean {
+  let open = openStep(task);
+  if (view.held) {
+    let added = false;
+    if (!open) { open = push(task, { kind: "wait", runtimeWait: true, round: 1, sub: 0, startedAt: at }); added = true; }
+    if (open.kind === "you" || view.phase === "after-current-work") return added;
+    // Compare only this annotation, never a group's potentially large exact input history.
+    const annotation = () => JSON.stringify([open!.runtimeWait, open!.waitReason, open!.waitsOn, open!.waitStates, open!.outcome]);
+    const before = annotation();
+    open.runtimeWait = true;
+    open.waitReason = view.reason;
+    open.waitsOn = view.prerequisites.map(({ id, title }) => ({ id, title }));
+    open.waitStates = view.prerequisites.map(({ id, state, landed, decisionNeeded }) => ({ id, state, landed, decisionNeeded }));
+    if (open.kind === "agent" && open.seats?.length) {
+      open.waitOutcome ??= { previous: open.outcome };
+      const reported = new Set((open.agentResults ?? []).map(result => {
+        const input = result.inputIndex === undefined ? undefined : open!.agentInputs?.[result.inputIndex];
+        return input?.reviewerKey ?? input?.place ?? result.profileId;
+      })).size;
+      open.outcome = `${reported} of ${open.seats.length} reported; waiting for prerequisites`;
+    }
+    return added || before !== annotation();
+  }
+  if (open?.kind === "wait" && open.runtimeWait) {
+    if (view.prerequisites.length) open.waitStates = view.prerequisites.map(({ id, state, landed, decisionNeeded }) => ({ id, state, landed, decisionNeeded }));
+    close(open, at, { outcome: view.releaseReason ?? "The wait ended", reason: view.releaseReason ?? "The wait ended" });
+    return true;
+  } else if (open && open.kind !== "you" && open.runtimeWait) {
+    delete open.waitReason; delete open.waitsOn; delete open.waitStates; delete open.runtimeWait;
+    if (open.waitOutcome) {
+      if (open.waitOutcome.previous !== undefined) open.outcome = open.waitOutcome.previous;
+      else delete open.outcome;
+      delete open.waitOutcome;
+    }
+    return true;
+  }
+  return false;
 }
 
 const LEGACY_WAITS: Partial<Record<InboxKind, JourneyWait>> = { plan: "plan", design: "design", delivery: "delivery", disagreement: "call", stuck: "stuck", shipping: "shipping" };
@@ -596,6 +637,8 @@ export interface JourneyNode {
   stageId?: Id;
   waitsFor?: JourneyWait;
   waitsOn?: readonly { id: Id; title: string }[];
+  waitReason?: string;
+  waitStates?: JourneyStep["waitStates"];
   startedAt?: number;
   endedAt?: number;
   outcome?: string;
@@ -787,6 +830,8 @@ export function journeyView(task: Task, ctx: JourneyContext): JourneyView {
       ...(step.stageId ? { stageId: step.stageId } : {}),
       ...(step.waitsFor ? { waitsFor: step.waitsFor } : {}),
       ...(step.waitsOn ? { waitsOn: step.waitsOn } : {}),
+      ...(step.waitReason ? { waitReason: step.waitReason } : {}),
+      ...(step.waitStates ? { waitStates: step.waitStates } : {}),
       ...(step.legacy ? { legacy: true } : { startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}) }),
       ...(outcome ? { outcome } : {}),
       ...(step.acceptanceChecks ? { acceptanceChecks: step.acceptanceChecks } : {}),

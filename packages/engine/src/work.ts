@@ -99,7 +99,7 @@ export class Work {
       if (updating) {
         // A first review, an unreviewed fix, or work beyond the conflicts needs the whole planned review.
         // Check the saved code too: older updates recorded a head without recording any completed review.
-        const reviewed = updating.head && repository.reviewedTree && repository.reviewedTree === await git.treeOf(repository.worktree!, updating.head);
+        const reviewed = !task.fixing && updating.head && repository.reviewedTree && repository.reviewedTree === await git.treeOf(repository.worktree!, updating.head);
         const merged = reviewed ? await git.mergeTree(repository.worktree!, updating.onto, updating.head) : undefined;
         const portOnly = merged && (await git.changedFiles(repository.worktree!, merged.tree, await git.head(repository.worktree!))).every((file) => updating.files.includes(file));
         delete repository.updating;
@@ -361,8 +361,9 @@ export class Work {
       if (task.repair) {
         task.repair.index += 1;
         if (task.repair.index < task.repair.products.length) {
-          task.activeProductId = task.repair.products[task.repair.index]!;
-          task.fixing = true;
+          const next = task.repair.products[task.repair.index]!;
+          task.activeProductId = next;
+          task.fixing = !task.repair.portProducts?.includes(next);
           this.k.commitNow();
           return "continue";
         }

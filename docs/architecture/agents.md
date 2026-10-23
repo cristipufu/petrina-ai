@@ -303,6 +303,8 @@ If the conversation cannot be reopened, a fresh one starts with the usual openin
 
 The screen goes to one agent, first asked, first served. It is held from the moment it is given until that agent's step ends: it hands back its result, fails, or is paused or cancelled. Waiting requests hold no slot. When the screen frees, the earliest allowed request continues next, ahead of queued tasks, as long as a slot is free. Until then it waits for a slot like any other task and says so; a paused pool holds it like any other agent.
 
+A task's runtime prerequisite wait keeps its screen request, approval, original place and conversation, but leaves it out of the screen line until release. An unanswered permission request stays in the Inbox with the same reference and can be approved while held; approval does not admit a new screen turn. An agent already using the screen, or a coordinator driving its terminal, keeps it until that session settles, including when a parallel peer fails and the group is closing. Between sessions, including after a restart, a held task returns its grant to the saved request so other tasks can use the screen.
+
 ### Switching off
 
 (or a task's allowance going off, or For an hour running out) never stops or messages the agent on the screen. It keeps the screen until its step ends; nobody new gets it. Requests that only the switch allowed go back to waiting for an OK; Allow now stays for its request.

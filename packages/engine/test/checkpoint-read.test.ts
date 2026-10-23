@@ -115,6 +115,32 @@ it("links a no-brief delivery to its actual seven passes, unavailable Linux chec
   expect((await f.c.call("inbox.inspect", { itemId })).revision).toBe(pages[0]!.revision);
 });
 
+it("keeps delivery evidence readable and decisions bound to that evidence through prerequisite wait changes", async () => {
+  const f = fixture(), node = recordAcceptance(f);
+  f.task.startedAt = 1;
+  f.task.state = "needs-you";
+  const prerequisiteId = f.e.addTask({ productId: "product", title: "Fix the unavailable verification" });
+  const itemId = f.offer("delivery");
+  const before = await complete(f.c, "inbox.inspect", { itemId });
+  for (const [index, reason] of ["The verification fix must land", "The final verification still needs the fix"].entries()) {
+    expect((await f.c.call("task.wait", { taskId: f.taskId, after: [prerequisiteId], reason, requestId: `wait-evidence-${index}` })).outcome).toBe("completed");
+    const held = await complete(f.c, "inbox.inspect", { itemId });
+    expect(held.pages[0]!.revision).toBe(before.pages[0]!.revision);
+    expect(held.value.acceptance).toEqual(before.value.acceptance);
+    const { operation, ...args } = held.value.acceptance.evidence.report;
+    expect((await complete(f.c, operation, args)).value).toEqual(node.agentResults![0]!.value);
+  }
+  node.acceptanceChecks![0]!.evidence += " A changed recorded observation";
+  expect((await f.c.call("inbox.approve", { itemId, revision: before.pages[0]!.revision, requestId: "changed-held-evidence" })).outcome).toBe("changed");
+  const changed = await complete(f.c, "inbox.inspect", { itemId });
+  expect(changed.pages[0]!.revision).not.toBe(before.pages[0]!.revision);
+  expect((await f.c.call("task.wait", { taskId: f.taskId, after: [], reason: "Proceed with the recorded evidence", requestId: "clear-evidence-wait" })).outcome).toBe("completed");
+  const cleared = await complete(f.c, "inbox.inspect", { itemId });
+  expect(cleared.pages[0]!.revision).toBe(changed.pages[0]!.revision);
+  expect(cleared.value.acceptance).toEqual(changed.value.acceptance);
+  expect(f.e.s.inbox.find((item) => item.id === itemId)).toBeDefined();
+});
+
 it("leaves acceptance coverage unknown after only the product's check commands change", async () => {
   const f = fixture(); recordAcceptance(f);
   const itemId = f.offer("delivery");

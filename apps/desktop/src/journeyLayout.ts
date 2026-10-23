@@ -129,7 +129,7 @@ export function layoutJourney(view: JourneyView, width: number, rem: number, sta
   const size = (entry: typeof entries[number]) => {
     const body = entry.kind === "box" ? SIZES.box : entry.kind === "you" ? SIZES.you : entry.kind === "start" ? SIZES.start : SIZES.end;
     // Each reviewer or voter gets a readable tool-and-model line in the shared box.
-    return { w: body.w, h: body.h + (entry.node?.kind === "agent" ? Math.max(0, (entry.node.team?.length ?? 1) - 1) : 0) };
+    return { w: body.w, h: body.h + (entry.node?.kind === "agent" ? Math.max(0, (entry.node.team?.length ?? 1) - 1) : 0) + (entry.node?.waitReason ? 1 : 0) };
   };
   const asksBelow = (node?: JourneyNode) => (node?.asks.length ? px(SIZES.ask.drop) + node.asks.length * px(SIZES.ask.h) + (node.asks.length - 1) * px(SIZES.ask.gap) : 0);
   const left = px(SIZES.padX);

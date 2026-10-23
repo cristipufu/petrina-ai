@@ -7,7 +7,7 @@ import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
 import { ImagePreview } from "../MessageBody";
-import { TaskDependencies } from "../TaskDependencies";
+import { TaskDependencies, TaskRuntimeWait } from "../TaskDependencies";
 import { WhatItUsed } from "./WhatItUsed";
 import { Journey } from "../Journey";
 import { TimelineList } from "../Timeline";
@@ -91,6 +91,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
       )}
 
       <TaskDependencies key={`dependencies-${task.id}`} task={task} state={state} onOpenTask={onOpenTask} onEdit={onDependencies} />
+      <TaskRuntimeWait key={`runtime-wait-${task.id}`} task={task} state={state} onOpenTask={onOpenTask} />
 
       {builderCheckSummary(task) && <section className="sheet-section reading"><h2>Latest Builder return</h2><p className="prose">{builderCheckSummary(task)}</p><p className="note">Earlier task changes are retained.</p></section>}
       <section className="sheet-section">

@@ -98,15 +98,16 @@ export class Updates {
    * changes and this one overlap, so the task is back on its builder step, with the working copy on main and the
    * change applied, conflict markers and all.
    * `fresh`: right before shipping, where only main freshly fetched from GitHub counts for a GitHub delivery.
+   * `requiredSource`: release from a prerequisite wait also refuses a missing approved GitHub connection.
    */
-  async upToDate(scope: RepositoryContext, signal: AbortSignal, fresh = false): Promise<"current" | "moved" | "conflict"> {
+  async upToDate(scope: RepositoryContext, signal: AbortSignal, fresh = false, requiredSource = false): Promise<"current" | "moved" | "conflict"> {
     const { task, work: repository } = scope;
     if (task.repositories && (repository.pr || repository.release || repository.landed)) return "current";
     const worktree = repository.worktree;
     const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
     if (!worktree) return "current";
     const foldedFork = await this.fold(scope);
-    const latest = await this.latestMain(scope, signal, fresh);
+    const latest = await this.latestMain(scope, signal, fresh, requiredSource);
     if (!latest) return "current";
     // Checked before treating an older tip as already current. A rewrite can keep the first starting commit
     // and still drop a source commit this task already brought in.
@@ -166,10 +167,26 @@ export class Updates {
     delete repository.approvedFor;
     repository.baseSha = latest.sha;
     repository.base = latest.ref;
-    if (task.repositories) task.repair = { products: [repository.productId], index: 0, returnStage: task.stageIndex, kind: "review" };
+    if (task.repositories) {
+      // A post-wait update examines companions even after one conflict. Save all unfinished
+      // owners before opening markers, retaining the existing repair's cursor and return step.
+      // A conflict added for a new owner does not turn that owner's port into a findings repair.
+      const repair = task.repair;
+      if (repair) {
+        if (!repair.products.slice(repair.index).includes(repository.productId)) task.repair = {
+          ...repair,
+          products: [...repair.products, repository.productId],
+          portProducts: [...new Set([...(repair.portProducts ?? []), repository.productId])],
+        };
+      } else task.repair = {
+        products: [repository.productId], index: 0, returnStage: task.stageIndex, kind: "review",
+        portProducts: task.fixing ? [] : [repository.productId],
+      };
+    }
     task.stageIndex = builder;
     task.sub = 0;
-    task.fixing = false;
+    // An update after a prerequisite wait can reach a Builder repair that is already owed.
+    // The same turn must still answer its findings and reuse its saved conversation.
     this.k.commitNow();
     await git.openOn(worktree, latest.sha, merged.tree);
     const files = merged.conflicts.length === 1 ? "1 file conflicts" : `${merged.conflicts.length} files conflict`;
@@ -231,7 +248,7 @@ export class Updates {
    * local destination commits. Explicit sources never fall back to an old copy. Ordinary default-branch
    * tasks keep their existing fallback before delivery; publishing always needs a fresh GitHub read.
    */
-  private async latestMain(scope: RepositoryContext, signal: AbortSignal, fresh: boolean): Promise<{ ref: string; sha: string } | undefined> {
+  private async latestMain(scope: RepositoryContext, signal: AbortSignal, fresh: boolean, requiredSource: boolean): Promise<{ ref: string; sha: string } | undefined> {
     const { work: repository } = scope;
     const product = this.k.repositoryOf(scope);
     if (!product?.path) return undefined;
@@ -242,6 +259,7 @@ export class Updates {
     } else if (!(repository.delivery === "local" && !product.remote && product.remoteRefused)) {
       const fetched = await this.connections.fetchDefault(scope, signal);
       if (fetched.ok) remote = { ref: `origin/${branch}`, sha: fetched.sha };
+      else if (requiredSource && (repository.delivery !== "local" || !!product.remote && !product.remoteRefused && !product.repo.startsWith("local/"))) throw new Error(`Petrina could not get the latest starting code from GitHub (${this.connections.why(scope, fetched)}). Your work is preserved. Try again when the connection is available.`);
       else if (fresh && !fetched.missing) throw new Error(`Petrina could not get the latest ${branch} from GitHub (${this.connections.why(scope, fetched)}), so it published nothing. Retry when that is sorted.`);
       else if (!fetched.missing) this.k.log(scope, "warn", `Did not update from GitHub: ${this.connections.why(scope, fetched)}, so Petrina compared the work with the local copy of ${branch}`);
     }

@@ -11,7 +11,7 @@ import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE,
 /** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
 const GUIDE_SECTION = "## Review guide";
 const GUIDE_POINTER = `Every change here is reviewed against ${GUIDE_FILE}: read it before you build or review one. A change is judged by the guide as the default branch has it, never by what the change itself writes there.`;
-import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, ScreenWait } from "./kernel.js";
+import { Kernel, Aborted, GUIDE_KEEPER_PROFILE, ScreenWait, SourceRefreshRequired } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import { beginSideStep } from "./side-step.js";
 import type { Turns } from "./turn.js";
@@ -94,7 +94,7 @@ export class GuideKeeper {
       if (signal.aborted || error instanceof Aborted || error instanceof ScreenWait) throw error;
       this.k.releaseScreen(task);
       restore();
-      if (error instanceof WaitingForUsage) throw error;
+      if (error instanceof WaitingForUsage || error instanceof SourceRefreshRequired) throw error;
       // Petrina carries on without it, but it is still a failure in Analytics.
       this.k.tracking.failed(scope, error, { roleId: "guide-keeper", profileId: ran });
       endAgentStep(task, { outcome: W.couldNotFinish, reason: W.backToBuilder }, Date.now());

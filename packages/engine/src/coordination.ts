@@ -1,5 +1,5 @@
 import { messageRemovalText } from "@petrina/core";
-import { checkProblem, displayTask, originalCheck, reviewDecisionPending, roleForTask } from "@petrina/core";
+import { checkProblem, displayTask, originalCheck, reviewDecisionPending, roleForTask, runtimeWaitView } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, seatRemaining, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
@@ -50,11 +50,30 @@ export function serial<T>(engine: Engine, run: () => T | Promise<T>): Promise<T>
 /** Awaiting merge confirms a delivery; only landing proves it landed. */
 const deliveryConfirmed = (landing: Landing): boolean => landing === "landed" || landing === "awaiting-merge";
 
+/** Retain each wait decision once, including after its ordinary timeline entry is evicted. */
+function taskTimeline(task: Task) {
+  const changes = task.runtimeWait?.changes ?? [];
+  const audit = (change: typeof changes[number]) => ({ kind: "prerequisite-wait-change", before: change.before, after: change.after, reason: change.reason, requestId: change.requestId ?? null });
+  return [
+    ...task.timeline.map(entry => {
+      const change = changes.find(change => change.timelineId === entry.id);
+      return change ? { ...entry, ...audit(change) } : entry;
+    }),
+    ...changes.flatMap((change, index) => task.timeline.some(entry => entry.id === change.timelineId) ? [] : [{
+      id: change.timelineId ?? `${task.id}:prerequisite-wait:${index}`, at: change.at, tone: "you",
+      text: change.after.length ? `You set the prerequisite wait. ${change.reason}` : `You cleared the prerequisite wait. ${change.reason}`,
+      ...audit(change),
+    }]),
+  ].sort((left, right) => left.at - right.at);
+}
+
 export function taskSummary(engine: Engine, task: Task) {
   // Delivery describes the whole task, whichever product is displayed.
   const landing = taskLanding(task);
   task = displayTask(task);
   const state = engine.activeState();
+  const wait = runtimeWaitView(task, (id) => engine.task(id) ?? engine.taskDetails(id));
+  const { changes: _changes, ...waitSummary } = wait ?? {};
   return {
     id: task.id,
     productId: task.productId,
@@ -63,6 +82,7 @@ export function taskSummary(engine: Engine, task: Task) {
     held: task.held,
     priority: task.priority,
     after: task.after ?? [],
+    ...(wait ? { runtimeWait: waitSummary, waitKind: wait.held ? wait.decisionNeeded ? "needs-your-decision" : "dependencies" : null } : {}),
     summary: mainLine(task),
     activity: task.toolActivity ?? null,
     workers: [task.agent, ...(task.helpers ?? [])].filter(Boolean).map(worker => ({ ...worker, activity: worker?.reviewKey ? task.hunt?.work?.[worker.reviewKey]?.toolActivity ?? null : task.toolActivity ?? null })),
@@ -310,7 +330,7 @@ export class Coordination {
         })();
       }
       // Task creation and its retry receipt are durable before the first admission pass.
-      if (name === "task.add" && result.outcome === "completed") this.engine.schedule();
+      if (["task.add", "task.wait"].includes(name) && result.outcome === "completed") this.engine.schedule();
       return clone(result);
     });
   }
@@ -368,7 +388,7 @@ export class Coordination {
           {
             request: { title: task!.title, description: task!.description },
             conversation: task!.session,
-            timeline: task!.timeline,
+            timeline: taskTimeline(task!),
             findings: a.findingId ? task!.findings.find((finding) => finding.id === a.findingId) : task!.findings,
             design: task!.brief || task!.objections.length || task!.call ? { brief: task!.brief ?? null, objections: task!.objections, call: task!.call ?? null } : undefined,
             messages: task!.queued,
@@ -663,6 +683,13 @@ export class Coordination {
       case "task.dependencies":
         e.setAfter(a.taskId, a.after);
         break;
+      case "task.wait": {
+        const changed = e.setRuntimeWait(a.taskId, a.after, a.reason, a.requestId);
+        return done({ taskId: a.taskId, unchanged: !changed, message: changed
+          ? a.after.length ? "Wait saved. Already-admitted work finishes before the task waits." : "Wait cleared. Ordinary scheduling and checks still apply."
+          : !a.after.length && t!.runtimeWait?.releasedAt !== undefined ? "Unchanged. This prerequisite wait has already ended."
+          : t!.runtimeWait ? "Unchanged. This prerequisite wait is already saved." : "Unchanged. This task has no prerequisite wait to clear." });
+      }
       case "task.reorder":
         if (t!.state !== "queued") return unavailable("Only queued tasks can be reordered.");
         if (a.anchorId && a.side) {

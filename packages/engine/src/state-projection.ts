@@ -51,7 +51,7 @@ export class StateProjection {
       hunt: task.hunt ? { ...task.hunt, findingChecks: undefined } : undefined,
     })) as Task[];
     const usageReads: NonNullable<State["pool"]["usageReads"]> = this.k.usageCoordinator.snapshot();
-    const dependencyIds = this.k.stopped ? [] : [...new Set([...this.k.s.inbox.map((item) => item.taskId), ...this.k.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])];
+    const dependencyIds = this.k.stopped ? [] : [...new Set([...this.k.s.inbox.map((item) => item.taskId), ...this.k.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.runtimeWait?.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])];
     const key = JSON.stringify([this.k.store.history.info().revision, dependencyIds]);
     // Streaming changes do not re-read archived delivery state. Keep only the current
     // dependency set, refreshing it when membership or the history revision changes.

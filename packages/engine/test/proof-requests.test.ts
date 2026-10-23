@@ -941,6 +941,37 @@ it("checks a saved prepared delivery again after main moves and retains the publ
   } finally { await f.engine.shutdown(); }
 });
 
+it("refreshes a released prerequisite before publishing and retains exact-version proof approval", async () => {
+  const f = await fixture(); const request = await f.request(); await f.recordPass();
+  try {
+    f.task.startedAt = 1; f.task.stageIndex = 4; f.task.proofRefreshes = 2;
+    f.task.approvedProofDecision = proofDecision(f.task, await versionsOf(f.task));
+    const approved = structuredClone(f.task.approvedProofDecision);
+    expect(await f.engine["shipping"]["prepare"](f.scope, f.ship, signal())).toBe("ready");
+    const prerequisite = f.engine.addTask({ productId: f.products[0]!.id, title: "Land the required fix", backlog: true });
+    f.engine.setRuntimeWait(f.task.id, [prerequisite], "Publishing needs this fix", "proof-wait");
+    await f.advance();
+    const destination = await git(f.products[0]!.path!, "rev-parse", "main");
+    f.engine.setRuntimeWait(f.task.id, [], "The required source is ready", "proof-clear");
+    expect(await f.engine["shipping"].deliver(f.task, f.ship, signal())).toBe("continue");
+    expect(f.task.runtimeWait?.refreshPending).toBe(true);
+    expect(await f.engine["driver"]["refreshAfterWait"](f.task, signal())).toBe(false);
+    expect(f.task.runtimeWait?.refreshPending).toBeUndefined();
+    expect(f.task.approvedProofDecision).toEqual(approved);
+    expect(await f.engine["shipping"].deliver(f.task, f.ship, signal())).toBe("continue");
+    expect(f.task.stageIndex).toBe(3);
+    expect(f.task.approvedProofDecision).toBeUndefined();
+    expect(request.status).toBe("stale");
+    expect(f.task.proofRefreshes).toBe(2);
+    expect(f.task.findings).toEqual([]);
+    expect(await git(f.products[0]!.path!, "rev-parse", "main")).toBe(destination);
+    await f.drive();
+    expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
+    expect(f.task.checkedProofDecision).not.toEqual(approved);
+    expect(f.task.proofRefreshes).toBe(2);
+  } finally { await f.engine.shutdown(); }
+});
+
 it("requires explicit release-gap approval and permits only Petrina's verified version commit, including the pushed restart and shared continuation", async () => {
   const f = await fixture(true); await f.request(); await f.recordPass();
   try {

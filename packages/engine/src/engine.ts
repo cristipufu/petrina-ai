@@ -1,6 +1,6 @@
 import { ProfileChoiceReader } from "./profile-choices.js";
 import { completeAll } from "./parallel.js";
-import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
+import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, validateRuntimeWait, changeRuntimeWait, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
 import { executionFor, scopesFor } from "./repository-context.js";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
@@ -65,7 +65,7 @@ import * as library from "@petrina/core";
 import * as git from "./git.js";
 import { parseCommand } from "./checks.js";
 import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
-import { Kernel, TONES, type EngineOptions, type MTask } from "./kernel.js";
+import { Kernel, TONES, stepKey, type EngineOptions, type MTask } from "./kernel.js";
 import { browserCommand, expandPath, findClones } from "./setup.js";
 import { ToolChecks } from "./tool-checks.js";
 import { Readiness } from "./readiness.js";
@@ -276,6 +276,7 @@ export class Engine extends Kernel implements Commands {
   schedule(): void {
     if (this.stopped) return;
     if (!this.startupComplete) {
+      this.driver.syncRuntimeWaits();
       this.syncScreen();
       this.commitNow();
       this.startupSchedulePending = true;
@@ -794,6 +795,25 @@ export class Engine extends Kernel implements Commands {
     if (task.state === "queued") syncWait(task, this.blockers(task), (id) => this.task(id), Date.now());
     this.log(task, "you", ids.length ? AFTER_WORDS.starts(ids.map((id) => this.task(id)!.title)) : AFTER_WORDS.none);
     this.commitNow(); this.schedule();
+  }
+
+  /** Save a coordinator's runtime prerequisite decision without interrupting admitted work. */
+  setRuntimeWait(taskId: Id, after: readonly Id[], reason: string, requestId: string): boolean {
+    const task = this.task(taskId);
+    if (!task) throw new Error("That task does not exist.");
+    const input = validateRuntimeWait(task, after, reason, (id) => this.task(id) ?? this.taskDetails(id));
+    if (!changeRuntimeWait(task, { ...input, requestId }, Date.now())) return false;
+    // Save the admitted step with the decision, even if the coordinator clears the wait
+    // before scheduling runs again or that step fails before the next scheduler pass.
+    if (input.after.length && !task.runtimeWait!.refreshAfterStep && this.taskStepStarted(task)) task.runtimeWait!.refreshAfterStep = stepKey(task);
+    task.runtimeWait!.titles = { ...task.runtimeWait!.titles, ...Object.fromEntries(input.after.map(id => [id, this.taskDetails(id)!.title])) };
+    this.log(task, "you", input.after.length
+      ? `You asked this task to wait for ${input.after.map((id) => `“${this.task(id)?.title ?? this.taskDetails(id)?.title ?? id}”`).join(", ")} to land. ${input.reason}`
+      : `You cleared the prerequisite wait. ${input.reason}`);
+    task.runtimeWait!.changes.at(-1)!.timelineId = task.timeline.at(-1)!.id;
+    this.commitNow(task);
+    // The named operation schedules only after its wait and retry receipt commit together.
+    return true;
   }
 
   setPoolLimit(limit: number): void {

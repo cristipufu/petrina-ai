@@ -157,7 +157,7 @@ export interface Scenario {
    * turn with Codex's overloaded stop and no sentence in the agent's text. `times` is how many turns
    * of this conversation stop this way (default one). `retryAfterMs` is an explicit provider delay on a thrown stop.
    */
-  capacity?: { model: string; role?: string; partial?: boolean; onScreen?: boolean; thrown?: boolean; native?: boolean; times?: number; retryAfterMs?: number; armed?: boolean; shape?: "claude" | "grok" | "grok-busy" | "claude-server" }[];
+  capacity?: { waitFor?: string; model: string; role?: string; partial?: boolean; onScreen?: boolean; thrown?: boolean; native?: boolean; times?: number; retryAfterMs?: number; armed?: boolean; shape?: "claude" | "grok" | "grok-busy" | "claude-server" }[];
   /**
    * The agent's own tool reports native retries during the first turn of a conversation with this role (on
    * `model` only, when set). Each step sends a session update, sends a notice on the tool's own route, waits for
@@ -640,6 +640,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const progress = capacityProgress(sessionId);
   const capacity = (plan.capacity ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && !(entry.onScreen && !progress.armed && !text.includes("You may now use the screen for")) && progress.used < (entry.times ?? 1));
   if (capacity) {
+    if (capacity.waitFor && dir) while (!existsSync(join(dir, capacity.waitFor))) await Bun.sleep(20);
     if (dir) writeFileSync(join(dir, `capacity-${sessionId}.json`), JSON.stringify({ used: progress.used + 1, armed: true }));
     if (text.includes('Set "complete" to true only')) session.maintenance = true;
     if (capacity.partial) writeFileSync(join(session.cwd, "capacity-draft.txt"), "A greeting draft\n");

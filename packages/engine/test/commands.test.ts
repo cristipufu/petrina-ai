@@ -229,16 +229,41 @@ describe("a command that does not end normally", () => {
   }
 
   it("does not succeed when its output closed but its exit is never reported", async () => {
-    const failure = await failureOf(runCommand(["git", "--version"], {
+    const failure = await failureOf(runCommand(["petrina-stand-in"], {
       timeoutMs: 300,
-      start: (argv, options) => {
-        const real = Bun.spawn(argv, { ...options, stdout: "pipe", stderr: "pipe" });
-        return { pid: real.pid, stdout: real.stdout, stderr: real.stderr, signalCode: null, exited: new Promise<number>(() => {}), kill: (signal) => real.kill(signal) };
-      },
+      // EOF is already available; starting a real program would not establish that it arrives before the deadline.
+      start: () => ({ stdout: new Response("finished\n").body!, stderr: new Response("").body!, signalCode: null, exited: new Promise<number>(() => {}), kill() {} }),
     }));
     expect(failure.reason).toBe("timeout");
     expect(failure.message).toContain("Its output closed, but its exit was never reported.");
-    expect(failure.stdout).toContain("git version");
+    expect(failure.stdout).toBe("finished\n");
+  });
+
+  it("keeps the failure's original state when output arrives during cleanup", async () => {
+    const stop = new AbortController();
+    let output!: ReadableStreamDefaultController<Uint8Array>;
+    let errorOutput!: ReadableStreamDefaultController<Uint8Array>;
+    const command = runCommand(["petrina-stand-in"], {
+      timeoutMs: 300,
+      signal: stop.signal,
+      start: () => ({
+        stdout: new ReadableStream({ start(controller) { output = controller; } }),
+        stderr: new ReadableStream({ start(controller) { errorOutput = controller; } }),
+        signalCode: null, exited: new Promise<number>(() => {}), kill() {},
+      }),
+    });
+    // Cancelling captures the failure before cleanup; output may still finish while cleanup settles.
+    stop.abort();
+    output.enqueue(new TextEncoder().encode("late output\n"));
+    output.close();
+    errorOutput.close();
+    const failure = await failureOf(command);
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.message).toContain("Its exit was never reported.");
+    expect(failure.message).not.toContain("Its output closed, but its exit was never reported.");
+    expect(failure.stdout).toBe("late output\n");
+    expect(failure.stderr).toBe("");
+    expect(failure.cleanup).toBe("unconfirmed");
   });
 
   it("does not succeed when neither its exit nor the end of its output is ever reported", async () => {

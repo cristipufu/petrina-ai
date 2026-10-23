@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { Window as HappyWindow } from 'happy-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { blocksDependents, historyItem, builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task, type DeepMutable } from '@petrina/core';
+import { blocksDependents, historyItem, builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, syncRuntimeWaitJourney, Simulator, repositoryTaskView, createDemoState, createPortfolioDemo, journeyView, JOURNEY_WORDS, type JourneyView, type State, type Task, type DeepMutable } from '@petrina/core';
 import { App } from '../src/App';
 import { Journey, JourneyEdge, JourneyList, spokenStep, startWords } from '../src/components/Journey';
 import { layoutJourney } from '../src/journeyLayout';
@@ -99,6 +99,56 @@ describe('the journey in the task sheet', () => {
   async function openTask(id: string) {
     await act(async () => host.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${id}"]`)!.click());
   }
+
+  it('shows a runtime wait reason and recorded prerequisite outcomes in its journey and details', async () => {
+    const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh') as DeepMutable<Task>;
+    task.state = 'waiting'; task.agent = undefined; task.helpers = undefined; task.journey = [];
+    const view = { held: true, phase: 'active' as const, reason: 'Final Linux validation needs the capacity fix.', prerequisites: [{ id: 'guest-checkout', title: 'Fix the capacity tests', state: 'cancelled', landed: false, decisionNeeded: true }] };
+    syncRuntimeWaitJourney(task, view, NOW - 100);
+    await mount(state); await openTask(task.id);
+    const node = task.journey!.at(-1)!;
+    const spoken = host.querySelector(`.journey-list li[data-step-id="${node.id}"]`)!;
+    expect(spoken.textContent).toContain('Reason for waiting: Final Linux validation needs the capacity fix.');
+    expect(host.querySelector('.jn-tool[title*="Final Linux validation"]')?.textContent).toContain('cancelled');
+    await act(async () => (spoken as HTMLElement).click());
+    expect(host.querySelector('.journey-details')?.textContent).toContain('Reason for waiting');
+    expect(host.querySelector('.journey-details')?.textContent).toContain(view.reason);
+    expect(host.querySelector('.journey-details')?.textContent).toContain('cancelled · your decision is needed');
+  });
+
+  it('removes a released partial review hold and keeps its real seat results and conversation starts', async () => {
+    const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh') as DeepMutable<Task>;
+    task.state = 'waiting'; task.agent = undefined; task.helpers = undefined; task.journey = [];
+    task.stageIndex = task.plan!.stages.findIndex(stage => stage.roleId === 'code-reviewer');
+    const first = state.profiles[0]!.id, second = state.profiles[1]!.id;
+    const group = beginAgentStep(task, 'code-reviewer', first, NOW - 100, state.roles, [first, second]);
+    group.seats = ['reviewer:0', 'reviewer:1'];
+    group.agentInputs = [{ roleId: 'code-reviewer', profileId: first, reviewerKey: '0', taskTitle: task.title, mode: 'fresh', sections: [] }];
+    group.agentResults = [{ roleId: 'code-reviewer', profileId: first, at: NOW - 50, inputIndex: 0, value: { summary: 'First seat finished its independent review.' } }];
+    const accepted = structuredClone(group.agentResults);
+    const held = { held: true, phase: 'active' as const, reason: 'Final validation needs the capacity fix.', prerequisites: [{ id: 'guest-checkout', title: 'Capacity fix', state: 'still in progress', landed: false, decisionNeeded: false }] };
+    syncRuntimeWaitJourney(task, held, NOW - 40);
+    expect(group.outcome).toBe('1 of 2 reported; waiting for prerequisites');
+    syncRuntimeWaitJourney(task, { ...held, held: false, phase: 'released', releaseReason: 'All required tasks landed' }, NOW - 20);
+    expect(group.agentResults).toEqual(accepted);
+    expect(group.endedAt).toBeUndefined();
+    expect(group.waitReason).toBeUndefined();
+    expect(group.waitsOn).toBeUndefined();
+    expect(group.waitStates).toBeUndefined();
+    expect(group.outcome).toBeUndefined();
+    group.agentInputs = [...group.agentInputs!, { roleId: 'code-reviewer', profileId: second, reviewerKey: '1', taskTitle: task.title, mode: 'continued', resumed: true, sections: [] }];
+    task.state = 'running'; task.statusLine = 'Code reviewer is finishing the remaining seat';
+    task.agent = { roleId: 'code-reviewer', profileId: second, reviewKey: '1', since: NOW - 10, step: 0 };
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${group.id}"]`)!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.textContent).not.toContain('waiting for prerequisites');
+    expect(details.textContent).not.toContain('Reason for waiting');
+    expect(details.textContent).toContain(task.statusLine);
+    expect([...details.querySelectorAll('.journey-input-mode')].map(node => node.textContent)).toEqual(['Fresh conversation', 'Continued conversation']);
+    expect(task.journey).toHaveLength(1);
+    expect(task.journey![0]!.agentResults).toEqual(accepted);
+  });
 
   it.each(['light', 'dark'])('offers final verification without approving delivery after an exhausted review in %s', async theme => {
     localStorage.setItem('petrina.theme', theme);

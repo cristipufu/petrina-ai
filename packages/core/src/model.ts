@@ -363,6 +363,12 @@ export interface JourneyStep {
   waitsFor?: JourneyWait;
   /** `wait`: the tasks it waits for, named as they were then. */
   waitsOn?: readonly { id: Id; title: string }[];
+  /** The coordinator's explicit reason for a runtime prerequisite hold. */
+  waitReason?: string;
+  waitStates?: readonly { id: Id; state: string; landed: boolean; decisionNeeded: boolean }[];
+  runtimeWait?: boolean;
+  /** A temporary partial-group line restores any real outcome when its hold ends. */
+  waitOutcome?: { previous?: string };
   startedAt: number;
   endedAt?: number;
   /** How it ended: done, stuck, or stopped by cancelling. */

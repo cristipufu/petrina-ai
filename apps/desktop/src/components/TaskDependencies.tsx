@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, ListOrdered, Search } from "lucide-react";
-import { blocksDependents, canEditTaskDependencies, finishedTask, historyItem, historyDeliveryItem, landingOf, taskProductIds, validateTaskDependencies, type HistoryItem, type State, type Task } from "@petrina/core";
+import { blocksDependents, canEditTaskDependencies, finishedTask, historyItem, historyDeliveryItem, landingOf, runtimeWaitView, taskProductIds, validateTaskDependencies, type HistoryItem, type State, type Task } from "@petrina/core";
 import { failureText, sim } from "../engine";
 import { uncertainReply } from "../commandFailures";
 import { lookup, STATE_LABEL } from "../lib";
@@ -174,7 +174,40 @@ export function TaskDependencies({ task, state, onOpenTask, onEdit }: { task: Ta
   return <section className="sheet-section reading">
     <h2>Start after other tasks land</h2><p className="quiet-text">{DEPENDENCY_HELP}</p>
     <Selection state={state} ids={task.after ?? []} onOpenTask={onOpenTask} />
-    {editable ? <button type="button" className="btn outline" onClick={() => onEdit ? onEdit(task) : setEditing(true)}>{task.after?.length ? "Change prerequisites" : "Choose tasks to wait for…"}</button> : <p className="note">Work has started. Prerequisites can no longer change.</p>}
+    {editable ? <button type="button" className="btn outline" onClick={() => onEdit ? onEdit(task) : setEditing(true)}>{task.after?.length ? "Change prerequisites" : "Choose tasks to wait for…"}</button> : <p className="note">Work has started. These pre-start prerequisites can no longer change.</p>}
     {editing && <DependencyEditor task={task} state={state} onClose={() => setEditing(false)} onOpenTask={onOpenTask} />}
+  </section>;
+}
+
+/** Runtime waits are coordinated through the CLI or MCP; the window shows their saved record. */
+export function TaskRuntimeWait({ task, state, onOpenTask }: { task: Task; state: State; onOpenTask?: (id: string) => void }) {
+  const wait = task.runtimeWait;
+  const ids = [...new Set([...(wait?.after ?? []), ...(wait?.changes.flatMap((change) => [...change.before, ...change.after]) ?? [])])];
+  const { choice, reload } = useChoices(state, ids);
+  const find = lookup(state);
+  const view = runtimeWaitView(task, (id) => choice(id).task);
+  if (!wait || !view) return null;
+  const checking = wait.after.some((id) => choice(id).loading || choice(id).error);
+  const list = (selected: readonly string[]) => selected.length ? selected.map((id, index) => <span key={id}>{index > 0 ? ", " : ""}<TaskLink taskId={id} find={find} onOpen={onOpenTask}>{choice(id).task?.title ?? wait.titles?.[id] ?? "Unavailable task"}</TaskLink></span>) : "None";
+  const date = (at: number) => <time className="num" dateTime={new Date(at).toISOString()}>{new Date(at).toLocaleString()}</time>;
+  return <section className="sheet-section reading runtime-wait" aria-label="Wait for other tasks to land">
+    <h2>Wait for other tasks to land</h2>
+    <p>{view.phase === "released" ? view.releaseReason ?? "The wait ended" : view.phase === "after-current-work" ? "The hold starts after the current work finishes." : "The hold is active. No new work starts for this task."}</p>
+    <p className="prose">{view.reason}</p>
+    {view.held && !checking && view.decisionNeeded && <p className="warn-text">Waiting for your decision. Change the awaited tasks or clear the wait, with a reason.</p>}
+    {!!view.prerequisites.length && <ul className="dependency-selection" aria-label="Awaited tasks">{view.prerequisites.map((entry) => {
+      const saved = choice(entry.id);
+      return <li key={entry.id}><div>
+        <TaskLink taskId={entry.id} find={find} onOpen={onOpenTask}>{saved.loading ? "Checking awaited task…" : entry.title}</TaskLink>
+        <span className="quiet-text">{saved.loading ? "Checking its current outcome…" : saved.error ? "The current outcome could not be checked." : entry.state}{!saved.loading && !saved.error && view.held && entry.decisionNeeded ? " · Your decision is needed" : ""}</span>
+        {saved.error && <><span className="note bad" role="alert">{saved.error}</span><button type="button" className="linkish" onClick={reload}>Try checking again</button></>}
+      </div></li>;
+    })}</ul>}
+    {view.releasedAt !== undefined && <p className="note">Wait ended {date(view.releasedAt)}.</p>}
+    {view.latestChange && <p className="note">Latest change: {date(view.latestChange.at)} · {view.latestChange.reason}</p>}
+    {!!view.changeCount && <details className="runtime-wait-history"><summary>{view.changeCount} {view.changeCount === 1 ? "recorded change" : "recorded changes"}</summary><ol>{view.changes.map((change, index) => <li key={`${change.at}-${index}`}>
+      <p>{date(change.at)}</p><p>Before: {list(change.before)}</p><p>After: {list(change.after)}</p><p className="prose">{change.reason}</p>{change.requestId && <p className="note">Request reference: {change.requestId}</p>}
+    </li>)}</ol></details>}
+    <p className="note">The coordinator changes this wait from the command line or MCP.</p>
   </section>;
 }

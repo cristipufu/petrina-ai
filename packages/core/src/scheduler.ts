@@ -2,6 +2,7 @@ import type { AgentProfile, Id, Pool, State, Task } from "./model.js";
 import { byRoom, currentReport, headroom, pastSlowDown, toolCapNow, usageCovers } from "./usage.js";
 import { screenReady } from "./screen.js";
 import { blocksDependents } from "./repositories.js";
+import { runtimeWaitHolds } from "./runtime-wait.js";
 
 /** A pool slot in use: which task holds it, on which tool, and the agent in it when there is one. */
 export interface SlotUse {
@@ -104,6 +105,8 @@ export const FEWER_START = "fewer start on it this close to its limit";
 
 /** Rechecked for every agent, including one on the same tool. The task's old slot does not count. */
 export function slotWait(state: State, candidate: Candidate): string | undefined {
+  const task = state.tasks.find(task => task.id === candidate.taskId);
+  if (task && runtimeWaitHolds(task)) return task.statusLine;
   const others = slotUses(state).filter((use) => use.taskId !== candidate.taskId);
   if (state.pool.paused) return "Waiting for the pool to resume";
   if (others.length >= state.pool.limit) return "Waiting for a free slot";
@@ -136,7 +139,7 @@ export function readyQueue(state: Pick<State, "tasks" | "history">): Task[] {
 export function startsNextCount(state: State): number {
   if (state.pool.paused) return 0;
   // A task waiting for the screen holds no claim on a slot until the screen is its turn.
-  const waiting = state.tasks.filter((task) => task.state === "waiting" && screenReady(task, state, state.now)).length;
+  const waiting = state.tasks.filter((task) => task.state === "waiting" && !runtimeWaitHolds(task) && screenReady(task, state, state.now)).length;
   const free = Math.max(0, state.pool.limit - slotUses(state).length - waiting);
   return readyQueue(state).slice(0, free).length;
 }

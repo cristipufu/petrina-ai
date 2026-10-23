@@ -1,3 +1,4 @@
+import { runtimeWaitHolds } from "@petrina/core";
 // Screen arbitration and the working copies retained by waiting review members.
 import { join } from "node:path";
 import { onScreen, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type Candidate, type Id, type State, type Task } from "@petrina/core";
@@ -5,7 +6,7 @@ import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, executionOf, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
 import { completeAll } from "./parallel.js";
-type ScreenHost = Pick<Kernel, "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule" | "stopped">;
+type ScreenHost = Pick<Kernel, "taskAdmissionWait" | "drivers" | "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule" | "stopped">;
 export class ScreenCoordinator {
   /** Live review groups. `returning`: seats wanted by members whose model wait ended; `rejoin` admits one of them. */
   readonly groups = new Map<Id, { continue: () => void; running: (member: string) => boolean; recipients: () => readonly string[]; finished: (member: string) => void; yield?: (member: string) => void; returning?: () => Candidate[]; rejoin?: () => void }>();
@@ -53,7 +54,7 @@ export class ScreenCoordinator {
     const allowed = screenAllowed(task as Task, this.k.s.pool as State["pool"], now);
     // First asked, first served: an earlier allowed request still waiting goes first.
     const free = !onScreen(this.k.s.tasks as Task[]) && !screenQueue(this.k.s.tasks as Task[]).some((other) => other.id !== task.id && screenAllowed(other, this.k.s.pool as State["pool"], now));
-    if (allowed && free) {
+    if (allowed && free && !runtimeWaitHolds(task)) {
       task.screen.granted = true;
       this.k.log(task, "milestone", SCREEN_WORDS.using(reason), roleId, profileId);
       return true;
@@ -95,6 +96,19 @@ export class ScreenCoordinator {
     // For an hour ran out: it is Off from now on, without anyone touching it.
     if (this.k.s.pool.screen && this.k.s.pool.screen.mode !== screenMode(this.k.s.pool as State["pool"], now)) this.k.s.pool.screen = { mode: "off" };
     for (const task of this.k.s.tasks) {
+      if (runtimeWaitHolds(task) && task.screen?.granted && !task.driving) {
+        // A held task cannot retain the screen between sessions, including after a restart. The
+        // admitted agent (or coordinator driving it) keeps its turn until it reaches that boundary.
+        const member = task.screen.member;
+        const group = this.groups.get(task.id);
+        // A failed group deregisters before its admitted sessions finish closing. Without its
+        // member record, the driver and its cleanup still own the grant until they settle.
+        const using = member && group ? group.running(member) : this.k.drivers.has(task.id) || this.k.settling.has(task.id);
+        if (!using) {
+          task.screen.granted = false;
+          task.screen.heard = false;
+        }
+      }
       this.selectScreen(task);
       const wait = screenWait(task as Task, this.k.activeState(), now);
       const item = this.k.s.inbox.find((entry) => entry.taskId === task.id && entry.kind === "screen");
@@ -104,6 +118,7 @@ export class ScreenCoordinator {
       } else if (wait !== "ask" && item) {
         this.k.s.inbox = this.k.s.inbox.filter((entry) => entry !== item);
       }
+      if (runtimeWaitHolds(task) && task.state === "waiting") { task.statusLine = this.k.taskAdmissionWait(task); continue; }
       if (wait === "ask") task.statusLine = SCREEN_WORDS.needs(task.screen!.reason);
       else if (wait === "turn") task.statusLine = SCREEN_WORDS.turn;
       // Its turn on the screen: it waits for a slot like any other task (the scheduler says which).

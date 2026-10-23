@@ -4,6 +4,7 @@
 // switch, the task's own allowance or the coordinator's Allow now lets it.
 
 import type { Id, Pool, ScreenMode, State, Task } from "./model.js";
+import { runtimeWaitHolds } from "./runtime-wait.js";
 
 export const SCREEN_HOUR_MS = 60 * 60_000;
 
@@ -32,7 +33,7 @@ export function onScreen(tasks: readonly Task[]): Task | undefined {
 
 /** Requests still waiting for the screen, first asked first. */
 export function screenQueue(tasks: readonly Task[]): Task[] {
-  return tasks.filter((task) => (task.state === "waiting" || task.state === "needs-you") && task.screen && !task.screen.granted).sort((a, b) => a.screen!.at - b.screen!.at);
+  return tasks.filter((task) => (task.state === "waiting" || task.state === "needs-you") && task.screen && !task.screen.granted && !runtimeWaitHolds(task)).sort((a, b) => a.screen!.at - b.screen!.at);
 }
 
 /** The request that gets the screen next: the earliest allowed one, once nobody is on the screen. */
@@ -53,6 +54,8 @@ export function screenReady(task: Task, state: State, now: number): boolean {
 export function screenWait(task: Task, state: State, now: number): "ask" | "turn" | undefined {
   if ((task.state !== "waiting" && task.state !== "needs-you") || !task.screen || task.screen.granted) return undefined;
   if (!screenAllowed(task, state.pool, now)) return "ask";
+  // A prerequisite wait yields the screen line, while the existing permission remains answerable.
+  if (runtimeWaitHolds(task)) return undefined;
   return screenNext(state, now) === task.id ? undefined : "turn";
 }
 

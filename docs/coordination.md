@@ -100,6 +100,27 @@ Learning offers use `learning inspect`, `learning accept --positions '[0,2]'`, o
 
 ## Focused evidence and waits
 
+### Prerequisites discovered after work starts
+
+Use `task wait` (MCP: `petrina_task_wait`) for a genuine prerequisite discovered on a started, unfinished task:
+
+```sh
+petrina task wait --task-id TASK --after '["FIX","FOUNDATION"]' --reason "Both fixes must land before final validation" --request-id REFERENCE
+petrina task wait --task-id TASK --after '[]' --reason "The remaining validation will be handled separately" --request-id NEW-REFERENCE
+```
+
+The list replaces the entire runtime prerequisite list. It takes 1–20 task IDs, or an empty list to clear the wait, and a nonblank reason of at most 1,000 characters. Unknown tasks, the task itself, already-finished prerequisites and loops across runtime and pre-start dependencies are refused without changing anything. An unstarted task must use `task dependencies`; finished tasks and tasks already awaiting merge cannot gain a runtime wait.
+
+Saving the wait does not interrupt admitted agents, their in-session helpers, check batches or deliveries. They finish under their current rules; no unstarted participant, replacement, next step, check batch or publication starts for that task. Its slots are freed once admitted work settles, including on shared-product tasks. Open checkpoints remain answerable, and their next step waits. Pause, Try again, terminal hand-back and restart preserve the wait. Cancelling the task ends it with a recorded reason.
+
+Runtime waits require Petrina's recorded whole-task landing fact: every publishing product must land. Awaiting merge, publishing and an unfinished push still wait. Cancelled, combined, closed without merging (even when accepted), marked-done, no-change and unavailable prerequisites require your decision; revise the full list or clear it with a reason. These runtime rules leave existing pre-start dependency release unchanged. On release, normal admission and saved-conversation rules apply. Before an unstarted step, Petrina updates onto the current approved source and rechecks version-bound evidence and delivery approval; an update fetch failure stops as stuck. Waiting grants no delivery approval, repair allowance or extra review round.
+
+`task inspect` shows the saved reason, each prerequisite's state, whether the hold is active or starts after current work, whether your decision is needed, and the latest change and change count. The timeline read lists every change, including its time, previous and new lists, reason and request reference, retained in History. The existing waiting event distinguishes a runtime prerequisite that needs your decision from an ordinary prerequisite wait; it uses the saved state, never report wording.
+
+Sending identical choices and reason reports `unchanged` without another history entry. Preserve the request reference and exact arguments when retrying a lost reply: the saved receipt returns the original result. Reusing a reference with different details is refused as a conflict. The wait and receipt save together.
+
+### Evidence reads
+
 Lists filter inside the engine before pagination. The default is 25 items, capped at 100. Task inspection gives the current summary, workers, next step, waiting reason, inbox references and delivery confirmation. Plans, conversations, findings and individual journey nodes are separate evidence reads. Evidence defaults to 8,000 characters per page, capped at 32,000. Diagnostic files use byte offsets and preserve UTF-8 boundaries. A `next` value is passed back as `--cursor`. `shortened` explicitly identifies unfinished text reads. Changed evidence or list contents invalidate their continuation and require a fresh focused read.
 
 Journey nodes distinguish recorded, planned and older reconstructed evidence. Accepted agent results keep their original response and separate references to any saved pictures; picture bytes remain available only while the task is unfinished. Missing inputs/results stay unavailable. Each newly recorded check keeps its original diagnostic link in the journey, so later checks and restarts do not replace its log. `journey check --task-id TASK --node-id NODE --index 0` starts at the beginning of that original log. Without a node it reads the latest task check. Results separately describe command outcome, historical or recorded-version relevance, and complete/incomplete/legacy/missing diagnostic evidence. An old excerpt or missing log does not establish a current pass.

@@ -503,10 +503,12 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(failed).toBeGreaterThan(0);
       expect(task.state).toBe("done");
       expect(task.error).toBeUndefined();
+      // A later save contains only live tasks: keep the disk-full stand-in installed across retirement.
+      await waitFor(() => !engine.activeState().tasks.some((entry) => entry.id === id), "the cleaned task to move to History");
       engine.commitNow();
       await gone(w, task);
       expect(displayTask(engine.store.history.get(id)!).cleanup?.removedAt).toBeDefined();
-    } finally { engine.store.save = save; engine.shutdown(); }
+    } finally { engine.store.save = save; await engine.shutdown(); }
   });
 
   it("cancels a running builder, waits for its background build, and removes any folder that comes back quietly", async () => {

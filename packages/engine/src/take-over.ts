@@ -4,7 +4,7 @@ import { executionFor, repositoryView } from "./repository-context.js";
 // launcher scripts and terminals are in terminal.ts.
 
 import { join } from "node:path";
-import { lastIndexWhere, TAKE_OVER_TOOLS, TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type Task } from "@petrina/core";
+import { runtimeWaitHolds, lastIndexWhere, TAKE_OVER_TOOLS, TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { handBackNote } from "./prompts.js";
 import { askMode, clearEnded, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, writeLauncher } from "./terminal.js";
@@ -248,8 +248,11 @@ export class TakeOver {
       task.holdsSlot = true;
       task.statusLine = `${role.name} is getting back to work`;
       this.k.commitNow();
-      // It still has its seat: the same agent carries on right away, whatever the pool is doing.
-      this.k.startDriver(taskId, true);
+      // Hand-back saves the coordinator's work as usual, but a runtime wait defers reopening the agent.
+      if (runtimeWaitHolds(task)) {
+        this.k.waitForUsage(task, this.k.taskAdmissionWait(task));
+        this.k.schedule();
+      } else this.k.startDriver(taskId, true);
     } finally {
       this.k.switching.delete(taskId);
     }

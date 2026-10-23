@@ -2459,6 +2459,10 @@ ul.plain strong { color: var(--text); font-weight: 620; }
 .dependency-selection li > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .dependency-selection li > button { flex: none; }
 .dependency-selection .linkish { text-align: left; }
+.runtime-wait-history { min-width: 0; overflow-wrap: anywhere; }
+.runtime-wait-history summary { cursor: pointer; }
+.runtime-wait-history ol { padding-left: 24px; display: grid; gap: 16px; }
+.runtime-wait-history li p { margin: 4px 0; }
 
 /* Account history: one allowance per tool, with shared row sizes in each pair. */
 .limit-history { container-type: inline-size; margin-top: 24px; }

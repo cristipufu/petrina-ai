@@ -12,6 +12,7 @@ import { historyItem, historyStatus, type HistoryStatus } from "./history.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
 import { roleForTask } from "./roles.js";
 import { findingReportCounts, outstandingReportsFirst } from "./finding-reports.js";
+import { runtimeWaitView, type RuntimeWaitTask } from "./runtime-wait.js";
 
 export const WORKFLOW_EVENT_KINDS = [
   "task.created", "task.state", "task.waiting", "task.finished",
@@ -55,6 +56,8 @@ export interface WorkflowContext {
   products: readonly { id: Id; name: string }[];
   limited?: readonly UsageLimit[];
   now: number;
+  /** Focused lookup also reads prerequisite landing records retained in History. */
+  findTask?: (id: Id) => RuntimeWaitTask | undefined;
 }
 
 /** How many manifest entries and finding ids an event shows before pointing at the complete page. */
@@ -62,7 +65,7 @@ export const EVENT_MANIFEST_ENTRIES = 12;
 export const EVENT_FINDING_IDS = 20;
 const SUMMARY_CHARACTERS = 400;
 
-export type WaitKind = "capacity" | "usage" | "slot" | "pool" | "dependencies" | "preparation" | "checks" | "readiness" | "other";
+export type WaitKind = "capacity" | "usage" | "slot" | "pool" | "dependencies" | "needs-your-decision" | "preparation" | "checks" | "readiness" | "other";
 
 export type PublishingResult =
   | { kind: "released"; landed: true; tag: string; url: string }
@@ -88,7 +91,7 @@ export interface PublishingFacts {
 type Work = TaskRepository | NonNullable<TaskState["repository"]>;
 
 /** One product's recorded delivery result through the existing delivery and landing rules. Nothing is inferred from a general delivered marker. */
-export function publishingResult(task: Pick<TaskState, "state" | "repositories" | "maintenance">, work: Work, interrupted: boolean): PublishingResult {
+export function publishingResult(task: Pick<TaskState, "state" | "repositories"> & { maintenance?: Pick<NonNullable<TaskState["maintenance"]>, "noProductChanges"> }, work: Work, interrupted: boolean): PublishingResult {
   const shared = work as Partial<TaskRepository>;
   if (work.shipping?.carriedOver) return { kind: "unknown", landed: false };
   if (shared.nothingToPublish || task.maintenance?.noProductChanges) return { kind: "no-changes", landed: null };
@@ -272,6 +275,7 @@ export interface WorkflowFacts {
   combinedFrom?: readonly { id: Id; title: string }[];
   error?: string;
   waitKind?: WaitKind;
+  runtimeWait?: Pick<NonNullable<ReturnType<typeof runtimeWaitView>>, "held" | "decisionNeeded" | "reason" | "prerequisites" | "phase">;
   statusLine: string;
   agents: readonly { roleId: Id; profileId: Id; reviewKey?: string; since: number }[];
   nodes: NodeFacts[];
@@ -290,6 +294,8 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
 
 function waitKindOf(task: TaskState, ctx: WorkflowContext): WaitKind | undefined {
   if (task.state !== "waiting" && !(task.state === "queued" && task.statusLine.startsWith("Waiting for “"))) return undefined;
+  const wait = runtimeWaitView(task, ctx.findTask ?? (() => undefined));
+  if (wait?.held) return wait.decisionNeeded ? "needs-your-decision" : "dependencies";
   const now = ctx.now;
   if (task.capacityPaused?.length || task.modelCapacity?.some((entry) => entry.until > now)) return "capacity";
   const line = task.statusLine;
@@ -423,6 +429,7 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
   const landing: Landing = task.state === "cancelled" ? "cancelled" : results.some((result) => result.kind === "unconfirmed") ? "marked-done"
     : shared ? shared === "landed" ? "landed" : shared === "waiting" ? "awaiting-merge" : "open"
     : results.some((result) => result.kind === "local-unpushed") ? "open" : landingOf(view);
+  const wait = runtimeWaitView(task, ctx.findTask ?? (() => undefined));
   return {
     id: task.id, title: task.title, productIds: taskProductIds(task), state: task.state, column: task.column, held: task.held,
     stageIndex: task.stageIndex, sub: task.sub, fixing: task.fixing,
@@ -430,6 +437,7 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
     ...(task.combinedInto ? { combinedInto: task.combinedInto } : {}), ...(task.combinedFrom ? { combinedFrom: task.combinedFrom } : {}),
     ...(task.error ? { error: clip(task.error) } : {}),
     ...((kind) => (kind ? { waitKind: kind } : {}))(waitKindOf(task, ctx)),
+    ...(wait ? { runtimeWait: { held: wait.held, decisionNeeded: wait.decisionNeeded, reason: wait.reason, prerequisites: wait.prerequisites, phase: wait.phase } } : {}),
     statusLine: task.statusLine,
     agents: [task.agent, ...(task.helpers ?? [])].flatMap((agent) => (agent ? [{ roleId: agent.roleId, profileId: agent.profileId, ...(agent.reviewKey ? { reviewKey: agent.reviewKey } : {}), since: agent.since }] : [])),
     nodes: journey.map((step, index) => nodeFacts(step, index, journey, task, ctx)),
@@ -494,6 +502,13 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
     push({ at: ctx.now, kind: "task.state", summary: `${prev.state} → ${next.state}: ${next.statusLine}`, from: prev.state, to: next.state, column: next.column, reason: next.statusLine, ...(next.waitKind ? { wait: next.waitKind } : {}), ...(next.error ? { error: next.error } : {}), ...(terminal ? { terminal: true } : {}) });
   } else if (prev && next.state === "waiting" && prev.waitKind !== next.waitKind && next.waitKind) {
     push({ at: ctx.now, kind: "task.waiting", summary: `Waiting (${next.waitKind}): ${next.statusLine}`, wait: next.waitKind, reason: next.statusLine });
+  }
+  if (next.state === "waiting" && next.runtimeWait?.held && (prev?.state !== "waiting" || !same(prev.runtimeWait, next.runtimeWait))) {
+    // The kind comes from the saved prerequisite facts, never a classifier over the coordinator's words.
+    const alreadyReported = drafts.some((event) => event.kind === "task.waiting");
+    const detail = { wait: next.waitKind, reason: next.runtimeWait.reason, prerequisites: next.runtimeWait.prerequisites, phase: next.runtimeWait.phase, decisionNeeded: next.runtimeWait.decisionNeeded };
+    if (alreadyReported) Object.assign(drafts.find((event) => event.kind === "task.waiting")!, detail);
+    else push({ at: ctx.now, kind: "task.waiting", summary: next.statusLine, ...detail });
   }
   for (const retry of next.capacityRetries) {
     const earlier = before.capacityRetries.find((entry) => entry.key === retry.key)?.tried ?? 0;

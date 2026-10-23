@@ -19,7 +19,7 @@ export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "st
   cleanup?: Pick<Cleanup, "markedDone">;
   productIds?: readonly Id[];
   products?: readonly { id: Id; name: string }[];
-  deliveries?: readonly (Pick<Task, "productId" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & { nothingToPublish?: boolean })[];
+  deliveries?: readonly (Pick<Task, "productId" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & { nothingToPublish?: boolean; cleanup?: Pick<Cleanup, "markedDone"> })[];
 };
 /** Final outcomes, based on delivery evidence rather than the broad done/cancelled state. */
 export const HISTORY_STATUSES = {
@@ -45,7 +45,7 @@ export function historyStatus(item: HistoryItem): HistoryStatus {
 }
 /** Missing fields in a saved companion delivery must never inherit the lead's evidence. */
 export function historyDeliveryItem(item: HistoryItem, work: NonNullable<HistoryItem["deliveries"]>[number]): HistoryItem {
-  return { ...item, productId: work.productId, delivery: work.delivery, pr: work.pr, release: work.release, landed: work.landed, localUpdate: work.localUpdate, deliveries: undefined };
+  return { ...item, productId: work.productId, delivery: work.delivery, pr: work.pr, release: work.release, landed: work.landed, localUpdate: work.localUpdate, cleanup: work.cleanup, deliveries: undefined };
 }
 export interface HistoryPage { items: readonly HistoryItem[]; nextCursor?: string; total: number }
 /** Attach just this page's whole-task totals, independent of its product filter. */
@@ -78,7 +78,10 @@ export function historyItem(task: Task): HistoryItem {
   const { id, productId, title, kind, state, createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, combinedInto } = task;
   const productIds = taskProductIds(task);
   const products = task.repositories?.map((work) => ({ id: work.productId, name: work.source?.product.name ?? work.workProduct?.name ?? work.productId })) ?? task.workRows?.map((row) => ({ id: row.source?.product.id ?? row.choice.productId, name: row.source?.product.name ?? row.choice.productId })) ?? productIds.map((id) => ({ id, name: id }));
-  const deliveries = task.repositories?.map(({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }) => ({ productId, delivery, pr, release, landed, localUpdate, nothingToPublish }));
+  const deliveries = task.repositories?.map((work) => {
+    const { productId, delivery, pr, release, landed, localUpdate, nothingToPublish } = work;
+    return { productId, delivery, pr, release, landed, localUpdate, nothingToPublish, ...(markedDoneUnconfirmed(task, work) ? { cleanup: { markedDone: true } } : {}) };
+  });
   return { blocksDependents: blocksDependents(task), id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(task.maintenance?.noProductChanges ? { maintenance: { noProductChanges: true } } : {}), ...(!task.repositories && markedDoneUnconfirmed(task, task) ? { cleanup: { markedDone: true } } : {}), ...(combinedInto ? { combinedInto } : {}), ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
 }
 export function historyCursor(item: Pick<Task, "id" | "finishedAt" | "createdAt">): string {

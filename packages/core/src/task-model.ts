@@ -84,6 +84,8 @@ export interface RepositoryState {
   localUpdate?: { branch: string; sha: string; pushed: boolean };
   /** How many times the current step has started. */
   stepAttempts?: number;
+  /** Admitted editable work owns this copy until its step completes, including a failed partial attempt. */
+  editAttempt?: { step: string; failed?: boolean };
   /** The conversation the current step's agent has open, so it can pick it up after a restart. */
   conversation?: ConversationNote;
   /** Main-step bookkeeping retained durably while an internal errand owns the current conversation. */
@@ -101,7 +103,7 @@ export const REPOSITORY_FIELDS = [
   "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
   "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
-  "cleanup", "conversation", "sideStep", "stepAttempts", "acceptanceReturns", "releasePreview", "confirmedDelivery", "proofRelease"
+  "cleanup", "conversation", "sideStep", "stepAttempts", "editAttempt", "acceptanceReturns", "releasePreview", "confirmedDelivery", "proofRelease"
 ] as const;
 export type RepositoryField = typeof REPOSITORY_FIELDS[number];
 export type TaskRepository = RepositoryState & {
@@ -148,7 +150,14 @@ export interface TaskScopeState {
   leadProductId?: Id;
   /** Product assigned to the current step. Operations retain their own repository context across waits. */
   activeProductId?: Id;
-  repair?: { products: readonly Id[]; index: number; returnStage: number; kind: "checks" | "acceptance" | "review" };
+  repair?: {
+    products: readonly Id[];
+    index: number;
+    returnStage: number;
+    kind: "checks" | "acceptance" | "review";
+    /** Owners added only to port conflicts, without an owed findings repair. Other owners retain their original repair. */
+    portProducts?: readonly Id[];
+  };
   /** Explicit New task choices stay authoritative until the coordinator approves a change. */
   explicitStart?: boolean;
   proposedSource?: TaskSource;
@@ -170,6 +179,8 @@ export interface TaskProgress {
   held: boolean;
   /** Tasks that must land first; until then this one waits quietly (a cancelled one no longer blocks). */
   after?: readonly Id[];
+  /** A coordinator's explicit hold on new work after this task has started. */
+  runtimeWait?: RuntimeWait;
   state: RunState;
   column: Column;
   /** Whether the task currently occupies a pool slot. */
@@ -190,6 +201,33 @@ export interface TaskProgress {
   startedAt?: number;
   finishedAt?: number;
   deliveryRecorded?: boolean;
+}
+
+/** Every coordinator decision is retained; release never rewrites the task's attempt history. */
+export interface RuntimeWaitChange {
+  at: number;
+  before: readonly Id[];
+  after: readonly Id[];
+  reason: string;
+  requestId?: Id;
+  /** Links the bounded ordinary timeline entry to this permanent audit record. */
+  timelineId?: Id;
+}
+
+export interface RuntimeWait {
+  after: readonly Id[];
+  reason: string;
+  /** Retained names keep unavailable prerequisites and earlier decisions understandable. */
+  titles?: Readonly<Record<Id, string>>;
+  changes: readonly RuntimeWaitChange[];
+  releasedAt?: number;
+  releaseReason?: string;
+  /** Before admitting a new step, bring every repository onto its current starting source. */
+  refreshPending?: boolean;
+  /** Owners still owed a source check; a pending conflict port retains its obligation until it finishes. */
+  refreshProducts?: readonly Id[];
+  /** An already-started step finishes on its own version before the refresh. */
+  refreshAfterStep?: string;
 }
 
 /** The shared design and independent participant conversations. A coordinator call remains final. */

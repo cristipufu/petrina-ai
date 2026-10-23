@@ -5,7 +5,7 @@ import { PrMonitor } from "./pr-monitor.js";
 import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
 import { proofDecision, refreshProofs, sameProofDecision } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
-import { companionText, landingState, repositoryDelivered } from "@petrina/core";
+import { companionText, landingState, repositoryDelivered, runtimeWaitHolds, syncRuntimeWait } from "@petrina/core";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
 // top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
 // publishes the exact commit it checked, with what the builder wrote to go out with it: it pushes the branch and
@@ -55,6 +55,9 @@ export const CARRIED_OVER = "This delivery was interrupted before Petrina was up
 class SourceMoved extends Error {}
 /** Local placement recovery may still owe a push; a changed decision publishes nothing further. */
 class ProofDecisionChanged extends Error {}
+
+/** A released prerequisite wait still owes the ordinary driver's source/evidence refresh. */
+class PrerequisiteRefresh extends Error {}
 
 /** Where a delivery goes. Approval is for this destination only. */
 export function destination(task: { delivery: DeliveryMode; source?: TaskSource }, product: Pick<Product, "path" | "repo" | "defaultBranch"> | undefined): string {
@@ -116,9 +119,21 @@ export class Shipping {
       }
       return await this.deliverOne(executionFor(task), stage, signal);
     } catch (error) {
-      if (error instanceof ProofDecisionChanged) return "continue";
+      if (error instanceof ProofDecisionChanged || error instanceof PrerequisiteRefresh) return "continue";
       throw error;
     }
+  }
+
+  /** Check again at the actual publication admission, including after preparation and a product queue. */
+  private beforePublishing(scope: RepositoryContext): void {
+    const { task, work } = scope;
+    if (work.shipping?.step || work.shipping?.pushed) return;
+    if (this.k.taskAdmissionsClosed(task)) {
+      const words = this.k.taskAdmissionWait(task);
+      throw new WaitingForUsage(!runtimeWaitHolds(task) && !this.k.draining ? `${words} before publishing` : words);
+    }
+    const wait = task.runtimeWait;
+    if (wait?.refreshPending && (!wait.refreshProducts || wait.refreshProducts.includes(work.productId))) throw new PrerequisiteRefresh();
   }
 
   private async clearUnpublishedPreparations(task: MTask): Promise<void> {
@@ -143,6 +158,7 @@ export class Shipping {
     for (const work of task.repositories!) {
       const scope: RepositoryContext = { task, work };
       if (repositoryDelivered(work)) continue;
+      this.beforePublishing(scope);
       task.activeProductId = work.productId;
       if (scope.work.shipping?.step) {
         if (await this.checkDelivery(scope, signal) === "stop" && !repositoryDelivered(work)) return "stop";
@@ -152,6 +168,7 @@ export class Shipping {
       if (!scope.work.shipping?.prepared) {
         if (scope.work.delivery !== "local") await this.tools.needGitHub(task);
         if (await this.readyToShip(scope, signal) === "back") return "continue";
+        this.beforePublishing(scope);
         if (scope.work.delivery !== "release" && scope.work.baseSha === await git.head(scope.work.worktree!)) {
           work.nothingToPublish = true;
           this.k.log(task, "done", `${scope.work.source!.product.name}: Nothing to publish`);
@@ -172,6 +189,7 @@ export class Shipping {
     for (const work of task.repositories!) {
       const scope: RepositoryContext = { task, work };
       if (repositoryDelivered(work)) continue;
+      this.beforePublishing(scope);
       task.activeProductId = work.productId;
       if (scope.work.shipping?.prepared?.body && preview) scope.work.shipping.prepared.body = `${scope.work.shipping.prepared.body.replace(/\n*Part of a change across: [^\n]*$/u, "")}\n\n${preview}`;
       const result = await this.deliverOne(scope, stage, signal);
@@ -210,16 +228,20 @@ export class Shipping {
       task.state = "done"; task.column = "done"; task.statusLine = "All products have landed"; task.finishedAt ??= Date.now();
       if (fresh) this.k.onTaskDone?.(task);
     }
+    syncRuntimeWait(task, id => this.k.taskDetails(id), Date.now());
     this.k.commitNow();
     this.k.schedule();
   }
 
   /** A known-unpublished version commit is preparation, so it never reaches an editing role. */
-  async clearUnpublishedVersion(scope: RepositoryContext): Promise<void> {
+  async clearUnpublishedVersion(scope: RepositoryContext, preserveAttempts = false): Promise<void> {
     const { work: repository } = scope;
     if (!repository.shipping?.step && !repository.shipping?.pushed && repository.shipping?.start) {
+      const { moves, failures } = repository.shipping;
       await this.backToWork(scope);
-      delete repository.shipping;
+      // Waiting invalidates the candidate, not the delivery attempts that actually happened.
+      if (preserveAttempts) repository.shipping = { moves, failures };
+      else delete repository.shipping;
       this.k.commitNow();
     }
   }
@@ -227,19 +249,21 @@ export class Shipping {
   private async deliverOne(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
     if (signal.aborted) throw new Aborted();
+    this.beforePublishing(scope);
     if (!repository.shipping?.step) {
       // Nothing starts shipping to GitHub without a GitHub login: no half-done delivery.
       if (repository.delivery !== "local") await this.tools.needGitHub(task);
       if (signal.aborted) throw new Aborted();
       if (!repository.shipping?.prepared) {
         if ((await this.readyToShip(scope, signal)) === "back") return "continue";
+        this.beforePublishing(scope);
         const prepared = await this.prepare(scope, stage, signal);
         if (prepared !== "ready") return prepared;
       }
     }
     // Check preparation or release notes may have finished after admissions closed. Publishing
     // is its own step; an already-started delivery still settles all of its saved steps.
-    if (this.k.admissionsClosed && !repository.shipping?.step) throw new WaitingForUsage("Waiting for the pool to resume before publishing");
+    this.beforePublishing(scope);
     // Petrina's own step on the journey, from its first look on GitHub until it went out.
     beginPetrinaStep(task, "delivery", Date.now(), repository);
     // Looked up before publishing, and first after an interruption: what is already there is recorded, not made again.
@@ -364,6 +388,7 @@ export class Shipping {
    */
   private async prepare(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"ready" | "continue" | "stop"> {
     const { task, work: repository } = scope;
+    this.beforePublishing(scope);
     const product = this.k.repositoryOf(scope)!;
     const defaultBranch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
     const shipping: NonNullable<RepositoryWork["shipping"]> = (repository.shipping = { moves: repository.shipping?.moves ?? 0, failures: repository.shipping?.failures ?? 0 });
@@ -389,6 +414,7 @@ export class Shipping {
     const tested = await this.releases.setVersion(scope, declared);
     if (task.proofRequests?.length) repository.proofRelease = { start, tested };
     // A version commit changes what ships: the checks run on it too.
+    this.beforePublishing(scope);
     if (tested !== start && (await this.checks.failing(scope, signal, undefined, "publishing"))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
     const preview = repository.releasePreview;
@@ -407,6 +433,7 @@ export class Shipping {
       return "continue";
     }
     const log = await this.releases.sincePreviousRelease(scope, signal);
+    this.beforePublishing(scope);
     const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;
     let by = profileId;
     const result = preview ?? await this.turns.turn(scope, "release-manager", profileId, () => [log], ReleaseNotesResult, signal, {
@@ -582,6 +609,7 @@ export class Shipping {
   /** Saved before the step starts: a restart, pause or Retry looks its result up before doing anything. */
   private saveStep(scope: RepositoryContext, step: ShippingStep, status: string): void {
     const { task, work: repository } = scope;
+    this.beforePublishing(scope);
     repository.shipping!.step = step;
     repository.shipping!.boot = this.k.boot;
     task.statusLine = status;
@@ -916,6 +944,7 @@ export class Shipping {
         task.state = "pr-open";
         task.column = "ready";
         task.statusLine = how === "updated" ? `Updated PR #${pr.number}. Merge it on GitHub when you are happy` : `Pull request #${pr.number} is open. Merge it on GitHub when you are happy`;
+        syncRuntimeWait(task, id => this.k.taskDetails(id), Date.now());
       } else {
         this.finished(scope, pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
       }
@@ -1011,6 +1040,7 @@ export class Shipping {
     task.column = "done";
     task.finishedAt = Date.now();
     task.statusLine = statusLine;
+    syncRuntimeWait(task, id => this.k.taskDetails(id), Date.now());
     this.k.onTaskDone?.(task);
   }
 

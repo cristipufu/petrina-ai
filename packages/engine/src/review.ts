@@ -4,14 +4,14 @@ import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { runtimeWaitHolds, acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
-import { Kernel, type MStage, type MTask, ScreenWait } from "./kernel.js";
+import { Kernel, type MStage, type MTask, ScreenWait, SourceRefreshRequired } from "./kernel.js";
 import { CAPACITY_WAIT, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
@@ -501,7 +501,7 @@ export class Reviews {
       panel = chosen.panel;
       // A paused scheduler may ask who would run next before tool checks finish.
       // Keep that preview provisional until work can start; an existing ballot stays durable.
-      if (hunt && !this.k.admissionsClosed) {
+      if (hunt && !this.k.taskAdmissionsClosed(task)) {
         chosen.keep();
         hunt.panel = panel as DeepMutable<VerifierPanel>;
         this.syncVoterSeats(task, panel.seats);
@@ -512,7 +512,7 @@ export class Reviews {
     const ids = new Set(panel.seats.flatMap((seat) => seat.findingIds));
     // A finding that became eligible while the initial places still work joins their assignment; it never waits for a later round.
     const joining = eligible.filter((finding) => !ids.has(finding.id));
-    if (joining.length && hunt?.panel === panel && panel.escalatedAt === undefined && !this.k.admissionsClosed) {
+    if (joining.length && hunt?.panel === panel && panel.escalatedAt === undefined && !this.k.taskAdmissionsClosed(task)) {
       for (const seat of panel.seats as DeepMutable<VerifierSeat>[]) seat.findingIds = [...seat.findingIds, ...joining.map((finding) => finding.id)];
       for (const finding of joining) ids.add(finding.id);
       this.k.commitNow();
@@ -525,16 +525,16 @@ export class Reviews {
     const admit = (seats: VerifierSeat[], phase: VerifierSeat[], third?: boolean): PendingVote => ({ findings: findings as Task["findings"], panel, seats, voters: seats.map((seat) => this.voterOn(task, seat)), phase, ...(third ? { third } : {}) });
     const initial = panel.seats.filter((seat) => !seat.third);
     if (initial.some(remaining)) {
-      if (hunt?.panel === panel && !this.k.admissionsClosed) this.replaceStalled(task, stage, panel, findings, initial);
+      if (hunt?.panel === panel && !this.k.taskAdmissionsClosed(task)) this.replaceStalled(task, stage, panel, findings, initial);
       return admit(initial.filter(remaining), initial);
     }
     if (panel.rule === "bounded" && panel.escalatedAt === undefined) {
       const plan = this.thirdAnswers(task, stage, panel, findings, ballot);
-      if (hunt?.panel !== panel || this.k.admissionsClosed) return admit(plan.seats, plan.seats, true);
+      if (hunt?.panel !== panel || this.k.taskAdmissionsClosed(task)) return admit(plan.seats, plan.seats, true);
       this.escalate(task, panel, findings, plan);
     }
     const third = panel.seats.filter((seat) => seat.third);
-    if (third.some(remaining) && hunt?.panel === panel && !this.k.admissionsClosed) this.replaceStalled(task, stage, panel, findings, third);
+    if (third.some(remaining) && hunt?.panel === panel && !this.k.taskAdmissionsClosed(task)) this.replaceStalled(task, stage, panel, findings, third);
     return admit(third.filter(remaining), third, true);
   }
 
@@ -911,6 +911,8 @@ export class Reviews {
     };
     // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
     await this.turns.refresh(scope);
+    // An unopened group must return through ordinary source updates and snapshot preparation.
+    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
     const pending = [...members];
     const accepted = new Set<string>();
     const running = new Map<string, { agent: ActiveAgent; done: Promise<void> }>();
@@ -945,8 +947,8 @@ export class Reviews {
       if (agents.length) {
         task.holdsSlot = true;
         task.agent = agents[0]!;
-      } else if (task.screen) {
-        // Only a screen wait gives up the group's last reserved seat. Ordinary cleanup keeps it.
+      } else if (task.screen || runtimeWaitHolds(task)) {
+        // A screen wait or prerequisite hold releases the group's last place. Ordinary cleanup keeps it.
         task.holdsSlot = false;
         delete task.agent;
       } else if (decision && task.holdsSlot && !this.k.readiness.charge(task, decision.need, members.find((member) => member.key === waitingOn)?.reviewKey)) {
@@ -957,8 +959,10 @@ export class Reviews {
       }
       if (agents.length > 1) task.helpers = agents.slice(1);
       else delete task.helpers;
-      task.state = this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking) ? "needs-you" : task.screen && !task.screen.granted ? "waiting" : "running";
-      if (task.state === "running") task.statusLine = !agents.length && decision ? decision.need.words : status(running.size, pending.length);
+      const held = !agents.length && runtimeWaitHolds(task);
+      task.state = this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking) ? "needs-you" : held || task.screen && !task.screen.granted ? "waiting" : "running";
+      if (held && task.state === "waiting") task.statusLine = this.k.taskAdmissionWait(task);
+      else if (task.state === "running") task.statusLine = !agents.length && decision ? decision.need.words : status(running.size, pending.length);
       this.k.showReviewWork(task);
       this.k.syncScreen();
     };
@@ -1057,7 +1061,7 @@ export class Reviews {
       if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, seat);
     };
     const continueScreen = () => {
-      if (signal.aborted || failure !== undefined || this.k.admissionsClosed) return;
+      if (signal.aborted || failure !== undefined || this.k.taskAdmissionsClosed(task) || this.k.taskSourceRefreshDue(task)) return;
       const member = members.find((entry) => entry.key === task.screen?.member);
       const saved = member && task.hunt?.screenTurns?.[member.key];
       if (!member || !saved || running.has(member.key)) return;
@@ -1066,8 +1070,9 @@ export class Reviews {
       scope.work.conversation ??= saved.conversation;
       startMember(member, saved.copy, roomFor(member.key), task.agent?.profileId ?? saved.conversation.profileId, true);
     };
-    // Nobody starts or comes back while a peer owns or waits for the screen, or once the group is ending.
-    const mayStart = () => !closing && failure === undefined && !signal.aborted && !this.k.admissionsClosed && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length;
+    // Nobody starts or comes back while admission is closed for this task, a peer owns or waits
+    // for the screen, or the group is ending. The same rule covers model returns and readiness probes.
+    const mayStart = () => !closing && failure === undefined && !signal.aborted && !this.k.taskAdmissionsClosed(task) && !this.k.taskSourceRefreshDue(task) && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length;
     /** Who would start for this member now, by the usual choice, or why it waits and whether only its saved tool's readiness stands in the way. */
     const admission = (member: (typeof members)[number]) => {
       const room = roomFor(member.key);
@@ -1117,7 +1122,12 @@ export class Reviews {
           const decision = { need: next.readiness, done: Promise.resolve() };
           deciding.set(member.key, decision);
           show();
-          decision.done = this.k.readiness.resolve(next.readiness, signal).then(() => {
+          decision.done = this.k.readiness.resolveHeld(next.readiness, signal, () => {
+            // A hold ends only the group's admission decision, never the shared tool check or
+            // a peer already working. Reconcile those owners before the driver frees a place.
+            show();
+            return !task.holdsSlot;
+          }).then(() => {
             deciding.delete(member.key);
             wake?.();
           });
@@ -1164,11 +1174,20 @@ export class Reviews {
       // Every peer has finished: a member still waiting stays with the task's wait, not this group.
       closing = true;
       if (failure !== undefined) throw failure;
+      // Readiness can settle after a wait ended. Unwind and clean the old copies before catch-up;
+      // returning normally would let runReview treat this unopened group as finished.
+      if (!signal.aborted && this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
       const waiting = noOne();
       if (!signal.aborted && !(waiting instanceof WaitingForCapacity) && Object.keys(task.hunt?.screenTurns ?? {}).length) {
         show();
         this.k.commitNow();
         throw new ScreenWait();
+      }
+      // Admitted members keep their reports. Missing seats remain on this same group after release.
+      if (pending.length && this.k.taskAdmissionsClosed(task)) {
+        const words = this.k.taskAdmissionWait(task);
+        this.k.waitForUsage(task, words);
+        throw new WaitingForUsage(words);
       }
       // The rest looked at the change and reported; the ones left wait, and the driver starts them again after.
       // A required seat waits even when a partner already voted.
