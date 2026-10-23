@@ -94,7 +94,10 @@ async function prepareSeed(path: string, version: string | undefined, versionFil
     await git(path, "init", "-q", "--bare", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []), origin);
     await git(source, "push", "-q", origin, "main");
   }
-  await git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", origin, clone);
+  // Files check out exactly as tests write them, whatever line endings this machine's own Git settings ask for: Git for
+  // Windows converts text to CRLF by default. Copies of the clone carry its settings and their linked working copies
+  // share them, so Petrina's own Git keeps files as written there too. A test exercising conversion sets its own.
+  await git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", "-c", "core.autocrlf=false", "-c", "core.eol=lf", origin, clone);
   if (versionFile) await git(clone, "remote", "set-url", "origin", ADDRESS);
   else {
     // Worlds originally pushed an initial commit to a bare repository by path, without tracking

@@ -659,6 +659,30 @@ it("keeps an undone change with its acceptance run through the coordinator's tak
   } finally { await f.engine.shutdown(); }
 });
 
+// Git converts a restored file's line endings when its repository asks for that, as Git for Windows' own settings do;
+// fixture repositories keep files as written. Only the bytes tell the two apart: Git sees no change either way.
+for (const converted of [false, true]) for (const committed of [false, true]) it(`restores the file behind an undone ${committed ? "commit" : "tracked edit"} ${converted ? "with the line endings its repository converts to" : "exactly as written"}`, async () => {
+  const fakeRoot = tempDir("petrina-acceptance-line-endings-"); roots.push(fakeRoot);
+  const fakes = new Fakes(fakeRoot);
+  const f = await fixture(false, false, fakes);
+  try {
+    const worktree = f.scope.work.worktree!, edited = join(worktree, "tester-edit.txt");
+    // The task's linked working copy shares the product's settings.
+    if (converted) await git(f.products[0]!.path!, "config", "core.autocrlf", "true");
+    writeFileSync(edited, "Saved before acceptance\n");
+    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
+    f.task.stageIndex = 1;
+    fakes.scenario({ testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Changed during acceptance\n", commit: committed }] });
+    await f.engine["work"].runDo(f.scope, f.tester, signal());
+    expect(testerSteps(f).at(-1)!.proofRun!.restored!.products).toEqual([{ productId: f.task.productId, ...(committed ? { commits: true } : { edits: true }), files: ["tester-edit.txt"] }]);
+    expect(await git(worktree, "status", "--porcelain")).toBe("");
+    const restored = readFileSync(edited, "utf8"), expected = converted ? "Saved before acceptance\r\n" : "Saved before acceptance\n";
+    // Bun's diff shows both line endings alike: the escaped text gets a line of its own.
+    if (restored !== expected) console.error(`Restored ${JSON.stringify(restored)} where ${JSON.stringify(expected)} was expected`);
+    expect(restored).toBe(expected);
+  } finally { await f.engine.shutdown(); }
+});
+
 it("validates structured requests, deduplicates replay by seat position and reuses only readable exact Tester evidence", async () => {
   const f = await fixture(false, true);
   try {

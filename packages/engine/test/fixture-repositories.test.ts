@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git, headNow, makeProduct, makeWorld, removeDir, repositorySeed, tempDir } from "./support.js";
+import { git, gitWith, headNow, makeProduct, makeWorld, removeDir, repositorySeed, tempDir, testGitEnv } from "./support.js";
 import { rejectionOf } from "./rejections.js";
 
 const roots: string[] = [];
@@ -49,6 +49,30 @@ it("retains each fixture recipe and version without carrying earlier changes int
   expect(await git(plain.clone, "ls-tree", "--name-only", "HEAD")).toBe("README.md");
   expect(await git(custom.clone, "config", "remote.origin.url")).toBe("https://github.com/acme/other.git");
   expect(await git(empty.clone, "config", "remote.origin.url")).toBe("");
+});
+
+it("checks files out as written in seed copies and their linked working copies, whatever line endings this machine's Git settings convert to", async () => {
+  const root = tempDir("petrina-seed-line-endings-"); roots.push(root);
+  // Stands in for Git for Windows' own settings, which convert text to CRLF, for these commands only: read even where
+  // the parent tells Git to skip machine settings. Personal settings outrank them and a personal attributes file can turn
+  // conversion off, so both are empty private ones here. Settings a parent Git command hands on outrank every file: dropped.
+  const settings = join(root, "gitconfig"), personal = join(root, "personal");
+  writeFileSync(settings, "[core]\n\tautocrlf = true\n");
+  mkdirSync(personal); writeFileSync(join(personal, "gitconfig"), "");
+  const machine: NodeJS.ProcessEnv = { ...testGitEnv(), GIT_CONFIG_NOSYSTEM: "0", GIT_CONFIG_SYSTEM: settings, GIT_CONFIG_GLOBAL: join(personal, "gitconfig"), XDG_CONFIG_HOME: personal };
+  delete machine.GIT_CONFIG_PARAMETERS;
+  const world = await makeWorld("seed-line-endings"); roots.push(world.dir);
+  for (const [name, clone] of [["product", await makeProduct(join(root, "product"))], ["world", world.clone]] as const) {
+    const copy = join(root, `${name}-copy`), file = join(copy, "README.md");
+    const restore = async () => { writeFileSync(file, "Changed\n"); await gitWith({ cwd: copy, env: machine }, "reset", "-q", "--hard"); return readFileSync(file, "utf8"); };
+    await gitWith({ cwd: clone, env: machine }, "worktree", "add", "-q", "--detach", copy);
+    expect(readFileSync(join(clone, "README.md"), "utf8")).toBe("# Demo\n");
+    expect(readFileSync(file, "utf8")).toBe("# Demo\n");
+    expect(await restore()).toBe("# Demo\n");
+    // Without the copy's own setting, the machine's applies.
+    await git(clone, "config", "--unset", "core.autocrlf");
+    expect(await restore()).toBe("# Demo\r\n");
+  }
 });
 
 it("shares one recipe's preparation among fixtures asking at once, and gives each its own writable copies", async () => {
