@@ -8,16 +8,33 @@ import { join } from "node:path";
 import { AGENT_CLEANUP_NOTE, AgentRun, presentStates, stopAll } from "../src/acp-run.js";
 import { AgentBrowser, type ObservedProcess } from "../src/browser.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { childState, parseChildState, processList } from "../src/process-tree.js";
-import { finishedHelper, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { childState, parseChildState, processList, readProcessList } from "../src/process-tree.js";
+import { finishedHelper, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-agent-lifetime-");
 afterAll(() => removeDir(root));
 const profile = ENGINE_PROFILES.find(profile => profile.id === "sol-high")!;
 const command = [process.execPath, join(import.meta.dir, "fake-agent.ts")];
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
+type Signals = ReturnType<typeof spyOn<typeof process, "kill">>;
 
-const expectPausesReclaimed = (signals: ReturnType<typeof spyOn<typeof process, "kill">>) => {
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** One process's state column in a process list, if it is listed. */
+const stateIn = (listed: string, pid: number) => listed.split("\n").find(line => Number(line.trim().split(/\s+/)[0]) === pid)?.trim().split(/\s+/)[2];
+/** Whether this fixture's last successful pause or resume of a process, or of its group, left it paused. */
+const pausedBy = (signals: Signals, pid: number) => {
+  let paused = false;
+  for (const [index, [target, signal]] of signals.mock.calls.entries()) {
+    if (Math.abs(target) !== pid || signals.mock.results[index]?.type !== "return") continue;
+    if (signal === "SIGSTOP") paused = true;
+    else if (signal === "SIGCONT") paused = false;
+  }
+  return paused;
+};
+/** Whether this fixture successfully forced a process, or the group it leads, to stop: it can only await collection. */
+const killedBy = (signals: Signals, pid: number) => signals.mock.calls.some(([target, signal], index) => Math.abs(target) === pid && signal === "SIGKILL" && signals.mock.results[index]?.type === "return");
+
+const expectPausesReclaimed = (signals: Signals) => {
   const { calls, results } = signals.mock;
   for (const [index, [pid, signal]] of calls.entries()) if (signal === "SIGSTOP") {
     // A known owner can already be gone when the final pause is attempted.
@@ -53,26 +70,44 @@ process.once("SIGTERM", () => { void (async () => {
 process.argv.push("--stubborn");
 await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
   const original = processes.execFile;
-  const actualList = () => new Promise<string>((resolve, reject) => {
-    original("/bin/ps", ["-A", "-o", "pid=,ppid=,stat="], { timeout: 4_000 }, (error, stdout) => error ? reject(error) : resolve(stdout));
-  });
   let forks = 0;
   const workerPids = () => Array.from({ length: forks }, (_, i) => workerFile(i + 1, "pid")).flatMap(path => existsSync(path) ? Number(readFileSync(path, "utf8")) || [] : []);
   const controller = new AbortController();
+  // Read natively before the stop: the stop's final look names process groups, and lists this test's.
+  const ownGroup = Number((await waitFor(() => processList(["-o", "pgid=", "-p", String(process.pid)], 4_000 * SLOW), "this test's process group")).trim());
   const unrelated = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" });
   const signals = spyOn(process, "kill");
-  let child: ChildProcess | undefined, run: AgentRun | undefined, incomplete = 0;
+  let child: ChildProcess | undefined, run: AgentRun | undefined, incomplete = 0, verifying = false;
   const snapshots: string[] = [];
+  // The stop's lists show this test's and this fixture's live processes with the parent links, or
+  // for its final look the process groups, and the state its own successful signals left them in:
+  // forced to stop, paused or running. A native ps here could answer after the stop's read
+  // allowance, which rightly reports cleanup incomplete (the failure controls below); the stop
+  // with no work keeps native list coverage. Verification after the stop reads natively.
+  const listing = (groups: boolean) => {
+    const linked = child!.exitCode === null && child!.signalCode === null;
+    // The agent and its detached workers lead their own groups; the unrelated program shares this test's.
+    const owned = [
+      { pid: process.pid, parent: process.ppid, group: ownGroup },
+      { pid: child!.pid!, parent: process.pid, group: child!.pid! },
+      ...workerPids().map(pid => ({ pid, parent: linked ? child!.pid! : 1, group: pid })),
+      { pid: unrelated.pid, parent: process.pid, group: ownGroup },
+    ];
+    return owned.filter(({ pid }) => alive(pid)).map(({ pid, parent, group }) => `${pid} ${groups ? group : parent} ${killedBy(signals, pid) ? "Z" : pausedBy(signals, pid) ? "T" : "S"}`).join("\n");
+  };
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
-    if (args[0] !== "ps") return Reflect.apply(original, processes, args);
+    if (args[0] !== "ps" || verifying) return Reflect.apply(original, processes, args);
     const done = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    // Listed when the stop asks. Each ownership list showing the agent able to run releases another
+    // fork. Deliver that exact old list only after its new detached, TERM-ignoring worker is ready.
+    // The final look after the forced stop asks for groups, and is no ownership snapshot.
+    const groups = (args[1] as string[]).some(arg => arg.includes("pgid="));
+    const listed = listing(groups);
+    if (!groups) snapshots.push(listed);
     void (async () => {
-      // Each snapshot showing the agent able to run releases another fork. Deliver that
-      // exact old list only after its new detached, TERM-ignoring worker is ready.
-      const listed = await actualList();
-      snapshots.push(listed);
-      const row = listed.split("\n").find(line => Number(line.trim().split(/\s+/)[0]) === child?.pid);
-      if (row && !/^[TZ]/.test(row.trim().split(/\s+/)[2] ?? "")) {
+      // Like a real read, answer only once execFile has returned the helper the reader inspects.
+      await Promise.resolve();
+      if (!groups && stateIn(listed, child!.pid!) === "S") {
         const n = ++forks;
         writeFileSync(workerFile(n, "release"), "ready");
         await waitFor(() => existsSync(workerFile(n, "ready")) && existsSync(workerFile(n, "pid")), "the late worker to cross the captured-snapshot barrier");
@@ -89,16 +124,19 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     if (entry !== "stop") await waitFor(() => snapshots.length > 0, "the stop to begin before joining its result");
     const complete = await run.stop();
     expect(Date.now() - from).toBeLessThan(7_000);
+    verifying = true;
     expect(complete).toBe(true);
     expect(incomplete).toBe(0);
-    const after = await actualList();
+    // Native evidence, outside the stop's allowance: the agent and every worker it forked have
+    // stopped, and the unrelated program still runs unpaused.
+    const after = await waitFor(() => readProcessList(4_000 * SLOW), "a native process list after the stop");
     expect(parseChildState(after, child!.pid!)).toBe("ended");
     expect(workerPids().filter(pid => parseChildState(after, pid) !== "ended")).toEqual([]);
     expect(snapshots).toHaveLength(2);
     expect(existsSync(stopping)).toBe(true);
-    expect(snapshots.map(listed => listed.split("\n").find(line => Number(line.trim().split(/\s+/)[0]) === child!.pid)?.trim().split(/\s+/)[2]?.startsWith("T"))).toEqual([true, true]);
+    expect(snapshots.map(listed => stateIn(listed, child!.pid!))).toEqual(["T", "T"]);
     expect(parseChildState(after, unrelated.pid)).toBe("running");
-    expect(after.split("\n").find(line => Number(line.trim().split(/\s+/)[0]) === unrelated.pid)?.trim().split(/\s+/)[2]).not.toContain("T");
+    expect(stateIn(after, unrelated.pid)).not.toContain("T");
     expect(signals.mock.calls.filter(([pid, signal]) => Math.abs(pid) === unrelated.pid && signal !== 0)).toEqual([]);
     expectPausesReclaimed(signals);
     expect(await run.stop()).toBe(true);
@@ -112,8 +150,8 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     await run?.stop();
     unrelated.kill("SIGKILL"); await unrelated.exited;
     await waitFor(async () => {
-      const listed = await actualList();
-      return [child?.pid, ...workerPids()].every(pid => !pid || parseChildState(listed, pid) === "ended");
+      for (const pid of [child?.pid, ...workerPids()]) if (pid && await childState(pid, 4_000 * SLOW) !== "ended") return false;
+      return true;
     }, "the fixture's programs to stop");
     removeDir(dir);
   }
@@ -209,7 +247,6 @@ const startWorker = () => { const child = spawn(process.execPath, ["-e", ${JSON.
 startWorker();
 ${stubborn ? 'process.argv.push("--stubborn");' : ""}
 await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
-  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const workerPid = () => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined;
   const original = processes.execFile;
   const scanned: boolean[] = [];
@@ -224,15 +261,7 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     const stopping = signals.mock.calls.some(([pid, signal], index) => Math.abs(pid) === child!.pid && signal === "SIGTERM" && signals.mock.results[index]?.type === "return");
     const worker = !listedLate || stopping ? workerPid() : undefined;
     const owned = [{ pid: child!.pid!, parent: process.pid }, ...(worker ? [{ pid: worker, parent: child!.pid! }] : []), { pid: unrelated.pid, parent: process.pid }];
-    return owned.filter(({ pid }) => alive(pid)).map(({ pid, parent }) => {
-      let paused = false;
-      for (const [index, [target, signal]] of signals.mock.calls.entries()) {
-        if (Math.abs(target) !== pid || signals.mock.results[index]?.type !== "return") continue;
-        if (signal === "SIGSTOP") paused = true;
-        else if (signal === "SIGCONT") paused = false;
-      }
-      return `${pid} ${parent} ${first && firstRunning && pid === child!.pid ? "S" : paused ? "T" : "S"}`;
-    }).join("\n");
+    return owned.filter(({ pid }) => alive(pid)).map(({ pid, parent }) => `${pid} ${parent} ${first && firstRunning && pid === child!.pid ? "S" : pausedBy(signals, pid) ? "T" : "S"}`).join("\n");
   };
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(original, processes, args);
@@ -248,8 +277,8 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
       reported = true; scansRunning.delete(id); scanned.push(!error); done(error, stdout, stderr);
     };
     // Script discovery independently of native startup: a paused parent can have forked a
-    // worker whose pid file it has not finished writing. Native late-fork barriers above cover
-    // actual spawning during shutdown; these cases keep real stopping and read deadlines.
+    // worker whose pid file it has not finished writing. The late-fork barriers above cover a
+    // real fork after a captured list; these cases keep real stopping and read deadlines.
     // Read outcomes use this fixture's ready process identities and successful signals: a
     // native ps within the remaining allowance can itself time out under suite load.
     const listed = hang ? "" : snapshot(first);

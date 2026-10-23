@@ -139,7 +139,7 @@ describe("the engine slows a tool down before its limit", () => {
         unsub();
       }
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

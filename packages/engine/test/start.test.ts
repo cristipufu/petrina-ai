@@ -39,7 +39,7 @@ describe("a tool that never answers when it starts", () => {
       engine.retry(stuck.id);
       await waitFor(() => engine.getState().inbox.some((item) => item.taskId === taskId && item.kind === "plan") || task()?.stageIndex! >= 0, "the planner to answer after Try again", 120_000);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

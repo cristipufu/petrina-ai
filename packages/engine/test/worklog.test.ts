@@ -1,7 +1,7 @@
 import { expectRejection } from "./rejections.js";
 // The work log, end to end: a real engine with the fake agent reporting usage and settings the
 // way Claude Code and Codex do, and the product list that never hands an id out again.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -106,6 +106,10 @@ describe("The work log of a real engine", () => {
   let productId = "";
   const permissionWait = 600;
 
+  // A replaced engine is still stopping its agents while the test reads its successor. Drain those
+  // stops when the test ends, however it ends: a file ending mid-stop leaves paused agents behind.
+  const replaced: Promise<void>[] = [];
+  afterEach(() => Promise.all(replaced.splice(0)));
   afterAll(() => engine.shutdown());
 
   it("takes a task from the queue to a commit on main, asking the coordinator along the way", async () => {
@@ -253,7 +257,7 @@ describe("The work log of a real engine", () => {
 
   it("keeps the log across a restart, and marks a turn cut off by a stop as lost", async () => {
     const before = engine.usage({ view: "task", taskId });
-    engine.shutdown();
+    replaced.push(engine.shutdown());
     engine = new Engine(data, options);
     expect(engine.usage({ view: "task", taskId })).toEqual(before);
 
@@ -261,7 +265,7 @@ describe("The work log of a real engine", () => {
     await until(engine, () => readLog((log) => log.turns({ taskId: hanging }).some((turn) => turn.end === undefined)), () => undefined, 20_000);
     // Nothing starts again after the restart, so the lost turn is the only one.
     engine.setPoolPaused(true);
-    engine.shutdown();
+    replaced.push(engine.shutdown());
     engine = new Engine(data, options);
     const lost = readLog((log) => log.turns({ taskId: hanging }));
     expect(lost).toHaveLength(1);
@@ -301,7 +305,7 @@ describe("The work log of a real engine", () => {
 
     // Lose the saved state entirely: ids in the work log are still never handed out again.
     const loggedTasks = readLog((log) => [...new Set(log.turns({}).map((turn) => turn.taskId))]);
-    engine.shutdown();
+    await engine.shutdown();
     const db = new Database(join(data, "petrina.db"));
     db.run("UPDATE kv SET value = '{not json' WHERE key = 'state'");
     db.close();
@@ -341,7 +345,7 @@ describe("The work log of a real engine", () => {
       expect(upgraded.usage({ view: "task", taskId: "task-3" }).empty).toBe("untracked");
       expect(upgraded.usage({ view: "products" }).products.find((entry) => entry.productId === "alive")?.tokens.atLeast).toBe(true);
     } finally {
-      upgraded.shutdown();
+      await upgraded.shutdown();
     }
   });
 });
@@ -392,15 +396,16 @@ describe("An agent session", () => {
     const profile = ENGINE_PROFILES.find((entry) => entry.id === "opus-high")!;
     const callbacks = { onActivity: () => undefined, onPlanStep: () => undefined, onPermission: async () => "deny" as const };
     const start = (env: NodeJS.ProcessEnv) => AgentRun.start({ profile, cwd, callbacks, signal: new AbortController().signal, command: [process.execPath, fake, "--tool=claude-code"], env, browserTempRoot: browsers });
-    const bare = await start({ ...process.env, FAKE_BARE_ACK: "1" });
-    const echoed = await start(process.env);
+    let bare: AgentRun | undefined, echoed: AgentRun | undefined;
     try {
+      bare = await start({ ...process.env, FAKE_BARE_ACK: "1" });
+      echoed = await start(process.env);
       // Petrina asked for opus at high and the tool only said "ok": neither is taken as confirmed.
       expect(bare.settings).toEqual({});
       expect(echoed.settings).toEqual({ model: "opus", modelName: "Opus 5.5", effort: "high" });
     } finally {
-      bare.close();
-      echoed.close();
+      // Wait for both stops: a stop pauses its agent while it lists the agent's programs.
+      await Promise.all([bare?.stop(), echoed?.stop()]);
       removeDir(cwd);
     }
   });

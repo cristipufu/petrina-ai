@@ -226,7 +226,7 @@ describe("the record each finished step leaves", () => {
         expect(record.worked).toBeGreaterThanOrEqual(0);
       }
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });
