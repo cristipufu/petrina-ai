@@ -511,10 +511,15 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
  */
 function ToolFix({ item, state }: { item: InboxItem; state: State }) {
   const toolId = item.toolId!;
-  const status = checkOf(state.setup?.checks, toolId).status;
+  const check = checkOf(state.setup?.checks, toolId);
+  const status = check.status;
   const platform = state.setup?.platform ?? "darwin";
   const name = CHECK_NAMES[toolId];
   if (!state.setup) return item.body ? <p className="ask-body">{item.body}</p> : null;
+  if (item.toolProblem === "not-installed" && status === "unknown") {
+    const fix = fixFor(toolId, status, platform)!;
+    return <FixSteps fix={{ ...fix, sentence: `The latest check of ${name} couldn't run, so Petrina can't confirm it is missing; Retry carries on.` }} detail={check.detail} name={name} />;
+  }
   const now = status === "not-installed" || status === "logged-out" ? status : undefined;
   if (!now && item.toolProblem !== "wont-start" && status === "ready") return <p className="ask-body">{name} is ready now, so Retry carries on.</p>;
   const problem = now ?? item.toolProblem;

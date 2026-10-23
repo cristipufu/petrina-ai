@@ -15,7 +15,7 @@ import { IdleSleepAssertion } from "./awake.js";
 import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import * as git from "./git.js";
-import type { Which } from "./setup.js";
+import type { DeveloperToolsResult, Which } from "./setup.js";
 import type { MachineRecords } from "./check-interruption.js";
 import { Store } from "./store.js";
 import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
@@ -126,7 +126,7 @@ export interface EngineOptions {
   /** Tests: a smaller retained workflow-event window, to exercise eviction. */
   eventRetention?: { events?: number; bytes?: number };
   /** Tests: where Apple's developer tools are, instead of asking xcode-select. */
-  developerTools?: () => Promise<string | undefined>;
+  developerTools?: () => Promise<DeveloperToolsResult>;
   /** Tests: the home folder: where the clone finder looks, and what ~ means in a pasted path. */
   home?: string;
   /** Tests: how often the once-a-minute checks run (pull requests, removing working copies). */

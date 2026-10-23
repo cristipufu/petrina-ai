@@ -371,15 +371,20 @@ describe("Tool status", () => {
   });
 
   it("checks Git and Node.js, and on a Mac never runs Git without Apple's developer tools", async () => {
-    const which = (name: string) => Bun.which(name);
+    const which = () => process.execPath;
     expect((await checkGit(which, "linux")).status).toBe("ready");
     expect((await checkGit(() => null, "linux")).status).toBe("not-installed");
     // /usr/bin/git without the developer tools is a stand-in that would open Apple's installer.
-    const noTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => undefined });
+    const noTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => ({ kind: "missing" }) });
     expect(noTools.status).toBe("not-installed");
-    const emptyTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => fresh("no-git-here") });
+    const emptyTools = await checkGit(() => "/usr/bin/git", "darwin", { developerTools: async () => ({ kind: "found", path: fresh("no-git-here") }) });
     expect(emptyTools.status).toBe("not-installed");
-    const engine = new Engine(fresh("data"), { which: (name) => (name === "node" ? null : Bun.which(name)), agentCommand: agents({}), toolCheckTimeoutMs: LIMIT });
+    const fakes = new Fakes(fresh("git-node-gh"));
+    const engine = new Engine(fresh("data"), {
+      which: (name) => name === "node" ? null : process.execPath,
+      gh: [process.execPath, fakeGh, join(fakes.dir, "github.json"), join(fakes.dir, "github.git")],
+      agentCommand: agents({}), toolCheckTimeoutMs: LIMIT,
+    });
     try {
       await engine.checkTools();
       expect(status(engine, "git")).toBe("ready");

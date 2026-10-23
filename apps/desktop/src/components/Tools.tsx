@@ -7,11 +7,11 @@ import { ToolIcon } from "./ToolIcon";
 
 /**
  * Shared rows for Agents and first run; optional agent tools appear once installed,
- * with Git and Node.js only when they are missing.
+ * with Git and Node.js when missing or when their check couldn't run.
  */
 export function shownChecks(checks: readonly ToolCheck[] | undefined): ToolCheck[] {
-  const missing = (["git", "node"] as const).filter((id) => checkOf(checks, id).status === "not-installed");
-  const rows: CheckId[] = [...agentTools(checks), "gh", ...missing];
+  const needsAttention = (["git", "node"] as const).filter((id) => ["not-installed", "unknown"].includes(checkOf(checks, id).status));
+  const rows: CheckId[] = [...agentTools(checks), "gh", ...needsAttention];
   return rows.map((id) => checkOf(checks, id));
 }
 

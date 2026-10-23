@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Simulator, createDemoState, createFirstRunDemo, type State } from '@petrina/core';
+import { Simulator, createDemoState, createFirstRunDemo, type CheckStatus, type State } from '@petrina/core';
 import { useSyncExternalStore } from 'react';
 import { App } from '../src/App';
 
@@ -52,7 +52,7 @@ async function mount(state: State) {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   await act(async () => root.render(<App />));
 }
-beforeEach(() => { localStorage.clear(); answer = undefined; });
+beforeEach(() => { localStorage.clear(); history.replaceState(null, '', '/'); answer = undefined; });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
 /** The board right after first run, its first task stuck because Claude Code isn't logged in. */
@@ -118,6 +118,86 @@ describe('first run', () => {
     expect(button('Continue').disabled).toBe(false);
     expect(text('.setup-notes')).toBe("Only Grok is set up, so agents will review each other's work on the same tool, and setting up Claude Code or Codex gives a second opinion.");
   });
+
+  for (const surface of ['first run', 'Agents'] as const) {
+    for (const status of ['unknown', 'not-installed', 'ready', 'unchecked'] as const) {
+      it(`shows Git and Node.js advice for ${status} in ${surface}`, async () => {
+        const detail = "Petrina couldn't prepare the temporary folder it uses for checks. System detail.";
+        const checks = [
+          { id: 'claude-code' as const, status: 'ready' as const },
+          { id: 'git' as const, status, detail },
+          { id: 'node' as const, status, detail },
+        ];
+        const state = onTools(checks);
+        if (surface === 'Agents') history.replaceState(null, '', '/agents');
+        await mount(surface === 'Agents' ? { ...state, setup: { ...state.setup!, done: true } } : state);
+        for (const [id, name] of [['git', 'Git'], ['node', 'Node.js']]) {
+          const row = host.querySelector<HTMLElement>(`.tool-row[aria-label^="${name}:"]`);
+          if (status === 'ready' || status === 'unchecked') {
+            expect(row).toBeNull();
+            continue;
+          }
+          expect(row).not.toBeNull();
+          expect(row!.textContent).toContain(status === 'unknown' ? "Couldn't check" : 'Not installed');
+          expect(row!.querySelector('a')!.textContent).toContain(`${name} guide`);
+          if (status === 'unknown') {
+            expect(row!.querySelector('.command')).toBeNull();
+            await click(row!.querySelector('button')!);
+            expect(row!.textContent).toContain(detail);
+          } else {
+            expect(row!.querySelector('.command')!.textContent).toContain(id === 'git' ? 'xcode-select --install' : 'brew install node');
+          }
+        }
+        expect(button('Check again')).toBeDefined();
+        if (surface === 'first run') expect(button('Continue').disabled).toBe(status === 'not-installed' || status === 'unchecked');
+      });
+    }
+  }
+
+  for (const status of ['unknown', 'not-installed', 'ready'] as const) {
+    it(`follows a missing tool's latest ${status} check in Stuck advice`, async () => {
+      const state = stuckFirstTask(false);
+      const task = { ...state.tasks[0]!, statusLine: "Stuck: Git isn't installed" };
+      const title = `Git isn't installed, so “${task.title}” is stuck`;
+      const detail = "Petrina couldn't prepare the temporary folder it uses for checks. Latest system reason.";
+      await mount({
+        ...state, tasks: [task],
+        inbox: [{ ...state.inbox[0]!, title, toolId: 'git', toolProblem: 'not-installed', detail: 'Old diagnosis' }],
+        setup: { ...state.setup!, checks: [{ id: 'git', status, detail }] },
+      });
+      await click(button('Show Needs you'));
+      expect(text('.ask-title')).toBe(title);
+      expect(button('Retry')).toBeDefined();
+      if (status === 'unknown') {
+        expect(text('.ask')).toContain("The latest check of Git couldn't run");
+        expect(text('.ask')).toContain("can't confirm it is missing; Retry carries on");
+        expect(host.querySelector('.ask .command')).toBeNull();
+        await click(button('Details'));
+        expect(text('.ask .detail')).toBe(detail);
+        expect(text('.ask')).not.toContain('Old diagnosis');
+      } else if (status === 'not-installed') {
+        expect(text('.ask .command')).toContain('xcode-select --install');
+      } else {
+        expect(text('.ask')).toContain('Git is ready now, so Retry carries on.');
+        expect(host.querySelector('.ask .command')).toBeNull();
+      }
+      expect(simulator.getState().tasks[0]!.statusLine).toBe("Stuck: Git isn't installed");
+    });
+  }
+
+  for (const problem of ['wont-start', 'logged-out'] as const) {
+    it(`keeps ${problem} advice when the latest tool check is uncertain`, async () => {
+      const state = stuckFirstTask(false);
+      await mount({ ...state,
+        inbox: [{ ...state.inbox[0]!, toolProblem: problem, detail: 'Original task failure' }],
+        setup: { ...state.setup!, checks: [{ id: 'claude-code', status: 'unknown' as CheckStatus, detail: 'Latest uncertain check' }] },
+      });
+      await click(button('Show Needs you'));
+      expect(text('.ask .command')).toContain(problem === 'wont-start' ? 'claude --version' : 'claude auth login');
+      await click(button('Details'));
+      expect(text('.ask .detail')).toBe('Original task failure');
+    });
+  }
 
   it('keeps every choice as it was sent while Start shows Starting…, and gives them back with the draft if saving fails', async () => {
     const demo = createFirstRunDemo(1_000_000_000).state;

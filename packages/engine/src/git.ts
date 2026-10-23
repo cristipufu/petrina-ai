@@ -11,7 +11,7 @@
 // agent that rewrites a remote cannot change what Petrina reads.
 
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -28,6 +28,14 @@ export interface RunResult {
   timedOut?: boolean;
   /** The process was observed gone or defunct, but its exit was never reported; its result is unknown. */
   exitUnreported?: boolean;
+  /** No program started. Exit numbers alone cannot distinguish this from a program's own answer. */
+  startFailure?: StartFailure;
+}
+
+export interface StartFailure {
+  kind: "missing-executable" | "temporary-directory" | "working-directory" | "permission" | "other";
+  message: string;
+  systemCode?: string;
 }
 
 export { EXIT_GRACE_MS } from "./process-tree.js";
@@ -117,7 +125,43 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** How long Petrina waits for GitHub before giving up on a lookup or a fetch. */
 export const FETCH_TIMEOUT_MS = 30_000;
 
+function systemCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : undefined;
+}
+
+/** Only an absent file is evidence of a missing program; unreadable files are not. */
+function absent(path: string): boolean {
+  try { statSync(path); return false; }
+  catch (error) { return ["ENOENT", "ENOTDIR"].includes(systemCode(error) ?? ""); }
+}
+
+function launchFailure(error: unknown, command: string | undefined, cwd: string): StartFailure["kind"] {
+  const code = systemCode(error);
+  if (code === "EACCES" || code === "EPERM") return "permission";
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    const message = error instanceof Error ? error.message : String(error);
+    const file = command && (command.includes("/") || (process.platform === "win32" && command.includes("\\")));
+    if ((file && absent(resolve(cwd, command))) || (!file && code === "ENOENT" && message.startsWith("Executable not found in $PATH:"))) return "missing-executable";
+    try { if (!statSync(cwd).isDirectory()) return "working-directory"; }
+    catch (cause) { if (["ENOENT", "ENOTDIR"].includes(systemCode(cause) ?? "")) return "working-directory"; }
+  }
+  return "other";
+}
+
+function neverStarted(error: unknown, kind: StartFailure["kind"]): RunResult {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = systemCode(error);
+  // Preserve the legacy number and message for callers that handle all command failures alike.
+  return { code: 127, stdout: "", stderr: message, startFailure: { kind, message, ...(code ? { systemCode: code } : {}) } };
+}
+
 export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; local?: boolean; timeoutMs?: number; ownHooks?: boolean; index?: string; rawOutput?: boolean } = {}): Promise<RunResult> {
+  let env: NodeJS.ProcessEnv;
+  try {
+    env = { ...gitEnv(options.credentials === true, { local: options.local === true, ownHooks: options.ownHooks === true }), ...(options.index ? { GIT_INDEX_FILE: options.index } : {}) };
+  } catch (error) {
+    return neverStarted(error, "temporary-directory");
+  }
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn([...cmd], {
@@ -125,12 +169,11 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
       stdin: input === undefined ? "ignore" : new Blob([input]),
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...gitEnv(options.credentials === true, { local: options.local === true, ownHooks: options.ownHooks === true }), ...(options.index ? { GIT_INDEX_FILE: options.index } : {}) },
+      env,
       windowsHide: true,
     });
   } catch (error) {
-    // The program is not installed (no gh, say): report it like a failed command.
-    return { code: 127, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+    return neverStarted(error, launchFailure(error, cmd[0], cwd));
   }
   // Read while the process writes: a saved file can exceed the pipe's capacity before Git exits.
   const readers = [proc.stdout, proc.stderr].map(stream => (stream as ReadableStream<Uint8Array>).getReader());

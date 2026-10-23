@@ -68,6 +68,8 @@ Everything waiting on you: items that keep an agent waiting first, then by task 
 | **Stuck** | A stage failed, or a tool needs you to log in | **Try again**, See what happened, Cancel task |
 | **Screen** | "Needs the screen for: Click the menu bar icon and check the quick note window opens in front" | Allow now. Quiet: listed after every other item, no notification or toast, never counted in "You're blocking" |
 
+A Stuck item recorded for a missing tool follows a later Couldn't check answer: its explanation says the latest check couldn't run, Petrina can't confirm the tool is missing, and Retry carries on. Details shows the latest reason, with no install command. A later Ready answer still says the tool is ready now. The stored heading and task card keep naming the original failure until Retry. Items for a tool that wouldn't start or was logged out keep their existing advice.
+
 Every agent is told: when you ask the coordinator a question with choices, put the answer you recommend first. The demo squad does the same, and keeps every answer in its order.
 
 ### Permissions
