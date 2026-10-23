@@ -1,12 +1,36 @@
 // GitHub CLI requests pinned to the approved product, outside working copies.
 import { tmpdir } from "node:os";
-import { run, commandFailure, isRefName, isRepoName, FETCH_TIMEOUT_MS, type Gh, type Check, type RunResult } from "./git.js";
+import { run, commandFailure, isRefName, isRepoName, EXIT_UNREPORTED, FETCH_TIMEOUT_MS, OUTPUT_INCOMPLETE, OUTPUT_UNREADABLE, type Gh, type Check, type RunResult } from "./git.js";
 const GH: Gh = ["gh"];
 
 /** gh with the coordinator's login, pinned to the product's repository and run outside any working copy. */
 export async function gh(cmd: Gh, repo: string, args: readonly string[], input?: string): Promise<RunResult> {
   if (!isRepoName(repo)) return { code: 2, stdout: "", stderr: `not a GitHub repository: ${repo}` };
-  return run([...cmd, ...args, "--repo", repo], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
+  return inGitHubTerms(await run([...cmd, ...args, "--repo", repo], tmpdir(), input, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS }));
+}
+
+const UNFINISHED: readonly (readonly [string, string])[] = [
+  [EXIT_UNREPORTED, "the GitHub command ended, but the system did not report its exit, so GitHub's answer is unknown"],
+  [OUTPUT_INCOMPLETE, "the GitHub command ended, but GitHub's answer did not finish arriving"],
+  ["timed out", `GitHub did not answer within ${FETCH_TIMEOUT_MS / 1000} seconds`],
+];
+
+/**
+ * A GitHub request that never finished: `run` words why for Git, so say it as GitHub's missing
+ * answer instead. The reason comes first so a shortened message keeps it; gh's own words follow.
+ */
+export function inGitHubTerms(result: RunResult): RunResult {
+  if (!result.timedOut) return result;
+  const { stderr } = result;
+  let own = stderr, why = "GitHub's answer is unknown";
+  const known = UNFINISHED.find(([reason]) => stderr === reason || stderr.endsWith(`\n${reason}`));
+  const unreadable = stderr.lastIndexOf(`${OUTPUT_UNREADABLE}: `);
+  if (known) [own, why] = [stderr.slice(0, -known[0].length), known[1]];
+  else if (unreadable === 0 || stderr[unreadable - 1] === "\n") {
+    own = stderr.slice(0, unreadable);
+    why = `GitHub's answer could not be read: ${stderr.slice(unreadable + OUTPUT_UNREADABLE.length + 2)}`;
+  }
+  return { ...result, stderr: [why, own.trim()].filter(Boolean).join("\n") };
 }
 
 export interface PullRequestInfo {
@@ -24,18 +48,21 @@ export interface PullRequestInfo {
 const LIST_LIMIT = 100;
 /**
  * gh's answer for a release that is not there. GitHub gives the same answer for a repository the
- * login cannot see, so it only counts once `canSee` says the login sees the repository.
+ * login cannot see, so it only counts once `canSee` says the login sees the repository. Words from
+ * a request that never finished are no answer.
  */
-const noRelease = (result: RunResult) => /^release not found$/im.test(result.stderr);
+const noRelease = (result: RunResult) => !result.timedOut && /^release not found$/im.test(result.stderr);
 
 /**
  * Does the coordinator's GitHub login see the product's repository? Asked before any "not there"
  * counts: GitHub answers "not found" alike for a missing release and a repository the login cannot see.
+ * Only GitHub's own answer says the login cannot see it: no answer leaves that unknown, never visible.
  */
 export async function canSee(repo: string, cmd: Gh = GH): Promise<Check<void>> {
   if (!isRepoName(repo)) return { ok: false, error: `not a GitHub repository: ${repo}` };
-  const result = await run([...cmd, "repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"], tmpdir(), undefined, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS });
+  const result = inGitHubTerms(await run([...cmd, "repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"], tmpdir(), undefined, { credentials: true, timeoutMs: FETCH_TIMEOUT_MS }));
   if (result.startFailure) return { ok: false, error: `Petrina couldn't start the repository check for ${repo} (${commandFailure(result).error})` };
+  if (result.timedOut) return { ok: false, error: `Petrina could not confirm whether your GitHub login can see ${repo} (${commandFailure(result).error})` };
   if (result.code !== 0) return { ok: false, error: `your GitHub login cannot see ${repo} (${commandFailure(result).error})` };
   return result.stdout.toLowerCase() === repo.toLowerCase() ? { ok: true, value: undefined } : { ok: false, error: `GitHub answered for ${result.stdout || "another repository"}, not ${repo}` };
 }

@@ -50,3 +50,4 @@ What agents learned about working in this repository, added with the coordinator
 - The stand-in agent used in engine tests reports token usage only when started with --tool=<tool id> (as the work-log tests do); without it, every turn records 'not reported'.
 - The fake agent rereads its script file on every turn, so an engine test can rewrite the script's hold mid-run to stop the Builder at a later turn (such as its conflict port) and pause or restart the engine at that exact point.
 - Bun's failing-test output omits an error's cause and only sometimes shows its extra properties; print evidence a saved Tests log must keep as its own console line, not attached to the error.
+- In Bun, node:child_process execFile goes through the global Bun.spawn, so a test that replaces or spies on Bun.spawn also intercepts Petrina's own process-list (ps) reads, such as the lost-exit watch.

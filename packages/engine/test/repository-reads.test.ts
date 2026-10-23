@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as commands from "../src/git.js";
-import { canSee } from "../src/github.js";
+import { canSee, findRelease, inGitHubTerms } from "../src/github.js";
+import { branchExists } from "../src/source-github.js";
 import { makeProduct, removeDir, SLOW, tempDir, testGitEnv } from "./fixtures.js";
 import { rejectionOf } from "./rejections.js";
 
@@ -154,19 +155,47 @@ describe("repository visibility and saved-file failures", () => {
     expect(await commands.fileAt(repo, "HEAD", "README.md", limit)).toBe("# Demo\n");
   });
 
-  it("keeps timeouts and unreported exits as failed lookups and failed reads", async () => {
+  it("keeps timeouts and unreported exits as failed lookups and failed reads, and says GitHub never answered", async () => {
     const running = spyOn(commands, "run");
     try {
-      for (const result of [
-        { code: 124, stdout: "", stderr: "timed out", timedOut: true },
-        { code: 124, stdout: "example/project", stderr: commands.EXIT_UNREPORTED, timedOut: true, exitUnreported: true },
-      ]) {
+      for (const [result, why] of [
+        [{ code: 124, stdout: "", stderr: "timed out", timedOut: true }, "GitHub did not answer within 30 seconds"],
+        [{ code: 124, stdout: "example/project", stderr: `gh: slow network\n${commands.EXIT_UNREPORTED}`, timedOut: true, exitUnreported: true },
+          "the GitHub command ended, but the system did not report its exit, so GitHub's answer is unknown\ngh: slow network"],
+        [{ code: 124, stdout: "example/pro", stderr: commands.OUTPUT_INCOMPLETE, timedOut: true }, "the GitHub command ended, but GitHub's answer did not finish arriving"],
+        [{ code: 124, stdout: "", stderr: `${commands.OUTPUT_UNREADABLE}: Error: stream broke`, timedOut: true }, "GitHub's answer could not be read: Error: stream broke"],
+      ] as const) {
         running.mockResolvedValue(result);
-        expect(await canSee("example/project", visible)).toEqual({ ok: false, error: `your GitHub login cannot see example/project (${result.stderr})` });
+        // Unknown, never visible and never a refusal: GitHub gave no answer about the login.
+        expect(await canSee("example/project", visible)).toEqual({ ok: false, error: `Petrina could not confirm whether your GitHub login can see example/project (${why})` });
         const error = await rejectionOf(commands.fileAt(temp, "HEAD", "README.md", limit)) as Error;
         expect(error.message).toBe("Git did not finish reading the repository's saved files");
         expect(error.cause).toBeUndefined();
+        // Partial words that look like "not there" are no answer either: never a missing release or branch.
+        running.mockClear();
+        running.mockResolvedValue({ ...result, stderr: `release not found\nHTTP 404: Not Found\n${result.stderr}` });
+        const release = await findRelease("example/project", "v1.0.0", visible);
+        expect(running).toHaveBeenCalledTimes(1);
+        if (release.ok) throw new Error("An unanswered release lookup unexpectedly counted");
+        for (const message of [release.error, (await rejectionOf(branchExists("example/project", "main", visible)) as Error).message]) {
+          expect(message).toContain(why.split("\n")[0]!);
+          expect(message).not.toContain("Git finished");
+          expect(message).not.toContain("Git's output");
+          expect(message).not.toContain("cannot see");
+          expect(message).not.toContain("is unavailable in");
+        }
       }
     } finally { running.mockRestore(); }
+  });
+
+  it("words a real unfinished GitHub command's result as GitHub's missing answer, and leaves finished results alone", async () => {
+    const slow = await commands.run([process.execPath, "-e", 'console.error("gh: waiting"); setInterval(() => {}, 1_000)'], temp, undefined, { timeoutMs: 500 * SLOW });
+    expect(slow.timedOut).toBe(true);
+    const unanswered = inGitHubTerms(slow);
+    expect(unanswered.code).toBe(124);
+    expect(unanswered.stderr.split("\n")[0]).toBe("GitHub did not answer within 30 seconds");
+    expect(unanswered.stderr).not.toContain("timed out");
+    const refused = await commands.run([process.execPath, "-e", 'console.error("Repository not found"); process.exit(1)'], temp, undefined, { timeoutMs: limit });
+    expect(inGitHubTerms(refused)).toBe(refused);
   });
 });

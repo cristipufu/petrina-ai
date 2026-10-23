@@ -31,7 +31,7 @@ export async function sourcePr(repo: string, number: number, cmd: git.Gh = GH): 
 /** Every page, with no truncation; pull review comments includes replies across all threads. */
 export async function api(repo: string, endpoint: string, cmd: git.Gh = GH): Promise<unknown[]> {
   if (!REPO.test(repo)) throw new Error("This is not a GitHub repository.");
-  const read = await git.run([...cmd, "api", `repos/${repo}/${endpoint}`, "--paginate", "--slurp"], tmpdir(), undefined, { credentials: true, timeoutMs: git.FETCH_TIMEOUT_MS });
+  const read = github.inGitHubTerms(await git.run([...cmd, "api", `repos/${repo}/${endpoint}`, "--paginate", "--slurp"], tmpdir(), undefined, { credentials: true, timeoutMs: git.FETCH_TIMEOUT_MS }));
   if (read.code) throw new Error(`Could not refresh pull request background in ${repo} (${read.stderr || read.stdout}). Earlier background has not been refreshed. Retry when GitHub is accessible.`);
   const pages: unknown = JSON.parse(read.stdout);
   if (!Array.isArray(pages)) throw new Error("GitHub returned unreadable background. Retry to read it again.");
@@ -42,10 +42,11 @@ export async function branchExists(repo: string, branch: string, cmd: git.Gh = G
   if (!REPO.test(repo)) throw new Error("This is not a GitHub repository.");
   const unavailable = `The branch ${branch} is unavailable in ${repo}. Correct the choice or retry.`;
   // A missing branch is not a failed pull request refresh. Read it directly so that explanation can be shown.
-  const read = await git.run([...cmd, "api", `repos/${repo}/branches/${encodeURIComponent(branch)}`, "--paginate", "--slurp"], tmpdir(), undefined, { credentials: true, timeoutMs: git.FETCH_TIMEOUT_MS });
+  const read = github.inGitHubTerms(await git.run([...cmd, "api", `repos/${repo}/branches/${encodeURIComponent(branch)}`, "--paginate", "--slurp"], tmpdir(), undefined, { credentials: true, timeoutMs: git.FETCH_TIMEOUT_MS }));
   const detail = read.stderr || read.stdout;
   if (read.code) {
-    if (/\b404\b|not found/i.test(detail)) throw new Error(unavailable);
+    // Only GitHub's own answer says the branch is missing: words from a request that never finished do not.
+    if (!read.timedOut && /\b404\b|not found/i.test(detail)) throw new Error(unavailable);
     throw new Error(`The branch ${branch} in ${repo} could not be checked (${detail}). Retry when GitHub is accessible.`);
   }
   let pages: unknown;

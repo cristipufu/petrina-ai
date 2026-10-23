@@ -41,6 +41,7 @@ export interface StartFailure {
 export { EXIT_GRACE_MS } from "./process-tree.js";
 export const EXIT_UNREPORTED = "Git finished, but the system did not report its exit";
 export const OUTPUT_INCOMPLETE = "Git finished, but its output did not finish arriving";
+export const OUTPUT_UNREADABLE = "Git's output could not be read";
 
 /** The `gh` command to run. Tests stand in a fake GitHub through the Engine's constructor. */
 export type Gh = readonly string[];
@@ -214,7 +215,7 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
       try { proc.kill("SIGKILL"); } catch { /* Already gone. */ }
     }
     for (const reader of readers) void reader.cancel().catch(() => undefined);
-    const reason = first === "lost" ? EXIT_UNREPORTED : first === "output-incomplete" ? OUTPUT_INCOMPLETE : typeof first === "object" ? `Git's output could not be read: ${String(first.error)}` : "timed out";
+    const reason = first === "lost" ? EXIT_UNREPORTED : first === "output-incomplete" ? OUTPUT_INCOMPLETE : typeof first === "object" ? `${OUTPUT_UNREADABLE}: ${String(first.error)}` : "timed out";
     return { code: 124, stdout: out(), stderr: [captured[1]!.trim(), reason].filter(Boolean).join("\n"), timedOut: true, ...(first === "lost" ? { exitUnreported: true } : {}) };
   }
   return { code: first.code, stdout: out(), stderr: captured[1]!.trim() };
