@@ -18,7 +18,7 @@ export function ReviewRoundFindings({ groups, find, onOpen }: { groups: ReviewRo
       <div><dt>Reopened</dt><dd className="num">{groups.reopened.length}</dd></div>
       <div><dt>New</dt><dd className="num">{groups.fresh.length}</dd></div>
     </dl>
-    <p className="note">As recorded for this completed review round.</p>
+    <p className="note">{groups.settled ? "Settled decisions for this review round." : "Hand-back copies; no settled decision was saved."}</p>
     {!groups.fixedRecorded && <p className="note">Some earlier fix answers were not recorded, so a complete fixed count is unavailable.</p>}
     {sections.filter((section) => section.findings.length).map((section) => <details className="journey-review-group" key={section.key} open={section.key !== "fixed"}>
       <summary><ChevronRight size={14} aria-hidden="true" /><span>{section.title}</span><span className="num">{section.findings.length}</span></summary>

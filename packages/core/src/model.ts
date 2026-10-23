@@ -298,8 +298,14 @@ export interface JourneyStep {
   fixing?: boolean;
   /** Findings assigned to this builder fix round. */
   findingIds?: readonly Id[];
-  /** The structured review output as it was handed back, before later rounds change its status or answers. */
-  result?: { objections?: readonly Objection[]; findings?: readonly Finding[] };
+  /** This step's saved evidence, independent of later rounds. Unmarked older findings are hand-back copies. */
+  result?: {
+    objections?: readonly Objection[];
+    findings?: readonly Finding[];
+    findingsSettled?: true;
+    /** Recorded transitions; a settled reviewers' step covers the whole examination across retries. */
+    findingChanges?: { raised: readonly Id[]; fixed: readonly Id[]; dismissed: readonly Id[]; reopened?: readonly { id: Id; evidence: boolean }[]; claimedFixed?: readonly Id[] };
+  };
   /** Whether the builder continued its saved conversation or began a fresh one for this step. */
   builderConversation?: "resumed" | "new";
   /** Observed contents for this return, independent of the Builder's claims. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginAgentStep, endAgentStep, JOURNEY_WORDS as W, BUILT_IN_ROLES, createDemoState, publishingResult, publishingWords, seatOf, workflowEvents, workflowFacts, WorkflowObserver, type Finding, type InboxItem, type JourneyStep, type Task, type TaskRepository, type TaskState, type WorkflowContext, type WorkflowEvent } from "../src/index.js";
+import { beginAgentStep, endAgentStep, JOURNEY_WORDS as W, BUILT_IN_ROLES, createDemoState, publishingResult, publishingWords, reviewRoundSteps, seatOf, workflowEvents, workflowFacts, WorkflowObserver, type Finding, type InboxItem, type JourneyStep, type Task, type TaskRepository, type TaskState, type WorkflowContext, type WorkflowEvent } from "../src/index.js";
 
 const state = createDemoState(1_000_000);
 const ctx = (inbox: InboxItem[] = [], now = 5_000): WorkflowContext => ({ roles: state.roles, profiles: state.profiles, inbox, products: state.products.map(({ id, name }) => ({ id, name })), now });
@@ -97,6 +97,21 @@ describe("publishing results follow the existing delivery and landing rules", ()
 });
 
 describe("compact facts become ordered events", () => {
+  it("groups accepted retry work only within the same review examination", () => {
+    const input = { file: "private-input", digest: "same-input", heads: { shop: "reviewed" } };
+    const partial = handedBack(seated({ id: "partial", kind: "agent", roleId: "code-reviewer", stageId: "review", round: 2, sub: 0, startedAt: 10, endedAt: 20, end: "failed", seats: ["reviewer:0", "reviewer:1"], reviewInput: input }));
+    const checkpoint: JourneyStep = { id: "try-again", kind: "you", round: 2, sub: 0, startedAt: 20, endedAt: 25, outcome: W.triedAgain };
+    const current: JourneyStep = { ...partial, id: "current", startedAt: 30, endedAt: undefined, agentResults: [], agentInputs: [] };
+    const group = (first: JourneyStep) => reviewRoundSteps({ journey: [first, checkpoint, current] }, current.id, state.roles).map(step => step.id);
+    expect(group(partial)).toEqual([partial.id, current.id]);
+    expect(group({ ...partial, round: 1 })).toEqual([current.id]);
+    expect(group({ ...partial, stageId: "another-review" })).toEqual([current.id]);
+    expect(group({ ...partial, reviewInput: { ...input, digest: "another-input" } })).toEqual([current.id]);
+    expect(group({ ...partial, result: { findings: [], findingsSettled: true } })).toEqual([current.id]);
+    const completed = handedBack(seated({ ...partial, agentInputs: [] }, [["0", "opus-high"], ["1", "sol-high"]]));
+    expect(group(completed)).toEqual([current.id]);
+  });
+
   it("follows successive lone-agent replacements across their recorded handoff nodes without treating later work as a replacement", () => {
     const current = task();
     const mutable = current as unknown as Task & { journey: JourneyStep[] };

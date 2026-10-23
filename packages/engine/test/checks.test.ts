@@ -262,8 +262,9 @@ describe("a check that misbehaves", () => {
     const childPid = join(dir, "child.pid");
     const grandPid = join(dir, "grandchild.pid");
     const ready = join(dir, "ready");
-    writeFileSync(worker, `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
-writeFileSync(process.argv[2], String(process.pid));
+    const logs = join(dir, "logs");
+    writeFileSync(worker, `import { spawn } from "node:child_process"; import { renameSync, writeFileSync } from "node:fs";
+writeFileSync(process.argv[2] + ".tmp", String(process.pid)); renameSync(process.argv[2] + ".tmp", process.argv[2]);
 if (process.argv[3]) spawn(process.execPath, [${JSON.stringify(worker)}, process.argv[3]], { detached: true, stdio: "ignore" }).unref();
 setInterval(() => {}, 1000);`);
     writeFileSync(parent, `import { spawn } from "node:child_process"; import { existsSync, writeFileSync } from "node:fs";
@@ -277,8 +278,9 @@ setInterval(() => {}, 1000);`);
     const workers = () => [childPid, grandPid].filter(existsSync).map((file) => Number(readFileSync(file, "utf8")));
     let running: Promise<unknown> | undefined;
     try {
-      running = runChecks(dir, [{ name: "Detached workers", argv: [process.execPath, parent] }], process.env, 20_000, stop.signal, join(dir, "logs"));
-      await waitFor(() => existsSync(ready), "both detached check workers to start");
+      running = runChecks(dir, [{ name: "Detached workers", argv: [process.execPath, parent] }], process.env, 20_000, stop.signal, logs);
+      // Readiness precedes the diagnostic: cancellation must wait for the output it asserts.
+      await waitFor(() => existsSync(ready) && readdirSync(logs).some(file => readFileSync(join(logs, file), "utf8").includes("both detached workers")), "both detached check workers and their captured start message");
       expect(workers()).toHaveLength(2);
       expect(workers().every(alive)).toBe(true);
       const stoppingAt = Date.now();
@@ -308,8 +310,8 @@ setInterval(() => {}, 1000);`);
     const grandPid = join(dir, "grandchild.pid");
     const parentPid = join(dir, "parent.pid");
     const ready = join(dir, "ready");
-    writeFileSync(worker, `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
-writeFileSync(process.argv[2], String(process.pid));
+    writeFileSync(worker, `import { spawn } from "node:child_process"; import { renameSync, writeFileSync } from "node:fs";
+writeFileSync(process.argv[2] + ".tmp", String(process.pid)); renameSync(process.argv[2] + ".tmp", process.argv[2]);
 if (process.argv[3]) spawn(process.execPath, [${JSON.stringify(worker)}, process.argv[3]], { detached: true, stdio: "ignore" }).unref();
 setInterval(() => {}, 1000);`);
     writeFileSync(parent, `import { spawn } from "node:child_process"; import { existsSync, writeFileSync } from "node:fs";

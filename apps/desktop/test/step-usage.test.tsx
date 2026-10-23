@@ -63,17 +63,18 @@ it("explains untracked, future and non-agent steps without figures", async () =>
   expect(read).toHaveBeenCalledTimes(1);
 });
 
-it("names actual seats, tools, models and separate starts with partial report wording", async () => {
+it.each([true, false])("names actual seats, tools, models and separate starts with partial report wording (tool name recorded: %s)", async recorded => {
   const amount = { value: 600, atLeast: true };
   const view = reported(600); view.tokens = amount;
   view.detail.input = { value: 400, atLeast: true };
   view.runs = [1, 2].map(start => ({ key: `run-${start}`, roleId: "code-reviewer", toolId: start === 1 ? "codex" : "grok", model: start === 1 ? "sol" : "Grok 4.7", seat: 1, start, tokens: { value: 300, atLeast: false }, detail: view.detail, models: [] }));
-  read.mockResolvedValue(view); await render();
+  const state = recorded ? base : { ...base, tools: base.tools.filter(tool => tool.id !== "grok") };
+  read.mockResolvedValue(view); await render(node, state);
   expect(host.textContent).toContain("> 600 tokens");
   expect(host.textContent).toContain("Seat 1 · Start 1");
   expect(host.textContent).toContain("Seat 1 · Start 2");
   expect(host.textContent).toContain("Codex · sol");
-  expect(host.textContent).toContain("grok · Grok 4.7");
+  expect(host.textContent).toContain(recorded ? "Grok · Grok 4.7" : "grok · Grok 4.7");
   expect(host.textContent).toContain("> 400");
   expect(host.textContent).not.toContain("At least");
   expect(host.textContent).not.toContain("at least");

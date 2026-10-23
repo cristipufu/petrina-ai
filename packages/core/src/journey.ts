@@ -11,6 +11,7 @@ import { reviewerAt, roleForTask } from "./roles.js";
 import { landingState } from "./repositories.js";
 import { markedDoneUnconfirmed } from "./cleanup.js";
 import type { HistoryItem } from "./history.js";
+import { verificationSummary } from "./reviews.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -34,9 +35,8 @@ export const JOURNEY_WORDS = {
   unchanged: "No changes to the code",
   fixed: (count: number) => (count ? `Builder claims ${plural(count, "fix")}` : "Changes returned"),
   checks: (failed: number, total: number) => (failed ? `${failed} of ${plural(total, "check")} failed` : total === 1 ? "The check passes" : total ? `All ${total} checks pass` : "No checks to run"),
-  voted: (real: number, total: number, more: { disputed?: number; unresolved?: number; oneTool?: boolean } = {}) =>
-    `${total} checked${more.oneTool ? " by one tool" : ""}: ${real} real${more.disputed ? ` (${more.disputed} disputed)` : ""}${more.unresolved ? `, ${more.unresolved} unresolved` : ""}`,
-  firstAnswers: (total: number, real: number, third: number) => `${total} checked: ${real} real, ${third} not blocking on both answers`,
+  voted: verificationSummary,
+  firstAnswers: (total: number, real: number, third: number) => `${total} checked: ${real} must be fixed in this change, ${third} awaiting a third answer`,
   foundChecks: (count: number) => (count ? `Found ${plural(count, "check")}` : "Found no checks"),
   couldNotFinish: "Could not finish",
   handedOn: "Work handed on",
@@ -318,7 +318,7 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
   return push(task, { kind: "agent", usageTracked: true, ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
 }
 
-/** Keep a step's actual handoff independent of later replies and fixes. */
+/** Keep a step's saved evidence independent of later replies and fixes. */
 export function recordStepResult(task: Pick<JourneyTask, "journey">, result: NonNullable<JourneyStep["result"]>): void {
   const step = openStep(task);
   if (step?.kind === "agent") step.result = JSON.parse(JSON.stringify({ ...step.result, ...result })) as NonNullable<JourneyStep["result"]>;

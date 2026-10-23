@@ -316,9 +316,13 @@ describe.concurrent("shipping is never repeated blindly", () => {
         const earlierChecks = before.timeline.filter((entry) => entry.text.startsWith("Checks passed:")).length;
         if (stop === "pause") {
           await engine.act("pause", run.taskId);
-          const paused = run.find(await engine.state());
+          const paused = run.find(await engine.until((state) => run.find(state).journey!.at(-1)?.toolActivity?.["release-manager"] !== undefined, "the cancelled Release Manager to record its final activity"));
           expect(paused.state).toBe("paused");
-          expect(paused.journey!.at(-1)).toEqual(notes);
+          // Cancellation ends the turn's activity on the same box without finishing the step.
+          const { toolActivity, ...pausedBox } = paused.journey!.at(-1)!;
+          const { toolActivity: _beforeActivity, ...originalBox } = notes;
+          expect(pausedBox).toEqual(originalBox);
+          expect(toolActivity).toEqual({ "release-manager": { roleId: "release-manager", profileId: notes.profileId, productId: before.productId, actionCount: 0 } });
           await engine.act("resume", run.taskId);
         } else {
           await engine.quit();

@@ -179,24 +179,34 @@ it("does not retain completed turns on the live agent's process", async () => {
   } finally { await run.stop(); }
 });
 
-const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(startsLate => ({ firstTimesOut, startsLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: false })));
+const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(listedLate => ({ firstTimesOut, listedLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: false })));
 stopCases.push(
-  { firstTimesOut: true, startsLate: false, stubborn: false, delay: 0, workerStubborn: true, cancel: true, firstRunning: false },
-  { firstTimesOut: false, startsLate: false, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false },
-  { firstTimesOut: false, startsLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false },
-  { firstTimesOut: false, startsLate: false, stubborn: false, delay: 3_800, workerStubborn: false, cancel: false, firstRunning: false },
-  { firstTimesOut: false, startsLate: false, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: true },
+  { firstTimesOut: true, listedLate: false, stubborn: false, delay: 0, workerStubborn: true, cancel: true, firstRunning: false },
+  { firstTimesOut: false, listedLate: false, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false },
+  { firstTimesOut: false, listedLate: true, stubborn: true, delay: 2_500, workerStubborn: true, cancel: false, firstRunning: false },
+  { firstTimesOut: false, listedLate: false, stubborn: false, delay: 3_800, workerStubborn: false, cancel: false, firstRunning: false },
+  { firstTimesOut: false, listedLate: false, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: true },
 );
-for (const { firstTimesOut, startsLate, stubborn, delay, workerStubborn, cancel, firstRunning } of stopCases) it.skipIf(process.platform === "win32")(`finds detached work ${startsLate ? "started during stopping" : "already running"} within the quit limit when the first process scan ${firstTimesOut ? "times out" : firstRunning ? "still shows the owner running" : "succeeds"}${delay ? ` with consistently slow ${delay}ms listings` : ""}${stubborn ? "" : " and the agent exits gracefully"}${cancel ? " on cancellation" : ""}`, async () => {
+for (const { firstTimesOut, listedLate, stubborn, delay, workerStubborn, cancel, firstRunning } of stopCases) it.skipIf(process.platform === "win32")(`finds detached work ${listedLate ? "first listed during stopping" : "already listed"} within the quit limit when the first process scan ${firstTimesOut ? "times out" : firstRunning ? "still shows the owner running" : "succeeds"}${delay ? ` with consistently slow ${delay}ms listings` : ""}${stubborn ? "" : " and the agent exits gracefully"}${cancel ? " on cancellation" : ""}`, async () => {
   const dir = tempDir("petrina-stop-scan-");
   const record = join(dir, "worker-pid");
   const workerReady = join(dir, "worker-ready");
+  const publishRecord = join(dir, "publish-worker-record");
   const agent = join(dir, "agent.ts");
-  const worker = `${workerStubborn ? 'process.on("SIGTERM", () => {});' : ""} setInterval(() => {}, 1000); require("node:fs").writeFileSync(${JSON.stringify(workerReady)}, "ready");`;
+  // Exercise a delayed record without letting publication race the scripted process lists.
+  const delayedRecord = listedLate && delay === 2_500;
+  const worker = `const { existsSync, writeFileSync } = require("node:fs");
+${workerStubborn ? 'process.on("SIGTERM", () => {});' : ""}
+setInterval(() => {}, 1000);
+writeFileSync(${JSON.stringify(workerReady)}, "ready");
+${delayedRecord ? `const publish = setInterval(() => {
+  if (!existsSync(${JSON.stringify(publishRecord)})) return;
+  writeFileSync(${JSON.stringify(record)}, String(process.pid)); clearInterval(publish);
+}, 5);` : ""}`;
   writeFileSync(agent, `import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-const startWorker = () => { const child = spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { detached: true, stdio: "ignore" }); writeFileSync(${JSON.stringify(record)}, String(child.pid)); child.unref(); };
-${startsLate ? 'process.once("SIGTERM", startWorker);' : "startWorker();"}
+const startWorker = () => { const child = spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { detached: true, stdio: "ignore" }); ${delayedRecord ? "" : `writeFileSync(${JSON.stringify(record)}, String(child.pid));`} child.unref(); };
+startWorker();
 ${stubborn ? 'process.argv.push("--stubborn");' : ""}
 await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -211,7 +221,8 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
   const unrelated = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdout: "ignore", stderr: "ignore" });
   const signals = spyOn(process, "kill");
   const snapshot = (first: boolean) => {
-    const worker = workerPid();
+    const stopping = signals.mock.calls.some(([pid, signal], index) => Math.abs(pid) === child!.pid && signal === "SIGTERM" && signals.mock.results[index]?.type === "return");
+    const worker = !listedLate || stopping ? workerPid() : undefined;
     const owned = [{ pid: child!.pid!, parent: process.pid }, ...(worker ? [{ pid: worker, parent: child!.pid! }] : []), { pid: unrelated.pid, parent: process.pid }];
     return owned.filter(({ pid }) => alive(pid)).map(({ pid, parent }) => {
       let paused = false;
@@ -236,10 +247,11 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
       if (reported) return;
       reported = true; scansRunning.delete(id); scanned.push(!error); done(error, stdout, stderr);
     };
-    // Script read outcomes from this fixture's real process identities and successful signals.
-    // A native ps started inside the remaining quit allowance can itself time out under suite
-    // load, turning an intended successful response into an unrelated failure. Native snapshots
-    // and late-fork barriers have their own tests; these cases keep real stopping and deadlines.
+    // Script discovery independently of native startup: a paused parent can have forked a
+    // worker whose pid file it has not finished writing. Native late-fork barriers above cover
+    // actual spawning during shutdown; these cases keep real stopping and read deadlines.
+    // Read outcomes use this fixture's ready process identities and successful signals: a
+    // native ps within the remaining allowance can itself time out under suite load.
     const listed = hang ? "" : snapshot(first);
     const timer = setTimeout(() => {
       scanTimers.delete(timer);
@@ -255,11 +267,15 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
   const controller = new AbortController();
   try {
     run = await AgentRun.start({ profile, cwd: dir, command: [process.execPath, agent], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: controller.signal, browser: false, onProcess: process => { child = process; } });
-    if (!startsLate) await waitFor(() => existsSync(workerReady), "the detached worker to be ready before stopping");
+    await waitFor(() => existsSync(workerReady), "the detached worker to be ready before stopping");
+    if (delayedRecord) {
+      expect(workerPid()).toBeUndefined();
+      writeFileSync(publishRecord, "ready");
+    }
+    const pid = await waitFor(workerPid, "the detached worker's complete record before stopping");
     const from = Date.now();
     if (cancel) controller.abort();
     const stopping = run.stop();
-    const pid = await waitFor(workerPid, "the detached worker to start");
     const complete = await stopping;
     expect(Date.now() - from).toBeLessThan(7_000);
     expect([child!.pid!, pid].filter(alive)).toEqual([]);
@@ -271,6 +287,12 @@ await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
     expect(incomplete).toBe(0);
     expect(alive(unrelated.pid)).toBe(true);
     expect(signals.mock.calls.filter(([pid, signal]) => Math.abs(pid) === unrelated.pid && signal !== 0)).toEqual([]);
+    if (listedLate) {
+      const term = signals.mock.calls.findIndex(([pid, signal]) => Math.abs(pid) === child!.pid && signal === "SIGTERM");
+      const discovered = signals.mock.calls.findIndex(([target, signal]) => Math.abs(target) === pid && signal !== 0);
+      expect(discovered).toBeGreaterThan(term);
+      expect(signals.mock.calls[discovered]![1]).toBe("SIGSTOP");
+    }
     expectPausesReclaimed(signals);
     if (!workerStubborn) expect(signals.mock.calls.some(([, signal]) => signal === "SIGKILL")).toBe(false);
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);

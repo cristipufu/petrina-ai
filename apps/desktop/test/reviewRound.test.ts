@@ -1,8 +1,65 @@
 import { describe, expect, it } from "vitest";
+import { createDemoState, journeyView } from "@petrina/core";
 import { reviewOutcome, reviewRoundGroups } from "../src/reviewRound";
 import { finding, step, node, repairedReviewFixture } from "./reviewRoundFixture";
 
 describe("the recorded result of a review round", () => {
+  it("keeps reopenings and older confirmations from the earlier partial step of a settled round", () => {
+    const reopened = finding("old-dismissed", { reopenedAt: 15, evidence: "The current case fails." });
+    const nit = finding("older-nit", { severity: "suggestion" });
+    const partial = step("partial", { end: "failed", result: { findings: [reopened, nit] } });
+    const current = step("after-retry", { startedAt: 30, endedAt: 40, result: { findingsSettled: true, findings: [reopened, nit], findingChanges: { raised: [], fixed: [], dismissed: [], reopened: [{ id: reopened.id, evidence: true }], claimedFixed: [] } } });
+    const before = JSON.stringify([partial, current]);
+    const groups = reviewRoundGroups(node(current), [partial, current])!;
+    expect(groups.reopened.map(finding => finding.id)).toEqual([reopened.id]);
+    expect(groups.stillOpen.map(finding => finding.id)).toEqual([nit.id]);
+    expect(groups.fresh).toEqual([]);
+    expect(groups.settled).toBe(true);
+    expect(JSON.stringify([partial, current])).toBe(before);
+    const later = step("later", { round: 2, startedAt: 50, endedAt: 60, result: { findingsSettled: true, findings: [reopened], findingChanges: { raised: [], fixed: [], dismissed: [], reopened: [] } } });
+    expect(reviewRoundGroups(node(later), [partial, current, later])!.reopened).toEqual([]);
+    expect(reviewRoundGroups(node(current), [partial, current, later])).toEqual(groups);
+  });
+  it("uses this round's recorded decisions and distinguishes an old confirmed report without any earlier saved copy", () => {
+    const previous = step("previous", { result: { findingsSettled: true, findings: [finding("old-dismissal", { status: "dismissed" }), finding("old-fix", { status: "fixed" })], findingChanges: { raised: [], fixed: ["old-fix"], dismissed: ["old-dismissal"] } } });
+    const current = step("current", { round: 2, result: { findingsSettled: true, findings: [...previous.result!.findings!, finding("new-fix", { status: "fixed" }), finding("old-confirmed"), finding("new")], findingChanges: { raised: ["new"], fixed: ["new-fix"], dismissed: [] } } });
+    const before = JSON.stringify([previous, current]);
+    const groups = reviewRoundGroups(node(current), [previous, current])!;
+    expect(groups.fixed.map(f => f.id)).toEqual(["new-fix"]);
+    expect(groups.dismissed).toEqual([]);
+    expect(groups.stillOpen.map(f => f.id)).toEqual(["old-confirmed"]);
+    expect(groups.fresh.map(f => f.id)).toEqual(["new"]);
+    expect(JSON.stringify([previous, current])).toBe(before);
+  });
+
+  it("keeps the demo's split vote in its discovery round and leaves later reviews free of repeated findings", () => {
+    const state = createDemoState(1_000_000_000_000);
+    const task = state.tasks.find(task => task.findings.some(finding => finding.votes?.length))!;
+    const view = journeyView(task, { ...state });
+    const reviews = view.nodes.filter(node => node.roleId && state.roles.find(role => role.id === node.roleId)?.result === "findings");
+    const first = reviews[0]!;
+    const last = reviews.at(-1)!;
+    expect(first.id).not.toBe(last.id);
+    expect(reviewRoundGroups(first, task.journey!)!.fresh.some(f => f.votes?.length === 4)).toBe(true);
+    const groups = reviewRoundGroups(last, task.journey!)!;
+    expect(groups.fresh).toEqual([]); expect(groups.dismissed).toEqual([]);
+    expect(groups.fixed).toHaveLength(1);
+    expect(last.result!.findings).toHaveLength(1);
+    expect(last.outcome).toBe("Nothing to fix");
+    expect(reviewOutcome(last)).toBe(last.outcome);
+  });
+  it("shows settled dismissals and unmentioned fixes, while keeping an older copy labelled as a hand-back", () => {
+    const current = step("settled", { outcome: "1 important", result: { findingsSettled: true, findings: [finding("dismissed", { status: "dismissed" }), finding("shared", { status: "fixed" })] } });
+    const groups = reviewRoundGroups(node(current), [current])!;
+    expect(groups.settled).toBe(true);
+    expect(groups.dismissed.map(f => f.id)).toEqual(["dismissed"]);
+    expect(groups.fixed.map(f => f.id)).toEqual(["shared"]);
+    expect(groups.fresh).toEqual([]);
+    expect(reviewOutcome(node(current))).toBe("Nothing to fix");
+    const older = { ...current, result: { findings: [finding("dismissed")] } };
+    expect(reviewRoundGroups(node(older), [older])!.settled).toBe(false);
+    expect(older.result.findings[0]!.status).toBe("open");
+  });
   it("separates accepted fixes, reopened reports and new reports, correcting the old new-only outcome", () => {
     const fixture = repairedReviewFixture();
     const groups = reviewRoundGroups(node(fixture.review), fixture.steps)!;

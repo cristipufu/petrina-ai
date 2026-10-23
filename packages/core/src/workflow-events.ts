@@ -219,6 +219,9 @@ interface NodeFacts {
   reuses: NonNullable<JourneyStep["reuses"]>;
   findingIds?: readonly Id[];
   resultFindings: readonly { id: Id; status: string; severity: string }[];
+  findingsSettled?: true;
+  findingChanges?: NonNullable<JourneyStep["result"]>["findingChanges"];
+  reviewSteps?: readonly Id[];
 }
 interface InboxFacts { id: Id; kind: InboxKind; title: string; at: number; blocking: boolean; reviewKey?: string; roleId?: Id; profileId?: Id; productId?: Id }
 interface WorkFacts {
@@ -397,6 +400,9 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
     checked: (step.checkAttempts ?? []).map(({ id, commands: _commands, ...version }) => ({ attemptId: id, ...version })), reuses: step.reuses ?? [],
     ...(step.findingIds ? { findingIds: step.findingIds } : {}),
     resultFindings: (step.result?.findings ?? []).map((finding) => ({ id: finding.id, status: finding.status, severity: finding.severity })),
+    ...(role?.result === "findings" ? { reviewSteps: reviewRoundSteps(task, step.id, ctx.roles).map(entry => entry.id) } : {}),
+    ...(step.result?.findingsSettled ? { findingsSettled: true } : {}),
+    ...(step.result?.findingsSettled && step.result.findingChanges ? { findingChanges: step.result.findingChanges } : {}),
   };
 }
 
@@ -491,7 +497,7 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
     const role = node.roleId ? ctx.roles.find((entry) => entry.id === node.roleId) : undefined;
     const at = { nodeId: node.id, ...(node.stageId ? { stageId: node.stageId } : {}) };
     if (isNew) {
-      if (!baselines.has(node.id)) baselines.set(node.id, { findings: next.findings.map((finding) => ({ ...finding })), since: "node-start", claims: claimsUnderTest(next, node, ctx.roles) });
+      if (!baselines.has(node.id)) baselines.set(node.id, baselines.get(node.reviewSteps?.[0] ?? node.id) ?? { findings: next.findings.map((finding) => ({ ...finding })), since: "node-start", claims: claimsUnderTest(next, node, ctx.roles) });
       const checkBasis = node.kind === "agent" && (role?.result === "checks" || role?.result === "findings" || role?.result === "votes") ? checkBasisFor(next, node) : undefined;
       push({ at: node.startedAt, kind: "node.started", summary: `${node.name} started${node.trigger?.reason ? `: ${node.trigger.reason}` : ""}`, ...at, nodeKind: node.kind, ...(node.roleId ? { roleId: node.roleId } : {}), ...(node.profileId ? { profileId: node.profileId } : {}), ...(node.team ? { team: node.team } : {}), ...(node.seats ? { seats: node.seats } : {}), round: node.round, ...(node.fixing ? { fixing: true, ...(node.findingIds ? { findingIds: node.findingIds, findingCount: node.findingIds.length } : {}) } : {}), ...(node.update ? { update: true } : {}), ...(node.port ? { port: true } : {}), ...(node.call ? { call: true } : {}), ...(node.work ? { work: node.work } : {}), ...(node.waitsFor ? { waitsFor: node.waitsFor } : {}), ...(node.waitsOn ? { waitsOn: node.waitsOn } : {}), ...(node.trigger ? { cause: { ...(node.trigger.after ? { nodeId: node.trigger.after } : {}), reason: node.trigger.reason } } : {}), ...(checkBasis ? { checks: checkBasis } : {}), refs: { node: { taskId: next.id, nodeId: node.id }, ...(node.reviewInput ? { reviewInput: { taskId: next.id, nodeId: node.id } } : {}) } });
     }
@@ -547,10 +553,14 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
       }
     }
     if (node.endedAt !== undefined && (fresh || old!.endedAt === undefined)) {
-      // Only a review step whose every seat handed back an accepted result gets a review summary. One closed
-      // before that, however the ending is worded, examined nothing: its claims stay under test for the next review.
+      // Settlement proves the whole group reported, including work kept through Try again on earlier steps.
+      // Without that proof, only a step holding every required hand-back gets a completed review summary.
       const review = node.kind === "agent" && (role?.result === "findings" || role?.result === "votes") ? reviewEnd(node) : undefined;
+      const reviewNodes = review?.examined && node.reviewSteps ? next.nodes.filter(entry => node.reviewSteps!.includes(entry.id)) : [node];
       const reconciliation = review?.examined ? reconcile(baselines.get(node.id) ?? { findings: before.findings, since: "engine-start", claims: claimsUnderTest({ nodes: next.nodes, findings: before.findings }, node, ctx.roles) }, next.findings) : undefined;
+      // A restart can observe this node after settlement. Keep the saved round's decisions,
+      // rather than attributing them to the engine-start population baseline.
+      if (reconciliation && node.findingChanges) Object.assign(reconciliation, node.findingChanges);
       // A run resumed on the same step keeps its stopped attempt as history; the step's result is its latest attempt.
       const attempt = node.kind === "petrina" && node.work === "checks" ? checkAttempt(node) : undefined;
       const checkSummary = attempt ? { ...(attempt.attemptId ? { attemptId: attempt.attemptId } : {}), ...(attempt.productId ? { productId: attempt.productId } : {}), attempts: attempt.attempts, ...checkTally(attempt.checks) } : undefined;
@@ -567,7 +577,7 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
         push({ at: node.endedAt, kind: "review.finished", ...at,
           summary: `${node.name} finished: ${reconciliation.opening} ${reconciliation.opening === 1 ? "report" : "reports"} before, ${reconciliation.closing} after; ${counts.open.total} open ${counts.open.total === 1 ? "report" : "reports"} (${counts.open.important} Important, ${counts.open.nits} ${counts.open.nits === 1 ? "nit" : "nits"}, ${counts.open.preExisting} pre-existing ${counts.open.preExisting === 1 ? "follow-up" : "follow-ups"}); raised ${reconciliation.raised.length}, fixed ${reconciliation.fixed.length}, reopened ${reconciliation.reopened.length}, dismissed ${reconciliation.dismissed.length}, unverified ${reconciliation.unverified.length}`,
           ...reconciliation, reports, omitted: { reportBodies: "Use each report’s evidence.read for full text, answers and verification, or its unavailable reason." }, ...(role ? { roleId: node.roleId } : {}), ...(node.team ? { team: node.team } : {}),
-          refs: { node: { taskId: next.id, nodeId: node.id }, ...(node.reviewInput ? { reviewInput: { taskId: next.id, nodeId: node.id } } : {}), findings: { taskId: next.id, nodeId: node.id }, results: resultRefs(next.id, node), inputs: node.inputs.map((input) => ({ taskId: next.id, nodeId: node.id, seat: input.seat, index: input.attempt - 1 })), currentRequests: { taskId: next.id } } });
+          refs: { node: { taskId: next.id, nodeId: node.id }, ...(node.reviewInput ? { reviewInput: { taskId: next.id, nodeId: node.id } } : {}), findings: { taskId: next.id, nodeId: node.id }, results: reviewNodes.flatMap(entry => resultRefs(next.id, entry)), inputs: reviewNodes.flatMap(entry => entry.inputs.map((input) => ({ taskId: next.id, nodeId: entry.id, seat: input.seat, index: input.attempt - 1 }))), currentRequests: { taskId: next.id } } });
       }
       if (node.kind === "you") {
         const item = [...carried, ...before.inbox].find((entry) => LEGACY_KINDS[entry.kind] === node.waitsFor && !next.inbox.some((current) => current.id === entry.id));
@@ -730,7 +740,13 @@ function checkBasisWords(entry: CheckBasis): string {
  * member no input names as its participant or as the planned profile it stood in for. A record without inputs
  * holds one seat.
  */
-function reviewSeats(node: Pick<NodeFacts, "inputs" | "team" | "seats">): { expected?: readonly string[]; count: number } {
+type ReviewProgress = Pick<JourneyStep, "endedAt" | "team" | "seats"> & {
+  findingsSettled?: true;
+  inputs: readonly Pick<SeatInputFacts, "seat" | "profileId" | "requestedProfileId">[];
+  results: readonly { seat?: string }[];
+};
+
+function reviewSeats(node: Pick<ReviewProgress, "inputs" | "team" | "seats">): { expected?: readonly string[]; count: number } {
   if (node.seats?.length) return { expected: node.seats, count: node.seats.length };
   const recorded = new Set(node.inputs.map((input) => input.seat));
   const named = new Set(node.inputs.flatMap((input) => [input.profileId, ...(input.requestedProfileId ? [input.requestedProfileId] : [])]));
@@ -739,24 +755,57 @@ function reviewSeats(node: Pick<NodeFacts, "inputs" | "team" | "seats">): { expe
 }
 
 /**
- * How a review step ended: a completed examination only when it ended and every expected seat handed back an
- * accepted result. The words that closed the step decide nothing: one that got stuck, was stopped by
- * cancelling, handed its work on, was restarted after the coordinator's own changes or was closed by any
- * later recovery before its seats reported has examined nothing, whatever label the ending carries. An
- * interrupted team review may hold some seats' results; they are evidence of those seats alone. This one
- * rule decides both whether the step gets a review summary and whether a later review still has its
- * claims under test.
+ * A completed examination ends after every expected seat reported. A settled copy records the engine's proof
+ * that the whole group reported, even across retry-split steps. Otherwise only the hand-backs on this step
+ * prove completion. Ending words never prove it, and an open step is not a finished examination. This same
+ * rule governs summaries and prior claims; acceptedResults counts the hand-backs saved on this step alone.
  */
-function reviewEnd(node: Pick<NodeFacts, "endedAt" | "inputs" | "results" | "team" | "seats">): { examined: boolean; acceptedResults: number; seats: number } {
+function reviewEnd(node: ReviewProgress): { examined: boolean; acceptedResults: number; seats: number } {
   const { expected, count } = reviewSeats(node);
   // A result whose seat an older record cannot name still covers one position.
   const covered = new Set(node.results.flatMap((result) => (result.seat !== undefined ? [result.seat] : [])));
   const unplaced = node.results.filter((result) => result.seat === undefined).length;
   const complete = expected ? expected.filter((seat) => !covered.has(seat)).length <= unplaced : covered.size + unplaced >= count;
-  return { examined: node.endedAt !== undefined && complete, acceptedResults: node.results.length, seats: count };
+  return { examined: node.endedAt !== undefined && (node.findingsSettled === true || complete), acceptedResults: node.results.length, seats: count };
 }
 
-const examined = (node: Pick<NodeFacts, "endedAt" | "inputs" | "results" | "team" | "seats">): boolean => reviewEnd(node).examined;
+/** Reviewer steps in one examination, including accepted work kept through Try again, never an earlier completed round. */
+export function reviewRoundSteps(task: Pick<Task, "journey" | "maintenance">, nodeId: Id, roles: WorkflowContext["roles"]): readonly JourneyStep[] {
+  const steps = task.journey ?? [];
+  const index = steps.findIndex(step => step.id === nodeId);
+  const current = steps[index];
+  if (!current || current.kind !== "agent" || roles.find(role => role.id === current.roleId)?.result !== "findings") return current ? [current] : [];
+  const group = [current];
+  for (let i = index - 1; i >= 0; i--) {
+    const step = steps[i]!;
+    if (step.kind !== "agent") {
+      if (step.kind === "petrina" && step.work === "checks") break;
+      continue; // Stuck and Try again checkpoints retain the round's accepted work.
+    }
+    if (roles.find(role => role.id === step.roleId)?.result !== "findings" || step.stageId !== current.stageId || step.round !== current.round || step.reviewInput?.digest !== current.reviewInput?.digest) break;
+    if (reviewEnd({
+      ...step, findingsSettled: step.result?.findingsSettled,
+      inputs: (step.agentInputs ?? []).map(input => ({ ...input, seat: seatOf(input, roles, task) })),
+      results: (step.agentResults ?? []).map(result => ({ seat: resultSeatOf(step, result, roles, task) })),
+    }).examined) break;
+    group.unshift(step);
+  }
+  return group;
+}
+
+/** Claims not yet examined by an earlier completed review, using the same completion rule as its event. */
+export function reviewClaimIds(task: Pick<Task, "journey" | "findings" | "maintenance">, nodeId: Id, roles: WorkflowContext["roles"]): Id[] {
+  const steps = task.journey ?? [];
+  const index = steps.findIndex(step => step.id === nodeId);
+  const prior = steps.slice(0, index < 0 ? steps.length : index);
+  const reviewed = Math.max(-Infinity, ...prior.filter(step => step.kind === "agent" && roles.find(role => role.id === step.roleId)?.result === "findings" && reviewEnd({
+    ...step,
+    findingsSettled: step.result?.findingsSettled,
+    inputs: (step.agentInputs ?? []).map(input => ({ ...input, seat: seatOf(input, roles, task) })),
+    results: (step.agentResults ?? []).map(result => ({ seat: resultSeatOf(step, result, roles, task) })),
+  }).examined).map(step => step.endedAt!));
+  return task.findings.filter(finding => finding.answer?.fixed && (finding.answer.at ?? 0) > reviewed).map(finding => finding.id);
+}
 
 /** Each accepted result on a step, by seat, with how many finding copies it left. */
 const resultRefs = (taskId: Id, node: NodeFacts) => node.results.map((result) => ({ taskId, nodeId: node.id, index: result.index, seat: result.seat, findingCopies: result.findingCopies ?? 0 }));
@@ -766,7 +815,7 @@ const resultRefs = (taskId: Id, node: NodeFacts) => node.results.map((result) =>
  * the claim already gave the finding. Claims an earlier review already examined are not under test again.
  */
 function claimsUnderTest(facts: Pick<WorkflowFacts, "nodes" | "findings">, node: Pick<NodeFacts, "index">, roles: WorkflowContext["roles"]): Id[] {
-  const reviewed = Math.max(-Infinity, ...facts.nodes.filter((entry) => entry.index < node.index && entry.kind === "agent" && examined(entry) && roles.find((role) => role.id === entry.roleId)?.result === "findings").map((entry) => entry.endedAt!));
+  const reviewed = Math.max(-Infinity, ...facts.nodes.filter((entry) => entry.index < node.index && entry.kind === "agent" && reviewEnd(entry).examined && roles.find((role) => role.id === entry.roleId)?.result === "findings").map((entry) => entry.endedAt!));
   return facts.findings.filter((finding) => finding.answerFixed && (finding.answerAt ?? 0) > reviewed).map((finding) => finding.id);
 }
 
@@ -842,7 +891,11 @@ export class WorkflowObserver {
     this.deferred.set(task.id, deferred);
     const events = workflowEvents(prev, next, ctx, baselines, deferred);
     this.facts.set(task.id, next);
-    for (const node of next.nodes) if (node.endedAt !== undefined) baselines.delete(node.id);
+    for (const node of next.nodes) if (node.endedAt !== undefined) {
+      if (node.reviewSteps && !reviewEnd(node).examined) continue;
+      baselines.delete(node.id);
+      for (const id of node.reviewSteps ?? []) baselines.delete(id);
+    }
     this.retire(task);
     return events;
   }

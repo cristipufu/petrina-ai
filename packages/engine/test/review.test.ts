@@ -292,7 +292,7 @@ describe.concurrent("reviews that converge", () => {
     expect(second.length).toBeGreaterThan(0);
     expect(second[0]).toContain(`git diff ${task.reviewedSha}..HEAD`);
     const secondReview = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
-    expect(secondReview.result?.findings?.some((finding) => finding.id === important[0]!.id)).toBe(false);
+    expect(secondReview.result?.findings?.find((finding) => finding.id === important[0]!.id)?.status).toBe("fixed");
     expect(important[0]!.status).toBe("fixed");
     expect(lines(task).some((line) => line.startsWith("Review passed: "))).toBe(true);
   });
@@ -305,7 +305,7 @@ describe.concurrent("reviews that converge", () => {
     expect(finding.verification).toMatchObject({ verdict: "not-a-bug", reason: "The welcome page shows the greeting already." });
     expect(fakes.openings("builder")).toHaveLength(1);
     expect(lines(task).some((line) => line.startsWith("Sent back to the builder"))).toBe(false);
-    expect(lines(task)).toContain("1 checked: 0 real, 1 not holding the work back");
+    expect(lines(task)).toContain("1 checked: none to fix now, 1 not a bug");
   });
 });
 

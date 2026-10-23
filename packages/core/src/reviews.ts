@@ -8,6 +8,42 @@ export function independentVotes(votes: readonly Vote[] = []): Vote[] {
   return [...new Map(votes.filter((vote) => vote.toolId).map((vote) => [vote.toolId, vote])).values()];
 }
 
+/** Recorded verdicts describe both existence and responsibility for this change. */
+export const VERDICT_WORDS: Record<Vote["verdict"], string> = {
+  real: "must be fixed in this change",
+  "pre-existing": "a real problem, already there before this change",
+  nit: "a real but minor problem",
+  "not-a-bug": "not a bug",
+};
+
+const verdicts: Vote["verdict"][] = ["real", "pre-existing", "nit", "not-a-bug"];
+const countWords: Record<Vote["verdict"], string> = {
+  real: "must be fixed in this change", "pre-existing": "already there before this change", nit: "minor", "not-a-bug": "not a bug",
+};
+
+/** Describe actual independent tools, never infer an outcome or fill in missing votes. */
+export function voteSummary(recorded: readonly Vote[] = []): string | undefined {
+  const votes = independentVotes(recorded);
+  if (!votes.length) return recorded.length ? "The actual voting tools were not recorded." : undefined;
+  const count = (verdict: Vote["verdict"]) => votes.filter(vote => vote.verdict === verdict).length;
+  const categories = verdicts.filter(verdict => count(verdict)).sort((a, b) => count(b) - count(a));
+  const distribution = categories.map(verdict => `${count(verdict)} ${countWords[verdict]}`).join(", ");
+  const exists = votes.filter(vote => vote.verdict !== "not-a-bug").length;
+  const agreement = categories.length > 1 ? ` ${exists === votes.length ? `All ${exists}` : `${exists} of ${votes.length}`} say the problem is real.` : "";
+  return `Votes from ${votes.length} tool${votes.length === 1 ? "" : "s"}: ${distribution}.${agreement}`;
+}
+
+/** Count saved outcomes for the vote step, independently of panel size and vote policy. */
+export function verificationSummary(findings: readonly Pick<Finding, "verification" | "unresolved">[], more: { disputed?: number; oneTool?: boolean } = {}): string {
+  const count = (verdict: Vote["verdict"]) => findings.filter(finding => finding.verification?.verdict === verdict).length;
+  const categories = verdicts.filter(verdict => count(verdict)).map(verdict => `${count(verdict)} ${countWords[verdict]}${verdict === "real" && more.disputed ? ` (${more.disputed} disputed)` : ""}`);
+  const unresolved = findings.filter(finding => !finding.verification && finding.unresolved).length;
+  const unknown = findings.filter(finding => !finding.verification && !finding.unresolved).length;
+  if (unresolved) categories.push(`${unresolved} unresolved`);
+  if (unknown) categories.push(`${unknown} without a recorded outcome`);
+  return `${findings.length} checked${more.oneTool ? " by one tool" : ""}: ${!count("real") && !unknown && !unresolved ? "none to fix now, " : ""}${categories.join(", ")}`;
+}
+
 /** A not-a-bug vote on a reopened finding rejects the new confirmation, not the earlier verified bug. */
 export function isRejectedReopenOfVerifiedFix(finding: Pick<Finding, "reopenedAt" | "verification" | "earlierReviews">): boolean {
   return finding.reopenedAt !== undefined && finding.verification?.verdict === "not-a-bug" &&

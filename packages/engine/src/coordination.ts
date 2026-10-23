@@ -423,14 +423,18 @@ export class Coordination {
         const chosen = a.index !== undefined ? results[a.index] : [...results].reverse().find((entry) => !a.seat || entry.seat === a.seat);
         if (!chosen || (a.seat && chosen.seat !== a.seat)) return { outcome: "unavailable", message: "No accepted result is recorded for that seat on this node." };
         const { value, images, findings: _findings, ...rest } = chosen.result;
-        return readText(value, a, [name, a.taskId, a.nodeId, chosen.index], { seat: chosen.seat, index: chosen.index, ...rest, images: images?.map(({ id, caption }) => ({ id, caption })) ?? [], findingCopies: chosen.result.findings?.length ?? 0, evidence: "recorded" });
+        const kind = s.roles.find(role => role.id === chosen.result.roleId)?.result;
+        const label = kind === "findings" || kind === "votes" ? "Participant’s report before the round’s decision" : "Participant’s original report";
+        return readText(value, a, [name, a.taskId, a.nodeId, chosen.index], { seat: chosen.seat, index: chosen.index, ...rest, label, images: images?.map(({ id, caption }) => ({ id, caption })) ?? [], findingCopies: chosen.result.findings?.length ?? 0, evidence: "recorded" });
       }
       const copy = a.result !== undefined ? results[a.result]?.result.findings : node.result?.findings;
       if (a.result !== undefined && !results[a.result]) return { outcome: "missing", message: "That result does not exist on this node." };
       if (!copy) return { outcome: "unavailable", message: a.result !== undefined ? "That result saved no finding copies." : "This node recorded no finding copies." };
       const finding = copy.find((entry) => entry.id === a.findingId);
       if (!finding) return { outcome: "missing", message: "That finding is not in this recorded copy. A newer record is never substituted." };
-      return readText(finding, a, [name, a.taskId, a.nodeId, a.result, a.findingId], { findingId: a.findingId, copy: a.result !== undefined ? { kind: "seat-result", result: a.result, seat: results[a.result]!.seat } : { kind: "node" }, evidence: "recorded" });
+      const settled = a.result === undefined && node.result?.findingsSettled === true;
+      const label = settled ? "Settled decision for this round" : a.result !== undefined ? "Participant’s report before the round’s decision" : "Hand-back copy; no settled decision was saved";
+      return readText(finding, a, [name, a.taskId, a.nodeId, a.result, a.findingId], { findingId: a.findingId, copy: { ...(a.result !== undefined ? { kind: "seat-result", result: a.result, seat: results[a.result]!.seat } : { kind: "node" }), basis: settled ? "settled" : "hand-back", label }, evidence: "recorded" });
     }
     if (name === "task.health") return this.health(task!);
     if (name === "inbox.list")

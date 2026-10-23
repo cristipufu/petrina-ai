@@ -6,6 +6,7 @@ import { AFTER_WORDS, syncWait } from "./journey.js";
 import { DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
 import { libraryRoles, NO_ROLE_CHANGES } from "./roles.js";
 import { followUpDescription, followUpTitle } from "./follow-ups.js";
+import { findingCount } from "./findings.js";
 import type { CheckRun, JourneyProductCheck, DeliveryMode, Finding, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
 import { askMomentId, MemoryWorkLog } from "./worklog.js";
@@ -126,7 +127,10 @@ function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): St
     seq: 0,
     products: DEMO_PRODUCTS,
     roles: libraryRoles(NO_ROLE_CHANGES),
-    tools: KNOWN_TOOLS,
+    tools: [...KNOWN_TOOLS,
+      { id: "grok", name: "Grok", command: ["grok"], status: "not-installed", models: ["Grok 4.7"] },
+      { id: "antigravity", name: "Antigravity", command: ["agy"], status: "not-installed", models: ["Gemini 4 Argon"] },
+    ],
     profiles: DEFAULT_PROFILES,
     tasks,
     inbox,
@@ -157,9 +161,24 @@ function attachSampleFollowUps(tasks: Task[], products: readonly Product[], now:
     tracking,
   });
   const first = finding(`${source.id}-about`, about, "opus-high", "code-reviewer", { taskId: "footer-follow-up" });
+  first.votes = [
+    { by: "grok-high", toolId: "grok", verdict: "real", reason: "The footer still opens a retired page." },
+    { by: "opus-high", toolId: "claude-code", verdict: "pre-existing", reason: evidence },
+    { by: "sol-xhigh", toolId: "codex", verdict: "pre-existing", reason: "Reproduced the same problem before this change." },
+    { by: "argon-high", toolId: "antigravity", verdict: "pre-existing", reason: "The changed page and the earlier page both have this problem." },
+  ];
+  first.verification = { by: "opus-high", verdict: "pre-existing", reason: evidence, at: now };
   const second = finding(`${source.id}-about-again`, other, "sol-xhigh", "security-reviewer", { taskId: "footer-follow-up" });
   const missed = finding(`${source.id}-year`, "The copyright line is a year behind.", "opus-high", "code-reviewer", { reason: "unmatched" });
   source.findings = [...source.findings, first, second, missed];
+  const review = source.journey?.find(step => step.result?.findingsSettled);
+  if (review?.result) {
+    review.result = { ...review.result, findings: [...(review.result.findings ?? []), JSON.parse(JSON.stringify(first)) as Finding], findingChanges: {
+      raised: [...(review.result.findingChanges?.raised ?? []), first.id],
+      fixed: review.result.findingChanges?.fixed ?? [], dismissed: review.result.findingChanges?.dismissed ?? [],
+    } };
+    review.outcome = findingCount(review.result.findings!.filter(finding => finding.status === "open"));
+  }
   const reports = [first, second].map((entry) => ({
     taskId: source.id,
     findingId: entry.id,

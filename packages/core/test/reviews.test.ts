@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDemoState } from "../src/demo.js";
 import type { Finding, Task } from "../src/model.js";
-import { combineReviewStats, reviewStats, subtractReviewStats } from "../src/reviews.js";
+import { combineReviewStats, reviewStats, subtractReviewStats, verificationSummary } from "../src/reviews.js";
 
 const demo = createDemoState(1_000_000_000);
 const base = demo.tasks.find((task) => task.state === "done")!;
@@ -13,6 +13,19 @@ function reviewed(id: string, rounds: number, findings: Finding[], extra: Partia
 }
 
 const finding = (id: string, raisedBy: string, extra: Partial<Finding> = {}): Finding => ({ id, text: `Finding ${id}`, severity: "blocking", raisedBy, confirmedBy: [], status: "open", ...extra });
+
+it("names the recorded vote outcomes in step and timeline summaries", () => {
+  const checked = (verdict: NonNullable<Finding["verification"]>["verdict"]) => ({ verification: { verdict, by: "tool", at: 1, reason: "Recorded result" } });
+  expect(verificationSummary([checked("pre-existing")])).toBe("1 checked: none to fix now, 1 already there before this change");
+  expect(verificationSummary([checked("nit")])).toBe("1 checked: none to fix now, 1 minor");
+  expect(verificationSummary([checked("not-a-bug")])).toBe("1 checked: none to fix now, 1 not a bug");
+  expect(verificationSummary([checked("real"), checked("nit"), checked("pre-existing"), checked("not-a-bug")])).toBe("4 checked: 1 must be fixed in this change, 1 already there before this change, 1 minor, 1 not a bug");
+  expect(verificationSummary([{}])).toBe("1 checked: 1 without a recorded outcome");
+  expect(verificationSummary([checked("real")], { disputed: 1 })).toBe("1 checked: 1 must be fixed in this change (1 disputed)");
+  expect(verificationSummary([checked("pre-existing")], { oneTool: true })).toBe("1 checked by one tool: none to fix now, 1 already there before this change");
+  expect(verificationSummary([{ unresolved: { at: 1, reason: "The required third answer was unavailable." } }])).toBe("1 checked: 1 unresolved");
+  expect(verificationSummary([checked("nit"), { unresolved: { at: 1, reason: "The required third answer was unavailable." } }])).toBe("2 checked: 1 minor, 1 unresolved");
+});
 
 describe("how reviews are going", () => {
   it("combines archived and live reviews without changing outcomes, means or independent verifier counts", () => {

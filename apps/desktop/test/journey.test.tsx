@@ -141,6 +141,24 @@ describe('the journey in the task sheet', () => {
     expect(host.querySelectorAll('.journey-list li')[2]?.textContent).toContain('6 important');
   });
 
+  it.each(['code-reviewer', 'verifier'])('labels settled evidence on a still-open %s step by its result kind', async roleId => {
+    const state = createDemoState(NOW);
+    const task = taskOf(state, 'guest-checkout');
+    task.state = 'running';
+    task.agent = { roleId, profileId: 'sol-high', since: NOW - 1000, step: 0 };
+    task.holdsSlot = true;
+    delete task.helpers; delete task.conversation;
+    state.inbox = state.inbox.filter(item => item.taskId !== task.id);
+    task.journey = [{ id: 'settled-open', kind: 'agent', roleId, profileId: 'sol-high', round: 1, sub: 0, startedAt: NOW - 1000, result: { findingsSettled: true, findings: [{ id: 'waiting-vote', text: 'A report waiting for voting', status: 'open', severity: 'blocking', raisedBy: 'sol-high', confirmedBy: [] }] } }];
+    await mount(state);
+    await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>('.journey-list li')!.click());
+    const details = host.querySelector('.journey-details')!;
+    expect(details.querySelector('.journey-review')).toBeNull();
+    expect(details.textContent).toContain(roleId === 'verifier' ? 'Settled decisions for this vote step.' : 'Settled decisions for this review round.');
+    expect(details.textContent).not.toContain(roleId === 'verifier' ? 'Settled decisions for this review round.' : 'Settled decisions for this vote step.');
+  });
+
   it.each(['builder', 'architect', 'code-reviewer', 'tester', 'verifier'])('keeps message and terminal controls in the active %s node across its tabs', async (roleId) => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'guest-checkout');

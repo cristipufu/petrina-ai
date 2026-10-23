@@ -56,6 +56,7 @@ import type {
 import { balanced, extraSlot, pickStarts, queueOf, slotUses, slotWait, type Candidate } from "./scheduler.js";
 import { afterChangesAsked, columnOf, designRoundEnd, gateStatus, gateTitle, noteRoundEnd, reviewRoundEnd, type DeepMutable } from "./flow.js";
 import { findingCount } from "./findings.js";
+import { reviewClaimIds } from "./workflow-events.js";
 import * as library from "./roles.js";
 import type { RoleDraft } from "./roles.js";
 import { onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenReady, screenReason, screenWait } from "./screen.js";
@@ -1328,7 +1329,13 @@ export class Simulator {
       noteRoundEnd(task, stage.id, open.length);
       // The round's step says what its reviewers raised, and where the work goes.
       const raised = task.findings.slice(task.hunt?.findings ?? 0);
-      recordStepResult(task, { findings: raised });
+      const claims = new Set(reviewClaimIds(task, openStep(task)!.id, d.roles));
+      const seen = new Set([...raised.map(finding => finding.id), ...claims]);
+      recordStepResult(task, { findings: task.findings.filter(finding => seen.has(finding.id)), findingsSettled: true, findingChanges: {
+        raised: raised.map(finding => finding.id),
+        fixed: task.findings.filter(finding => claims.has(finding.id) && finding.status === "fixed").map(finding => finding.id),
+        dismissed: [],
+      } });
       delete task.hunt;
       endAgentStep(
         task,

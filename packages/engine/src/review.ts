@@ -3,7 +3,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewRoundEnd, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -97,6 +97,20 @@ function reopenFinding(finding: DeepMutable<Finding>, at: number, evidence?: str
   finding.status = "open";
   finding.reopenedAt = at;
   if (evidence !== undefined) finding.evidence = evidence.trim();
+}
+
+/** Recover older accepted reports before new hand-backs make the round's transitions explicit. */
+function recordedReopenings(group: readonly JourneyStep[]): { id: Id; evidence: boolean }[] {
+  const reopened = new Map<Id, { id: Id; evidence: boolean }>();
+  for (const step of group) {
+    const recorded = step.result?.findingChanges?.reopened;
+    if (recorded) for (const finding of recorded) reopened.set(finding.id, finding);
+    // Only saved participant copies can recover older transitions, never today's live findings.
+    else for (const result of step.agentResults ?? []) for (const finding of result.findings ?? []) {
+      if (finding.reopenedAt !== undefined && finding.reopenedAt >= group[0]!.startedAt && finding.reopenedAt >= result.at) reopened.set(finding.id, { id: finding.id, evidence: !!finding.evidence });
+    }
+  }
+  return [...reopened.values()];
 }
 
 /** What admission decided for a parallel seat: the words on its start, why a saved conversation was not kept, and its readiness recheck. */
@@ -381,13 +395,16 @@ export class Reviews {
   private async applyReview(scope: RepositoryContext, stage: MStage, result: z.infer<typeof ReviewResult>, profileId: Id, roleId: Id, reviewerKey: string): Promise<void> {
     const { task } = scope;
     await this.learnings.note(scope, result.learnings, roleId, profileId);
+    const reopenings = new Set<Id>();
     for (const id of result.confirms) {
       const finding = task.findings.find((entry) => entry.id === id);
       // Fresh proof can challenge a claimed fix or dismissal without creating another finding, and on changed code starts
       // a fresh ballot for one a vote left unresolved. Native check findings remain governed by the actual check results.
       const evidence = result.confirmationEvidence[id];
-      if (finding && finding.raisedBy !== "petrina" && (closedFinding(finding) || reopensUnresolved(finding, task.hunt, evidence))) reopenFinding(finding, Date.now(), evidence);
-      else if (finding) addEvidence(finding, evidence);
+      if (finding && finding.raisedBy !== "petrina" && (closedFinding(finding) || reopensUnresolved(finding, task.hunt, evidence))) {
+        reopenFinding(finding, Date.now(), evidence);
+        reopenings.add(id);
+      } else if (finding) addEvidence(finding, evidence);
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
     if (task.hunt) for (const report of [...result.confirms.map(id => ({ id, resolved: false, evidence: result.confirmationEvidence[id] })), ...result.resolves.map(entry => ({ ...entry, resolved: true }))]) {
@@ -429,10 +446,16 @@ export class Reviews {
     const important = raised.some((finding) => finding.severity === "blocking");
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
     const created = new Set(raised.map((finding) => finding.id));
-    const seen = new Set([...(openStep(task)?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id), ...result.resolves.map(finding => finding.id)]);
-    recordStepResult(task, { findings: task.findings.filter((finding) => seen.has(finding.id) || created.has(finding.id)) });
-    // This seat's own copy of the records it touched: later peers and rounds never rewrite it.
     const step = openStep(task);
+    const seen = new Set([...(step?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id), ...result.resolves.map(finding => finding.id)]);
+    const priorChanges = step?.result?.findingChanges;
+    const priorReopened = recordedReopenings(step ? reviewRoundSteps(task, step.id, this.k.s.roles) : []);
+    const reopened = task.findings.filter(finding => reopenings.has(finding.id)).map(finding => ({ id: finding.id, evidence: !!finding.evidence }));
+    recordStepResult(task, {
+      findings: task.findings.filter((finding) => seen.has(finding.id) || created.has(finding.id)),
+      findingChanges: { raised: [...(priorChanges?.raised ?? []), ...created], fixed: priorChanges?.fixed ?? [], dismissed: priorChanges?.dismissed ?? [], reopened: [...priorReopened, ...reopened] },
+    });
+    // This seat's own copy of the records it touched: later peers and rounds never rewrite it.
     const own = step?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === profileId && (entry.inputIndex === undefined || step.agentInputs?.[entry.inputIndex]?.reviewerKey === reviewerKey));
     if (own) own.findings = structuredClone(task.findings.filter((finding) => result.confirms.includes(finding.id) || result.disputes.some((dispute) => dispute.id === finding.id) || result.resolves.some(entry => entry.id === finding.id) || created.has(finding.id)));
     const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || created.has(finding.id)));
@@ -803,7 +826,7 @@ export class Reviews {
     const ids = new Set(pending.findings.map((finding) => finding.id));
     const panel = task.hunt?.panel ?? pending.panel;
     const at = Date.now();
-    let real = 0, disputed = 0, unresolved = 0, cleared = 0;
+    let real = 0, disputed = 0, unresolved = 0;
     for (const finding of task.findings.filter((entry) => ids.has(entry.id))) {
       if (!panel || !task.hunt) continue;
       // One actual tool, one answer on this ballot. Older rounds' answers and unproven identities stay history.
@@ -822,16 +845,17 @@ export class Reviews {
         continue;
       }
       finding.verification = { by: decision.vote.by, verdict: decision.verdict, reason: decision.vote.reason, at };
-      cleared += 1;
       if (decision.verdict === "not-a-bug") finding.status = isRejectedReopenOfVerifiedFix(finding) ? "fixed" : "dismissed";
       else if (decision.verdict === "nit") finding.severity = "suggestion";
       else finding.severity = "pre-existing";
     }
-    recordStepResult(task, { findings: task.findings.filter((finding) => ids.has(finding.id)) });
+    const checked = task.findings.filter((finding) => ids.has(finding.id));
+    recordStepResult(task, { findings: checked, findingsSettled: true });
     const oneTool = panel?.rule === "bounded" && panel.usable.length === 1;
-    this.k.log(task, real || unresolved ? "warn" : "done", `${ids.size} checked${oneTool ? " by the one usable tool" : ""}: ${real} real${disputed ? ` (${disputed} disputed)` : ""}${unresolved ? `, ${unresolved} unresolved` : ""}${cleared ? `, ${cleared} not holding the work back` : ""}`);
+    const outcome = W.voted(checked, { disputed, oneTool });
+    this.k.log(task, real || unresolved ? "warn" : "done", outcome);
     this.k.commit();
-    return W.voted(real, ids.size, { disputed, unresolved, oneTool });
+    return outcome;
   }
 
   /**
@@ -1089,9 +1113,9 @@ export class Reviews {
 
   /** Settle objections and shared repairs together, only after the whole reviewer group reports. */
   private settleReviews(task: MTask, stage: MStage): void {
-    if (!task.hunt || this.pendingReviewers(task, stage).length) return;
+    if (!task.hunt || task.hunt.stageId !== stage.id || task.hunt.round !== (task.rounds[stage.id] ?? 1) || this.pendingReviewers(task, stage).length) return;
     const reviewers = Object.keys(task.hunt.reported);
-    let repairedAny = false;
+    const before = new Map(task.findings.map(finding => [finding.id, finding.status]));
     for (const finding of task.findings) {
       if (finding.status !== "open" || finding.severity !== "pre-existing" || finding.raisedBy === "petrina") continue;
       const checks = Object.values(task.hunt.findingChecks?.[finding.id] ?? {});
@@ -1103,11 +1127,6 @@ export class Reviews {
       finding.resolution = { by: repaired.by, evidence: repaired.evidence, at: Date.now(), versions: { ...versions } };
       finding.status = "fixed";
       addEvidence(finding, `Verified repaired: ${repaired.evidence}`);
-      repairedAny = true;
-    }
-    if (repairedAny) {
-      const seen = new Set(openStep(task)?.result?.findings?.map(finding => finding.id) ?? []);
-      recordStepResult(task, { findings: task.findings.filter(finding => seen.has(finding.id)) });
     }
     for (const finding of task.findings) {
       if (finding.status !== "open" || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:")) continue;
@@ -1117,6 +1136,24 @@ export class Reviews {
       const owners = productsFor(task, finding.productIds);
       const reviews = task.hunt.fixReviews?.[finding.id];
       if (owners.length > 1 && finding.status === "open" && !finding.confirmedBy.length && owners.every((id) => finding.answers?.[id]?.fixed) && reviewers.length && reviewers.every((key) => reviews?.[key] === true)) finding.status = "fixed";
+    }
+    // The round's decision includes unmentioned fixes and claims, not just ids touched by a
+    // reviewer. Never rewrite a closed step, the pre-vote copy, or any participant's hand-back.
+    const step = openStep(task);
+    if (step?.stageId === stage.id && step.round === task.hunt.round && step.roleId && this.k.role(step.roleId)?.result === "findings" && !step.result?.findingsSettled) {
+      const group = reviewRoundSteps(task, step.id, this.k.s.roles);
+      const raised = task.findings.slice(task.hunt.findings ?? task.findings.length).map(finding => finding.id);
+      const claims = new Set(reviewClaimIds(task, group[0]!.id, this.k.s.roles));
+      const changed = task.findings.filter(finding => before.get(finding.id) !== finding.status);
+      const seen = new Set([...group.flatMap(entry => [...(entry.result?.findings ?? []), ...(entry.agentResults ?? []).flatMap(result => result.findings ?? [])]).map(finding => finding.id), ...raised, ...claims, ...changed.map(finding => finding.id)]);
+      const findingChanges = {
+        raised,
+        fixed: task.findings.filter(finding => finding.status === "fixed" && (before.get(finding.id) !== "fixed" || claims.has(finding.id))).map(finding => finding.id),
+        dismissed: changed.filter(finding => finding.status === "dismissed").map(finding => finding.id),
+        reopened: recordedReopenings(group),
+        claimedFixed: [...claims],
+      };
+      recordStepResult(task, { findings: task.findings.filter(finding => seen.has(finding.id)), findingsSettled: true, findingChanges });
     }
   }
 

@@ -323,13 +323,14 @@ describe("the bounded event log", () => {
     expect(JSON.stringify(health)).not.toContain("retry");
     const nodeCopy = await c.call("journey.finding", { taskId, nodeId: "j1", findingId: "f1" });
     expect(JSON.parse(String(nodeCopy.text))).toMatchObject({ text: "As the node saw it", status: "open" });
+    expect(nodeCopy.copy).toMatchObject({ basis: "hand-back", label: "Hand-back copy; no settled decision was saved" });
     const seatCopy = await c.call("journey.finding", { taskId, nodeId: "j1", findingId: "f1", result: 0 });
     expect(JSON.parse(String(seatCopy.text))).toMatchObject({ text: "As this seat saw it" });
-    expect(seatCopy.copy).toEqual({ kind: "seat-result", result: 0, seat: "code-reviewer" });
+    expect(seatCopy.copy).toEqual({ kind: "seat-result", result: 0, seat: "code-reviewer", basis: "hand-back", label: "Participant’s report before the round’s decision" });
     expect((await c.call("journey.finding", { taskId, nodeId: "j1", findingId: "f2" })).outcome).toBe("missing");
     expect((await c.call("journey.finding", { taskId, nodeId: "j1", findingId: "f1", result: 3 })).outcome).toBe("missing");
     const result = await c.call("journey.result", { taskId, nodeId: "j1", seat: "code-reviewer" });
-    expect(result).toMatchObject({ outcome: "completed", seat: "code-reviewer", index: 0, findingCopies: 1 });
+    expect(result).toMatchObject({ outcome: "completed", seat: "code-reviewer", index: 0, findingCopies: 1, label: "Participant’s report before the round’s decision" });
     expect(JSON.parse(String(result.text))).toEqual({ verdict: "fail" });
     expect((await c.call("journey.input", { taskId, nodeId: "j1" })).outcome).toBe("unavailable");
   });

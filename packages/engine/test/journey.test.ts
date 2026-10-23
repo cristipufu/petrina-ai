@@ -165,7 +165,8 @@ describe("the engine records each task's journey", () => {
       expect(reviews[0]!.reason).toBe("1 important finding to check");
       const votes = view.nodes.filter((node) => node.roleId === "verifier");
       expect(votes).toHaveLength(1);
-      expect(votes[0]).toMatchObject({ outcome: "1 checked: 1 real", reason: "sent back: 1 important", tone: "back", state: "done" });
+      expect(votes[0]).toMatchObject({ outcome: "1 checked: 1 must be fixed in this change", reason: "sent back: 1 important", tone: "back", state: "done" });
+      expect(task.timeline.some(entry => entry.step === votes[0]!.id && entry.text === "1 checked: 1 must be fixed in this change")).toBe(true);
       expect(view.nodes.find((node) => node.name === "Builder (fixes)")).toMatchObject({ outcome: "Changes returned; 2 fixes claimed", reason: "Changes returned; 2 fixes claimed" });
       expect(view.nodes.at(-1)).toMatchObject({ kind: "petrina", name: "Publish delivery", state: "done" });
       expect(journeyProblems(task)).toEqual([]);

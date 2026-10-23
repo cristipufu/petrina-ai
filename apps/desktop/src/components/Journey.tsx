@@ -754,7 +754,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
 
       {reviewGroups ? <ReviewRoundFindings groups={reviewGroups} find={find} {...(onOpen ? { onOpen } : {})} /> : findings !== undefined && <div className="journey-context">
         <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings from this step</h4>
-        {findings.length ? <><p className="note">{node.result?.findings ? "As recorded when this step handed back its result." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
+        {findings.length ? <><p className="note">{node.result?.findingsSettled ? role?.result === "votes" ? "Settled decisions for this vote step." : "Settled decisions for this review round." : node.result?.findings ? "Hand-back copies; no settled decision was saved." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
       </div>}
 
       {objections !== undefined && <div className="journey-context">

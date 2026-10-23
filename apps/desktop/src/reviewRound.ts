@@ -4,9 +4,10 @@ const object = (value: unknown): Record<string, unknown> | undefined => value !=
 
 /** Display saved reviewer evidence, including reopened reports omitted by older outcome strings. */
 export function reviewOutcome(node: JourneyNode, role?: Role): string | undefined {
-  if (node.kind !== "agent" || node.state !== "done" || (role?.result !== "findings" && node.roleId !== "code-reviewer" && node.roleId !== "security-reviewer") || node.endedAt === undefined) return node.outcome;
+  const result = role?.result ?? BUILT_IN_ROLES.find(role => role.id === node.roleId)?.result;
+  if (node.kind !== "agent" || node.state !== "done" || result !== "findings" || node.endedAt === undefined) return node.outcome;
   const open = node.result?.findings ? [...new Map(node.result.findings.map((finding) => [finding.id, finding])).values()].filter((finding) => finding.status === "open") : undefined;
-  return open?.length ? findingCount(open) : node.outcome;
+  return open && (open.length || node.result?.findingsSettled) ? findingCount(open) : node.outcome;
 }
 
 export interface ReviewRoundGroups {
@@ -16,6 +17,7 @@ export interface ReviewRoundGroups {
   stillOpen: Finding[];
   dismissed: Finding[];
   fixedRecorded: boolean;
+  settled: boolean;
 }
 
 /** Never read mutable task.findings: a later round must not change an earlier round's result. */
@@ -53,17 +55,21 @@ export function reviewRoundGroups(node: JourneyNode, steps: readonly JourneyStep
       if (typeof id === "string") confirms.add(id);
     }
   }
-  const groups: ReviewRoundGroups = { fixed: [], reopened: [], fresh: [], stillOpen: [], dismissed: [], fixedRecorded };
+  const settled = node.result.findingsSettled === true;
+  const groups: ReviewRoundGroups = { fixed: [], reopened: [], fresh: [], stillOpen: [], dismissed: [], fixedRecorded: settled || fixedRecorded, settled };
   const current = new Map(node.result.findings.map((finding) => [finding.id, finding]));
+  const changes = node.result.findingChanges;
+  const reopened = changes?.reopened ? new Set(changes.reopened.map(finding => finding.id)) : undefined;
   for (const finding of current.values()) {
-    if (finding.status === "dismissed") groups.dismissed.push(finding);
-    else if (finding.status === "fixed") groups.fixed.push(finding);
-    else if ((finding.reopenedAt !== undefined && finding.reopenedAt >= (node.startedAt ?? Infinity) && finding.reopenedAt <= node.endedAt) || prior.get(finding.id)?.status === "fixed") groups.reopened.push(finding);
+    if (finding.status === "dismissed") { if (!changes || changes.dismissed.includes(finding.id)) groups.dismissed.push(finding); }
+    else if (finding.status === "fixed") { if (!changes || changes.fixed.includes(finding.id)) groups.fixed.push(finding); }
+    else if (reopened ? reopened.has(finding.id) : (finding.reopenedAt !== undefined && finding.reopenedAt >= (node.startedAt ?? Infinity) && finding.reopenedAt <= node.endedAt) || prior.get(finding.id)?.status === "fixed") groups.reopened.push(finding);
+    else if (changes) (changes.raised.includes(finding.id) ? groups.fresh : groups.stillOpen).push(finding);
     else if (prior.has(finding.id) || confirms.has(finding.id) || finding.reopenedAt !== undefined) groups.stillOpen.push(finding);
     else groups.fresh.push(finding);
   }
   // A completed review keeps a builder's earlier fix closed unless this round reopens/disputes it.
-  for (const [id, answer] of claims) {
+  for (const [id, answer] of settled ? [] : claims) {
     const finding = prior.get(id);
     if (answer.fixed && finding && !current.has(id)) groups.fixed.push({ ...finding, status: "fixed", answer });
   }

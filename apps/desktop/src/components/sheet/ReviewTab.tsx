@@ -2,14 +2,16 @@
 
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { findingCount, independentVotes, trackingWords, type CheckRun, type Finding, type Task } from "@petrina/core";
+import { findingCount, independentVotes, trackingWords, VERDICT_WORDS, voteSummary, type CheckRun, type Finding, type Task, type Vote } from "@petrina/core";
 import { ago, profileText, type Lookup } from "../../lib";
 import { followLink, routeHref } from "../../routes";
 import { openFirst } from "./order";
 
 const FINDING_TAG: Record<Finding["severity"], string> = { blocking: "Important", suggestion: "Nit", "pre-existing": "Pre-existing" };
 
-const VERDICT: Record<NonNullable<Finding["verification"]>["verdict"], string> = { real: "Checked: real", "not-a-bug": "Checked: not a bug", nit: "Checked: only a nit", "pre-existing": "Checked: older than this change" };
+function voteAttribution(vote: Vote, find: Lookup): string {
+  return [find.tool(vote.toolId)?.name ?? vote.toolId, profileText(find.profile(vote.by), find)].filter(Boolean).join(" · ");
+}
 
 function answerAttribution(finding: Finding, fixed: boolean): string | undefined {
   if (finding.raisedBy !== "petrina" || !finding.text.startsWith("Check failed")) return;
@@ -29,7 +31,10 @@ export function TaskLink({ taskId, find, onOpen, children }: { taskId: string; f
 
 export function FindingItem({ finding, find, onOpen }: { finding: Finding; find: Lookup; onOpen?: (taskId: string) => void }) {
   const votes = independentVotes(finding.votes);
-  const beforeFix = !!finding.verification && !!finding.answer?.fixed && finding.verification.at < finding.answer.at;
+  const voteWords = voteSummary(finding.votes);
+  const decisionAt = finding.verification?.at ?? finding.unresolved?.at;
+  const beforeFix = decisionAt !== undefined && !!finding.answer?.fixed && decisionAt < finding.answer.at;
+  const unfinishedVote = `${finding.status === "open" && finding.severity === "blocking" ? "Still Important: " : ""}${finding.unresolved ? "verification is unresolved." : "waiting for the remaining verifier answers."}`;
   const followUp = finding.status === "open" && finding.severity === "pre-existing";
   const status = finding.status === "fixed" ? "Fixed" : finding.status === "dismissed" ? "Dismissed" : finding.status === "unverified" ? "Could not verify" : followUp ? "Follow-up" : "Open";
   return (
@@ -52,18 +57,20 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
           {dispute.reason}
         </div>
       ))}
-      {finding.verification && (
+      {(finding.verification || finding.unresolved || voteWords) && (
         <div className="issue-response">
           <b>
-            {beforeFix && "Before the reported fix — "}{VERDICT[finding.verification.verdict]}
-            {votes.length
-              ? `: ${votes.filter((vote) => vote.verdict === "real").length} of ${votes.length} voter${votes.length === 1 ? "" : "s"} said it is real`
-              : finding.votes?.length ? ": actual voting tools were not recorded"
-              : `, by ${profileText(find.profile(finding.verification.by), find, true)}`}
+            {beforeFix && "Before the reported fix — "}{finding.verification ? `Checked: ${VERDICT_WORDS[finding.verification.verdict]}.` : unfinishedVote}
+            {finding.verification && !finding.votes?.length && ` By ${profileText(find.profile(finding.verification.by), find, true)}.`}
           </b>
-          {finding.verification.reason}
+          {voteWords && <p>{beforeFix && "Before the reported fix — "}{voteWords}</p>}
+          {finding.verification?.reason ?? finding.unresolved?.reason}
         </div>
       )}
+      {votes.length > 0 && <details className="issue-response">
+        <summary>{beforeFix ? "Votes before the reported fix" : "Tool verdicts and reasons"}</summary>
+        {votes.map(vote => <p key={vote.toolId}><b>{voteAttribution(vote, find)}: {VERDICT_WORDS[vote.verdict]}</b>{vote.reason}</p>)}
+      </details>}
       {finding.answers && Object.entries(finding.answers).map(([id, answer]) => <div className="issue-response" key={id}><b>{find.product(id)?.name ?? id}: {answer.fixed ? "Builder claims a fix" : "Builder answered: not fixed"}</b>{answer.text}{answerAttribution(finding, answer.fixed) && <p>{answerAttribution(finding, answer.fixed)}</p>}</div>)}
       {!finding.answers && finding.answer && (
         <div className="issue-response">
@@ -78,8 +85,10 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
         {finding.earlierReviews.map((review, index) => <div key={index} className="issue-response">
           {review.confirmedBy.length > 0 && <p>Confirmed by {review.confirmedBy.map((id) => profileText(find.profile(id), find, true)).join(" and ")}</p>}
           {review.disputes?.map((dispute, i) => <p key={i}>Disputed by {profileText(find.profile(dispute.by), find, true)}: {dispute.reason}</p>)}
-          {review.verification && <><b>Before the reported fix — {VERDICT[review.verification.verdict]}</b>{review.verification.reason}</>}
-          {independentVotes(review.votes).map((vote) => <p key={vote.toolId}>{profileText(find.profile(vote.by), find, true)}: {vote.reason}</p>)}
+          {review.verification && <><b>Before the reported fix — Checked: {VERDICT_WORDS[review.verification.verdict]}.</b>{review.verification.reason}</>}
+          {!review.verification && review.unresolved && <><b>Before the reported fix — verification was unresolved.</b>{review.unresolved.reason}</>}
+          {voteSummary(review.votes) && <p>Before the reported fix — {voteSummary(review.votes)}</p>}
+          {independentVotes(review.votes).map((vote) => <p key={vote.toolId}>{voteAttribution(vote, find)}: {VERDICT_WORDS[vote.verdict]}. {vote.reason}</p>)}
           {review.answer && <p>Builder reported {review.answer.fixed ? "a fix" : "no fix"}: {review.answer.text}</p>}
         </div>)}
       </details>}

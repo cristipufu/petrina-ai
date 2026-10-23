@@ -373,7 +373,12 @@ describe.concurrent("bounded verifier panels", () => {
       expect(f.models("verifier")).toEqual(expect.arrayContaining(["gpt-6.1-sol", "grok-4.7", "opus"]));
       expect(f.fakes.openings("verifier")).toHaveLength(3);
       const [first, second] = verifierSteps(f);
-      expect(first).toMatchObject({ outcome: "1 checked: 0 real, 1 not blocking on both answers", reason: "1 finding to check on a third tool" });
+      expect(first).toMatchObject({ outcome: "1 checked: 0 must be fixed in this change, 1 awaiting a third answer", reason: "1 finding to check on a third tool" });
+      expect(first!.result?.findingsSettled).toBeUndefined();
+      expect(first!.result?.findings?.find(copy => copy.id === finding.id)?.verification).toBeUndefined();
+      expect(second!.result?.findingsSettled).toBe(true);
+      expect(second!.result?.findings?.find(copy => copy.id === finding.id)?.verification?.verdict).toBe(third);
+      expect(f.task().timeline.some(entry => entry.step === second!.id && entry.text === second!.outcome)).toBe(true);
       expect(second!.seats).toEqual(["verifier:third:opus-high"]);
       expect(second!.agentInputs![0]!.selectionReason).toContain("Third answer: both first verifiers said this finding does not block");
       expect(plain(finding.votes)!.find((vote) => vote.toolId === "claude-code")).toEqual({ by: "opus-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: third, reason: expect.any(String) });
@@ -381,13 +386,13 @@ describe.concurrent("bounded verifier panels", () => {
       if (third === "real") {
         expect(finding.verification?.verdict).toBe("real");
         expect(finding.verification?.reason).toContain("Disputed: ");
-        expect(second!.outcome).toBe("1 checked: 1 real (1 disputed)");
+        expect(second!.outcome).toBe("1 checked: 1 must be fixed in this change (1 disputed)");
         expect(f.task().fixing).toBe(true);
       } else {
         // Three answers settle it; no fourth is asked.
         expect(finding.verification?.verdict).toBe("nit");
         expect(finding.severity).toBe("suggestion");
-        expect(second!.outcome).toBe("1 checked: 0 real");
+        expect(second!.outcome).toBe("1 checked: none to fix now, 1 minor");
       }
       await f.advance(f.delivery);
       expect(f.fakes.openings("verifier")).toHaveLength(3);
@@ -418,7 +423,7 @@ describe.concurrent("bounded verifier panels", () => {
       const finding = f.task().findings.find((entry) => entry.id === HISTORICAL)!;
       expect(f.fakes.openings("verifier")).toHaveLength(2);
       expect(verifierSteps(f)).toHaveLength(1);
-      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked: 1 real (1 disputed)");
+      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked: 1 must be fixed in this change (1 disputed)");
       expect(finding.verification).toMatchObject({ verdict: "real", by: "grok-high" });
       expect(finding.verification!.reason).toContain("answered only a nit");
     } finally { await f.engine.shutdown(); }
@@ -440,7 +445,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(main.verification?.verdict).toBe("real");
       expect(second.verification?.verdict).toBe("nit");
       expect(second.severity).toBe("suggestion");
-      expect(verifierSteps(f)[1]!.outcome).toBe("2 checked: 1 real");
+      expect(verifierSteps(f)[1]!.outcome).toBe("2 checked: 1 must be fixed in this change, 1 minor");
     } finally { await f.engine.shutdown(); }
   });
 
@@ -460,7 +465,10 @@ describe.concurrent("bounded verifier panels", () => {
       expect(Object.values(finding.unresolved?.trees ?? {})).toHaveLength(1);
       expect(finding.severity).toBe("blocking");
       expect(finding.status).toBe("open");
-      expect(verifierSteps(f).map((step) => step.outcome)).toEqual(["1 checked: 0 real, 1 unresolved"]);
+      expect(verifierSteps(f).map((step) => step.outcome)).toEqual(["1 checked: 1 unresolved"]);
+      const { answer: laterAnswer, ...reviewed } = finding;
+      expect(laterAnswer).toEqual({ fixed: false, text: "It is not broken.", at: expect.any(Number) });
+      expect(verifierSteps(f)[0]!.result).toEqual({ findings: [reviewed], findingsSettled: true });
       expect(f.task().timeline.some((entry) => entry.text.startsWith("Review rounds used up"))).toBe(true);
     } finally { await f.engine.shutdown(); }
   });
@@ -497,8 +505,8 @@ describe.concurrent("bounded verifier panels", () => {
       expect(finding.verification?.by).toBe("sol-high");
       expect(finding.status).toBe("dismissed");
       expect(f.fakes.openings("builder")).toHaveLength(1);
-      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked by one tool: 0 real");
-      expect(f.task().timeline.some((entry) => entry.text === "1 checked by the one usable tool: 0 real, 1 not holding the work back")).toBe(true);
+      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked by one tool: none to fix now, 1 not a bug");
+      expect(f.task().timeline.some((entry) => entry.text === "1 checked by one tool: none to fix now, 1 not a bug")).toBe(true);
     } finally { f.engine.shutdown(); }
   });
 

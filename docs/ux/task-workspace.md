@@ -28,6 +28,10 @@ The brief in one reading column (what changes for users, which parts of the prod
 
 The tamper check, then the findings: open blockers first, each with its status, who raised it and who confirmed it.
 
+Checked findings name the recorded outcome: must be fixed in this change, a real problem already there before this change, a real but minor problem, or not a bug. Counts name each verdict and the actual number of independent tools that voted. Split judgments also say how many tools affirm the problem is real; older and minor problems count as real problems. Missing votes never imply agreement. Each current tool's verdict and reason can be opened beneath the finding; earlier reviews retain verdicts beside their reasons. Outcomes and counts from before a reported fix keep that label.
+
+A completed review round displays its saved settled decisions, with dismissals under Not a bug and closed fixes under Fixed. Its evidence includes shared fixes and unmentioned Builder fix claims. Individual reviewer reports remain evidence from before the round's decision. Older unmarked copies say they are hand-back copies without a saved settled decision. Later reviews never change an earlier round's display. Vote boxes and timeline entries count recorded outcome categories, including older and minor problems, rather than only counting “real”. A finding with unfinished verification shows the actual number of tools that answered and why it remains Important, including the saved reason when a required answer was unavailable.
+
 #### Session
 
 Join the agent that is working right now (below).
