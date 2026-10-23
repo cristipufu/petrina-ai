@@ -9,6 +9,7 @@ import * as library from "@petrina/core";
 // session, the inbox, and saving. Feature modules get this, never the Engine itself.
 
 import { randomBytes } from "node:crypto";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
@@ -194,12 +195,29 @@ export class ScreenWait extends Error {}
 
 export const RISK_WORD: Record<RiskLevel, string> = { low: "Low", medium: "Medium", high: "High" };
 
+/** One product's undone acceptance changes join the in-flight run and its open step, adding to what was already seen. */
+function addRestored(task: MTask, entry: { productId: Id; commits?: boolean; edits?: boolean; files?: readonly string[] }): void {
+  const run = task.acceptanceRun!;
+  const saved = run.restored?.products.find((other) => other.productId === entry.productId);
+  const commits = !!entry.commits || !!saved?.commits, edits = !!entry.edits || !!saved?.edits;
+  const merged = { productId: entry.productId, ...(commits ? { commits } : {}), ...(edits ? { edits } : {}), files: [...new Set([...(saved?.files ?? []), ...(entry.files ?? [])])].slice(0, 20) };
+  run.restored = { at: run.restored?.at ?? Date.now(), products: [...(run.restored?.products ?? []).filter((other) => other.productId !== entry.productId), merged] };
+  const step = openStep(task);
+  if (step?.kind === "agent" && step.proofRun) step.proofRun = structuredClone(run);
+}
+
+/** Why acceptance is unverified when Petrina undid changes during its latest run, or could not account for that run's cleanup. */
+function restoredLine(task: Task): string {
+  const restored = library.restoredAcceptance(task);
+  return restored ? `Acceptance could not be verified: ${library.restorationReason(restored)}` : "";
+}
+
 /** What the delivery check says beside the work: its risk, and what Petrina's own run of the checks found. */
 function deliveryLines(task: Task): string | undefined {
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked") ?? [];
   const acceptance = unverified.length
     ? `${unverified.length} acceptance ${unverified.length === 1 ? "check could not" : "checks could not"} be verified:\n${unverified.map((item) => `• ${item.text}${item.reason ? ` — ${item.reason}` : ""}`).join("\n")}`
-    : "";
+    : restoredLine(task);
   const lines = [task.risk ? `${RISK_WORD[task.risk.level]} risk: ${task.risk.why}` : "", checksLine(task) ?? "", acceptance].filter(Boolean);
   return lines.length ? lines.join("\n") : undefined;
 }
@@ -295,6 +313,7 @@ export abstract class Kernel {
     this.events = new WorkflowEvents(this, options.eventRetention);
     this.events.baseline(this.s.tasks);
     this.usageCoordinator.startReaders(this.dataDir, options);
+    this.recoverStoppedRestorations();
   }
 
   waitUntilReady(): Promise<void> { return this.startupReady; }
@@ -771,9 +790,119 @@ export abstract class Kernel {
     const conversation = repository.conversation?.roleId === roleId ? repository.conversation : undefined;
     const role = conversation?.role ?? this.role(roleId);
     if (role && !(conversation?.access?.canEdit ?? role.canEdit) && worktree && !(knownClean ?? await git.isClean(worktree))) {
+      if (role.result === "checks" && scope.task.acceptanceRun) {
+        // An unreadable status cannot show that only new output files are being removed.
+        const status = await git.worktreeStatus(worktree).catch(() => undefined);
+        if (status?.trackedChanged !== false) await this.noteRestoredAcceptance(scope, role, repository.productId, worktree, undefined, { commits: false, edits: true });
+      }
       await git.discardChanges(worktree);
       this.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
     }
+  }
+
+  /**
+   * Petrina is about to undo commits or tracked-file edits from an acceptance run, found by its role's result kind:
+   * none of the run's answers can verify the restored product. Saved with the run, and its open step, before the
+   * undo removes the evidence, so pause, restart, a stand-in or a take-over within the run keep it.
+   */
+  async noteRestoredAcceptance(scope: RepositoryContext, role: Role, productId: Id, path: string, since: string | undefined, change: { commits: boolean; edits: boolean }): Promise<void> {
+    const { task } = scope;
+    const run = task.acceptanceRun;
+    if (role.result !== "checks" || !run || (!change.commits && !change.edits)) return;
+    const files = await git.trackedChangesSince(path, since);
+    addRestored(task, { productId, ...(change.commits ? { commits: true } : {}), ...(change.edits ? { edits: true } : {}), files });
+    const what = [change.commits && "commits", change.edits && "changes to project files"].filter(Boolean).join(" and ");
+    const named = files.length ? ` (${files.slice(0, 3).join(", ")}${files.length > 3 ? ` and ${files.length - 3} more` : ""})` : "";
+    const line = `This acceptance run cannot verify the restored product: Petrina is undoing ${what} from ${role.name} in ${this.productLabel(productId)}${named}`;
+    this.log(scope, "warn", line);
+    // Shutdown saved and closed the store before this cleanup: its record goes beside the store once the cleanup is over.
+    if (this.stopped) this.stoppedLines.set(task.id, [...(this.stoppedLines.get(task.id) ?? []), line]);
+    else this.commitNow(scope);
+  }
+
+  /** Lines noted by cleanups that finish after the last save at shutdown, per task. */
+  private readonly stoppedLines = new Map<Id, string[]>();
+  private get stoppedRestorations(): string { return join(this.dataDir, "acceptance-restorations"); }
+
+  /**
+   * An acceptance agent is starting: until its cleanup is over, every save marks the run with this cleanup's own
+   * identity, which names the only record a later start may take for it.
+   */
+  beginAcceptanceCleanup(task: MTask): string {
+    const cleanup = randomBytes(12).toString("hex");
+    task.acceptanceCleanupPending = cleanup;
+    return cleanup;
+  }
+
+  /** That cleanup is over with any undone changes noted: saved now, or kept beside the store when shutdown already closed it. */
+  endAcceptanceCleanup(scope: RepositoryContext, cleanup: string): void {
+    const { task } = scope;
+    if (task.acceptanceCleanupPending !== cleanup) return;
+    if (this.stopped) return this.keepStoppedOutcome(task, cleanup);
+    delete task.acceptanceCleanupPending;
+    this.commitNow(scope);
+  }
+
+  /** A stopped acceptance step's cleanup is over: its outcome, named by the cleanup's identity, waits beside the store for the next start. */
+  private keepStoppedOutcome(task: MTask, cleanup: string): void {
+    const run = task.acceptanceRun;
+    if (!run) return;
+    const path = join(this.stoppedRestorations, `${cleanup}.json`);
+    try {
+      mkdirSync(this.stoppedRestorations, { recursive: true, mode: 0o700 });
+      writeFileSync(`${path}.tmp`, JSON.stringify({ taskId: task.id, cleanup, ...(run.restored ? { restored: run.restored } : {}), lines: this.stoppedLines.get(task.id) ?? [] }), { mode: 0o600 });
+      renameSync(`${path}.tmp`, path);
+    } catch (error) {
+      // The run stays marked, so the next start cannot trust it.
+      console.error(`Could not keep the acceptance cleanup record for task ${task.id}:`, error);
+    }
+  }
+
+  /**
+   * A run marked at shutdown takes the record its own cleanup left, saved before the record goes. A record from an
+   * earlier cleanup has another name, so it never speaks for a later one. Without a readable record of that cleanup,
+   * nothing shows what it undid, so the run cannot verify the product.
+   */
+  private recoverStoppedRestorations(): void {
+    type Kept = { taskId?: Id; cleanup?: string; restored?: { products?: { productId: Id; commits?: boolean; edits?: boolean; files?: string[] }[] }; lines?: string[] };
+    let names: string[] = [];
+    try { names = readdirSync(this.stoppedRestorations); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("Could not read the acceptance cleanup records:", error); }
+    const read = (cleanup: string): Kept | undefined => {
+      const path = join(this.stoppedRestorations, `${cleanup}.json`);
+      try { return JSON.parse(readFileSync(path, "utf8")); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Could not read the acceptance cleanup record ${path}:`, error); }
+      return undefined;
+    };
+    let changed = false;
+    for (const task of this.s.tasks) {
+      const cleanup = task.acceptanceCleanupPending, run = task.acceptanceRun;
+      if (cleanup === undefined) continue;
+      delete task.acceptanceCleanupPending;
+      changed = true;
+      if (!run) continue;
+      const kept = /^[0-9a-f]{24}$/.test(cleanup) ? read(cleanup) : undefined;
+      if (kept?.taskId === task.id && kept.cleanup === cleanup) {
+        for (const entry of kept.restored?.products ?? []) addRestored(task, entry);
+        for (const line of kept.lines ?? []) this.log(task, "warn", line);
+        continue;
+      }
+      run.restored ??= { at: Date.now(), products: [] };
+      const step = openStep(task);
+      if (step?.kind === "agent" && step.proofRun) step.proofRun = structuredClone(run);
+      this.log(task, "warn", "This acceptance run cannot verify the product: Petrina closed during it and could not read what its cleanup undid");
+    }
+    if (!changed && !names.length) return;
+    this.save();
+    for (const name of names) {
+      try { rmSync(join(this.stoppedRestorations, name), { force: true }); }
+      catch (error) { console.error(`Could not remove the acceptance cleanup record ${name}:`, error); }
+    }
+  }
+
+  /** A product as the coordinator named it. */
+  productLabel(productId: Id): string {
+    return this.s.products.find((product) => product.id === productId)?.name ?? productId;
   }
 
   /** Keep an editing role's work before another role's read-only clean-up can undo it. */

@@ -475,7 +475,7 @@ export class Driver {
                 work.approvedPatch = work.checkedPatch;
                 work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
               }
-              this.k.log(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? "Requested proof is current and checks passed: shipping without asking you, as this task's settings allow" : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
+              this.k.log(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? `${current.proofRequests?.length ? "Requested proof is current" : "Acceptance is verified"} and checks passed: shipping without asking you, as this task's settings allow` : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
               current.stageIndex += 1;
               current.sub = 0;
               this.k.commit();

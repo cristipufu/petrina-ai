@@ -2,7 +2,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { draftOf, journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
+import { ACCEPTANCE_RESTORED, draftOf, journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { Fakes, git, headNow, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
@@ -121,7 +121,7 @@ describe("the tester tries the change once, and the final code once more", () =>
     } finally { await engine.shutdown(); }
   });
 
-  it("keeps a tester's permitted edits before review and undoes its edits and commits on the final acceptance pass", async () => {
+  it("keeps a tester's permitted edits before review and undoes its edits and commits on the final acceptance pass, leaving that pass unverified", async () => {
     const root = tempDir("petrina-tester-edits-");
     roots.push(root);
     const fakes = new Fakes(join(root, "fake"));
@@ -155,6 +155,13 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(task.timeline.some((entry) => entry.text === "Saved the changes from the Tester on the task's branch")).toBe(true);
       expect(task.timeline.some((entry) => entry.text === "Undid commits from Tester, which is read-only")).toBe(true);
       expect(engine.getState().roles.find((role) => role.id === tester.id)!.canEdit).toBe(true);
+      // The permitted first pass counts as usual; the final pass ran on code Petrina then restored.
+      const [first, final] = task.journey!.filter((step) => step.roleId === "tester");
+      expect(first!.proofRun!.restored).toBeUndefined(); expect(first!.acceptanceChecks!.every((check) => check.result === "pass")).toBe(true);
+      expect(final!.proofRun!.restored!.products).toEqual([{ productId, commits: true, files: ["tester-edit.txt"] }]);
+      expect(final!.acceptanceChecks!.every((check) => check.result === "blocked" && check.reason === ACCEPTANCE_RESTORED)).toBe(true);
+      expect(task.acceptancePassed).toBe(false); expect(task.acceptanceUnverified).toBe(true);
+      expect(engine.getState().inbox.find((item) => item.taskId === taskId && item.kind === "delivery")!.title).toContain("could not be verified");
     } finally {
       engine.shutdown();
     }

@@ -433,9 +433,16 @@ for (const list of ["defunct", "unreadable", "running", "silent"] as const) it.s
     await waitFor(async () => (await childState(agent.pid)) === "ended", "the agent to be defunct", 10_000);
     const notes: string[] = [];
     const own = (line: string) => Number(line.trim().split(/\s+/)[0]) === agent.pid;
+    // What a given list shows is not about time. The running and silent lists derive from one complete native list,
+    // read beforehand with the defunct agent in it, so a busy machine's slow read cannot make them unreadable instead.
+    // The defunct list is still read live within the stop's final second.
+    const listed = list === "running" || list === "silent" ? await waitFor(async () => {
+      const text = await groups(4_000 * SLOW);
+      return text?.split("\n").some((line) => own(line) && /Z\S*\s*$/.test(line)) && text;
+    }, "a native process list showing the defunct agent") : undefined;
     const read = list === "defunct" ? groups : list === "unreadable" ? async () => undefined
-      : list === "running" ? async (timeout: number) => (await groups(timeout))?.split("\n").map((line) => own(line) ? line.replace(/Z\S*\s*$/, "S") : line).join("\n")
-      : async (timeout: number) => (await groups(timeout))?.split("\n").filter((line) => !own(line)).join("\n");
+      : list === "running" ? async () => listed!.split("\n").map((line) => own(line) ? line.replace(/Z\S*\s*$/, "S") : line).join("\n")
+      : async () => listed!.split("\n").filter((line) => !own(line)).join("\n");
     const from = Date.now();
     const stopped = await stopAll({ pid: agent.pid, exitCode: null, signalCode: null } as unknown as ChildProcess, 2_000, true, (line) => { notes.push(line); }, read);
     expect(Date.now() - from).toBeLessThan(7_000);

@@ -1,6 +1,6 @@
 import { type RepositoryContext } from "./repository-context.js";
 import { beginRepair, productsFor, versionsOf, changesOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
-import { openProofs, refreshProofs, sameVersions } from "@petrina/core";
+import { openProofs, refreshProofs, restorationReason, sameVersions } from "@petrina/core";
 // "do" stages: one role on one profile. The builder answers findings, brings work up to date and writes a pull
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
@@ -17,6 +17,7 @@ import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
 import type { ProductChecks } from "./product-checks.js";
 import { assignedCheckFailures } from "./related-check-evidence.js";
+import { addDeliveryCheck } from "./proof-requests.js";
 
 /** A pull request's description must fit where GitHub puts it, beside Petrina's own part: the builder shortens it, never Petrina. */
 function tooLong(value: { description?: string | undefined }): string | undefined {
@@ -164,6 +165,10 @@ export class Work {
     } else if (role?.result === "checks") {
       const continuing = repository.conversation?.roleId === roleId && repository.conversation.step === stepKey(task);
       if (!task.acceptanceRun || !continuing) {
+        // An interrupted attempt whose changes Petrina undid settled nothing: its step keeps that record, and the fresh run gets its own.
+        const interrupted = openStep(task);
+        const lost = interrupted?.kind === "agent" ? interrupted.proofRun?.restored : undefined;
+        if (lost) endAgentStep(task, { outcome: "Stopped before a result", reason: `${lost.products.length ? "Petrina undid changes during this attempt" : "Petrina could not confirm what this attempt's cleanup undid"}; the next run starts fresh`, tone: "back" }, Date.now());
         const versions = await versionsOf(task);
         refreshProofs(task, versions);
         task.acceptanceRun = { versions, changes: await changesOf(task), requestIds: openProofs(task).map(request => request.id) };
@@ -188,20 +193,28 @@ export class Work {
       // Explicit proof also needs one finishing observation when a read-only Tester returns.
       const currentVersions = role.canEdit || !task.proofRequests?.length ? testedVersions : await versionsOf(task);
       const staleRun = !!task.proofRequests?.length && !sameVersions(run.versions, currentVersions);
+      // Saved by the step's cleanup before it undid commits or tracked edits anywhere in the task: every answer
+      // from this run stays unverified, keeping any reason it was already unavailable. The agent's report is untouched.
+      const restored = run.restored, invalid = restored && restorationReason(restored);
+      const unavailable = <C extends { result: "pass" | "fail" | "blocked"; reason?: string | undefined }>(check: C): C => invalid
+        ? { ...check, result: "blocked", reason: [invalid, check.result === "blocked" ? check.reason : undefined].filter(Boolean).join(" ") }
+        : check;
       // Preserve observed failures and unavailable probes. Freshness belongs to each request's
       // affected products, independently of the outcome recorded on the run's starting versions.
-      const proofAnswers = rawResult.proofAnswers.map(answer => answer.evidence?.trim() ? answer : { ...answer, result: "blocked" as const, reason: answer.reason?.trim() || "The agent did not record how it verified this request." });
-      const proofChecks = proofAnswers.map(answer => ({ ...answer, proofRequestId: answer.id, text: task.proofRequests!.find(request => request.id === answer.id)!.text, productIds: [...task.proofRequests!.find(request => request.id === answer.id)!.productIds] }));
+      const answered = rawResult.proofAnswers.map(answer => answer.evidence?.trim() ? answer : { ...answer, result: "blocked" as const, reason: answer.reason?.trim() || "The agent did not record how it verified this request." });
+      const proofAnswers = answered.map(unavailable);
+      const proofChecks = answered.map(answer => ({ ...answer, proofRequestId: answer.id, text: task.proofRequests!.find(request => request.id === answer.id)!.text, productIds: [...task.proofRequests!.find(request => request.id === answer.id)!.productIds] }));
       const result = { ...rawResult, checks: [...rawResult.checks, ...proofChecks].map((check) => {
         const productIds = productsFor(task, "productIds" in check ? check.productIds : undefined);
-        if (task.repositories && !productIds.length) return { ...check, productIds: [], result: "blocked" as const, reason: "Together: no valid affected products were assigned. The coordinator must resolve ownership." };
-        if (check.result !== "blocked" && !check.evidence) return { ...check, productIds, result: "blocked" as const, reason: "The agent did not record how it verified this item." };
-        return { ...check, productIds };
+        if (task.repositories && !productIds.length) return unavailable({ ...check, productIds: [], result: "blocked" as const, reason: "Together: no valid affected products were assigned. The coordinator must resolve ownership." });
+        if (check.result !== "blocked" && !check.evidence) return unavailable({ ...check, productIds, result: "blocked" as const, reason: "The agent did not record how it verified this item." });
+        return unavailable({ ...check, productIds });
       }) };
       const testerStep = openStep(task);
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) {
         const report = testerStep.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
         if (report) report.versions = testedVersions;
+        if (restored) testerStep.proofRun = structuredClone(run);
         testerStep.proofChecks = proofAnswers;
         testerStep.acceptanceChecks = result.checks.map((check) => ({ text: check.text, result: check.result, ...(check.evidence ? { evidence: check.evidence } : {}), ...("reason" in check && check.reason ? { reason: check.reason } : {}) }));
       }
@@ -211,7 +224,8 @@ export class Work {
         if (!check) return item;
         return {
           ...item,
-          ...(task.repositories ? { productIds: check.productIds, versions: Object.fromEntries(check.productIds.map((id) => [id, testedVersions![id]!])) } : {}),
+          // An invalidated run cannot reassign an item's products or versions.
+          ...(task.repositories && !restored ? { productIds: check.productIds, versions: Object.fromEntries(check.productIds.map((id) => [id, testedVersions![id]!])) } : {}),
           met: check.result === "pass" ? true : check.result === "fail" ? false : undefined,
           verification: check.result === "pass" ? "passed" : check.result === "fail" ? "failed" : "blocked",
           ...(check.result === "blocked" && check.reason ? { reason: check.reason } : { reason: undefined }),
@@ -219,7 +233,8 @@ export class Work {
       });
       const failed = result.checks.filter((check) => check.result === "fail");
       const blocked = result.checks.filter((check) => check.result === "blocked");
-      for (const check of result.checks) {
+      // An invalidated run's reported failures stay in its history; earlier problems keep their own results.
+      for (const check of restored ? [] : result.checks) {
         const proofRequestId = "proofRequestId" in check && typeof check.proofRequestId === "string" ? check.proofRequestId : undefined;
         const text = check.result === "blocked" ? `Could not verify acceptance check: ${check.text}` : `Failed acceptance check: ${check.text}`;
         const alternate = check.result === "blocked" ? `Failed acceptance check: ${check.text}` : `Could not verify acceptance check: ${check.text}`;
@@ -237,13 +252,16 @@ export class Work {
           severity: "blocking", raisedBy: by, confirmedBy: [], status: "open",
         });
       }
-      const unverified = blocked.length > 0;
-      this.k.log(scope, failed.length || unverified ? "warn" : "done", unverified
+      // Without checklist items or requested proof, an invalidated run is still unverified.
+      const unverified = blocked.length > 0 || !!restored;
+      this.k.log(scope, failed.length || unverified ? "warn" : "done", restored
+        ? `Acceptance could not be verified: ${invalid}`
+        : unverified
         ? `${blocked.length} acceptance check${blocked.length === 1 ? "" : "s"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}`
         : failed.length ? `${failed.length} acceptance check${failed.length === 1 ? "" : "s"} failed` : staleRun ? "Acceptance passed on an earlier version; the final code still needs acceptance testing" : result.summary, roleId, by);
       endAgentStep(task, {
-        outcome: unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
-        reason: unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : staleRun ? "the code changed during acceptance testing; final acceptance is still pending" : W.checksPassed,
+        outcome: restored && !blocked.length ? "Could not be verified" : unverified ? `${blocked.length} ${blocked.length === 1 ? "check" : "checks"} could not be verified${failed.length ? `; ${failed.length} failed` : ""}` : W.checks(failed.length, result.checks.length),
+        reason: restored ? restored.products.length ? "Petrina undid changes during acceptance testing" : "Petrina could not confirm what its cleanup undid" : unverified ? "acceptance not fully verified" : failed.length ? W.checksFailed(failed.length) : staleRun ? "the code changed during acceptance testing; final acceptance is still pending" : W.checksPassed,
       }, Date.now());
       for (const answer of proofAnswers) {
         const request = task.proofRequests!.find(request => request.id === answer.id)!;
@@ -260,6 +278,10 @@ export class Work {
       task.acceptancePassed = failed.length === 0 && !unverified && !staleRun;
       task.acceptanceUnverified = unverified;
       if (!unverified) delete task.acceptanceBlocked;
+      // Even with delivery approval off, an invalidated run's work waits for the coordinator's decision.
+      if (restored && !task.plan!.stages.some((entry) => entry.kind === "gate" && entry.gate === "delivery") && addDeliveryCheck(this.k, task)) {
+        this.k.log(scope, "milestone", "Added your delivery check: this acceptance run cannot verify the product, so delivery waits for your decision");
+      }
       if (task.repositories && failed.length) {
         this.k.finishStep(scope);
         delete task.retest;

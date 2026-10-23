@@ -256,10 +256,15 @@ export interface TaskAcceptanceState {
   proofRefreshes?: number;
   proofRefreshBlocked?: boolean;
   proofRetestReason?: "requested" | "main-moved" | "code-changed";
-  /** Added only when requested proof needs preparation in a plan that omitted the delivery check. */
+  /** Added only when requested proof, or an acceptance run Petrina invalidated, needs the delivery check in a plan that omitted it. */
   proofDeliveryGate?: Id;
   /** One in-flight Tester run, retained across pause, restart and profile handoff. */
   acceptanceRun?: NonNullable<JourneyStep["proofRun"]>;
+  /**
+   * Set from an acceptance agent's start until its cleanup is over, to that cleanup's own identity: a later start
+   * trusts the run only with the record that cleanup left, never one an earlier cleanup of the same run left.
+   */
+  acceptanceCleanupPending?: string;
   checkedProofDecision?: ProofDecision;
   approvedProofDecision?: ProofDecision;
   /** The change (its fingerprint) the tester last tried: fix rounds are reviewed, and the tester tries the final code once more before the delivery check. */

@@ -1,5 +1,5 @@
 // Compact recorded evidence only. This projection never supplies an acceptance verdict to the engine.
-import { acceptanceSummary, recordedAcceptance, resultSeatOf, roleForTask, seatOf, type Role, type Task } from "@petrina/core";
+import { acceptanceSummary, recordedAcceptance, restorationReason, resultSeatOf, roleForTask, seatOf, type Role, type Task } from "@petrina/core";
 
 const CHECK_LIMIT = 8, ATTEMPT_LIMIT = 4;
 const clip = (text: string, limit: number) => {
@@ -15,7 +15,9 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
   const checks = step?.acceptanceChecks ?? [];
   const nodeRead = (nodeId: string) => ({ operation: "journey.node", taskId: task.id, nodeId });
   const planned = task.plan?.stages.some((stage) => roleFor(stage.roleId)?.result === "checks");
-  const missing = testers.length ? "Testing ran but recorded no completed check results." : planned ? "Testing has not run yet." : "No testing step is planned or recorded.";
+  // Petrina undid commits or tracked edits during this run, or could not account for its cleanup, so none of its answers verifies the product.
+  const restored = step?.proofRun?.restored;
+  const missing = restored ? restorationReason(restored) : testers.length ? "Testing ran but recorded no completed check results." : planned ? "Testing has not run yet." : "No testing step is planned or recorded.";
   const works = task.repositories ?? (task.repository ? [task.repository] : [task]);
   const products = works.map((work) => {
     const tree = tested?.[work.productId];
@@ -78,6 +80,7 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
       state: checks.length ? "recorded" : "unavailable",
       ...(!checks.length ? { reason: missing } : {}),
       counts: { passed: checks.filter((check) => check.result === "pass").length, failed: checks.filter((check) => check.result === "fail").length, couldNotVerify: checks.filter((check) => check.result === "blocked").length },
+      ...(restored ? { restored: { reason: restorationReason(restored), products: restored.products.map((entry) => ({ productId: entry.productId, commits: !!entry.commits, edits: !!entry.edits, files: entry.files?.slice(0, 5) ?? [], omittedFiles: Math.max(0, (entry.files?.length ?? 0) - 5) })) } } : {}),
       checks: listed, omittedChecks: checks.length - listed.length,
       shortened: checks.length > listed.length || listed.some((entry) => entry.shortened),
       ...(step ? {

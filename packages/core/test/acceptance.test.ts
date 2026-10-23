@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { acceptanceSummary } from "../src/acceptance.js";
+import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceSummary, recordedAcceptance, restorationReason, restoredAcceptance } from "../src/acceptance.js";
+import { gateStatus, gateTitle } from "../src/flow.js";
 import { createDemoState, createPortfolioDemo } from "../src/demo.js";
 import { journeyView } from "../src/journey.js";
 import { BUILT_IN_ROLES } from "../src/library.js";
@@ -136,6 +137,28 @@ describe("acceptance evidence attribution", () => {
     const task = fixture();
     task.journey = [...task.journey!, step({ id: "empty-later-run", roleId: "custom-test", acceptanceChecks: [] })];
     expect(acceptanceSummary(task, roleFor).items.map((item) => [item.check?.result, item.current])).toEqual([["pass", true], ["fail", true], ["blocked", false]]);
+  });
+
+  it("selects a later run Petrina invalidated even with nothing to report, and names it at the delivery check", () => {
+    const task = fixture("custom-test");
+    task.findings = []; delete task.checks; delete task.proofRequests;
+    const restored = { at: 30, products: [{ productId: task.productId, edits: true, files: ["bun.lock"] }] };
+    const run = { versions: { [task.productId]: "tested-tree" }, changes: {}, requestIds: [], restored };
+    task.journey = [...task.journey!, step({ id: "invalidated", roleId: "custom-test", acceptanceChecks: [], proofRun: run })];
+    expect(recordedAcceptance(task, roleFor).step!.id).toBe("invalidated");
+    expect(acceptanceSummary(task, roleFor).items.every((item) => !item.current)).toBe(true);
+    expect(restoredAcceptance(task)).toBeUndefined();
+    task.acceptanceUnverified = true; delete task.brief;
+    expect(restoredAcceptance(task)).toEqual(restored);
+    // Only a run with undone changes says Petrina undid them; one whose cleanup went unaccounted says so instead.
+    expect(restorationReason(restored)).toBe(ACCEPTANCE_RESTORED); expect(restorationReason({ at: 31, products: [] })).toBe(ACCEPTANCE_UNACCOUNTED);
+    expect(gateTitle(task, "delivery")).toBe(`Your call on “${task.title}”: acceptance could not be verified`);
+    expect(gateStatus(task, "delivery")).toBe("Acceptance could not be verified. Your call");
+    // An interrupted attempt saved no results: it settles nothing and replaces nothing.
+    task.journey = [task.journey[0]!, step({ id: "interrupted", roleId: "custom-test", end: "cancelled", proofRun: run })];
+    expect(recordedAcceptance(task, roleFor).step!.id).toBe("tester");
+    expect(restoredAcceptance(task)).toBeUndefined();
+    expect(gateTitle(task, "delivery")).toBe(`Ready to ship “${task.title}”`);
   });
 
   it.each(["unknown version", "running editor", "missing step evidence", "missing version", "unavailable version", "not current"])("leaves uncertain evidence unverified: %s", (variant) => {

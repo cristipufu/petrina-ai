@@ -15,18 +15,26 @@ export function checkProofRequests(k: Pick<Kernel, "s" | "role">, task: MTask, r
   }
 }
 
+/**
+ * A plan that omitted delivery approval gains the delivery check before its delivery step, so evidence that must be
+ * current is prepared and checked there; the task's own approval choice still applies once it is. False without a delivery step.
+ */
+export function addDeliveryCheck(k: Pick<Kernel, "role">, task: MTask): boolean {
+  if (task.plan!.stages.some(entry => entry.kind === "gate" && entry.gate === "delivery")) return true;
+  const index = task.plan!.stages.findIndex(entry => entry.kind === "do" && k.role(entry.roleId, task)?.result === "delivery");
+  if (index < 0) return false;
+  const id = `${task.id}:proof-delivery`;
+  task.plan!.stages.splice(index, 0, { id, title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] });
+  task.proofDeliveryGate = id;
+  if (task.stageIndex >= index) task.stageIndex += 1;
+  return true;
+}
+
 /** Called with the accepted seat result; identity is its position in this execution, never similar wording. */
 export function recordReviewProofs(k: Pick<Kernel, "id" | "role">, task: MTask, stage: MStage, requests: z.infer<typeof ReviewResult>["proofRequests"], by: string, roleId: string, seat: string): void {
   const owner = task.plan?.stages.find(entry => entry.kind === "do" && k.role(entry.roleId, task)?.result === "checks");
   if (!owner || !requests.length) return;
-  if (!task.plan!.stages.some(entry => entry.kind === "gate" && entry.gate === "delivery")) {
-    const index = task.plan!.stages.findIndex(entry => entry.kind === "do" && k.role(entry.roleId, task)?.result === "delivery");
-    if (index < 0) throw new Error("Required proof needs a delivery preparation step.");
-    const id = `${task.id}:proof-delivery`;
-    task.plan!.stages.splice(index, 0, { id, title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] });
-    task.proofDeliveryGate = id;
-    if (task.stageIndex >= index) task.stageIndex += 1;
-  }
+  if (!addDeliveryCheck(k, task)) throw new Error("Required proof needs a delivery preparation step.");
   const round = task.rounds[stage.id] ?? 1;
   const hunt = task.hunt;
   if (!hunt || hunt.stageId !== stage.id) throw new Error("A proof request must belong to the current review execution.");

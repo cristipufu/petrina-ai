@@ -99,6 +99,11 @@ export interface Scenario {
   tester?: "work" | "fail-once" | "writes" | "always-fail" | "omit-once" | "blocked" | "no-evidence";
   /** Explicit proof answers for acceptance tests that exercise the real turn and read-only cleanup. */
   testerProofAnswers?: { id: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string }[];
+  /**
+   * Files a Tester on `model` (any, unset) writes as its turn starts, before a usage limit can stop it: in any
+   * product's copy, by absolute folder. `commit` also commits the file there.
+   */
+  testerFiles?: { dir: string; file: string; text: string; commit?: boolean; model?: string }[];
   /** "hang": the first Release Manager works until cancelled. Later ones write the notes as usual. */
   releaseManager?: "hang";
   /**
@@ -619,6 +624,14 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
     return { text: "could not tell" };
   }
   for (const report of plan.usage ?? []) if (report.model === session.model) await send(client, sessionId, usageUpdate(report.status, report.type ?? "seven_day", report.utilization, report.resetsAt, report.overage, report.paidStatus));
+  if (session.role === "tester") for (const entry of plan.testerFiles ?? []) {
+    if (entry.model && entry.model !== session.model) continue;
+    writeFileSync(join(entry.dir, entry.file), entry.text);
+    if (entry.commit) {
+      await run(entry.dir, "add", "--", entry.file);
+      await run(entry.dir, "-c", "user.email=fake@example.com", "-c", "user.name=Fake", "commit", "--quiet", "-m", "Tester commits during acceptance");
+    }
+  }
   const limit = (plan.limited ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && (!entry.onScreen || text.includes("You may now use the screen for")));
   const until = limit && outOfUsage(limit);
   if (limit && until && !limit.afterRelease) await runOut(limit, until, session, sessionId, client);
@@ -1287,7 +1300,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       }
       // "fail-once": the second tester pass (the one on the final code) fails an acceptance item, once.
       if (plan.tester === "blocked") return done({ summary: "I could not open the live session because its account limit is exhausted.", checks: [{ text: "A greeting file exists", result: "blocked", reason: "The Claude Code weekly limit prevents opening a live session." }] });
-      if (plan.tester === "always-fail") return done({ summary: "The greeting still does not appear.", checks: [{ text: "A greeting file exists", pass: false, evidence: "The scripted guest welcome page has no greeting; expected the greeting to be visible." }] });
+      if (plan.tester === "always-fail") return done({ summary: "The greeting still does not appear.", checks: [{ text: "A greeting file exists", pass: false, evidence: "The scripted guest welcome page has no greeting; expected the greeting to be visible." }], ...(plan.testerProofAnswers ? { proofAnswers: plan.testerProofAnswers } : {}) });
       if (plan.tester === "fail-once" && marked("tester-passed-once") && !marked("tester-failed-once")) {
         mark("tester-failed-once");
         return done({ summary: "Tried it: the greeting is missing on the welcome page.", checks: [{ text: "A greeting file exists", pass: false, evidence: "The scripted guest welcome page has no greeting; expected the greeting to be visible." }] });

@@ -44,7 +44,7 @@ Findings in a `do` step join the final review, notes or checks in the review get
 
 ### Work is never lost between roles
 
-A role that may change the product has its work committed at the end of its step, labelled with its name, so a later read-only role never wipes it. Read-only roles, added ones included, have their changes and commits undone when their step ends.
+A role that may change the product has its work committed at the end of its step, labelled with its name, so a later read-only role never wipes it. Read-only roles, added ones included, have their changes and commits undone when their step ends. In a shared task, commits and tracked edits any role leaves in the other products are undone too, with a warning naming each product. An acceptance run that Petrina had to undo cannot verify the product ([acceptance evidence](workflow.md#acceptance-evidence)).
 
 - Changes reach the next agent that starts and the next plan. An agent already working finishes with the version of its role it started with, its wording, name and permission included, even when Petrina restarts in between and its conversation starts again. Reviewers and voters working side by side each keep their own saved version; a replacement on another tool keeps it until that part of the review finishes.
 

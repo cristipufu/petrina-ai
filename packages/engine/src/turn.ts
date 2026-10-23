@@ -411,7 +411,7 @@ export class Turns {
     // The working copy as the step first found it: what the summary compares with, and what a read-only role leaves.
     const [head, protectedCopies] = await Promise.all([
       same?.head ?? (worktree ? git.head(worktree).catch(() => undefined) : undefined),
-      task.repositories && !options.copy ? Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => ({ path: work.worktree!, sha: await git.head(work.worktree!) }))) : [],
+      task.repositories && !options.copy ? Promise.all(task.repositories.filter((work) => work.worktree && work.productId !== repository.productId).map(async (work) => ({ productId: work.productId, path: work.worktree!, sha: await git.head(work.worktree!) }))) : [],
     ]);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
     const opened = await this.openAgentRun(scope, role, profile, worktree, signal, agent, {
@@ -431,6 +431,8 @@ export class Turns {
     const { run } = opened;
     options.started?.();
     this.k.runs.set(taskId, run);
+    // From the agent's start until its cleanup is over, the run counts on a later start only with that cleanup's record.
+    const acceptanceCleanup = role.result === "checks" && task.acceptanceRun ? this.k.beginAcceptanceCleanup(task) : undefined;
     this.k.syncIdleSleep();
     if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
     const picked = run.reopened !== undefined;
@@ -592,16 +594,23 @@ export class Turns {
       this.k.syncIdleSleep();
       // Nothing the agent started may still write in the working copy once the step is over.
       await run.stop();
+      // Undone commits and tracked edits are saved first, so an acceptance run never counts on the restored product.
       await completeAll([
         ...protectedCopies.map(async (copy) => {
           const state = await git.worktreeStatus(copy.path);
-          if (state.head !== copy.sha) await git.resetTo(copy.path, copy.sha);
+          const commits = state.head !== copy.sha;
+          await this.k.noteRestoredAcceptance(scope, role, copy.productId, copy.path, copy.sha, { commits, edits: state.trackedChanged });
+          if (commits) await git.resetTo(copy.path, copy.sha);
           if (!state.clean) await git.discardChanges(copy.path);
+          const why = role.canEdit ? `which may change only ${this.k.productLabel(repository.productId)} in this step` : "which is read-only";
+          if (commits) this.k.log(scope, "warn", `Undid commits in ${this.k.productLabel(copy.productId)} from ${role.name}, ${why}`);
+          if (state.trackedChanged) this.k.log(scope, "warn", `Undid changes in ${this.k.productLabel(copy.productId)} from ${role.name}, ${why}`);
         }),
         // A read-only role leaves its primary copy as found, including commits and tracked changes.
         ...(!role.canEdit && headBefore ? [(async () => {
           const state = await git.worktreeStatus(worktree);
           if (task.maintenance?.role.id === roleId && (state.head !== headBefore || !state.clean)) task.maintenance.readOnlyWrites = true;
+          await this.k.noteRestoredAcceptance(scope, role, repository.productId, worktree, headBefore, { commits: state.head !== headBefore, edits: state.trackedChanged });
           if (state.head !== headBefore) {
             await git.resetTo(worktree, headBefore);
             this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
@@ -612,6 +621,8 @@ export class Turns {
           }
         })()] : []),
       ]);
+      // Its undone changes, if any, are saved; a close since the last save keeps them in the cleanup's record.
+      if (acceptanceCleanup) this.k.endAcceptanceCleanup(scope, acceptanceCleanup);
     }
   }
 

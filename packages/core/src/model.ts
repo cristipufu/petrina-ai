@@ -348,7 +348,7 @@ export interface JourneyStep {
   /** Passed applicable review rounds, without any reviewer conclusions. */
   checkReviews?: readonly { productId: Id; tree: string; at: number; stageId: Id; round: number }[];
   /** Frozen before a Tester starts; retained when its conversation resumes. */
-  proofRun?: { versions: Readonly<Record<Id, string>>; changes: Readonly<Record<Id, string>>; requestIds: readonly Id[] };
+  proofRun?: { versions: Readonly<Record<Id, string>>; changes: Readonly<Record<Id, string>>; requestIds: readonly Id[]; restored?: AcceptanceRestoration };
   proofChecks?: readonly { id: Id; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string }[];
   proofDecision?: import("./task-model.js").ProofDecision;
   /** Per seat, including finished members and usage replacements. */
@@ -385,6 +385,16 @@ export interface JourneyAcceptanceCheck {
   reason?: string;
   /** The scenario and observed result, recorded by this acceptance run. */
   evidence?: string;
+}
+
+/**
+ * Commits or tracked-file edits Petrina undid during one acceptance run, saved before the undo. None of the
+ * run's answers can verify the restored product. New untracked files alone are output and are not recorded.
+ * Without products, Petrina stopped before the run's cleanup was accounted for, so nothing shows what it undid.
+ */
+export interface AcceptanceRestoration {
+  at: number;
+  products: readonly { productId: Id; commits?: boolean; edits?: boolean; files?: readonly string[] }[];
 }
 
 export interface JourneyProductCheck {

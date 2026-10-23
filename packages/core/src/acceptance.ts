@@ -1,9 +1,27 @@
-import type { JourneyAcceptanceCheck, Role, Task } from "./model.js";
+import type { AcceptanceRestoration, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
+
+/** Why every item and proof answer from a run whose changes Petrina undid is unverified. */
+export const ACCEPTANCE_RESTORED = "Petrina undid changes during acceptance testing. This run cannot verify the restored product.";
+/** Why every item and proof answer is unverified from a run Petrina stopped during before its cleanup was accounted for. */
+export const ACCEPTANCE_UNACCOUNTED = "Petrina stopped during acceptance testing and could not confirm what its cleanup undid. This run cannot verify the product.";
+
+/** Why an invalidated run's answers are unverified: what Petrina undid, or that nothing shows what it undid. */
+export function restorationReason(restored: AcceptanceRestoration): string {
+  return restored.products.length ? ACCEPTANCE_RESTORED : ACCEPTANCE_UNACCOUNTED;
+}
+
+/** A completed acceptance run whose results were saved, including a run Petrina invalidated that had nothing to report. */
+const savedRun = (step: JourneyStep) => !!step.acceptanceChecks?.length || (step.acceptanceChecks !== undefined && !!step.proofRun?.restored);
+
+/** The undone changes behind the latest saved acceptance run, while that leaves acceptance unverified. */
+export function restoredAcceptance(task: Pick<Task, "journey" | "acceptanceUnverified">) {
+  return task.acceptanceUnverified ? task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && step.acceptanceChecks !== undefined)?.proofRun?.restored : undefined;
+}
 
 /** Select one recorded run; later unfinished attempts never replace or supplement it. */
 export function recordedAcceptance(task: Task, roleFor: (id?: string) => Role | undefined) {
   const journey = task.journey ?? [];
-  const index = journey.findLastIndex((step) => step.kind === "agent" && step.endedAt !== undefined && !!step.acceptanceChecks?.length && roleFor(step.roleId)?.result === "checks");
+  const index = journey.findLastIndex((step) => step.kind === "agent" && step.endedAt !== undefined && savedRun(step) && roleFor(step.roleId)?.result === "checks");
   const step = journey[index];
   const reportIndex = step?.agentResults?.findLastIndex((report) => report.roleId === step.roleId) ?? -1;
   const report = step?.agentResults?.[reportIndex];

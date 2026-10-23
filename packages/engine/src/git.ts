@@ -883,6 +883,13 @@ export async function changedSince(path: string, sha: string): Promise<FileChang
   return changes;
 }
 
+/** Tracked files the working copy changed since `sha` (its checked-out commit when omitted), committed or not; untracked files are left out. */
+export async function trackedChangesSince(path: string, sha?: string): Promise<string[]> {
+  if (sha !== undefined && !SHA.test(sha)) return [];
+  const result = await run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", sha ?? "HEAD"], path);
+  return result.code === 0 ? result.stdout.split("\0").filter(Boolean) : [];
+}
+
 /** How many commits `to` (the working copy's branch, unless given) has on top of `sha`. */
 export async function commitsSince(path: string, sha: string, to = "HEAD"): Promise<number> {
   if (!SHA.test(sha)) return 0;

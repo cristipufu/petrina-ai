@@ -5,6 +5,7 @@
 import { roleForTask } from "./roles.js";
 import { checkProblem } from "./check-evidence.js";
 import { proofGap } from "./proof-requests.js";
+import { restoredAcceptance } from "./acceptance.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
 import type { Column, GateKind, InboxKind, Role, Stage, Task } from "./model.js";
 
@@ -60,6 +61,7 @@ export function gateTitle(task: Task, gate: GateKind): string {
   const gap = gate === "delivery" && proofGap(task);
   if (gap) return `Your call on “${task.title}”: ${gap[0]!.toLowerCase()}${gap.slice(1)}`;
   const unverified = gate === "delivery" ? task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0 : 0;
+  if (!unverified && gate === "delivery" && restoredAcceptance(task)) return `Your call on “${task.title}”: acceptance could not be verified`;
   return unverified ? `Your call on “${task.title}”: ${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}` : GATE_TITLE[gate](task.title);
 }
 
@@ -80,6 +82,7 @@ export function gateStatus(task: Task, gate: GateKind): string {
   if (gap) return `${gap}. Your call`;
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;
   if (unverified) return `${unverified === 1 ? "1 acceptance check could not be verified" : `${unverified} acceptance checks could not be verified`}. Your call`;
+  if (restoredAcceptance(task)) return "Acceptance could not be verified. Your call";
   return "Reviews done. Waiting for your OK to ship";
 }
 
