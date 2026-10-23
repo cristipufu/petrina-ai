@@ -1,6 +1,6 @@
 // One engine-owned Playwright MCP instance. Its stdin is a lifetime pipe from Petrina.
 // The protocol proxy only confines browser output; the coding tool still owns permissions.
-import { rm } from "node:fs/promises";
+// Petrina removes the session folder once it confirms every browser process stopped, never this helper.
 import type { connectBrowser } from "./browser-connection.js";
 
 const [root, secret, owner] = process.argv.slice(2) as [string, string, string];
@@ -27,7 +27,6 @@ async function close() {
   clearInterval(watchdog);
   http.stop(true);
   await connection?.then((browser) => browser.close(), () => undefined);
-  await rm(root, { recursive: true, force: true });
   if (!connection) console.log(JSON.stringify({ closedUnused: true }));
   process.exit(0);
 }

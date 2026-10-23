@@ -2,6 +2,7 @@ import { expectRejection } from "./rejections.js";
 // Where agents' temporary browser folders live. Real agents keep the user's standard folder; test
 // fixtures use their own short folders, and scripted agents that never open a page get no browser.
 import { expect, it, spyOn } from "bun:test";
+import * as processes from "node:child_process";
 import { execFile, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -13,12 +14,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import sharp from "sharp";
 import { AgentRun } from "../src/acp-run.js";
-import { AgentBrowser, browserTempRoot } from "../src/browser.js";
+import { AgentBrowser, browserTempRoot, CLEANUP_NOTE } from "../src/browser.js";
 import { preserveCaptures } from "../src/captures.js";
 import { Engine } from "./engine.js";
+import { CLEANUP_INCOMPLETE } from "../src/process-tree.js";
 import { mayAskScreen } from "../src/prompts.js";
 import { opensBrowser } from "../src/turn.js";
-import { finish, makeWorld, removeDir, SLOW, taskOf, tempDir, testBrowserRoot } from "./support.js";
+import { finish, makeWorld, removeDir, SLOW, taskOf, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
 
@@ -124,6 +126,50 @@ it("finishes a scripted workflow unrelated to browsing while the standard browse
     removeDir(world.dir);
   }
 }, 120_000 * SLOW);
+
+it.skipIf(process.platform === "win32")("saves a failed browser cleanup's private note in the task's own log and only the shared warning on the task", async () => {
+  const world = makeWorld("browser-cleanup-note", { browser: true });
+  // The first agent's helper dies before its conversation opens, and this engine cannot read the folder scans.
+  const opened: AgentBrowser[] = [];
+  const start = AgentBrowser.start;
+  const started = spyOn(AgentBrowser, "start").mockImplementation(async (...args) => {
+    const browser = await start.apply(AgentBrowser, args);
+    if (!opened.length) await crash(browser);
+    opened.push(browser);
+    return browser;
+  });
+  const originalRead = processes.execFile;
+  let unavailable = true;
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (!unavailable || args[0] !== "ps" || !(args[1] as string[]).includes("-axww")) return Reflect.apply(originalRead, processes, args);
+    const callback = args.at(-1) as (error: Error, stdout: string, stderr: string) => void;
+    queueMicrotask(() => callback(new Error("The process list is unavailable"), "", ""));
+    return new processes.ChildProcess();
+  }) as typeof processes.execFile);
+  const engine = world.start();
+  try {
+    const productId = await engine.addProduct(world.clone);
+    const id = engine.addTask({ productId, title: "Greet the guest", description: "[no-check]" });
+    const log = join(world.data, "logs", `${id}.log`);
+    const notes = await waitFor(() => {
+      const lines = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((line) => line.includes(CLEANUP_NOTE)) : [];
+      return lines.length ? lines : undefined;
+    }, "the failed cleanup's note in the task's saved log", 60_000);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(new RegExp(`^${CLEANUP_NOTE} stage=exited-before-close elapsed=\\d+ms helper=signal-SIGKILL,closed,unused early=not-taken tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0$`));
+    await waitFor(() => engine.task(id)?.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE), "the shared cleanup warning on the task");
+    expect(engine.task(id)!.timeline.some((entry) => entry.text.includes(CLEANUP_NOTE))).toBe(false);
+    expect(existsSync(opened[0]!.directory)).toBe(true);
+  } finally {
+    unavailable = false;
+    await engine.shutdown();
+    scan.mockRestore();
+    started.mockRestore();
+    for (const browser of opened) await browser.close().catch(() => undefined);
+    removeDir(world.dir);
+    removeDir(world.browsers!);
+  }
+}, 90_000 * SLOW);
 
 it.skipIf(process.platform === "win32")("opens a real headless page and saves a capture in a fixture's own folder, new and resumed, while the standard folder refuses writes", async () => {
   const refusal = refuseStandardFolder();

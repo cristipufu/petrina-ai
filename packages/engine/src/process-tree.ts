@@ -109,15 +109,24 @@ export function sharedRead(read: ProcessListRead, timeout: number, since: number
  */
 export type ChildState = "running" | "ended" | "unknown";
 
-/** One child's state from a process list snapshot. A complete list that lacks the child says it is gone. */
-export function parseChildState(stdout: string, pid: number): ChildState {
+/** What one snapshot lists for a process: `running`, `finished` (defunct, not yet collected), `absent`, or `unknown`. */
+export type ProcessState = "running" | "finished" | "absent" | "unknown";
+
+/** One process's state from a process list snapshot. A complete list that lacks it says it is gone. */
+export function parseProcessState(stdout: string, pid: number): ProcessState {
   for (const line of stdout.split("\n")) {
     const [id, , state] = line.trim().split(/\s+/);
     if (Number(id) !== pid) continue;
-    // An older snapshot without a state column cannot tell a defunct child from a running one.
-    return state === undefined ? "unknown" : state.startsWith("Z") ? "ended" : "running";
+    // An older snapshot without a state column cannot tell a defunct process from a running one.
+    return state === undefined ? "unknown" : state.startsWith("Z") ? "finished" : "running";
   }
-  return "ended";
+  return "absent";
+}
+
+/** One child's state from a process list snapshot: gone and defunct both mean it ended. */
+export function parseChildState(stdout: string, pid: number): ChildState {
+  const state = parseProcessState(stdout, pid);
+  return state === "finished" || state === "absent" ? "ended" : state;
 }
 
 /**

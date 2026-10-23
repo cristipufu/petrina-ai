@@ -9,17 +9,21 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "./engine.js";
 import * as browserRecovery from "../src/browser.js";
-import { AgentBrowser, browserTempRoot, recoverBrowserTemps } from "../src/browser.js";
+import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowserTemps, type ObservedProcess } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
-import { parseDescendants, readProcessList } from "../src/process-tree.js";
-import { engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
+import { parseDescendants, parseProcessState, processList, readProcessList } from "../src/process-tree.js";
+import { defunctProcess, engineEnv, Fakes, firstLine, HARNESS, makeProduct, removeDir, runChecks, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
 const root = tempDir("petrina-browser-");
 // Sessions start in this file's own short browser folder, never the user's standard one.
 const browsers = testBrowserRoot();
 afterAll(() => { removeDir(root); removeDir(browsers); });
 const startBrowser = (parent: string, env: NodeJS.ProcessEnv = process.env, onLog?: (text: string) => void) => AgentBrowser.start(parent, env, onLog, browsers);
+/** A browser log that keeps only failed cleanups' notes, without the helper's own output. */
+const notesIn = (notes: string[]) => (text: string) => { if (text.trim().startsWith(CLEANUP_NOTE)) notes.push(text.trim()); };
+/** A failed attempt's whole note line, as a pattern: these fields in order, with `elapsed=?` for any elapsed time. */
+const notePattern = (fields: string) => new RegExp(`^${`${CLEANUP_NOTE} ${fields}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("elapsed=\\?", "elapsed=\\d+ms")}\\n?$`);
 
 export async function connectBrowser(browser: AgentBrowser) {
   if (!("url" in browser.mcp) || !("headers" in browser.mcp)) throw new Error("Expected an HTTP browser");
@@ -65,13 +69,36 @@ function requiredPid(pid: number | undefined, who: string): number {
   return pid;
 }
 
+/**
+ * What this test itself sees of the processes it tracked, in cleanup's bounded format: the controller, the
+ * browser processes it found and any process still naming the session folder. Only a failed shutdown asks.
+ */
+async function observeTracked(stage: string, started: number, controller: number, owned: readonly number[], directory: string): Promise<string> {
+  // Both reads settle by their own deadlines, so a lost process exit cannot turn the failure into a timeout.
+  const [list, commands] = await Promise.all([readProcessList(4_000), processList(["-axww", "-o", "pid=,command="], 4_000, 32 * 1024 * 1024)]);
+  const named = new Set<number>();
+  for (const line of commands?.split("\n") ?? []) {
+    const match = /^(\d+)\s+(.*)$/.exec(line.trim());
+    if (match && namesSession(match[2]!, directory)) named.add(Number(match[1]));
+  }
+  const state = (pid: number): ObservedProcess["state"] => {
+    if (!processAlive(pid)) return "absent";
+    const listed = list === undefined ? "unknown" : parseProcessState(list, pid);
+    return listed === "absent" ? "unknown" : listed;
+  };
+  const processes = [...new Set([...owned, ...named])].map((pid) => ({ pid, state: state(pid), sources: [...(owned.includes(pid) ? ["tracked"] : []), ...(named.has(pid) ? ["folder"] : [])] }));
+  return cleanupNote("Browser shutdown test observation:", [["stage", stage], ["elapsed", `${Date.now() - started}ms`], ["controller", state(controller)], ["list", list === undefined ? "unavailable" : "readable"], ["folder", commands === undefined ? "unavailable" : named.size]], processes);
+}
+
 /** Open a real headless page, then run one shutdown and require every browser process it started to be gone. */
 async function expectBrowserStops(port: number, stop: (browser: AgentBrowser) => Promise<void>): Promise<void> {
+  const started = Date.now();
   const browser = await startBrowser(root);
   const child = (browser as unknown as { child: ChildProcess }).child;
   const controller = requiredPid(child.pid, "The browser controller");
   let client: Client | undefined;
   let owned: number[] = [];
+  let stage = "opening";
   try {
     client = await connectBrowser(browser);
     const opened = await client.callTool({ name: "browser_navigate", arguments: { url: `http://127.0.0.1:${port}` } });
@@ -83,9 +110,15 @@ async function expectBrowserStops(port: number, stop: (browser: AgentBrowser) =>
     client = undefined;
     // Closing the tool connection must not be what stops the browser. Shutdown has to.
     expect(owned.some(processAlive)).toBe(true);
+    stage = "stopping";
     await stop(browser);
+    stage = "checking";
     expect(await sessionCommands(browser.directory)).toEqual([]);
     for (const pid of [controller, ...owned]) expect(processAlive(pid)).toBe(false);
+  } catch (error) {
+    // Record this test's own observations before its cleanup and retry below. The original error stays the failure.
+    await observeTracked(stage, started, controller, owned, browser.directory).then((note) => console.error(note), () => undefined);
+    throw error;
   } finally {
     await client?.close().catch(() => undefined);
     if (processAlive(controller)) {
@@ -148,34 +181,52 @@ it("starts cleanly when no interrupted browser registry exists", async () => {
   expect(existsSync(missing)).toBe(false);
 });
 
-for (const stillRunning of [false, true]) it(`checks final browser termination after the first cleanup wait (${stillRunning ? "still running" : "stopped"})`, async () => {
-  const registry = join(root, `late-browser-stop-${stillRunning}`);
+// What the three folder scans show: the process, nothing, or an unreadable list; it ends after the first wait,
+// once killed, or never. Completion needs the latest readable scan to show nothing left, and the process gone.
+for (const { name, shown, ends, failure, changed } of [
+  { name: "stopped", shown: ["listed", "", ""], ends: "after the first wait" },
+  { name: "still running", shown: ["listed", "listed", "listed"], ends: "never", failure: { wording: "Some of its programs are still running.", note: "folder1=1 folder2=1 folder3=1 confirmed=no reasons=still-running processes=1 shown=1 omitted=0 owned=1234567890:running:folder" } },
+  { name: "stopped, confirmed by the final scan after an unreadable one", shown: ["listed", undefined, ""], ends: "after the first wait" },
+  { name: "stopped, with no readable scan after it", shown: ["listed", undefined, undefined], ends: "after the first wait", failure: { wording: "Petrina could not read the list of running programs.", note: "folder1=1 folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=1 shown=1 omitted=0 owned=1234567890:absent:folder" }, changed: true },
+  // An earlier clear scan no longer counts once a later one finds a process.
+  { name: "appeared after a clear scan, with no readable scan after it", shown: ["", "listed", undefined], ends: "once killed", failure: { wording: "Petrina could not read the list of running programs.", note: "folder1=0 folder2=1 folder3=unavailable confirmed=no reasons=list-unreadable processes=1 shown=1 omitted=0 owned=1234567890:absent:folder" }, changed: true },
+]) it.skipIf(!!changed && process.platform === "win32")(`checks final browser termination after the first cleanup wait (${name})`, async () => {
+  const registry = join(root, `late-browser-stop-${name.replace(/\W+/g, "-")}`);
   const directory = mkdtempSync(join(browsers, "petrina-browser-"));
   mkdirSync(registry);
   writeFileSync(join(registry, "owned.json"), JSON.stringify(directory));
   const pid = 1_234_567_890;
-  let scans = 0;
+  const listed = `${pid} 1 S browser ${directory}\n`;
+  let scans = 0, killed = false;
+  const notes: string[] = [];
   const originalRead = processes.execFile, originalKill = process.kill;
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(originalRead, processes, args);
     scans += 1;
-    const output = scans === 1 ? `${pid} browser ${directory}\n` : "";
-    const callback = args.at(-1) as (error: null, stdout: string, stderr: string) => void;
-    queueMicrotask(() => callback(null, output, ""));
+    const output = shown[scans - 1] === "listed" ? listed : shown[scans - 1];
+    const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    queueMicrotask(() => output === undefined ? callback(new Error("The process list is unavailable"), "", "") : callback(null, output, ""));
     return new processes.ChildProcess();
   }) as typeof processes.execFile);
   const kill = spyOn(process, "kill").mockImplementation((target, signal) => {
     if (Math.abs(target) !== pid) return originalKill(target, signal);
+    if (signal === "SIGKILL") killed = true;
     // The first one-second wait expires. The next OS observation confirms it is gone.
-    if (signal === 0 && scans >= 2 && !stillRunning) throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    const gone = ends === "after the first wait" ? scans >= 2 : ends === "once killed" && killed;
+    if (signal === 0 && gone) throw Object.assign(new Error("No such process"), { code: "ESRCH" });
     return true;
   });
   try {
-    if (stillRunning) await expectRejection(recoverBrowserTemps(registry, browsers), "The headless browser did not stop");
-    else await recoverBrowserTemps(registry, browsers);
+    const recovery = recoverBrowserTemps(registry, browsers, (note) => notes.push(note));
+    if (failure) await expectRejection(recovery, process.platform === "win32" ? "The headless browser did not stop" : `Petrina could not confirm that a background browser from an earlier session stopped. ${failure.wording}`);
+    else await recovery;
     expect(scans).toBe(3);
-    expect(existsSync(directory)).toBe(stillRunning);
-    expect(existsSync(registry)).toBe(stillRunning);
+    expect(existsSync(directory)).toBe(!!failure);
+    expect(existsSync(registry)).toBe(!!failure);
+    if (process.platform !== "win32") {
+      expect(notes).toHaveLength(failure ? 1 : 0);
+      if (failure) expect(notes[0]).toMatch(notePattern(`stage=startup-recovery elapsed=? helper=not-tracked early=not-taken tree=not-taken ${failure.note}`));
+    }
   } finally { kill.mockRestore(); scan.mockRestore(); removeDir(directory); removeDir(registry); }
 });
 
@@ -388,11 +439,18 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
   try {
     const hello = JSON.parse(await firstLine(proc.stdout)) as { type: string; message?: string };
     expect(hello.type).toBe("error");
-    expect(hello.message).toContain("The headless browser did not stop.");
+    expect(hello.message).toContain(process.platform === "win32" ? "The headless browser did not stop." : "Petrina could not confirm that a background browser from an earlier session stopped. Petrina could not read the list of running programs.");
+    expect(hello.message).not.toContain(CLEANUP_NOTE);
     expect(existsSync(connectionPath(home))).toBe(false);
     expect(readdirSync(registry)).toEqual(["interrupted.json"]);
     expect(existsSync(session)).toBe(true);
     expect(await proc.exited).toBe(1);
+    if (process.platform !== "win32") {
+      // The engine's own saved log keeps the attempt's private note, whole, on one line.
+      const notes = readFileSync(join(home, "engine.log"), "utf8").split("\n").filter((line) => line.includes(CLEANUP_NOTE));
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatch(notePattern("stage=startup-recovery elapsed=? helper=not-tracked early=not-taken tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0"));
+    }
     if (lifecycle) expect(lifecycle.receipt("browser-recovery")).toEqual(expect.objectContaining({ outcome: "failed", operation: expect.objectContaining({ phase: "failed" }) }));
     await recoverBrowserTemps(registry, browsers);
     expect(existsSync(registry)).toBe(false);
@@ -518,6 +576,10 @@ console.log(JSON.stringify({ ...result, removedAfterRetry: !existsSync(browser.d
     expect(code, stderr).toBe(0);
     expect(JSON.parse(stdout)).toEqual({ error: "The headless browser did not stop.", keptDirectory: true, registrations: 1, removedAfterRetry: true, registrationsAfterRetry: 0 });
     expect((JSON.parse(readFileSync(pids, "utf8")) as number[]).filter(processAlive)).toEqual([]);
+    // Without a log of its own, the failed attempt's note goes to standard error.
+    const notes = stderr.split("\n").filter((line) => line.startsWith(CLEANUP_NOTE));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(notePattern("stage=exited-before-close elapsed=? helper=signal-SIGKILL,closed,used early=not-taken tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0"));
   } finally {
     worker.kill();
     for (const pid of existsSync(pids) ? JSON.parse(readFileSync(pids, "utf8")) as number[] : []) {
@@ -526,6 +588,266 @@ console.log(JSON.stringify({ ...result, removedAfterRetry: !existsSync(browser.d
     }
   }
 }, 45_000 * SLOW);
+
+/** A program whose launcher has already exited, as a browser's are once its helper dies: the system, not this test, collects it. */
+async function orphan(...args: string[]): Promise<number> {
+  const launcher = Bun.spawn(["sh", "-c", '"$@" </dev/null >/dev/null 2>&1 & echo $!', "sh", ...args], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const [text] = await Promise.all([new Response(launcher.stdout).text(), launcher.exited]);
+  return requiredPid(Number(text.trim()) || undefined, "The stand-in program");
+}
+
+function stopOrphan(pid: number | undefined): void {
+  if (pid !== undefined) try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ }
+}
+
+it.skipIf(process.platform === "win32")("keeps a killed helper's folder and registration while every folder scan is unavailable, then a later attempt stops the session's program", async () => {
+  const registry = join(root, "killed-during-shutdown");
+  const notes: string[] = [];
+  const browser = await startBrowser(registry, process.env, notesIn(notes));
+  const child = (browser as unknown as { child: ChildProcess }).child;
+  const helper = requiredPid(child.pid, "The browser controller");
+  let standIn: number | undefined, unrelated: number | undefined;
+  const originalRead = processes.execFile;
+  let unavailable = false;
+  const reads: string[] = [];
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (args[0] !== "ps" || !unavailable) return Reflect.apply(originalRead, processes, args);
+    const folder = (args[1] as string[]).includes("-axww");
+    reads.push(folder ? "folder" : "helper");
+    const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    // The helper's early process list is readable and empty; every folder scan fails.
+    queueMicrotask(() => folder ? callback(new Error("The process list is unavailable"), "", "") : callback(null, "", ""));
+    return new processes.ChildProcess();
+  }) as typeof processes.execFile);
+  try {
+    // Connecting marks the helper used without opening a page, so its shutdown needs process scans.
+    await (await connectBrowser(browser)).close();
+    standIn = await orphan(process.execPath, "-e", "setInterval(() => {}, 1000)", join(browser.directory, "stand-in"));
+    unrelated = await orphan(process.execPath, "-e", "setInterval(() => {}, 1000)");
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    // Hold the helper so it cannot finish closing normally, then kill it during shutdown.
+    process.kill(helper, "SIGSTOP");
+    unavailable = true;
+    const closing = browser.close();
+    child.kill("SIGKILL");
+    await exited;
+    await expectRejection(closing, "The headless browser did not stop.");
+    expect(reads).toEqual(["helper", "folder", "folder", "folder"]);
+    expect(existsSync(browser.directory)).toBe(true);
+    expect(readdirSync(registry)).toHaveLength(1);
+    expect(processAlive(standIn)).toBe(true);
+    // One private line for the attempt: the helper's own end apart from the unreadable scans.
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(notePattern("stage=closed-within-wait elapsed=? helper=signal-SIGKILL,closed,used early=0 tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0"));
+
+    // Readable scans let a later attempt find the session's program afresh and stop only it.
+    unavailable = false;
+    await browser.close();
+    expect(notes).toHaveLength(1);
+    expect(processAlive(standIn)).toBe(false);
+    expect(existsSync(browser.directory)).toBe(false);
+    expect(readdirSync(registry)).toEqual([]);
+    expect(processAlive(unrelated)).toBe(true);
+  } finally {
+    scan.mockRestore();
+    stopOrphan(standIn);
+    stopOrphan(unrelated);
+    await browser.close().catch(() => undefined);
+  }
+}, 30_000 * SLOW);
+
+it.skipIf(process.platform === "win32")("records a helper that never answered and was force-stopped apart from the unreadable folder scans", async () => {
+  const registry = join(root, "forced-without-scans");
+  const notes: string[] = [];
+  const browser = await startBrowser(registry, process.env, notesIn(notes));
+  const helper = requiredPid((browser as unknown as { child: ChildProcess }).child.pid, "The browser controller");
+  const originalRead = processes.execFile;
+  let unavailable = false;
+  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (args[0] !== "ps" || !unavailable) return Reflect.apply(originalRead, processes, args);
+    const folder = (args[1] as string[]).includes("-axww");
+    const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    // Both of the helper's own lists are readable and empty; every folder scan fails.
+    queueMicrotask(() => folder ? callback(new Error("The process list is unavailable"), "", "") : callback(null, "", ""));
+    return new processes.ChildProcess();
+  }) as typeof processes.execFile);
+  try {
+    await (await connectBrowser(browser)).close();
+    process.kill(helper, "SIGSTOP");
+    unavailable = true;
+    await expectRejection(browser.close(), "The headless browser did not stop.");
+    expect(processAlive(helper)).toBe(false);
+    expect(existsSync(browser.directory)).toBe(true);
+    expect(readdirSync(registry)).toHaveLength(1);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(notePattern("stage=forced-after-wait elapsed=? helper=signal-SIGKILL,closed,used early=0 tree=0 folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0"));
+    unavailable = false;
+    await browser.close();
+    expect(existsSync(browser.directory)).toBe(false);
+    expect(readdirSync(registry)).toEqual([]);
+  } finally {
+    scan.mockRestore();
+    try { process.kill(helper, "SIGKILL"); } catch { /* Already gone. */ }
+    await browser.close().catch(() => undefined);
+  }
+}, 30_000 * SLOW);
+
+/** Answer this test's next early helper list itself; every other process list stays live. */
+function answerEarlyList(answer: (callback: (error: Error | null, stdout: string, stderr: string) => void) => void) {
+  const originalRead = processes.execFile;
+  let answered = false;
+  return spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+    if (answered || args[0] !== "ps" || !(args[1] as string[]).includes("-A")) return Reflect.apply(originalRead, processes, args);
+    answered = true;
+    answer(args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void);
+    return new processes.ChildProcess();
+  }) as typeof processes.execFile);
+}
+
+it.skipIf(process.platform === "win32")("keeps what the helper's early list finds after the helper closed as targets of that stop", async () => {
+  const notes: string[] = [];
+  const browser = await startBrowser(root, process.env, notesIn(notes));
+  const child = (browser as unknown as { child: ChildProcess }).child;
+  const helper = requiredPid(child.pid, "The browser controller");
+  let standIn: number | undefined;
+  // A slow early list, as on a busy machine: it names the helper's child only after the helper has closed.
+  const scan = answerEarlyList((callback) => child.once("close", () => setTimeout(() => callback(null, `${standIn} ${helper} S\n`, ""), 50)));
+  try {
+    await (await connectBrowser(browser)).close();
+    standIn = await orphan(process.execPath, "-e", "setInterval(() => {}, 1000)");
+    await browser.close();
+    expect(processAlive(standIn)).toBe(false);
+    expect(existsSync(browser.directory)).toBe(false);
+    expect(notes).toEqual([]);
+  } finally {
+    scan.mockRestore();
+    stopOrphan(standIn);
+    await browser.close().catch(() => undefined);
+  }
+}, 30_000 * SLOW);
+
+it.skipIf(process.platform === "win32")("never signals process numbers from an earlier stop when cleanup is retried", async () => {
+  const registry = join(root, "retry-forgets-numbers");
+  const notes: string[] = [];
+  const browser = await startBrowser(registry, process.env, notesIn(notes));
+  const helper = requiredPid((browser as unknown as { child: ChildProcess }).child.pid, "The browser controller");
+  // A process number the first stop found. The system keeps reporting it, as it would once the number is reused.
+  const remembered = 1_234_567_891;
+  let attempt = 1;
+  const signals: string[] = [];
+  const originalKill = process.kill;
+  const kill = spyOn(process, "kill").mockImplementation((target, signal) => {
+    if (Math.abs(target) !== remembered) return originalKill(target, signal);
+    signals.push(`${attempt}:${signal ?? "SIGTERM"}`);
+    return true;
+  });
+  const scan = answerEarlyList((callback) => queueMicrotask(() => callback(null, `${remembered} ${helper} S\n`, "")));
+  try {
+    await (await connectBrowser(browser)).close();
+    await expectRejection(browser.close(), "The headless browser did not stop.");
+    expect(signals).toContain("1:SIGKILL");
+    expect(existsSync(browser.directory)).toBe(true);
+    expect(readdirSync(registry)).toHaveLength(1);
+    expect(notes).toHaveLength(1);
+    // The helper finished its own close; the process it listed is present but missing from the final complete list.
+    expect(notes[0]).toMatch(notePattern(`stage=closed-within-wait elapsed=? helper=exit-0,closed,used early=1 tree=not-taken folder1=0 folder2=0 folder3=0 confirmed=yes reasons=state-unknown processes=1 shown=1 omitted=0 owned=${remembered}:unknown:early`));
+    attempt = 2;
+    await browser.close();
+    expect(signals.filter((signal) => signal.startsWith("2:"))).toEqual([]);
+    expect(existsSync(browser.directory)).toBe(false);
+    expect(readdirSync(registry)).toEqual([]);
+    expect(notes).toHaveLength(1);
+  } finally {
+    scan.mockRestore();
+    kill.mockRestore();
+    await browser.close().catch(() => undefined);
+  }
+}, 30_000 * SLOW);
+
+it.skipIf(process.platform === "win32")("describes a finished but unreleased process as finished and keeps cleanup incomplete until it is released", async () => {
+  const registry = join(root, "finished-unreleased");
+  const notes: string[] = [];
+  const browser = await startBrowser(registry, process.env, notesIn(notes));
+  const helper = requiredPid((browser as unknown as { child: ChildProcess }).child.pid, "The browser controller");
+  const defunct = await defunctProcess();
+  let scan: { mockRestore(): void } | undefined;
+  try {
+    await waitFor(async () => { const list = await readProcessList(4_000); return list !== undefined && parseProcessState(list, defunct.pid) === "finished"; }, "the stand-in to finish without being released", 10_000);
+    // The helper's early list names it; the folder scans and its final state stay live.
+    scan = answerEarlyList((callback) => queueMicrotask(() => callback(null, `${defunct.pid} ${helper} Z\n`, "")));
+    await (await connectBrowser(browser)).close();
+    // Today's rule: a process the system still holds is not confirmed stopped.
+    await expectRejection(browser.close(), "The headless browser did not stop.");
+    expect(existsSync(browser.directory)).toBe(true);
+    expect(readdirSync(registry)).toHaveLength(1);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(notePattern(`stage=closed-within-wait elapsed=? helper=exit-0,closed,used early=1 tree=not-taken folder1=0 folder2=0 folder3=0 confirmed=yes reasons=finished-unreleased processes=1 shown=1 omitted=0 owned=${defunct.pid}:finished:early`));
+    await defunct.release();
+    await browser.close();
+    expect(existsSync(browser.directory)).toBe(false);
+    expect(readdirSync(registry)).toEqual([]);
+  } finally {
+    scan?.mockRestore();
+    await defunct.release();
+    await browser.close().catch(() => undefined);
+  }
+}, 30_000 * SLOW);
+
+it("keeps a cleanup note to one bounded line of fixed words, counts and process numbers", () => {
+  const states = ["absent", "running", "finished", "unknown"] as const;
+  const processes = Array.from({ length: 40 }, (_, index) => ({ pid: 1_000 + index, state: states[index % 4]!, sources: ["early", "folder"] }));
+  const note = cleanupNote(CLEANUP_NOTE, [["stage", "closed-within-wait"], ["helper", "/Users/someone/private folder\nhttps://example.test/?token=secret"]], processes);
+  expect(note).toStartWith(`${CLEANUP_NOTE} stage=closed-within-wait helper=`);
+  for (const text of ["\n", "/", "?", "=secret", " folder"]) expect(note.slice(CLEANUP_NOTE.length)).not.toContain(text);
+  expect(note).toContain("processes=40 shown=16 omitted=24 owned=");
+  const shown = note.split(" owned=")[1]!.split(",");
+  // Processes still present come first: ten running, then the first six finished.
+  expect(shown.map((entry) => entry.split(":")[1])).toEqual([...Array(10).fill("running"), ...Array(6).fill("finished")]);
+  expect(shown[0]).toBe("1001:running:early+folder");
+  // However long its entries, the line stays within 4 KiB and counts what it leaves out.
+  const long = cleanupNote(CLEANUP_NOTE, [["stage", "startup-recovery"]], processes.map((entry) => ({ ...entry, sources: ["x".repeat(400)] })));
+  expect(Buffer.byteLength(long)).toBeLessThanOrEqual(4096);
+  const [, total, kept, omitted] = /processes=(\d+) shown=(\d+) omitted=(\d+)/.exec(long)!.map(Number);
+  expect(total).toBe(40);
+  expect(kept).toBeLessThan(16);
+  expect(kept! + omitted!).toBe(40);
+  expect(long.split(" owned=")[1]!.split(",")).toHaveLength(kept!);
+});
+
+it.skipIf(process.platform === "win32")("a failing test run leaves the whole note line in its saved check log", async () => {
+  const work = tempDir("petrina-browser-note-log-");
+  const bin = join(work, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  // A controlled failing test file through the engine's own parallel runner, as the Tests check runs it, in this
+  // test's private folders. The process list is unreadable there. No configured check or live log is involved.
+  writeFileSync(join(work, "shutdown.test.ts"), `import { it } from "bun:test";
+import { rmSync } from "node:fs";
+import { AgentBrowser } from ${JSON.stringify(join(import.meta.dir, "../src/browser.ts"))};
+it("stops a browser whose helper was killed", async () => {
+  const browser = await AgentBrowser.start(undefined, process.env, undefined, ${JSON.stringify(browsers)});
+  const child = (browser as any).child;
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  child.kill("SIGKILL");
+  await closed;
+  try { await browser.close(); } finally { rmSync(browser.directory, { recursive: true, force: true }); }
+});
+`);
+  try {
+    const checks = join(work, "data", "checks", "task-1");
+    const [run] = await runChecks(work, [{ name: "Tests", argv: [process.execPath, join(import.meta.dir, "run.ts"), "./shutdown.test.ts"] }], { ...process.env, PATH: bin }, 60_000 * SLOW, undefined, checks);
+    expect(run!.ok).toBe(false);
+    expect(dirname(run!.logPath!)).toBe(checks);
+    const log = readFileSync(run!.logPath!, "utf8");
+    expect(log).toContain("PARALLEL");
+    expect(log).toContain("(fail) stops a browser whose helper was killed");
+    // The error stays plain; the note is its own whole line, printed once.
+    expect(log).toContain("error: The headless browser did not stop.\n");
+    const notes = log.split("\n").filter((line) => line.includes(CLEANUP_NOTE));
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(notePattern("stage=exited-before-close elapsed=? helper=signal-SIGKILL,closed,unused early=not-taken tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0"));
+  } finally { removeDir(work); }
+}, 60_000 * SLOW);
 
 it("stops unused endpoints and endpoints receiving their first connection", async () => {
   for (const connect of [false, true]) {
@@ -717,7 +1039,8 @@ try {
 
     const failed = Bun.spawnSync([process.execPath, recoveryScript, registry, browsers], { cwd: import.meta.dir, env: { ...process.env, PATH: bin }, stdout: "pipe", stderr: "pipe" });
     expect(failed.exitCode, failed.stderr.toString()).toBe(0);
-    expect(JSON.parse(failed.stdout.toString())).toMatchObject({ failed: true, message: "The headless browser did not stop." });
+    expect(JSON.parse(failed.stdout.toString())).toMatchObject({ failed: true, message: process.platform === "win32" ? "The headless browser did not stop." : "Petrina could not confirm that a background browser from an earlier session stopped. Petrina could not read the list of running programs." });
+    if (process.platform !== "win32") expect(failed.stderr.toString().split("\n").filter((line) => line.startsWith(CLEANUP_NOTE))).toHaveLength(1);
     expect(readdirSync(registry)).toHaveLength(1);
     expect(existsSync(browser.directory)).toBe(true);
     expect(owned.some(processAlive)).toBe(true);
