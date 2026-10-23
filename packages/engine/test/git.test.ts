@@ -2,10 +2,10 @@ import { expectRejection } from "./rejections.js";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
-import { addCopy, commitAll, commitTree, contains, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
+import { basename, dirname, join, sep } from "node:path";
+import { addCopy, commitAll, commitTree, contains, copyFolderName, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { childState } from "../src/process-tree.js";
 import { defunctProcess, firstLine, removeDir, testGitEnv, waitFor } from "./fixtures.js";
 
@@ -151,6 +151,47 @@ describe("Petrina's own git steps", () => {
     expect(existsSync(folder)).toBe(false);
     expect(git(repo, "worktree", "list", "--porcelain", "-z")).not.toContain(kept);
     expect(checkedOut(join(unrelated, "README.md"))).toBe("Keep the product\n");
+  });
+
+  it("names review copy folders portably and distinctly, keeping ordinary members' names", () => {
+    for (const member of ["review-0", "review-12", "vote-opus-high", "vote-sol-high", "vote-3f2a9c1e-7b4d-4e8a-9f00-1a2b3c4d5e6f"]) expect(copyFolderName(member)).toBe(member);
+    expect(copyFolderName("vote-third:argon-high")).toBe("vote-third_3aargon-high");
+    // Distinct places that naive punctuation replacement, a case-insensitive disk or Windows' rules would merge or refuse.
+    const members = [
+      "vote-third:argon-high", "vote-third-argon-high", "vote-third_argon-high", "vote-third.argon-high", "vote-third argon-high", "vote-third/argon-high", "vote-third\\argon-high",
+      "vote-third_3aargon-high", "vote-Third:argon-high", "vote-third:Argon-high", "vote-third:argon-high.", "vote-third:argon-high ", "vote-thïrd:argon-high", "vote-third:argon-high\u{1F600}",
+      "vote-\uD800", "vote-\uDBFF", "con", "CON", "Nul", "com1", "lpt9", "_63on", "_",
+    ];
+    const names = members.map(copyFolderName);
+    expect(new Set(names.map((name) => name.toLowerCase())).size).toBe(members.length);
+    const decode = (name: string) => name.replace(/_u([0-9a-f]{4})|_([0-9a-f]{2})/g, (_, wide?: string, narrow?: string) => String.fromCharCode(parseInt(wide ?? narrow!, 16)));
+    for (const [index, name] of names.entries()) {
+      // Only lowercase letters, digits, dashes and complete escapes: nothing Windows refuses or a disk folds together.
+      expect(name).toMatch(/^(?:[a-z0-9-]|_[0-9a-f]{2}|_u[0-9a-f]{4})+$/);
+      expect(name).not.toMatch(/^(con|prn|aux|nul|com\d|lpt\d)$/);
+      expect(decode(name)).toBe(members[index]!);
+      expect(copyFolderName(members[index]!)).toBe(name);
+    }
+    expect(copyFolderName("")).toBe("_");
+    expect(names).not.toContain("_");
+  });
+
+  it("creates a separate real copy for each member that a naive or case-insensitive name would merge", async () => {
+    const repo = join(temp, "portable-copies"); mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.email", "test@example.com"); git(repo, "config", "user.name", "Test");
+    writeFileSync(join(repo, "README.md"), "Keep the product\n"); git(repo, "add", "."); git(repo, "commit", "-qm", "Initial");
+    const sha = git(repo, "rev-parse", "HEAD"), folder = join(temp, "portable.copies");
+    const members = ["vote-third:argon-high", "vote-third-argon-high", "vote-third_argon-high", "vote-Third:argon-high", "vote-third:argon-high.", "review-0"];
+    const names = members.map(copyFolderName);
+    for (const name of names) await addCopy(repo, join(folder, name), sha);
+    expect(readdirSync(folder).sort()).toEqual([...names].sort());
+    expect((await operations.linkedWorktrees(repo)).map((path) => basename(path)).sort()).toEqual([...names].sort());
+    for (const name of names) expect(checkedOut(join(folder, name, "README.md"))).toBe("Keep the product\n");
+    await removeCopies(repo, folder, [join(folder, names[0]!)]);
+    expect(readdirSync(folder)).toEqual([names[0]!]);
+    expect((await operations.linkedWorktrees(repo)).map((path) => basename(path))).toEqual([names[0]!]);
+    await removeCopies(repo, folder);
+    expect(existsSync(folder)).toBe(false);
   });
 
   it("does not follow a replaced review parent while preserving a screen conversation", async () => {

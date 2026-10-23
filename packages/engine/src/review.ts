@@ -4,6 +4,7 @@ import { beginRepair, productsFor } from "./repositories.js";
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
 import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReviewTag, noteRoundEnd, openStep, panelAnswers, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "./git.js";
@@ -887,6 +888,23 @@ export class Reviews {
     // Only saved screen conversations keep their copies; interrupted background peers start fresh.
     const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
     await completeAll(copyOwners.map((owner) => git.removeCopies(owner.root, owner.folder, keptCopies())));
+    // Each member's own copy in each product, fixed for the group once chosen, so a member coming back reopens it.
+    // Its folder name encodes the member's name, which may hold characters a file system refuses (a third answer's
+    // `third:` place). A folder already held is never shared, including one a screen wait saved under an earlier
+    // version's naming: the member takes the next free `.1`, `.2`… folder instead, a form no encoded name has.
+    const chosen = new Map<string, string>();
+    const memberCopy = (productId: Id, member: string) => {
+      const key = JSON.stringify([productId, member]);
+      const known = chosen.get(key);
+      if (known !== undefined) return known;
+      // Compared without case too: a disk that ignores case treats two such folders as one.
+      const held = new Set([...chosen.values(), ...keptCopies()].map((path) => path.toLowerCase()));
+      const base = join(copyFolder(productId), git.copyFolderName(member));
+      let path = base;
+      for (let next = 1; held.has(path.toLowerCase()) || existsSync(path); next += 1) path = `${base}.${next}`;
+      chosen.set(key, path);
+      return path;
+    };
     // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
     await this.turns.refresh(scope);
     const pending = [...members];
@@ -969,6 +987,8 @@ export class Reviews {
       waits.delete(member.key);
       const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
       let completed = false;
+      // A continued member reopens the companion copies its screen turn kept, as it reopens its primary one.
+      const kept = continuing ? task.hunt?.screenTurns?.[member.key]?.copies : undefined;
       const used = (profileId: Id) => {
         agent.profileId = profileId;
         if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, profileId);
@@ -983,7 +1003,7 @@ export class Reviews {
           await completeAll([
             reuse ? Promise.resolve() : git.addCopy(root, copy, sha),
             ...versions.filter((work) => work.productId !== scope.work.productId).map(async (work) => {
-              const peer = join(copyFolder(work.productId), member.key);
+              const peer = kept?.[work.productId] ?? memberCopy(work.productId, member.key);
               if (!reuse) await git.addCopy(work.root, peer, work.sha);
               copies[work.productId] = peer;
             }),
@@ -1076,7 +1096,7 @@ export class Reviews {
         const next = due(member);
         if (next.waiting) continue;
         if (!next.room(next.profile.toolId, next.profile)) continue;
-        startMember(member, join(folder, member.key), next.room, next.seat, false, next.selection);
+        startMember(member, memberCopy(scope.work.productId, member.key), next.room, next.seat, false, next.selection);
         limit -= 1;
       }
     };
@@ -1108,7 +1128,7 @@ export class Reviews {
         }
         if (!next.room(next.profile.toolId, next.profile)) break;
         pending.shift();
-        startMember(member, join(folder, member.key), next.room, next.seat, false, next.selection);
+        startMember(member, memberCopy(scope.work.productId, member.key), next.room, next.seat, false, next.selection);
       }
       rejoin();
       this.k.commit();

@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { EngineOptions } from "./engine.js";
+import type { Scenario } from "./fake-agent.js";
 import { addCopy, ensureWorktree } from "../src/git.js";
 import { Sources } from "../src/sources.js";
 import type { Connections } from "../src/connection.js";
@@ -515,6 +516,69 @@ describe.concurrent("one task across products", () => {
       for (const [, copy] of copies) expect(existsSync(copy)).toBe(false);
       for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
       expect(engine.task(id)!.hunt?.screenTurns).toBeUndefined();
+    } finally { await engine.shutdown(); }
+  });
+
+  it("gives a third answer its own portable copy in every product and resumes it there after a screen wait and restart", async () => {
+    const { shop, api, start, fakes } = setup("third-answer-copies");
+    let engine = start();
+    try {
+      await engine.checkTools();
+      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      // Both initial verifiers say the Important finding does not block, so Antigravity gives the third answer, on the screen.
+      const scenario: Scenario = { planner: "parallel", builder: "plain", reviewer: "important", verifier: "not-a-bug", screenRoles: ["verifier"], screenModels: ["gemini-4-argon"], screenRoleHold: true, reopen: "resume", affectedProducts: [first, second] };
+      fakes.scenario(scenario);
+      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Check the shared greeting three ways" });
+      await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
+      const member = "vote-third:argon-high";
+      const copies = (name: string) => ({ [first]: join(shop.data, "worktrees", first, `${id}.copies`, name), [second]: join(shop.data, "worktrees", second, `${id}.copies`, name) });
+      const kept = copies("vote-third_3aargon-high");
+      const saved = engine.task(id)!.hunt!.screenTurns![member]!;
+      expect(Object.keys(engine.task(id)!.hunt!.screenTurns!)).toEqual([member]);
+      expect(saved.copy).toBe(kept[first]!);
+      expect(saved.copies).toEqual(kept);
+      for (const copy of Object.values(kept)) expect(existsSync(copy)).toBe(true);
+      // Every verifier place was given its own copy of each product, the third one's beside the initial pair's.
+      const mapOf = (text: string) => Object.fromEntries([...text.matchAll(/Product id: ([^;]+); copy: ([^;]+);/g)].map((match) => [match[1]!, match[2]!]));
+      const opened = new Map<string, Record<string, string>>();
+      for (const entry of fakes.received("verifier")) if (!opened.has(entry.session)) opened.set(entry.session, mapOf(entry.text));
+      const session = saved.conversation.sessionId;
+      expect(opened.size).toBe(3);
+      expect(opened.get(session)).toEqual(kept);
+      expect([...opened.values()]).toEqual(expect.arrayContaining([copies("vote-sol-high"), copies("vote-grok-high"), kept]));
+      // A companion copy saved under another folder name, as an earlier version named it, is still the one reopened.
+      const earlier = join(shop.data, "worktrees", second, `${id}.copies`, "saved-earlier");
+      git(api.clone, "worktree", "move", kept[second]!, earlier);
+      const resumed = { ...kept, [second]: earlier };
+      const turn = engine.task(id)!.hunt!.screenTurns![member]!;
+      turn.copies = resumed;
+      turn.conversation.repositoryCopies = resumed;
+      for (const copy of Object.values(resumed)) writeFileSync(join(copy, "held.txt"), "Kept through the restart\n");
+      engine.commitNow();
+      await engine.shutdown();
+      engine = start();
+      expect(engine.task(id)!.hunt!.screenTurns![member]!.copies).toEqual(resumed);
+      engine.allowScreen(id);
+      await until(engine, () => existsSync(join(fakes.dir, `on-screen-${session}`)), coordinator([]));
+      // The same place reopens its own conversation in the copies it kept, in both products.
+      expect(fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume"]);
+      expect(engine.task(id)!.hunt!.screenTurns![member]!.conversation.repositoryCopies).toEqual(resumed);
+      for (const copy of Object.values(resumed)) expect(readFileSync(join(copy, "held.txt"), "utf8")).toBe("Kept through the restart\n");
+      expect(existsSync(kept[second]!)).toBe(false);
+      fakes.scenario({ ...scenario, screenRoleHold: false });
+      writeFileSync(join(fakes.dir, `screen-release-${session}`), "go");
+      const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || ["pr-open", "done", "failed"].includes(taskOf(state, id).state), coordinator([]));
+      expect(taskOf(state, id).error).toBeUndefined();
+      const task = engine.task(id)!;
+      const finding = task.findings.find((entry) => entry.text === "The greeting is missing on the welcome page.")!;
+      // The third answer counts on its logical place: three answers settle the finding instead of leaving it unresolved.
+      expect(finding.votes!.filter((vote) => vote.toolId === "antigravity")).toEqual([expect.objectContaining({ by: "argon-high", plannedProfileId: "argon-high", verdict: "not-a-bug", ballot: expect.objectContaining({ seat: "third:argon-high" }) })]);
+      expect(finding.unresolved).toBeUndefined();
+      expect(finding.status).toBe("dismissed");
+      expect(task.journey!.filter((step) => step.roleId === "verifier").map((step) => step.seats)).toEqual([["verifier:sol-high", "verifier:grok-high"], ["verifier:third:argon-high"]]);
+      expect(new Set(fakes.received("verifier").map((entry) => entry.session)).size).toBe(3);
+      for (const map of [resumed, kept, copies("vote-sol-high"), copies("vote-grok-high")]) for (const copy of Object.values(map)) expect(existsSync(copy)).toBe(false);
+      for (const world of [shop, api]) expect(git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
     } finally { await engine.shutdown(); }
   });
 
