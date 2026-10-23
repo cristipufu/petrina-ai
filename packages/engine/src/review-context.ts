@@ -1,11 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { BuilderContext, Finding, Hunt, Id, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { ContextPart } from "./roles.js";
 import { repositoryView, scopesFor, type RepositoryContext } from "./repository-context.js";
 import * as git from "./git.js";
+import { saveImmutable } from "./immutable-file.js";
 
 import { PREPARED_REVIEW } from "./prompts.js";
 export interface ReviewInput {
@@ -22,20 +23,7 @@ export interface ReviewInput {
 type InputRef = NonNullable<Hunt["input"]>;
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
-async function immutable(folder: string, suffix: string, body: string): Promise<{ file: string; digest: string }> {
-  const hash = digest(body), file = join(folder, `${hash}.${suffix}`);
-  await mkdir(folder, { recursive: true, mode: 0o700 });
-  const existing = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
-  if (existing === undefined) {
-    const temporary = join(folder, `${hash}.${randomUUID()}.tmp`);
-    try {
-      await writeFile(temporary, body, { flag: "wx", mode: 0o600 });
-      await rename(temporary, file);
-    } finally { await rm(temporary, { force: true }); }
-  }
-  if (existing !== undefined && digest(existing) !== hash) throw new Error("The saved review material changed. Try the review again.");
-  return { file, digest: hash };
-}
+const immutable = (folder: string, suffix: string, body: string) => saveImmutable(folder, suffix, body, "The saved review material changed. Try the review again.");
 
 async function output(path: string, args: string[]): Promise<string> {
   const result = await git.run(["git", ...args], path, undefined, { timeoutMs: 30_000, rawOutput: true });

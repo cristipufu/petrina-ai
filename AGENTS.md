@@ -51,3 +51,4 @@ What agents learned about working in this repository, added with the coordinator
 - The fake agent rereads its script file on every turn, so an engine test can rewrite the script's hold mid-run to stop the Builder at a later turn (such as its conflict port) and pause or restart the engine at that exact point.
 - Bun's failing-test output omits an error's cause and only sometimes shows its extra properties; print evidence a saved Tests log must keep as its own console line, not attached to the error.
 - In Bun, node:child_process execFile goes through the global Bun.spawn, so a test that replaces or spies on Bun.spawn also intercepts Petrina's own process-list (ps) reads, such as the lost-exit watch.
+- Engine tests can pause or fail a real file write at an exact point: spying on the node:fs/promises namespace (as captures.test.ts does) also catches the source modules' own imports, so race regressions can use a pause-and-release step instead of repeated random runs.

@@ -3,12 +3,13 @@
 // Reads return the saved text after checking its identity; a missing or changed file says so and never
 // substitutes a rebuilt or newer message.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { seatOf, type ExactMessage, type Id, type InputManifestEntry, type JourneyAgentInput, type Role, type Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { Result } from "./coordination.js";
 import { readText } from "./evidence-read.js";
+import { saveImmutable } from "./immutable-file.js";
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const short = (text: string) => digest(text).slice(0, 16);
@@ -18,17 +19,13 @@ export function exactMessageFolder(dataDir: string, taskId: Id): string | undefi
   return /^[a-zA-Z0-9_-]+$/.test(taskId) ? join(dataDir, "contexts", taskId, "messages") : undefined;
 }
 
-/** Save the text once, by content. A second identical message shares the file; a write failure leaves the reference absent. */
+/** Save the text once, by content, named only once complete. A second identical message shares the file; a failed write or a different saved text leaves the reference absent. */
 export async function saveExactMessage(dataDir: string, taskId: Id, text: string): Promise<ExactMessage | undefined> {
   const folder = exactMessageFolder(dataDir, taskId);
   if (!folder) return undefined;
-  const hash = digest(text);
-  const file = join(folder, `${hash}.md`);
   try {
-    await mkdir(folder, { recursive: true, mode: 0o700 });
-    try { await writeFile(file, text, { flag: "wx", mode: 0o600 }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
-    return { file, digest: hash, size: text.length };
+    const saved = await saveImmutable(folder, "md", text, "The saved message file changed.");
+    return { ...saved, size: text.length };
   } catch {
     return undefined;
   }

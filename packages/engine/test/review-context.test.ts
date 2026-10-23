@@ -1,5 +1,6 @@
 import { expectRejection } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
 import * as gitOps from "../src/git.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -524,10 +525,18 @@ describe.concurrent("reviewer conversations across fix rounds", () => {
       await f.beforeFix(); f.advanceMain();
       const stage = f.task().plan!.stages.find((entry) => entry.kind === "review-chain")!;
       const prior = f.task().reviewSessions![stage.id]!["0"]!;
-      if (changed === "absent context") delete prior.context;
-      if (changed === "context" || changed === "absent context") {
+      if (changed === "context") {
+        // Both seats saved the complete packet; only this seat's reference then loses its file.
+        for (const seat of ["0", "1"]) {
+          const saved = f.task().reviewSessions![stage.id]![seat]!.context!;
+          const packet = readFileSync(saved.file, "utf8");
+          expect(createHash("sha256").update(packet).digest("hex")).toBe(saved.digest);
+          expect(packet).toContain("ORIGINAL-REVIEW-REQUEST");
+        }
+        prior.context!.file += ".missing";
+      } else if (changed === "absent context") {
         // Context storage is optional: a failed save sends complete instructions without a packet.
-        if (prior.context) prior.context.file += ".missing";
+        delete prior.context;
       } else if (changed === "profile") stage.profileIds[0] = "opus-xhigh";
       else if (changed === "source") {
         const work = executionFor(f.task()).work;

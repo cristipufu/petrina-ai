@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { BuilderContext, Finding, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
+import { saveImmutable } from "./immutable-file.js";
 import { FINDING_TAG, formatFindings } from "./prompts.js";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -27,14 +28,9 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
   const findingSection = (title: string) => title === "Findings so far (confirm or dispute by id)" || answering(title);
   const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? task.findings.filter(finding => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(task.productId))) : undefined) : undefined;
   const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(findingRecords, null, 2)}\n` : ""}`;
-  const digest = hash(packet);
-  const file = join(root, `${digest}.md`);
   try {
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    let written = false;
-    try { await writeFile(file, packet, { flag: "wx", mode: 0o600 }); written = true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
-    if (!written && hash(await readFile(file, "utf8")) !== digest) return { sections: all };
+    // Named only once complete, so a seat saving the same packet at the same moment never reads part of it.
+    const { file, digest } = await saveImmutable(root, "md", packet, "The saved context packet changed.");
     const findingHashes = findingRecords ? Object.fromEntries(findingRecords.map((finding) => [finding.id, hash(JSON.stringify(finding))])) : undefined;
     const snapshot: BuilderContext = { scope, file, digest, hashes: Object.fromEntries(keyed.map((entry) => [entry.key, entry.digest])), ...(findingHashes ? { findingHashes } : {}) };
     const intact = previous && previous.scope === scope && dirname(previous.file) === root
