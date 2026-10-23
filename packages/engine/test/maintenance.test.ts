@@ -7,6 +7,7 @@ import { normalizePlan } from "../src/plan.js";
 import { plannerRoles } from "../src/roles.js";
 import type { Engine } from "./engine.js";
 import { git } from "./fixtures.js";
+import { Coordination } from "../src/coordination.js";
 
 async function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], objectFormat?: "sha1" | "sha256") {
   const world = await makeWorld(`maintenance-${name}`, { objectFormat }), fakes = new Fakes(join(world.dir, "agents"));
@@ -85,11 +86,21 @@ describe("real queue maintenance", () => {
       await engine.shutdown();
       if (fresh) fakes.forgetConversations();
       engine = start(); fakes.scenario({ maintenance: {} });
+      // One variant replays the held reply as a tool that did not stream it, with words before its question.
+      const spoken = "I looked at checkout first.";
+      const held = engine.task(run.taskId)!.maintenance!.pendingReply!;
+      if (fresh && !queued) { delete held.streamed; held.text = `${spoken}\n\n${held.text}`; }
       engine.resolveMaintenanceSettings(run.taskId, "keep"); engine.setPoolPaused(false);
       const asking = await result(engine, run.taskId);
       const question = engine.getState().inbox.find(item => item.taskId === run.taskId && item.kind === "question");
       expect(question).toBeDefined(); expect(question!.title).toBe(questionText);
       expect(asking.session.filter(line => line.from === "agent" && line.text === questionText)).toHaveLength(1);
+      // Its saved words name the start that wrote them, so the asking agent has one current message while it waits.
+      const live = engine.task(run.taskId)!, asked = live.session.findLast(line => line.from === "agent" && line.text === questionText)!;
+      const node = live.journey!.find(step => step.id === asked.step)!;
+      expect(node.agentInputs![asked.inputIndex!]).toMatchObject({ roleId: asked.roleId, profileId: asked.profileId });
+      expect(((await new Coordination(engine).call("task.conversation", { taskId: run.taskId, nodeId: node.id })).activeMessages as { id: string }[]).map(message => message.id)).toEqual([asked.id]);
+      if (fresh && !queued) expect(live.session.find(line => line.from === "agent" && line.text.startsWith(spoken))?.inputIndex).toBe(asked.inputIndex);
       expect(fakes.prompts()).toHaveLength(1);
       if (queued) expect(asking.queued.some(message => message.text === instruction)).toBe(true);
       if (fresh && queued) { await engine.shutdown(); engine = start(); }

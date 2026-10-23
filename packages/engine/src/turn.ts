@@ -186,7 +186,7 @@ export class Turns {
         if (error instanceof ModelAtCapacity) {
           // Keep the conversation and the work. The same model gets a few short continues before anyone else takes the step.
           // An agent that already has the screen keeps it: this is not a usage limit, and it does not give the screen up.
-          this.keepWords(scope, roleId, profile.id, error);
+          this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
           if (this.deferCapacity(scope, roleId, profile.id, error, plannedId, options.member)) {
             const words = this.capacityWords(scope, profile.id);
             this.k.waitForUsage(task, words);
@@ -196,7 +196,7 @@ export class Turns {
           continue;
         }
         if (!(error instanceof UsageLimited)) throw error;
-        this.keepWords(scope, roleId, profile.id, error);
+        this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
         this.k.recordLimit(task, roleId, profile.id, error);
         if (task.screen?.granted && task.screen.profileId === profile.id) {
           this.k.tracking.owesRetry(scope, roleId, plannedId);
@@ -209,15 +209,15 @@ export class Turns {
   }
 
   /** What an agent had said when it stopped joins the session, so the one taking over can be told. */
-  private keepWords(scope: RepositoryContext, roleId: Id, profileId: Id, error: { said?: string; streamed?: boolean }): void {
+  private keepWords(scope: RepositoryContext, roleId: Id, profileId: Id, reviewerKey: string | undefined, error: { said?: string; streamed?: boolean }): void {
 
     if (error.streamed) return;
     const prose = error.said ? proseOf(error.said) : undefined;
-    if (prose) this.k.say(scope, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, roleId, profileId);
+    if (prose) this.k.participantSay(scope, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, roleId, profileId, reviewerKey);
   }
 
   /** One saved bubble per public message, including parallel agents; token chunks update that bubble. */
-  private messageStream(scope: RepositoryContext, roleId: Id, profileId: Id, signal: AbortSignal, main = false): (message: AgentMessage) => void {
+  private messageStream(scope: RepositoryContext, roleId: Id, profileId: Id, reviewerKey: string | undefined, signal: AbortSignal, main = false): (message: AgentMessage) => void {
     const { task } = scope;
     let last: { key: number; line: Id } | undefined;
     return (message) => {
@@ -230,7 +230,7 @@ export class Turns {
         line.text = message.text;
         this.k.noteStream(scope);
       } else {
-        this.k.say(scope, "agent", message.text, roleId, profileId);
+        this.k.participantSay(scope, "agent", message.text, roleId, profileId, reviewerKey);
         last = { key: message.id, line: task.session.at(-1)!.id };
         this.k.commit(scope);
       }
@@ -415,7 +415,7 @@ export class Turns {
     ]);
     // Tests: the command is asked for every agent process, so a test can tell a reopen attempt from the fresh start after it.
     const opened = await this.openAgentRun(scope, role, profile, worktree, signal, agent, {
-      main: true, reviewKey: options.reviewKey, sessionId: (reopen ?? back)?.sessionId, reselect: back?.reselect,
+      main: true, reviewKey: options.reviewKey, reviewerKey: options.reviewerKey, sessionId: (reopen ?? back)?.sessionId, reselect: back?.reselect,
       onStarting: () => {
         if (saved) return;
         this.k.say(scope, "system", `${role.name} joined · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
@@ -732,7 +732,7 @@ export class Turns {
           work.clock = pauseClock(work.clock, Date.now());
           // This member stopped working: a peer's retry no longer says the others continue.
           this.k.showReviewWork(task);
-          this.keepWords(scope, roleId, profile.id, error);
+          this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
           // Peers keep working. The group waits only once this member's short retries, or its stand-in, are exhausted.
           if (this.deferCapacity(scope, roleId, profile.id, error, plannedId, options.member)) throw new WaitingForCapacity(this.capacityWords(scope, profile.id));
           stopped = { profileId: profile.id, error, at: since };
@@ -743,7 +743,7 @@ export class Turns {
         // This member has stopped, even while its peers keep working. A stand-in resumes its clock.
         work.clock = pauseClock(work.clock, Date.now());
         this.k.showReviewWork(task);
-        this.keepWords(scope, roleId, profile.id, error);
+        this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
         this.k.recordLimit(task, roleId, profile.id, error);
         stopped = { profileId: profile.id, error, at: since };
       }
@@ -789,7 +789,7 @@ export class Turns {
     // A same-round capacity wait is not an older round's saved review. Reopen that conversation for a short continue.
     const held = !offered ? task.capacityResume?.find((entry) => entry.roleId === roleId && entry.profileId === profileId && entry.member === options.member) : undefined;
     const opened = await this.openAgentRun(scope, role, profile, copy, signal, agent, {
-      main: false, reviewKey: options.key, sessionId: offered?.sessionId ?? held?.sessionId, reselect: offered?.reselect,
+      main: false, reviewKey: options.key, reviewerKey: options.reviewerKey, sessionId: offered?.sessionId ?? held?.sessionId, reselect: offered?.reselect,
       onStarting: () => {
         if (options.took) {
           const words = `${role.name} on ${this.k.named(profileId)} took over from ${options.took.from}, which ${options.took.refusal ? `could not continue (${options.took.refusal})` : "ran out of usage"}`;
@@ -849,7 +849,7 @@ export class Turns {
     } catch (error) {
       if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
       if (error instanceof UsageLimited && !signal.aborted && task.screen?.granted && task.screen.member === options.member) {
-        this.keepWords(scope, roleId, profileId, error);
+        this.keepWords(scope, roleId, profileId, options.reviewerKey, error);
         this.k.recordLimit(task, roleId, profileId, error);
         this.k.tracking.owesRetry(scope, roleId, options.plannedId);
         this.k.waitForScreen(task);
@@ -970,11 +970,13 @@ export class Turns {
       const current = this.k.task(task.id);
       if (!current) throw new Aborted();
       const prose = proseOf(reply.text);
-      if (prose && !reply.streamed) this.k.say(scope, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId);
-      // A streamed reply is already in the conversation. Pictures stay on that report, not on later activity.
+      if (prose && !reply.streamed) this.k.participantSay(scope, "agent", prose.length > 2400 ? `${prose.slice(0, 2400)}…` : prose, role.id, profileId, options.reviewerKey);
+      // A streamed reply is already in the conversation. Pictures stay on that report, not on later activity,
+      // nor on a peer's words on the same role and profile, which name another start.
+      const own = openStep(current)?.agentInputs?.findLastIndex((input) => input.roleId === role.id && input.profileId === profileId && input.reviewerKey === options.reviewerKey) ?? -1;
       const reportLine = prose
         ? reply.streamed
-          ? [...current.session].reverse().find((line) => line.from === "agent" && line.roleId === role.id && line.profileId === profileId)
+          ? [...current.session].reverse().find((line) => line.from === "agent" && line.roleId === role.id && line.profileId === profileId && (own < 0 || line.inputIndex === undefined || line.inputIndex === own))
           : current.session.at(-1)
         : undefined;
       const parsed = parseResult(reply.text, schema);
@@ -1013,7 +1015,7 @@ export class Turns {
         continue;
       }
       if (parsed.ok === "input") {
-        this.k.say(scope, "agent", parsed.question, role.id, profileId);
+        this.k.participantSay(scope, "agent", parsed.question, role.id, profileId, options.reviewerKey);
         this.k.log(scope, "warn", `Asked you: ${parsed.question}`, role.id, profileId);
         const answer = await this.wait(scope, "question", parsed.question, true, { options: parsed.options }, signal, "Waiting for your answer", by, options.main, options.reviewKey);
         await holdUnconfirmed(this.k, scope, options.member, signal, options.reviewKey);
@@ -1074,7 +1076,7 @@ export class Turns {
               if (saved.length) {
                 let host = reportLine ? live.session.find((line) => line.id === reportLine.id) : undefined;
                 if (!host) {
-                  this.k.say(live, "agent", reportLine?.text ?? (parsed.value as { summary?: string }).summary ?? "Report ready", role.id, profileId);
+                  this.k.participantSay(live, "agent", reportLine?.text ?? (parsed.value as { summary?: string }).summary ?? "Report ready", role.id, profileId, options.reviewerKey);
                   host = live.session.at(-1);
                 }
                 host!.images = saved;
@@ -1108,10 +1110,10 @@ export class Turns {
 
   /** Shared startup, callbacks and reopen fallback for main turns and parallel members. */
   private async openAgentRun(scope: RepositoryContext, role: Role, profile: AgentProfile, cwd: string, signal: AbortSignal, agent: TurnAgent,
-    options: { main: boolean; reviewKey?: string; sessionId?: string; reselect?: boolean; onStarting?: () => void }): Promise<{ run: AgentRun; off?: string; reopenFailure?: string }> {
+    options: { main: boolean; reviewKey?: string; reviewerKey?: string; sessionId?: string; reselect?: boolean; onStarting?: () => void }): Promise<{ run: AgentRun; off?: string; reopenFailure?: string }> {
     const { task } = scope, roleId = role.id, profileId = profile.id;
     const callbacks = {
-      onMessage: this.messageStream(scope, roleId, profileId, signal, options.main),
+      onMessage: this.messageStream(scope, roleId, profileId, options.reviewerKey, signal, options.main),
       onActivity: () => {},
       onToolActivity: (event: ToolActivityEvent) => {
         const current = this.k.task(task.id);
@@ -1135,7 +1137,7 @@ export class Turns {
           const invocation = event.invocation;
           const existing = current.session.find(line => line.toolInvocationId === invocation.id);
           if (existing) existing.text = invocation.description;
-          else if (event.isNew) this.k.say(scope, "activity", invocation.description, roleId, profileId, invocation.id);
+          else if (event.isNew) this.k.participantSay(scope, "activity", invocation.description, roleId, profileId, options.reviewerKey, invocation.id);
         }
         this.k.commit(scope);
       },

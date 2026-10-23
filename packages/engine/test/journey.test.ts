@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { journeyProblems, journeyView, type JourneyView, type State, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { Coordination } from "../src/coordination.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const roots: string[] = [];
@@ -63,6 +64,61 @@ describe("the engine records each task's journey", () => {
       expect(new Set(inputs.map(input => input.profileId)).size).toBe(1);
       expect(inputs.every(input => input.selectionReason)).toBe(true);
       for (const input of inputs) expect(fakes.prompts().some(prompt => prompt.includes(input.instructions!))).toBe(true);
+      // Each place's messages and result name its own start, so two places on one profile stay apart.
+      const step = engine.task(id)!.journey!.find(step => step.roleId === "code-reviewer")!;
+      const spoken = engine.task(id)!.session.filter(line => line.step === step.id && line.from === "agent" && line.roleId === "code-reviewer");
+      expect(new Set(spoken.map(line => step.agentInputs![line.inputIndex!]!.reviewerKey))).toEqual(new Set(["0", "1"]));
+      expect(new Set(spoken.map(line => line.inputIndex))).toEqual(new Set(step.agentResults!.filter(result => result.roleId === "code-reviewer").map(result => result.inputIndex)));
+    } finally { await engine.shutdown(); }
+  });
+  it("lists one current message for an agent that streamed words and then asked a question", async () => {
+    const { engine, productId } = await setup();
+    try {
+      const id = engine.addTask({ productId, title: "Ask before designing", description: "One agent, one current message." });
+      const asked = (state: State) => state.inbox.some(item => item.taskId === id && item.kind === "question");
+      await until(engine, asked, (_, kind) => kind === "question", "the architect's question");
+      const task = engine.task(id)!, step = task.journey!.at(-1)!;
+      const spoken = task.session.filter(line => line.step === step.id && line.from === "agent");
+      expect(spoken.length).toBeGreaterThan(1);
+      // The streamed words and the question name the same recorded start, so the agent is one current message.
+      expect(new Set(spoken.map(line => line.inputIndex))).toEqual(new Set([step.agentInputs!.length - 1]));
+      const read = await new Coordination(engine).call("task.conversation", { taskId: id, nodeId: step.id });
+      expect(read.activeMessages).toEqual([expect.objectContaining({ id: spoken.at(-1)!.id, roleId: "architect" })]);
+    } finally { await engine.shutdown(); }
+  });
+  it("keeps the still-asking reviewer discoverable when its same-profile peer answers and finishes", async () => {
+    const { engine, productId } = await setup({ reviewer: "question", architect: "plain" });
+    try {
+      engine.setPoolPaused(true);
+      await waitFor(() => !engine.s.setup?.checks.some(check => check.checking), "initial tool checks");
+      engine.s.setup!.checks = [{ id: "claude-code", status: "ready" }, { id: "codex", status: "logged-out" }, { id: "grok", status: "logged-out" }, { id: "antigravity", status: "logged-out" }];
+      engine.s.tools = engine.s.tools.map(tool => ({ ...tool, status: tool.id === "claude-code" ? "ready" : "logged-out" }));
+      const id = engine.addTask({ productId, title: "Two reviewers ask", description: "Keep each reviewer's questions its own." });
+      engine.setPoolPaused(false);
+      const questions = () => engine.s.inbox.filter(item => item.taskId === id && item.kind === "question" && item.roleId === "code-reviewer");
+      await until(engine, () => questions().length === 2, (current, kind, itemId) => kind === "question" && current.s.inbox.find(item => item.id === itemId)?.roleId === "code-reviewer", "both reviewers' questions");
+      const task = engine.task(id)!, step = task.journey!.at(-1)!;
+      const inputs = step.agentInputs!.filter(input => input.roleId === "code-reviewer");
+      expect(inputs.map(input => input.reviewerKey).sort()).toEqual(["0", "1"]);
+      expect(new Set(inputs.map(input => input.profileId)).size).toBe(1);
+      const c = new Coordination(engine), read = () => c.call("task.conversation", { taskId: id, nodeId: step.id });
+      const before = await read();
+      expect((before.activeMessages as unknown[]).length).toBe(2);
+      // One reviewer hears its answer and hands back; the other still waits on its own question.
+      const [first, second] = questions();
+      engine.answer(first!.id, "Yes");
+      await waitFor(() => (step.agentResults ?? []).some(result => result.roleId === "code-reviewer"), "the answered reviewer's result");
+      const finished = step.agentResults!.find(result => result.roleId === "code-reviewer")!.inputIndex!;
+      const waiting = step.agentInputs!.findIndex((input, index) => input.roleId === "code-reviewer" && index !== finished);
+      const lines = task.session.filter(line => line.step === step.id && line.from === "agent" && line.roleId === "code-reviewer");
+      expect(lines.every(line => line.inputIndex === finished || line.inputIndex === waiting)).toBe(true);
+      const after = await c.call("task.conversation", { taskId: id, nodeId: step.id, ifRevision: before.revision as string });
+      expect(after.unchanged).toBe(false);
+      const stillAsking = lines.filter(line => line.inputIndex === waiting).at(-1)!;
+      expect(stillAsking.text).toBe(second!.title);
+      expect((after.activeMessages as { id: string }[]).map(message => message.id)).toEqual([stillAsking.id]);
+      const statuses = Object.fromEntries(((await read()).items as { id: string; mayChange: boolean | null }[]).map(item => [item.id, item.mayChange]));
+      for (const line of lines) expect(statuses[line.id]).toBe(line.inputIndex === waiting);
     } finally { await engine.shutdown(); }
   });
   it("names the planner that can run as tool readiness changes, including after a restart", async () => {

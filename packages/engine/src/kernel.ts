@@ -501,8 +501,11 @@ export abstract class Kernel {
     return true;
   }
 
-  /** `checks`: a check problem's own title and explanation, raised wherever the failing checks stopped the task. */
-  gate(task: MTask, gate: GateKind, problem?: string, checks?: { title: string; body: string }): void {
+  /**
+   * `checks`: a check problem's own title and explanation, raised wherever the failing checks stopped the task.
+   * `decides`: the stage a check raised again still decides (null when its original recorded none).
+   */
+  gate(task: MTask, gate: GateKind, problem?: string, checks?: { title: string; body: string }, decides?: Id | null): void {
     delete task.agent;
     task.holdsSlot = false;
     const decision = beginYouStep(task, gate, Date.now());
@@ -517,7 +520,9 @@ export abstract class Kernel {
     const body = gate === "design" ? callCheckBody(task as unknown as Task) : gate === "delivery" ? [workLine, task.repositories ? library.companionPreview(task.repositories) : deliveryLines(taskView(task)) ?? ""].filter(Boolean).join("\n") : gate === "plan" ? [workLine, task.workError ?? ""].filter(Boolean).join("\n") : undefined;
     const explanation = [problem, checks?.body, reviewCall ? "Review left Important findings open. Send the work back with a concrete repair request, or accept the unresolved review and continue to final verification. Continuing approves no delivery, fixes no finding and grants no automatic review rounds. Current product checks and required acceptance testing still run before a separate delivery approval." : undefined, body].filter(Boolean).join("\n\n");
     const proofBody = gate === "delivery" && task.proofRequests?.length ? [library.proofGap(taskView(task)), library.proofContext(task.proofRequests)].filter(Boolean).join("\n\n") : "";
-    this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, explanation || proofBody ? { body: [explanation, proofBody].filter(Boolean).join("\n\n") } : {});
+    // A review decision is asked after the flow moved past its review: the check still decides that review.
+    const stageId = decides !== undefined ? decides : reviewCall ? task.reviewDecision!.stageId : task.stageIndex >= 0 ? task.plan?.stages[task.stageIndex]?.id : undefined;
+    this.raise(task, gate, checks?.title ?? gateTitle(taskView(task), gate), false, { ...(explanation || proofBody ? { body: [explanation, proofBody].filter(Boolean).join("\n\n") } : {}), ...(stageId !== undefined ? { stageId } : {}) });
     task.statusLine = problem ? "Delivery preparation needs you" : gateStatus(taskView(task), gate);
     task.column = gate === "plan" ? "planning" : gate === "design" ? "designing" : "ready";
     // On disk before the window shows it: an answer to this check must find it after any restart.
@@ -525,7 +530,7 @@ export abstract class Kernel {
   }
 
   /** `by`: the agent asking, when it is not the task's main one (a reviewer working beside others). */
-  raise(target: MTask | RepositoryContext, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"]; reviewKey?: string } = {}, by: { roleId: Id; profileId: Id } | undefined = undefined): Id {
+  raise(target: MTask | RepositoryContext, kind: InboxKind, title: string, blocking: boolean, extra: { body?: string; options?: string[]; detail?: string; toolId?: CheckId; toolProblem?: InboxItem["toolProblem"]; reviewKey?: string; stageId?: Id | null } = {}, by: { roleId: Id; profileId: Id } | undefined = undefined): Id {
     const scope = executionOf(target);
     const { task, work: repository } = scope;
     by ??= task.agent;
@@ -546,6 +551,7 @@ export abstract class Kernel {
       ...(extra.toolId ? { toolId: extra.toolId } : {}),
       ...(extra.toolProblem ? { toolProblem: extra.toolProblem } : {}),
       ...(extra.reviewKey ? { reviewKey: extra.reviewKey } : {}),
+      ...(extra.stageId !== undefined ? { stageId: extra.stageId } : {}),
     });
     this.tracking.asked(scope, this.s.inbox.at(-1)!);
     return id;
@@ -601,10 +607,34 @@ export abstract class Kernel {
   /** The same kind of profile on a tool the squad can use. Unchanged when its tool is usable, or when none is. */
   onUsable(profileId: Id): Id { return this.usageCoordinator.onUsable(profileId); }
 
-  remember(task: MTask, text: string, id?: Id, kind?: InboxKind): void {
+  /**
+   * The stage a waiting check decides: recorded on it, else a pending review decision's review. Undefined: the current
+   * stage. Null: unknown, for an older delivery check that recorded none while the flow stands away from the delivery
+   * check (as when raised again after a review decision), so the current stage is not where it was asked.
+   */
+  checkStage(task: MTask, item: InboxItem): Id | null | undefined {
+    if (item.stageId !== undefined) return item.stageId;
+    if (item.kind !== "delivery") return undefined;
+    if (library.reviewDecisionPending(task)) return task.reviewDecision!.stageId;
     const stage = task.plan?.stages[task.stageIndex];
-    const roleId = task.agent?.roleId ?? (stage?.kind === "converge" && task.sub > 0 ? stage.reviewerRoleId : stage?.roleId);
-    const roleName = roleId ? this.role(roleId)?.name : undefined;
+    return stage?.kind === "gate" && stage.gate === "delivery" ? undefined : null;
+  }
+
+  /** `stageId`: the stage a checkpoint decides (null when unknown); by default, that of a check waiting on the task. */
+  remember(task: MTask, text: string, id?: Id, kind?: InboxKind, stageId?: Id | null): void {
+    // While a check waits, anything the coordinator says belongs to the stage it decides, not a later one, which has not run.
+    if (stageId === undefined) {
+      const waiting = this.s.inbox.find((item) => item.taskId === task.id && (item.stageId !== undefined || item.kind === "delivery"));
+      stageId = waiting ? this.checkStage(task, waiting) : library.reviewDecisionPending(task) ? task.reviewDecision!.stageId : undefined;
+    }
+    const stage = stageId === undefined ? task.plan?.stages[task.stageIndex] : task.plan?.stages.find((entry) => entry.id === stageId);
+    // An unknown decided stage, or one no longer in the plan, stays unrecorded rather than named after the current one.
+    if (stageId !== undefined && !stage) {
+      task.notes = [...(task.notes ?? []), { at: Date.now(), text, ...(id ? { id } : {}) }];
+      return;
+    }
+    const roleId = stageId === undefined ? task.agent?.roleId ?? (stage?.kind === "converge" && task.sub > 0 ? stage.reviewerRoleId : stage?.roleId) : stage?.roleId;
+    const roleName = roleId ? this.role(roleId, task)?.name : undefined;
     const origin = { stageTitle: stage?.title ?? (task.startedAt === undefined ? "Before work started" : "Planning"), ...(stage ? { stageId: stage.id } : {}), ...(roleName ? { roleName } : {}), ...(kind ? { kind } : {}) };
     task.notes = [...(task.notes ?? []), { at: Date.now(), text, origin, ...(id ? { id } : {}) }];
   }
@@ -1046,6 +1076,16 @@ export abstract class Kernel {
       if (index < 0) break;
       task.session.splice(index, 1);
     }
+  }
+
+  /** A participant's words name its start on their step, found as its result and message receipts find theirs, so places sharing a role and profile stay apart. */
+  participantSay(target: MTask | RepositoryContext, from: "agent" | "activity", text: string, roleId: Id, profileId: Id, reviewerKey: string | undefined, toolInvocationId?: Id): void {
+    this.say(target, from, text, roleId, profileId, toolInvocationId);
+    const { task } = executionOf(target);
+    const line = task.session.at(-1);
+    if (line?.from !== from || line.roleId !== roleId || line.profileId !== profileId) return;
+    const index = task.journey?.find((step) => step.id === line.step)?.agentInputs?.findLastIndex((input) => input.roleId === roleId && input.profileId === profileId && input.reviewerKey === reviewerKey) ?? -1;
+    if (index >= 0) line.inputIndex = index;
   }
 
   async emptyGhConfig(): Promise<string> {

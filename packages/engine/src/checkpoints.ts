@@ -6,7 +6,7 @@ import { beginRepair } from "./repositories.js";
 import { destination, type Shipping } from "./shipping.js";
 import type { Sources } from "./sources.js";
 
-type CheckpointHost = Pick<Kernel, "s" | "task" | "takeItem" | "tracking" | "log" | "say" | "id" | "remember" | "clearStep" | "stepNote" | "toWaiting" | "commit" | "commitNow" | "schedule" | "productOf" | "gate" | "role">;
+type CheckpointHost = Pick<Kernel, "s" | "task" | "takeItem" | "tracking" | "log" | "say" | "id" | "remember" | "checkStage" | "clearStep" | "stepNote" | "toWaiting" | "commit" | "commitNow" | "schedule" | "productOf" | "gate" | "role">;
 
 export class Checkpoints {
   constructor(private readonly k: CheckpointHost, private readonly sources: Pick<Sources, "confirm">, private readonly shipping: Pick<Shipping, "clearDelivery">) {}
@@ -85,7 +85,10 @@ export class Checkpoints {
     this.k.say(task, "you", note);
     endYouStep(task, call ? { outcome: W.madeCall, reason: W.yourCall, tone: "back" } : { outcome: W.changes, reason: W.changesAsked, tone: "back" }, Date.now());
     const id = this.k.id(task.id);
-    this.k.remember(task, note, id, item.kind);
+    // A review decision is asked after the flow moved past its review: the note belongs to that review, not the next stage,
+    // and so does the same check raised again below. What an older check never recorded stays unknown.
+    const decided = this.k.checkStage(task, item);
+    this.k.remember(task, note, id, item.kind, decided);
     // The call reaches the architect in a section of its own; any other note goes to the next agent.
     if (!call) task.queued.push({ id, text: note, at: Date.now() });
     // The change request starts the next step: it is the first thing that step keeps (a call is kept on the task).
@@ -119,14 +122,14 @@ export class Checkpoints {
           const back = review >= 0 && fromCheck > task.stageIndex && fromCheck < review ? fromCheck : review;
           if (!beginRepair(this.k, task, "review", back)) {
             task.stageIndex = fromCheck;
-            this.k.gate(task, "delivery");
+            this.k.gate(task, "delivery", undefined, undefined, decided);
             return;
           }
         } else {
           const products = task.repositories.filter((work) => !repositoryPublished(work)).map((work) => work.productId);
           const lead = task.leadProductId;
           if (lead && products.includes(lead)) products.splice(0, 0, ...products.splice(products.indexOf(lead), 1));
-          if (!products.length) { task.stageIndex = fromCheck; this.k.gate(task, "delivery"); return; }
+          if (!products.length) { task.stageIndex = fromCheck; this.k.gate(task, "delivery", undefined, undefined, decided); return; }
           task.repair = { products, index: 0, returnStage: task.stageIndex + 1, kind: "review" };
           task.activeProductId = products[0]!;
           task.fixing = true;

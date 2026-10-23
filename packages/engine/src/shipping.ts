@@ -419,7 +419,7 @@ export class Shipping {
     delete task.agent;
     task.holdsSlot = false;
     this.k.finishStep(scope);
-    this.k.say(scope, "agent", `${result.summary}\n\n${this.k.describe("release-manager", by)}`, "release-manager", by);
+    this.k.participantSay(scope, "agent", `${result.summary}\n\n${this.k.describe("release-manager", by)}`, "release-manager", by, undefined);
     this.k.log(scope, "done", `Ready to publish: ${tested.slice(0, 7)}, as ${shipping.tag}, with notes on everything since ${shipping.after || "the start"}`, "release-manager", by);
     this.k.commitNow();
     return "ready";

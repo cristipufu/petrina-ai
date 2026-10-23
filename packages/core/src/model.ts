@@ -247,6 +247,8 @@ export interface SessionLine {
   images?: readonly ReportImage[];
   /** Distinct invocation identity; streamed metadata updates this line in place. */
   toolInvocationId?: Id;
+  /** The participant's start on its step (`agentInputs` index) that wrote it, telling apart places that share a role and profile. Older lines have none. */
+  inputIndex?: number;
 }
 
 /** How an arrow out of a step reads: the work moved on, went back (a send-back, changes asked), or got stuck. */
@@ -1054,6 +1056,11 @@ export interface InboxItem {
   toolId?: CheckId;
   /** With `toolId`: what was wrong with the tool when the item was raised. */
   toolProblem?: "not-installed" | "logged-out" | "wont-start";
+  /**
+   * The stage a check decides, which notes given while it waits and its answer belong to. A review decision's review,
+   * kept when that check is raised again at a later stage. Null: raised again from an older check that recorded none.
+   */
+  stageId?: Id | null;
 }
 
 /**
