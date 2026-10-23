@@ -7,6 +7,20 @@ import { conventions, inputs, observe, recordedCoverage, ROOT } from "./reposito
 import { fingerprint, impactPlan, WORKSPACES } from "./impact.js";
 import { failedFiles } from "./results.js";
 
+// This entry point is the required full check, never a focused test selector.
+const args = process.argv.slice(2);
+if (args.length) {
+  const help = args.length === 1 && (args[0] === "--help" || args[0] === "-h");
+  const usage = `Run the required full check with no arguments:
+  bun run test
+For focused engine tests, run from the repository root:
+  bun run --cwd packages/engine test test/name.test.ts
+Focused runs do not replace the required full check. See docs/testing.md for other workspaces.`;
+  if (help) console.log(usage);
+  else console.error(`The root test command does not accept file selectors or options. No tests ran.\n${usage}`);
+  process.exit(help ? 0 : 1);
+}
+
 const PRELIMINARY: readonly string[] = ["packages/core", "apps/desktop"];
 const ORDER = [...PRELIMINARY, ...WORKSPACES.filter(workspace => !PRELIMINARY.includes(workspace))];
 const suite = (workspace: string) => workspace.split("/").at(-1)!;

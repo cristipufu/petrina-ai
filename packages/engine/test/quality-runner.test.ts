@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
-import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join } from "node:path";
 import { namedCheckFailures } from "../src/related-check-evidence.js";
@@ -32,8 +32,8 @@ type Suite = "core" | "desktop" | "engine";
 type StandIn = { code?: number; report?: "pass" | "fail" | "missing"; print?: string; change?: boolean; hold?: boolean };
 const NOT_STARTED = "core and desktop did not both pass", INTERRUPTED = "the run was interrupted first";
 
-/** A repository whose workspace test scripts are tiny stand-ins, never another full suite. */
-function fixture(scenario: Partial<Record<Suite, StandIn>>): string {
+/** The real root script and runner, without a repository to scan or any suites to run. */
+function entryFixture(): string {
   const root = tempDir("petrina-quality-runner-"); roots.push(root);
   const quality = join(root, "packages", "engine", "test", "quality");
   mkdirSync(quality, { recursive: true });
@@ -44,6 +44,14 @@ function fixture(scenario: Partial<Record<Suite, StandIn>>): string {
     mkdirSync(dirname(link), { recursive: true });
     symlinkSync(folder, link, process.platform === "win32" ? "junction" : "dir");
   }
+  const manifest = JSON.parse(readFileSync(join(ENGINE, "..", "..", "package.json"), "utf8"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ private: true, scripts: { test: manifest.scripts.test } }));
+  return root;
+}
+
+/** A repository whose workspace test scripts are tiny stand-ins, never another full suite. */
+function fixture(scenario: Partial<Record<Suite, StandIn>>): string {
+  const root = entryFixture();
   writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nstarted*\n");
   const runner = join(root, "runner.ts");
   writeFileSync(runner, `import { appendFileSync, renameSync, writeFileSync } from "node:fs";
@@ -93,11 +101,52 @@ function recorded(root: string, stdout: string) {
 
 function run(scenario: Partial<Record<Suite, StandIn>>, expected: number) {
   const root = fixture(scenario);
-  const result = Bun.spawnSync(command(root), { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  const result = Bun.spawnSync([process.execPath, "run", "test"], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 30_000 });
   const stdout = result.stdout.toString();
   expect({ code: result.exitCode, output: result.exitCode === expected ? "" : `${stdout}\n${result.stderr.toString()}` }).toEqual({ code: expected, output: "" });
   return { ...recorded(root, stdout), stdout, stderr: result.stderr.toString() };
 }
+
+for (const args of [
+  ["test/chosen.test.ts"],
+  Array.from({ length: 6 }, (_, index) => `test/chosen-${index}.test.ts`),
+  ["--watch"],
+  ["-t", "chosen test"],
+  ["--reporter=json"],
+  ["--help", "test/chosen.test.ts"],
+  ["test/chosen.test.ts", "-h"],
+] as const) it(`rejects root arguments ${args.join(" ")} before scanning or writing a report`, () => {
+  const root = entryFixture();
+  const result = Bun.spawnSync([process.execPath, "run", "test", ...args], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("The root test command does not accept file selectors or options. No tests ran.");
+  expect(result.stderr.toString()).toContain("bun run --cwd packages/engine test test/name.test.ts");
+  expect(result.stderr.toString()).not.toContain("Could not inspect test inputs");
+  expect(result.stdout.toString()).toBe("");
+  expect(existsSync(join(root, ".test-results"))).toBe(false);
+  expect(existsSync(join(root, "runs.log"))).toBe(false);
+});
+
+for (const option of ["--help", "-h"]) it(`shows ${option} through the root script without a repository, suites or reports`, () => {
+  const root = entryFixture();
+  const result = Bun.spawnSync([process.execPath, "run", "test", option], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.toString()).toContain("bun run --cwd packages/engine test test/name.test.ts");
+  expect(result.stdout.toString()).toContain("Focused runs do not replace the required full check.");
+  expect(result.stdout.toString()).not.toContain("Test summary:");
+  expect(result.stderr.toString()).not.toContain("Could not inspect test inputs");
+  expect(existsSync(join(root, ".test-results"))).toBe(false);
+  expect(existsSync(join(root, "runs.log"))).toBe(false);
+});
+
+it("rejects a selector in a ready repository without launching even a stand-in suite", () => {
+  const root = fixture({});
+  const result = Bun.spawnSync([process.execPath, "run", "test", "test/chosen.test.ts"], { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr.toString()).toContain("No tests ran.");
+  expect(existsSync(join(root, "runs.log"))).toBe(false);
+  expect(existsSync(join(root, ".test-results"))).toBe(false);
+});
 
 it("resolves the copied runner's packages from the engine's own install, never another one", () => {
   const root = fixture({});

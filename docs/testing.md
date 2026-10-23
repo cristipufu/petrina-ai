@@ -13,7 +13,9 @@ bun run test
 
 Core and desktop use Vitest; engine tests use Bun. Keep the required engine suite fully parallel. Before a full run, check whether another full suite is already running on the machine; investigate with focused runs while it finishes. An isolated timing failure passing alone does not rule out a race.
 
-`bun run test` first enforces test conventions and exits before writing reports if they fail. It then runs the quick core and desktop suites one after the other, both even when the first fails, and starts the long engine suite only when both pass: a zero exit status and a readable structured report naming no failed file. Otherwise engine is recorded as not run and the command fails, so the Builder gets every quick failure without waiting for engine. Every suite keeps its normal parallel workers, assertions and deadlines, with no retries. The command passes only when every configured workspace ran and passed in that one invocation and its inputs were unchanged when it finished; results from separate runs are never combined, and inputs are compared only at the end. It closes with one plain line per suite: passed, failed (with its failing files), incomplete (a missing, unreadable or contradictory report), or not run and why. These lines never begin like a runner's failure marker, so each suite's own failing tests remain the diagnostic. A stop signal is passed to the running suite; nothing later starts and no summary is printed.
+`bun run test` takes no arguments. File selectors and options fail before repository scanning, reports or suite launches; `--help` or `-h` alone prints usage without running tests or writing a report. For a focused run, use a workspace command below; focused results never replace this required full check.
+
+The full check first enforces test conventions and exits before writing reports if they fail. It then runs the quick core and desktop suites one after the other, both even when the first fails, and starts the long engine suite only when both pass: a zero exit status and a readable structured report naming no failed file. Otherwise engine is recorded as not run and the command fails, so the Builder gets every quick failure without waiting for engine. Every suite keeps its normal parallel workers, assertions and deadlines, with no retries. The command passes only when every configured workspace ran and passed in that one invocation and its inputs were unchanged when it finished; results from separate runs are never combined, and inputs are compared only at the end. It closes with one plain line per suite: passed, failed (with its failing files), incomplete (a missing, unreadable or contradictory report), or not run and why. These lines never begin like a runner's failure marker, so each suite's own failing tests remain the diagnostic. A stop signal is passed to the running suite; nothing later starts and no summary is printed.
 
 Each run saves `impact.json` and `results.json` in a unique ignored `.test-results/` folder. `results.json` lists every workspace, either with its exit code, duration and failed files, or with `notRun` and the reason; its `scope` is `complete` only when every workspace ran without interruption. A partial observation says nothing about the failures or selection misses of suites that did not run. The report identifies failed files outside the predicted selection, or explicitly says attribution was unavailable. It never changes which tests run.
 
@@ -41,11 +43,15 @@ The engine runner owns workers' temporary files and private Git helpers, reclaim
 
 ## Choose a focused test
 
+From the repository root, choose the workspace explicitly. Do not append files or filtering options to the root `bun run test` command:
+
 ```sh
 bun run --cwd packages/engine test test/name.test.ts
 bun run --cwd packages/core test test/name.test.ts -t 'test name'
 bun run --cwd apps/desktop test test/name.test.tsx -t 'test name'
 ```
+
+Use an absolute working-copy path when starting elsewhere, for example `bun run --cwd /absolute/working-copy/packages/engine test test/name.test.ts`. If you change directories in a shell, join the commands with `&&` so a failed change stops the test command: `cd /absolute/working-copy/packages/engine && bun run test test/name.test.ts`. Do not put the test command on an unconditional next line or after `;`, where it could run from the wrong directory.
 
 Core stops at the first failure; filter by name to investigate later cases. Core modules have no runtime dependencies: diagnostic scripts can import their source by absolute path without the whole suite. Keep those scripts, their working directory and `TMPDIR` in an uncrowded home folder on this Mac; moving just one leaves Bun's startup delay. Use the command tool's deadline; this Mac has no `timeout` program.
 

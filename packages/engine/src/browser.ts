@@ -285,10 +285,10 @@ async function reap(directory: string, owned: number[] | undefined, attempt: Att
   if (still().length) forceKill(still());
   await untilGone(attempt.targets(), 1_000);
   const left = await attempt.scan(directory);
-  if (left?.length) {
-    forceKill(left.filter(alive));
-    await untilGone(attempt.targets(), 1_000);
-  }
+  if (left?.length) forceKill(left.filter(alive));
+  // Commands can stop naming the folder before their processes are released. Every tracked
+  // target still gets the existing final wait, even when the folder scan itself is clear.
+  if (still().length) await untilGone(attempt.targets(), 1_000);
   const remaining = await attempt.scan(directory);
   // A process can finish between the first wait and the final scan. Judge the final
   // ownership evidence, keeping every earlier target; a provisional timeout is not a sticky failure.

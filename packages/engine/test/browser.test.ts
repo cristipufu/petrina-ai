@@ -181,11 +181,13 @@ it("starts cleanly when no interrupted browser registry exists", async () => {
   expect(existsSync(missing)).toBe(false);
 });
 
-// What the three folder scans show: the process, nothing, or an unreadable list; it ends after the first wait,
-// once killed, or never. Completion needs the latest readable scan to show nothing left, and the process gone.
+// What the three folder scans show: the process naming the folder, still present without the name, nothing,
+// or an unreadable list. Completion needs the latest readable scan to show the folder clear, and every target gone.
 for (const { name, shown, ends, failure, changed } of [
   { name: "stopped", shown: ["listed", "", ""], ends: "after the first wait" },
   { name: "still running", shown: ["listed", "listed", "listed"], ends: "never", failure: { wording: "Some of its programs are still running.", note: "folder1=1 folder2=1 folder3=1 confirmed=no reasons=still-running processes=1 shown=1 omitted=0 owned=1234567890:running:folder" } },
+  { name: "stops during the final wait after losing its folder name", shown: ["listed", "unmarked", "unmarked"], ends: "during the final wait", changed: true },
+  { name: "still running after losing its folder name", shown: ["listed", "unmarked", "unmarked"], ends: "never", failure: { wording: "Some of its programs are still running.", note: "folder1=1 folder2=0 folder3=0 confirmed=yes reasons=still-running processes=1 shown=1 omitted=0 owned=1234567890:running:folder" }, changed: true },
   { name: "stopped, confirmed by the final scan after an unreadable one", shown: ["listed", undefined, ""], ends: "after the first wait" },
   { name: "stopped, with no readable scan after it", shown: ["listed", undefined, undefined], ends: "after the first wait", failure: { wording: "Petrina could not read the list of running programs.", note: "folder1=1 folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=1 shown=1 omitted=0 owned=1234567890:absent:folder" }, changed: true },
   // An earlier clear scan no longer counts once a later one finds a process.
@@ -197,13 +199,13 @@ for (const { name, shown, ends, failure, changed } of [
   writeFileSync(join(registry, "owned.json"), JSON.stringify(directory));
   const pid = 1_234_567_890;
   const listed = `${pid} 1 S browser ${directory}\n`;
-  let scans = 0, killed = false;
+  let scans = 0, killed = false, finalChecks = 0, released = false;
   const notes: string[] = [];
   const originalRead = processes.execFile, originalKill = process.kill;
   const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(originalRead, processes, args);
     scans += 1;
-    const output = shown[scans - 1] === "listed" ? listed : shown[scans - 1];
+    const output = shown[scans - 1] === "listed" ? listed : shown[scans - 1] === "unmarked" ? `${pid} 1 S browser\n` : shown[scans - 1];
     const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
     queueMicrotask(() => output === undefined ? callback(new Error("The process list is unavailable"), "", "") : callback(null, output, ""));
     return finishedHelper();
@@ -211,8 +213,11 @@ for (const { name, shown, ends, failure, changed } of [
   const kill = spyOn(process, "kill").mockImplementation((target, signal) => {
     if (Math.abs(target) !== pid) return originalKill(target, signal);
     if (signal === "SIGKILL") killed = true;
+    // Release only when cleanup checks the tracked target again between its second and final scans.
+    // A clear folder scan alone cannot trigger this release or prove the process gone.
+    if (ends === "during the final wait" && signal === 0 && scans === 2) released ||= ++finalChecks > 1;
     // The first one-second wait expires. The next OS observation confirms it is gone.
-    const gone = ends === "after the first wait" ? scans >= 2 : ends === "once killed" && killed;
+    const gone = ends === "after the first wait" ? scans >= 2 : ends === "once killed" ? killed : released;
     if (signal === 0 && gone) throw Object.assign(new Error("No such process"), { code: "ESRCH" });
     return true;
   });
