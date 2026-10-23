@@ -6,6 +6,7 @@ import { Engine } from "./engine.js";
 import { executionFor } from "../src/repository-context.js";
 import { BuildResult, ReviewResult } from "../src/roles.js";
 import { MESSAGE_RECOVERY_OPTIONS, routeMessages } from "../src/messages.js";
+import { EARLIER_ATTEMPT } from "../src/prompts.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 async function fixture() {
@@ -220,7 +221,7 @@ for (const mode of ["queue", "interrupt"] as const) it(`records guidance arrivin
   } finally { turns["prepareTurnPrompt"] = prepare; release.resolve(); await f.dispose(); }
 });
 
-it("keeps broadcast receipts per seat and retains heard guidance for a fresh replacement", async () => {
+for (const attempts of [0, 2]) it(`keeps broadcast receipts per seat and retains heard guidance for a fresh replacement (step attempts=${attempts})`, async () => {
   const f = await fixture();
   try {
     f.fakes.scenario({ builder: "plain", reopen: "resume" });
@@ -247,6 +248,8 @@ it("keeps broadcast receipts per seat and retains heard guidance for a fresh rep
     expect(broadcast.recipients).toEqual({ "review-0": true, "review-1": false });
     expect(broadcast.deliveries?.["review-0"]?.state).toBe("applied");
     expect(broadcast.deliveries?.["review-1"]).toBeUndefined();
+    // The step may have started more than once; a parallel opening still has no earlier-attempt section.
+    if (attempts) f.scope.work.stepAttempts = attempts;
     // A warm cross-round return hears no duplicate while its peer is still waiting.
     await run(0, first);
     expect(f.fakes.received("builder")[1]!.text).not.toContain(text);
@@ -261,6 +264,13 @@ it("keeps broadcast receipts per seat and retains heard guidance for a fresh rep
     expect(replacement.session).not.toBe(first.sessionId);
     expect(replacement.text.split(text)).toHaveLength(2);
     expect(replacement.text).not.toContain(onlyPeer);
+    expect(replacement.text).not.toContain("## Messages from the coordinator, in order");
+    expect(replacement.text).not.toContain(EARLIER_ATTEMPT);
+    const replaced = f.task.journey!.at(-1)!.agentInputs!.at(-1)!;
+    expect(readFileSync(replaced.exact!.file, "utf8")).toBe(replacement.text);
+    expect(replaced.sections.find(section => section.title.startsWith("The coordinator's notes"))?.body).toContain(text);
+    // Background only: the receipt still names the conversation that heard it.
+    expect(broadcast.deliveries?.["review-0"]).toEqual(expect.objectContaining({ state: "applied", sessionId: first.sessionId }));
     expect(broadcast.recipients).toEqual({ "review-0": true, "review-1": false });
     await run(1);
     const peer = f.fakes.received("builder")[3]!;
@@ -275,6 +285,27 @@ it("keeps broadcast receipts per seat and retains heard guidance for a fresh rep
       const prompt = f.fakes.received("builder").find(prompt => prompt.session === input.sessionId && prompt.text === readFileSync(input.exact!.file, "utf8"));
       expect(prompt).toBeDefined();
     }
+  } finally { await f.dispose(); }
+});
+
+it("says heard guidance once when a single conversation starts the step again fresh", async () => {
+  const f = await fixture();
+  try {
+    await f.first();
+    // The step's saved conversation cannot be reopened, so its second start is a fresh one.
+    f.fakes.scenario({ builder: "plain", controlled: false });
+    await f.start();
+    const opening = f.fakes.received("builder")[1]!;
+    expect(f.scope.work.stepAttempts).toBe(2);
+    expect(opening.text).toContain(`## ${EARLIER_ATTEMPT}`);
+    expect(opening.text.split("ALREADY-HEARD")).toHaveLength(2);
+    expect(opening.text).toContain("(earlier attempt) A message from the coordinator: ALREADY-HEARD");
+    expect(opening.text).toContain("UNCHANGED-BACKGROUND");
+    expect(opening.text).not.toContain("## Messages from the coordinator, in order");
+    const input = f.task.journey!.at(-1)!.agentInputs!.at(-1)!;
+    expect(input.mode).toBe("fresh");
+    expect(readFileSync(input.exact!.file, "utf8")).toBe(opening.text);
+    expect(input.sections.find(section => section.title.startsWith("The coordinator's notes"))?.body ?? "").not.toContain("ALREADY-HEARD");
   } finally { await f.dispose(); }
 });
 
@@ -294,7 +325,7 @@ it("delivers a new instruction even when its words match an already heard instru
   } finally { await f.dispose(); }
 });
 
-for (const peerWaiting of [true, false]) it(`keeps guidance after declining a resend in a fresh reviewer conversation (peer waiting=${peerWaiting})`, async () => {
+for (const [peerWaiting, attempts] of [[true, 0], [false, 0], [true, 2]] as const) it(`keeps guidance after declining a resend in a fresh reviewer conversation (peer waiting=${peerWaiting}, step attempts=${attempts})`, async () => {
   const f = await fixture();
   try {
     f.fakes.scenario({ reopen: "resume" });
@@ -318,6 +349,7 @@ for (const peerWaiting of [true, false]) it(`keeps guidance after declining a re
     const message = f.task.queued[0]!;
     // These are provider acknowledgements without confirmed consumption, as after a lost turn.
     message.deliveries = Object.fromEntries(Object.keys(message.recipients!).map(member => [member, { state: "accepted" as const, via: "live" as const, toolId: "grok", sessionId: `old-${member}` }]));
+    if (attempts) f.scope.work.stepAttempts = attempts;
     const reviewing = run(0);
     const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "the reviewer's delivery-recovery decision");
     expect(f.fakes.received("code reviewer")).toEqual([]);
@@ -328,8 +360,10 @@ for (const peerWaiting of [true, false]) it(`keeps guidance after declining a re
     expect(opening.text.split(text)).toHaveLength(2);
     expect(opening.text).toContain("## The coordinator's notes on this task");
     expect(opening.text).not.toContain("## Messages from the coordinator, in order");
+    expect(opening.text).not.toContain(EARLIER_ATTEMPT);
     const input = f.task.journey!.at(-1)!.agentInputs!.at(-1)!;
     expect(input.mode).toBe("fresh");
+    expect(input.sections.find(section => section.title.startsWith("The coordinator's notes"))?.body).toContain(text);
     expect(readFileSync(input.exact!.file, "utf8")).toBe(opening.text);
     expect(readFileSync(saved!.context!.file, "utf8")).toContain(text);
     expect(message.deliveries["review-0"]).toEqual(expect.objectContaining({ state: "skipped", via: "live", toolId: "grok", sessionId: "old-review-0", decisionId: decision.id }));

@@ -232,12 +232,13 @@ export class Context {
 }
 
 /**
- * Every agent on the task sees all of the coordinator's notes, reviewers included. A step started again
- * hears what was said in its earlier attempt in a section of its own, so those are left out here.
+ * Every agent on the task sees all of the coordinator's notes, reviewers included. What was said in an
+ * earlier attempt at this step is left out only when `earlierCarried`: the opening hears it in a section
+ * of its own, or continues a conversation that already heard it. A fresh parallel opening has neither.
  */
-export function coordinatorNotes(scope: RepositoryContext, member?: string): Section[] {
+export function coordinatorNotes(scope: RepositoryContext, member?: string, earlierCarried = false): Section[] {
   const { task, work: repository } = scope;
-  const fromEarlier = (repository.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
+  const fromEarlier = earlierCarried && (repository.stepAttempts ?? 0) > 1 ? ((task.stepNotes ?? []) as StepNote[]) : [];
   const replaying = task.maintenance?.pendingReply && task.maintenance.settingsDecision?.choice === "keep";
   const available = (task.notes ?? []).filter(note => {
     const queued = task.queued.find(message => message.id === note.id);

@@ -516,7 +516,8 @@ export class Turns {
       let openingMessages: ReturnType<typeof takeMessages> = [];
       const withBackground = async (): Promise<Section[]> => {
         const sections = [...currentStepAssignment(task, roleId), ...await given(), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : [])];
-        openingMessages = this.reserveOpening(scope, sections, options.member);
+        // A fresh start hears the step's earlier attempts in a section of its own; a return continues the conversation that heard them.
+        openingMessages = this.reserveOpening(scope, sections, options.member, true);
         return sections;
       };
       // Why this conversation is fresh rather than the saved one, when Petrina recorded a reason.
@@ -809,7 +810,8 @@ export class Turns {
     try {
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const givenSections = [...currentStepAssignment(task, roleId), ...await given(), ...(wentBack ? offered?.continuedSections ?? [] : []), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
-      const openingMessages = this.reserveOpening(scope, givenSections, options.member);
+      // A parallel opening has no earlier-attempt section: a fresh one keeps the step's heard guidance as background.
+      const openingMessages = this.reserveOpening(scope, givenSections, options.member, wentBack);
       if (signal.aborted) throw new Aborted();
       if (options.took) givenSections.push({ title: TOOK_OVER, body: formatReviewTakeOver(options.took.from, options.took.words, options.took.refusal) });
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
@@ -1233,9 +1235,9 @@ export class Turns {
   }
 
   /** Refresh removable notes, then reserve before an immutable packet can expose them. */
-  private reserveOpening(scope: RepositoryContext, sections: Section[], member?: string): ReturnType<typeof takeMessages> {
+  private reserveOpening(scope: RepositoryContext, sections: Section[], member: string | undefined, earlierCarried: boolean): ReturnType<typeof takeMessages> {
     const index = sections.findIndex(section => section.title.startsWith("The coordinator's notes on this task"));
-    if (index >= 0) sections.splice(index, 1, ...coordinatorNotes(scope, member));
+    if (index >= 0) sections.splice(index, 1, ...coordinatorNotes(scope, member, earlierCarried));
     const maintenance = scope.task.maintenance;
     if (maintenance?.pendingReply && maintenance.settingsDecision?.choice === "keep") return [];
     return takeMessages(scope.task, member, Infinity);
