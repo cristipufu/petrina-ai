@@ -1301,7 +1301,8 @@
       "validation": {
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
-        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
+        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -1319,7 +1320,8 @@
       "validation": {
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
-        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
+        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -2276,7 +2278,8 @@
       "validation": {
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
-        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
+        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -2428,7 +2431,8 @@
       "validation": {
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
-        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
+        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
