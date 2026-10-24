@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import type { ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import * as git from "./git.js";
-import { processList } from "./process-tree.js";
+import { processList } from "@petrina/platform/process-tree";
 
 export const OWNER_LABEL = "app.petrina.validation-owner";
 export const RUN_LABEL = "app.petrina.validation-run";

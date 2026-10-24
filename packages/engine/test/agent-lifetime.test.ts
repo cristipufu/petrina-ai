@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { AGENT_CLEANUP_NOTE, AgentRun, stopAll } from "../src/acp-run.js";
 import { AgentBrowser } from "../src/browser.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { childState, parseChildState, presentStates, processList, readProcessList, type ObservedProcess } from "../src/process-tree.js";
+import { childState, parseChildState, presentStates, processList, readProcessList, type ObservedProcess } from "@petrina/platform/process-tree";
 import { defunctProcess as uncollected, finishedHelper, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-agent-lifetime-");

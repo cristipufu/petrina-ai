@@ -2,7 +2,7 @@
 import { expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runCommand, type Started } from "./commands.js";
+import { runCommand, type Started } from "@petrina/test-support/commands";
 import { removeDir, tempDir, waitForFile } from "./fixtures.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { SetupSteps } from "./setup-steps.js";

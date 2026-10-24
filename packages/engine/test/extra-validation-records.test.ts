@@ -6,7 +6,7 @@ import { Engine, writeFixtureEngineOptions } from "./engine.js";
 import { git, makeProduct, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
-import * as processTree from "../src/process-tree.js";
+import * as processTree from "@petrina/platform/process-tree";
 import { Store } from "@petrina/storage/store";
 import { ExtraFixtures } from "./extra-fixtures.js";
 

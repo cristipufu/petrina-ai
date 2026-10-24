@@ -4,7 +4,7 @@ import { Coordination } from "../src/coordination.js";
 // Real worktrees and fake agents/GitHub: no network, no windows, and branches/history survive removal.
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { FileFaults } from "./file-faults.js";
+import { FileFaults } from "@petrina/test-support/file-faults";
 import { basename, dirname, join } from "node:path";
 import { CLEANUP_WORDS, type Task } from "@petrina/core";
 import type { Engine } from "./engine.js";

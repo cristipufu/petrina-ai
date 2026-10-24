@@ -5,11 +5,11 @@
 // that report can be lost, and then no timer in the worker runs again: not the test's own deadline, not another
 // test. Here every wait ends on a timer the worker schedules itself, and a command only succeeds once its exit
 // is reported and its output is complete. Closed output alone proves nothing.
-import { parseDescendants, type ProcessListRead } from "../src/process-tree.js";
-import { SLOW } from "@petrina/test-support/slow";
+import { parseDescendants, type ProcessListRead } from "@petrina/platform/process-tree";
+import { SLOW } from "./slow.js";
 import { testGitEnv } from "./test-git-env.js";
 import { execFile } from "node:child_process";
-import { createProcessHost } from "../src/process-host.js";
+import { createProcessHost } from "@petrina/platform/process-host";
 
 /** Git's allowance per command; like the fixtures' other hang-catching limits, it stretches on a busy machine. */
 export const GIT_TIMEOUT_MS = 30_000;

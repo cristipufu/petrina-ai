@@ -7,7 +7,7 @@ import { waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import { ExtraFixtures } from "./extra-fixtures.js";
-import { FileFaults } from "./file-faults.js";
+import { FileFaults } from "@petrina/test-support/file-faults";
 
 const owned = new ExtraFixtures();
 const { engines } = owned;

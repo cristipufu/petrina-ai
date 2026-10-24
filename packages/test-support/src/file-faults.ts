@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { localFiles, type FileOperations } from "../src/file-operations.js";
+import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
 
 /** Per-fixture storage failures, independent of accounts, privilege and OS permission semantics. */
 export class FileFaults {

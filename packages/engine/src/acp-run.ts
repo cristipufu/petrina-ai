@@ -3,7 +3,7 @@
 // what happens. It also reads back what the tool says the session runs on, and what each turn used.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { processHost } from "./process-host.js";
+import { processHost } from "@petrina/platform/process-host";
 import { ReopenFailed, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentInputReceipt, type PermissionInfo, type NativeRetryReport, type SessionSettings, type TurnNotes, type TurnResult, type RetryCause } from "@petrina/orchestrator";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -11,7 +11,7 @@ import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, typ
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser, cleanupNote } from "./browser.js";
-import { CLEANUP_INCOMPLETE, descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE, descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "@petrina/platform/process-tree";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import type { SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages } from "./agent-messages.js";

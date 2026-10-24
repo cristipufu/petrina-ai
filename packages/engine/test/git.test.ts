@@ -1,5 +1,5 @@
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { FileFaults } from "./file-faults.js";
+import { FileFaults } from "@petrina/test-support/file-faults";
 import { expectRejection } from "@petrina/test-support/rejections";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { addCopy, commitAll, commitTree, contains, copyFolderName, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
-import { childState } from "../src/process-tree.js";
+import { childState } from "@petrina/platform/process-tree";
 import { defunctProcess, firstLine, git, gitWith, makeProduct, removeDir, testGitEnv, waitFor } from "./fixtures.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));

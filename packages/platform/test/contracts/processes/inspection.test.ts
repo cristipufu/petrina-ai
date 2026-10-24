@@ -4,8 +4,8 @@ import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { childState, descendantsKnown, lostExit, parseChildState, parseDescendants, readProcessList, sharedRead } from "../src/process-tree.js";
-import { defunctProcess, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
+import { childState, lostExit, readProcessList, waitForProcessesToEnd } from "@petrina/platform/process-tree";
+import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 
 const snapshot = "11 10\n12 11\n40 1\n";
 
@@ -78,118 +78,8 @@ function describeRead(list: string | undefined, helper: Helper, elapsed: number,
   });
 }
 
-describe("process-tree snapshots", () => {
-  it("finds a child and a grandchild, and leaves an unrelated process out", () => {
-    expect(parseDescendants(snapshot, [10])).toEqual([11, 12]);
-  });
-
-  it("distinguishes an empty tree from failure to read the process list", async () => {
-    expect(parseDescendants("", [10])).toEqual([]);
-    expect(await descendantsKnown([10], 100, async () => undefined)).toBeUndefined();
-  });
-
-  it("retries a failed read within its budget and returns the later snapshot", async () => {
-    const timeouts: number[] = [];
-    const result = await descendantsKnown([10], 3_200, async (timeout) => {
-      timeouts.push(timeout);
-      return timeouts.length === 1 ? undefined : snapshot;
-    });
-    expect(timeouts).toEqual([1_000, 2_000]);
-    expect(result).toEqual([11, 12]);
-  });
-
-  it("does not reread a list that was read and has no descendants", async () => {
-    let calls = 0;
-    const listed = await descendantsKnown([10], 3_200, async () => {
-      calls += 1;
-      return "40 1\n";
-    });
-    expect(calls).toBe(1);
-    expect(listed).toEqual([]);
-  });
-
-  it("rejects a successful but unpaused snapshot and uses the next confirmed one", async () => {
-    const timeouts: number[] = [];
-    const result = await descendantsKnown([10, 11], 4_800, async timeout => {
-      timeouts.push(timeout);
-      return timeouts.length === 1 ? "10 1 T\n11 10 S\n" : "10 1 T\n11 10 T\n12 11 S\n40 1 S\n";
-    }, [4_000, 4_000], true);
-    expect(timeouts).toEqual([4_000, expect.any(Number)]);
-    expect(result).toEqual([12]);
-  });
-
-  for (const listed of [undefined, "10 1 S\n", "10 1\n"]) it(`does not confirm ownership when a list ${listed === undefined ? "fails" : listed.includes("S") ? "shows an owner running" : "lacks the owner's state"}`, async () => {
-    let reads = 0;
-    expect(await descendantsKnown([10], 4_800, async () => { reads++; return listed; }, [4_000, 4_000], true)).toBeUndefined();
-    expect(reads).toBe(2);
-  });
-
-  for (const listed of ["", "10 1 Z\n", "10 1 T+\n"]) it(`accepts one confirmed list with an owner ${listed === "" ? "gone" : listed.includes("Z") ? "defunct" : "paused"}`, async () => {
-    let reads = 0;
-    expect(await descendantsKnown([10], 4_800, async () => { reads++; return listed; }, [4_000, 4_000], true)).toEqual([]);
-    expect(reads).toBe(1);
-  });
-
-  for (const delay of [2_500, 3_999]) it(`preserves a consistently slow ${delay}ms first snapshot before stopping the parent`, async () => {
-    let now = 0;
-    const clock = spyOn(Date, "now").mockImplementation(() => now);
-    const timeouts: number[] = [];
-    try {
-      const result = await descendantsKnown([10], 4_800, async (timeout) => {
-        timeouts.push(timeout);
-        now += Math.min(delay, timeout);
-        return delay < timeout ? snapshot : undefined;
-      }, [4_000, 4_000]);
-      expect(timeouts).toEqual([4_000]);
-      expect(result).toEqual([11, 12]);
-    } finally { clock.mockRestore(); }
-  });
-
-  it("recovers a hung first read while reserving the rest of the quit budget", async () => {
-    let now = 0;
-    const clock = spyOn(Date, "now").mockImplementation(() => now);
-    const timeouts: number[] = [];
-    try {
-      const result = await descendantsKnown([10], 4_800, async (timeout) => {
-        timeouts.push(timeout);
-        now += timeouts.length === 1 ? timeout : 100;
-        return timeouts.length === 1 ? undefined : snapshot;
-      }, [4_000, 4_000]);
-      expect(timeouts).toEqual([4_000, 800]);
-      expect(result).toEqual([11, 12]);
-      expect(now).toBe(4_100);
-    } finally { clock.mockRestore(); }
-  });
-
-  it("lets a slow rescan use the remaining allowance without splitting it into shorter attempts", async () => {
-    let now = 0;
-    const clock = spyOn(Date, "now").mockImplementation(() => now);
-    try {
-      const timeouts: number[] = [];
-      const result = await descendantsKnown([10], 3_200, async (timeout) => {
-        timeouts.push(timeout);
-        now += Math.min(2_500, timeout);
-        return timeout > 2_500 ? snapshot : undefined;
-      }, [4_000, 4_000]);
-      expect(timeouts).toEqual([3_200]);
-      expect(result).toEqual([11, 12]);
-    } finally { clock.mockRestore(); }
-  });
-});
-
-describe("a child's state from the process list", () => {
-  it("tells a running child from a defunct or missing one, and admits when a snapshot cannot say", () => {
-    const listed = "11 10 Ss\n12 11 Z+\n40 1 SN\n";
-    expect(parseChildState(listed, 11)).toBe("running");
-    expect(parseChildState(listed, 12)).toBe("ended");
-    expect(parseChildState(listed, 40)).toBe("running");
-    expect(parseChildState(listed, 99)).toBe("ended");
-    // A snapshot without a state column (an older helper) cannot tell a defunct child from a running one.
-    expect(parseChildState("11 10\n", 11)).toBe("unknown");
-    // Descendants still read from the same snapshot.
-    expect(parseDescendants(listed, [10])).toEqual([11, 12]);
-  });
-});
+import { SLOW } from "@petrina/test-support/slow";
+import { defunctProcess } from "@petrina/test-support/defunct-process";
 
 describe("a process-list read's deadline", () => {
   const controlled = () => {
@@ -384,9 +274,12 @@ exec sleep 30
     const recorded = () => existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8").trim()) || undefined : undefined;
     // A Mac can hold a new program's first start for a while: start the stand-in once outside the measured read.
     const warm = Bun.spawn([join(bin, "ps")], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-    const warmPid = await waitFor(recorded, "the stand-in helper to start once", 60_000);
-    warm.kill("SIGKILL");
-    await waitFor(() => !alive(warmPid), "the warm-up helper to be gone", 10_000);
+    let warmPid: number;
+    try {
+      warmPid = await waitFor(recorded, "the stand-in helper to start once", 60_000);
+      warm.kill("SIGKILL");
+      await waitFor(() => !alive(warmPid), "the warm-up helper to be gone", 10_000);
+    } finally { try { warm.kill("SIGKILL"); } catch { /* Already gone. */ } }
     rmSync(pidFile);
     const path = process.env.PATH;
     process.env.PATH = `${bin}:${path ?? ""}`;
@@ -406,41 +299,15 @@ exec sleep 30
     } finally {
       watch.spawn.mockRestore();
       process.env.PATH = path;
+      for (const helper of watch.helpers) {
+        try { helper.child?.kill("SIGKILL"); } catch { /* Already gone. */ }
+        if (helper.child?.pid) await waitFor(async () => (await childState(helper.child!.pid!, 4_000)) === "ended", "the owned process-list helper to be stopped", 10_000);
+      }
     }
   });
 });
 
-describe("process-list reads shared by the watchers asking at once", () => {
-  const controlled = () => {
-    const pending: ((value: string | undefined) => void)[] = [];
-    const read = (_timeout: number) => new Promise<string | undefined>((resolve) => { pending.push(resolve); });
-    return { read, pending, settle: (value: string | undefined) => pending.shift()!(value) };
-  };
-
-  it("runs one read at a time: askers at the same moment share it, later askers get a snapshot taken after they asked", async () => {
-    const list = controlled();
-    const since = Date.now();
-    const together = [sharedRead(list.read, 300, since), sharedRead(list.read, 300, since), sharedRead(list.read, 300, since)];
-    expect(list.pending).toHaveLength(1);
-    // A child that may be newer than the read under way could be missing from its snapshot: these wait for the next read.
-    const later = [sharedRead(list.read, 300, Date.now() + 1), sharedRead(list.read, 300, Date.now() + 1)];
-    expect(list.pending).toHaveLength(1);
-    list.settle("1 0 S\n");
-    expect(await Promise.all(together)).toEqual(["1 0 S\n", "1 0 S\n", "1 0 S\n"]);
-    await waitFor(() => list.pending.length === 1, "the queued read to start");
-    list.settle("2 0 S\n");
-    expect(await Promise.all(later)).toEqual(["2 0 S\n", "2 0 S\n"]);
-    // Nothing under way: a fresh ask starts a fresh read, and a failed read is reported as such without wedging the next.
-    const failed = sharedRead(list.read, 300, Date.now());
-    expect(list.pending).toHaveLength(1);
-    list.settle(undefined);
-    expect(await failed).toBeUndefined();
-    const fresh = sharedRead(list.read, 300, Date.now());
-    expect(list.pending).toHaveLength(1);
-    list.settle("3 0 S\n");
-    expect(await fresh).toBe("3 0 S\n");
-  });
-
+describe("native exit watches", () => {
   it.skipIf(process.platform === "win32")("gives the watches of many children one helper at a time", async () => {
     // Two dozen children close their output together and their exits go unreported for a while: their watches
     // read the process list once, together, instead of starting two dozen helpers at the same moment.
@@ -460,4 +327,28 @@ describe("process-list reads shared by the watchers asking at once", () => {
     stop.abort();
     expect(await Promise.all(watches)).toEqual(Array.from({ length: 24 }, () => "stopped"));
   });
+});
+
+it.skipIf(process.platform === "win32")("keeps a lost-exit watch cancellable after its reader throws", async () => {
+  let reads = 0;
+  const stop = new AbortController();
+  const watch = lostExit(process.pid, stop.signal, () => { reads++; throw new Error("Controlled native observation failure"); });
+  try {
+    await waitFor(() => reads > 0, "the failing process observation");
+  } finally { stop.abort(); }
+  expect(await watch).toBe("stopped");
+});
+
+for (const rejected of [false, true]) it.skipIf(process.platform === "win32")(`does not mistake a ${rejected ? "rejected" : "throwing"} native observation for confirmed termination`, async () => {
+  let reads = 0;
+  const read = () => {
+    reads++;
+    if (rejected) return Promise.reject(new Error("Unavailable process list"));
+    throw new Error("Unavailable process list");
+  };
+  expect(await childState(process.pid, 300, read)).toBe("unknown");
+  expect(await waitForProcessesToEnd([process.pid], 100, read)).toEqual({
+    ended: false, processes: [{ pid: process.pid, state: "unknown", sources: ["target"] }],
+  });
+  expect(reads).toBe(2);
 });

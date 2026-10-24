@@ -966,11 +966,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/commands.test.ts",
+      "file": "packages/test-support/test/contracts/processes/commands.test.ts",
       "declarations": 34,
       "assertionSites": 125,
       "baselineDigest": "191ed24490bf58ba23e8b5153e47e46bf7ae228d9ef8c67ad6f6f65a721b6901",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/commands.test.ts",
+      "review": "All 47 runtime cases retained: command completion, native signals, cut or closed output, bounded cleanup, unavailable observations and PID ownership remain command-boundary contracts; Git lookup and private-environment cases own real Git separately. Canonical command execution, seeds and cleanup come from test support, without engine imports.",
+      "splitFiles": [
+        "packages/test-support/test/contracts/processes/commands.test.ts",
+        "packages/test-support/test/contracts/git/commands.test.ts"
+      ],
+      "validation": {
+        "artifact": "platform-reconciliation.json",
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+      }
     },
     {
       "file": "packages/engine/test/connector-browser.test.ts",
@@ -1260,11 +1270,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/file-operations.test.ts",
+      "file": "packages/platform/test/contracts/filesystem/operations.test.ts",
       "declarations": 3,
       "assertionSites": 12,
       "baselineDigest": "15f09c296ddd239676b80548df84ec60a6a807021273f8de772a2fa083e0672a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/file-operations.test.ts",
+      "review": "All three original cases and twelve assertion sites retained. Native copying/removal and alias semantics test the platform adapter; injected per-fixture failures and release identity test the shared FileFaults fixture independently of Engine or machine permissions.",
+      "splitFiles": [
+        "packages/platform/test/contracts/filesystem/operations.test.ts",
+        "packages/test-support/test/contracts/filesystem/faults.test.ts"
+      ],
+      "validation": {
+        "artifact": "platform-reconciliation.json",
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+      }
     },
     {
       "file": "packages/core/test/rules/reviews/evidence-updates.test.ts",
@@ -1615,18 +1635,39 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/process-host.test.ts",
+      "file": "packages/platform/test/orchestration/processes/capabilities.test.ts",
       "declarations": 6,
       "assertionSites": 21,
       "baselineDigest": "a869afff59e93692fc842031d332af81afdbab580d12d8993a3dff5b1c4569c2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/process-host.test.ts",
+      "review": "All six cases retained. Capability selection and Windows helper/deadline decisions use an explicit executor and clock. The real Windows stop control owns a bounded leaf process, without starting an Engine.",
+      "splitFiles": [
+        "packages/platform/test/orchestration/processes/capabilities.test.ts",
+        "packages/platform/test/contracts/processes/windows-host.test.ts"
+      ],
+      "validation": {
+        "artifact": "platform-reconciliation.json",
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+      }
     },
     {
-      "file": "packages/engine/test/process-tree.test.ts",
+      "file": "packages/platform/test/orchestration/processes/observations.test.ts",
       "declarations": 20,
       "assertionSites": 61,
       "baselineDigest": "8fae2a724a77e508d8a485772779468569f06810f67cd4aee8d26220b7ae7dcc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/process-tree.test.ts",
+      "review": "All 28 original runtime cases and assertions retained. Parsing takes data; observation coordination takes explicit queries and time; real stream/exit/deadline, ps, zombie and watcher controls stay native. Nine regressions cover thrown/rejected queries, callback reentrancy, queued failure, independent readers and unknown termination evidence.",
+      "splitFiles": [
+        "packages/platform/test/rules/processes/snapshots.test.ts",
+        "packages/platform/test/orchestration/processes/observations.test.ts",
+        "packages/platform/test/contracts/processes/inspection.test.ts"
+      ],
+      "validation": {
+        "artifact": "platform-reconciliation.json",
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+      }
     },
     {
       "file": "packages/engine/test/products.test.ts",
@@ -2308,9 +2349,13 @@
       "declarations": 3,
       "assertionSites": 17,
       "baselineDigest": "0e9f84b1f3816e29124d858e68722e4e265a5b963ea93e5409c1609f5abd1395",
-      "status": "pending",
-      "review": "Physical storage ownership moved with every SQLite schema/lock case and original assertion. Still pending: bounded child execution and native Windows/Linux qualification must be audited; a folder move is not completion.",
-      "from": "packages/engine/test/store-startup.test.ts"
+      "status": "reviewed",
+      "review": "All four schema/lock cases and assertions retained against real private SQLite files. Startup lock children now use the canonical bounded command runner with cancellation and awaited cleanup, rather than raw unbounded exit/pipe waits. Real SQLite busy-timeout assertions remain unchanged.",
+      "from": "packages/engine/test/store-startup.test.ts",
+      "validation": {
+        "artifact": "platform-reconciliation.json",
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+      }
     },
     {
       "file": "packages/engine/test/takeover.test.ts",

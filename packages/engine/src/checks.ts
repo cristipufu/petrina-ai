@@ -3,12 +3,12 @@
 // arrays, never a shell, and they run in the task's working copy without credentials.
 
 import { createHash, randomUUID } from "node:crypto";
-import { processHost } from "./process-host.js";
+import { processHost } from "@petrina/platform/process-host";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
-import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit, waitForProcessesToEnd } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit, waitForProcessesToEnd } from "@petrina/platform/process-tree";
 import { livePowerRecords, machineInterruption, type MachineRecords } from "./check-interruption.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */

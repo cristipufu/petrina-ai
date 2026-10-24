@@ -5,7 +5,7 @@ import { BACKGROUND } from "../src/prompts.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCommand } from "./commands.js";
+import { runCommand } from "@petrina/test-support/commands";
 
 describe("agent safety", () => {
   it("runs every tool in its own automatic safety mode", () => {

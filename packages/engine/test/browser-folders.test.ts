@@ -17,7 +17,7 @@ import { AgentRun } from "../src/acp-run.js";
 import { AgentBrowser, browserTempRoot, CLEANUP_NOTE } from "../src/browser.js";
 import { preserveCaptures } from "../src/captures.js";
 import { Engine } from "./engine.js";
-import { CLEANUP_INCOMPLETE } from "../src/process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { mayAskScreen } from "../src/prompts.js";
 import { opensBrowser } from "../src/turn.js";
 import { finish, makeWorld, removeDir, SLOW, taskOf, tempDir, testBrowserRoot, waitFor } from "./support.js";

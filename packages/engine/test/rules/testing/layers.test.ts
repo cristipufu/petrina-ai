@@ -90,6 +90,8 @@ it("keeps native persistence and shared test infrastructure independent of the a
   const host = "packages/engine/src/kernel.ts";
   for (const [owner, dependency] of [
     ["packages/storage", "../../engine/src/kernel.js"],
+    ["packages/platform", "../../engine/src/kernel.js"],
+    ["packages/platform", "../../test-support/src/environment.js"],
     ["packages/test-support", "../../engine/src/kernel.js"],
     ["packages/storage", "../../test-support/src/environment.js"],
   ]) {
@@ -99,6 +101,7 @@ it("keeps native persistence and shared test infrastructure independent of the a
     expect(errors.some(error => error.includes("including through types"))).toBe(true);
   }
   expect(packageBoundaries(new Map([["packages/storage/src/adapter.ts", "import { Database } from 'bun:sqlite';"],
+    ["packages/platform/src/process-host.ts", "import { execFile } from 'node:child_process';"],
     ["packages/test-support/src/fixtures.ts", "import { mkdir } from 'node:fs/promises';"]]))).toEqual([]);
 });
 

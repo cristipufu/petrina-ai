@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Store } from "@petrina/storage/store";
 import { WorkLog } from "@petrina/storage/worklog";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
+import { runCommand } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 
 const roots: string[] = [];
@@ -69,20 +70,24 @@ try {
   process.exitCode = 1;
 }
 `);
-  const child = Bun.spawn([process.execPath, wrapper], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const stop = new AbortController();
+  const child = runCommand([process.execPath, wrapper], { signal: stop.signal, timeoutMs: 10_000 * SLOW });
+  // Attach the failure handler before waiting for the ready marker. The caller still receives failures.
+  const settled = child.catch(() => undefined);
   let blocked = true;
   try {
     await waitFor(() => existsSync(marker), "the competing database open to begin");
     if (releases) {
       // Real time checks that SQLite waits rather than immediately failing startup. The
       // other process owns the wait, so releasing this connection cannot deadlock it.
-      expect(await Promise.race([child.exited.then(() => "exited"), Bun.sleep(100).then(() => "waiting")])).toBe("waiting");
+      expect(await Promise.race([child.then(() => "exited"), Bun.sleep(100).then(() => "waiting")])).toBe("waiting");
       blocker.run("ROLLBACK"); blocked = false;
       blocker.close();
     }
-    expect(await child.exited).toBe(releases ? 0 : 1);
-    expect(await new Response(child.stderr).text()).toBe("");
-    const result = JSON.parse(await new Response(child.stdout).text());
+    const completed = await child;
+    expect(completed.code).toBe(releases ? 0 : 1);
+    expect(completed.stderr).toBe("");
+    const result = JSON.parse(completed.stdout);
     if (releases) expect(result).toEqual({ outcome: "completed", saved: { text: "Saved before interruption" } });
     else {
       expect(result).toMatchObject({ outcome: "failed", message: expect.stringContaining("locked") });
@@ -95,7 +100,7 @@ try {
     try { expect(recovered.database.query("SELECT text FROM saved_work").get()).toEqual({ text: "Saved before interruption" }); }
     finally { recovered.close(); }
   } finally {
-    child.kill("SIGKILL"); await child.exited;
+    stop.abort(); await settled;
     if (blocked) { blocker.run("ROLLBACK"); blocker.close(); }
   }
 });

@@ -7,7 +7,7 @@ import { ReopenFailed } from "@petrina/orchestrator";
 import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { descendantsKnown } from "../src/process-tree.js";
+import { descendantsKnown } from "@petrina/platform/process-tree";
 import { BACKGROUND_FEATURES, backgroundConfig } from "../src/codex-background.js";
 import { removeDir, SLOW, tempDir, testBrowserRoot } from "./fixtures.js";
 import { claudeSandbox } from "../src/sandbox.js";

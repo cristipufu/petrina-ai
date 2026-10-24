@@ -1,8 +1,8 @@
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { FileFaults } from "./file-faults.js";
-import type { FileOperations } from "../src/file-operations.js";
+import { FileFaults } from "@petrina/test-support/file-faults";
+import type { FileOperations } from "@petrina/platform/file-operations";
 import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
 import { Engine } from "./engine.js";

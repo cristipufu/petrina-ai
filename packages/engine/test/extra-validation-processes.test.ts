@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
 import { currentSlow, waitFor } from "./fixtures.js";
-import * as processTree from "../src/process-tree.js";
+import * as processTree from "@petrina/platform/process-tree";
 import { ExtraContainer } from "../src/extra-container.js";
 import { ExtraFixtures } from "./extra-fixtures.js";
 

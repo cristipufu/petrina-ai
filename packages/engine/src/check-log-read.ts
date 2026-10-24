@@ -6,7 +6,7 @@ import { resolve, sep } from "node:path";
 import type { Result } from "./coordination.js";
 import { cursor, fingerprint, position, readText } from "./evidence-read.js";
 import { CHECK_EXIT_UNREPORTED, checkLogBeginning } from "./checks.js";
-import { CLEANUP_INCOMPLETE } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 
 export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
   return expected.device === actual.dev.toString() && expected.inode === actual.ino.toString();

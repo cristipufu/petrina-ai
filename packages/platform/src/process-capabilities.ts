@@ -1,11 +1,9 @@
-// Native process capabilities and effects. Callers retain ownership and cleanup policy.
-import { execFile, type ChildProcess } from "node:child_process";
-
-export type ProcessHelper = (command: string, args: readonly string[], options: { timeout: number; windowsHide: true }, done: (error: Error | null) => void) => Pick<ChildProcess, "kill">;
-const execute: ProcessHelper = (command, args, options, done) => execFile(command, [...args], options, error => done(error));
+// Capability and deadline decisions take explicit effects, without native imports.
+/** A started native helper. Callers retain ownership of the process identity. */
+export interface HelperProcess { kill(signal?: "SIGKILL"): unknown }
+export type ProcessHelper = (command: string, args: readonly string[], options: { timeout: number; windowsHide: true }, done: (error: Error | null) => void) => HelperProcess;
 /** Schedule a future deadline, returning its cancellation. */
 export type ProcessDeadline = (expired: () => void, ms: number) => () => void;
-const deadline: ProcessDeadline = (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
 
 export interface ProcessHost {
   /** POSIX process groups support group signals and group ownership observations. */
@@ -15,8 +13,7 @@ export interface ProcessHost {
   readonly stopTree?: (pid: number, timeoutMs: number) => Promise<boolean>;
 }
 
-/** Inject the native helper privately in contract tests; never replace process-wide commands. */
-export function createProcessHost(platform: NodeJS.Platform = process.platform, helper: ProcessHelper = execute, arm: ProcessDeadline = deadline): ProcessHost {
+export function processHostFor(platform: NodeJS.Platform, helper: ProcessHelper, arm: ProcessDeadline): ProcessHost {
   const groups = platform !== "win32";
   return {
     groups,
@@ -24,7 +21,7 @@ export function createProcessHost(platform: NodeJS.Platform = process.platform, 
     ...(!groups ? { stopTree: (pid: number, timeoutMs: number): Promise<boolean> => {
       if (!Number.isSafeInteger(pid) || pid <= 0 || !(timeoutMs > 0 && timeoutMs <= 2_147_483_647)) return Promise.resolve(false);
       return new Promise<boolean>(resolve => {
-        let cancel: (() => void) | undefined, child: Pick<ChildProcess, "kill"> | undefined, settled = false;
+        let cancel: (() => void) | undefined, child: HelperProcess | undefined, settled = false;
         const finish = (success: boolean) => {
           if (settled) return;
           settled = true; cancel?.(); resolve(success);
@@ -44,5 +41,3 @@ export function createProcessHost(platform: NodeJS.Platform = process.platform, 
     } } : {}),
   };
 }
-
-export const processHost = createProcessHost();

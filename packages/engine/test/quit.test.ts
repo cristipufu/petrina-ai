@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { Engine } from "./engine.js";
 import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
-import { parseChildState, readProcessList } from "../src/process-tree.js";
+import { parseChildState, readProcessList } from "@petrina/platform/process-tree";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor, waitForFile } from "./support.js";
 
 // Conversations started here keep their browsers, in this file's own browser folder.

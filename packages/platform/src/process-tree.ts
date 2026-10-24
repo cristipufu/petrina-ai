@@ -1,3 +1,7 @@
+import { ProcessObservations, readObservation, type ProcessListRead } from "./process-observations.js";
+import { parseDescendants, parseChildState, parseProcessState, type ChildState, type ObservedProcess } from "./process-snapshots.js";
+export { parseDescendants, parseChildState, parseProcessState, type ChildState, type ProcessState, type ObservedProcess } from "./process-snapshots.js";
+export type { ProcessListRead } from "./process-observations.js";
 import { execFile } from "node:child_process";
 
 export const CLEANUP_INCOMPLETE = "Petrina could not confirm every child process stopped. Some may still be running.";
@@ -8,43 +12,9 @@ export function descendants(roots: readonly number[], timeout = 4_000): Promise<
 }
 
 /** Retry failed or unconfirmed snapshots within a fixed budget. `undefined` means none was usable. */
-export async function descendantsKnown(
-  roots: readonly number[],
-  budget = 3_200,
-  read: (timeout: number) => Promise<string | undefined> = readProcessList,
-  attempts: readonly number[] = [1_000, 2_000],
-  requirePaused = false,
-): Promise<number[] | undefined> {
-  const started = Date.now();
-  for (const attempt of attempts) {
-    const left = budget - (Date.now() - started);
-    if (left < 50) break;
-    const stdout = await read(Math.min(attempt, left));
-    if (stdout !== undefined && (!requirePaused || pausedOrGone(stdout, roots))) return parseDescendants(stdout, roots);
-  }
-  return undefined;
-}
-
-/** A delayed successful read is unsafe if any known owner could still fork when it was listed. */
-function pausedOrGone(stdout: string, pids: readonly number[]): boolean {
-  for (const line of stdout.split("\n")) {
-    const [pid, , state] = line.trim().split(/\s+/);
-    if (pids.includes(Number(pid)) && !state?.startsWith("T") && !state?.startsWith("Z")) return false;
-  }
-  return true;
-}
-
-/** Parse one successful `ps` snapshot. An empty list is a valid result. */
-export function parseDescendants(stdout: string, roots: readonly number[]): number[] {
-  const children = new Map<number, number[]>();
-  for (const line of stdout.split("\n")) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-    if (pid && ppid) children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-  }
-  const found = new Set<number>(roots);
-  const queue = [...roots];
-  while (queue.length) for (const pid of children.get(queue.shift()!) ?? []) if (!found.has(pid)) found.add(pid), queue.push(pid);
-  return [...found].filter((pid) => !roots.includes(pid));
+export function descendantsKnown(roots: readonly number[], budget = 3_200, read: ProcessListRead = readProcessList,
+  attempts: readonly number[] = [1_000, 2_000], requirePaused = false): Promise<number[] | undefined> {
+  return observations.descendantsKnown(roots, budget, read, attempts, requirePaused);
 }
 
 /** Every process with its parent and its state, so one read serves both descendants and a child's state. */
@@ -75,48 +45,12 @@ export function processList(args: readonly string[], timeout: number, maxBuffer?
   }).catch(() => undefined); // A sandbox can reject the spawn synchronously.
 }
 
-/** A process-list read: the live one, or a test's stand-in. */
-export type ProcessListRead = (timeout: number) => Promise<string | undefined>;
+const observations = new ProcessObservations(() => Date.now());
 
-/** The read under way and the one queued behind it, per reader, so watchers asking together share them. */
-type SharedReads = { current?: { startedAt: number; result: Promise<string | undefined> }; next?: Promise<string | undefined> };
-const sharedReads = new WeakMap<ProcessListRead, SharedReads>();
-
-/**
- * A process-list read shared among the watchers asking at once. Many commands can close their output
- * together (a parallel suite's Git reads, a batch of product checks), and under the load that delays exit
- * reports each would otherwise start its own helper at the same moment, on a machine already slow to start
- * programs. One read per reader runs at a time. A read that started at or after `since`, the moment the
- * asker's child was last known to exist, is joined; an older read in flight could predate that child and
- * show it gone, so such an asker waits for the next read, which starts once the current one ends.
- */
+/** Share only a snapshot started after the request's last known child observation. */
 export function sharedRead(read: ProcessListRead, timeout: number, since: number): Promise<string | undefined> {
-  let state = sharedReads.get(read);
-  if (!state) sharedReads.set(read, (state = {}));
-  const shared = state;
-  const start = (): Promise<string | undefined> => {
-    const startedAt = Date.now();
-    const result: Promise<string | undefined> = read(timeout).catch(() => undefined).finally(() => { if (shared.current?.result === result) shared.current = undefined; });
-    shared.current = { startedAt, result };
-    return result;
-  };
-  if (!shared.current) return start();
-  if (shared.current.startedAt >= since) return shared.current.result;
-  shared.next ??= shared.current.result.then(() => { shared.next = undefined; return shared.current?.result ?? start(); });
-  return shared.next;
+  return observations.sharedRead(read, timeout, since);
 }
-
-/**
- * What the system says about a child whose exit the runtime has not reported: still `running`, `ended`
- * (gone, or defunct: finished but never collected), or `unknown` when the state could not be read.
- */
-export type ChildState = "running" | "ended" | "unknown";
-
-/** What one snapshot lists for a process: `running`, `finished` (defunct, not yet collected), `absent`, or `unknown`. */
-export type ProcessState = "running" | "finished" | "absent" | "unknown";
-
-/** One tracked process, its last observed state and the evidence that associated it with the work. */
-export type ObservedProcess = { pid: number; state: ProcessState; sources: readonly string[] };
 
 /** Every process with its group and state, for confirming a forced stop including defunct members. */
 export const readProcessGroups: ProcessListRead = (timeout) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
@@ -148,28 +82,11 @@ export async function waitForProcessesToEnd(targets: readonly number[], ms: numb
   let listing: Promise<string | undefined> | undefined;
   for (; Date.now() < end; await Bun.sleep(50)) {
     if (!targets.some(alive)) return { ended: true, processes: [] };
-    listing ??= Date.now() >= from ? read(Math.max(50, end - Date.now())).catch(() => undefined) : undefined;
+    listing ??= Date.now() >= from ? readObservation(read, Math.max(50, end - Date.now())) : undefined;
   }
   const present = targets.filter(alive);
   if (!present.length) return { ended: true, processes: [] };
   return presentStates(await listing, present);
-}
-
-/** One process's state from a process list snapshot. A complete list that lacks it says it is gone. */
-export function parseProcessState(stdout: string, pid: number): ProcessState {
-  for (const line of stdout.split("\n")) {
-    const [id, , state] = line.trim().split(/\s+/);
-    if (Number(id) !== pid) continue;
-    // An older snapshot without a state column cannot tell a defunct process from a running one.
-    return state === undefined ? "unknown" : state.startsWith("Z") ? "finished" : "running";
-  }
-  return "absent";
-}
-
-/** One child's state from a process list snapshot: gone and defunct both mean it ended. */
-export function parseChildState(stdout: string, pid: number): ChildState {
-  const state = parseProcessState(stdout, pid);
-  return state === "finished" || state === "absent" ? "ended" : state;
 }
 
 /**
@@ -180,7 +97,7 @@ export async function childState(pid: number, timeout = 3_000, read: ProcessList
   try { process.kill(pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return "ended"; }
   // Windows has no defunct processes: a child that still exists is running.
   if (process.platform === "win32") return "running";
-  const stdout = await read(timeout);
+  const stdout = await readObservation(read, timeout);
   return stdout === undefined ? "unknown" : parseChildState(stdout, pid);
 }
 

@@ -14,7 +14,7 @@ import { join } from "node:path";
 import type { CheckAttemptEvidence, CheckRun, DeepMutable, JourneyCheckReuse, JourneyProductCheck } from "@petrina/core";
 import { namedCheckFailures } from "./related-check-evidence.js";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
-import { CLEANUP_INCOMPLETE } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { withoutCredentials } from "./env.js";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait, SourceRefreshRequired, type MTask } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";

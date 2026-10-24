@@ -1,12 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { processHost } from "./process-host.js";
+import { processHost } from "@petrina/platform/process-host";
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
-import { descendants, descendantsKnown, parseProcessState, processList, type ObservedProcess, type ProcessState } from "./process-tree.js";
+import { descendants, descendantsKnown, parseProcessState, processList, type ObservedProcess, type ProcessState } from "@petrina/platform/process-tree";
 
 export class AgentBrowser {
   private closing?: Promise<void>;

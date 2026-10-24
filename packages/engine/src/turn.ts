@@ -17,7 +17,7 @@ import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox
 import { browserPrompt, buildPrompt, capacityContinuePrompt, continuePrompt, currentStepAssignment, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
 import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, ModelAtCapacity, sameCapacityModel, UsageLimited, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import { ADAPTERS, agentCommandFor } from "./tools.js";
-import { CLEANUP_INCOMPLETE } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "@petrina/storage/worklog";

@@ -2,7 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { Engine, fixtureEngineOptions, writeFixtureEngineOptions } from "./engine.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { FileFaults } from "./file-faults.js";
+import { FileFaults } from "@petrina/test-support/file-faults";
 import { AgentRun } from "../src/acp-run.js";
 import { ADAPTERS, agentCommandFor } from "../src/tools.js";
 import { FAKE_AGENT, Fakes, removeDir, tempDir } from "./fixtures.js";

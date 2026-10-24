@@ -5,7 +5,7 @@ import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { builderFindings, dueAnswers, exhaustedAcceptanceFailure, followingCall, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
-import { CLEANUP_INCOMPLETE } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";

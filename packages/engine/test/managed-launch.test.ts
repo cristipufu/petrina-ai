@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ADAPTERS } from "../src/tools.js";
 import { ownSession } from "../src/env.js";
 import { AgentRun } from "../src/acp-run.js";
-import { readProcessList } from "../src/process-tree.js";
+import { readProcessList } from "@petrina/platform/process-tree";
 import { backgroundCommand } from "../src/codex-background.js";
 import { Fakes, removeDir, SLOW, tempDir } from "./fixtures.js";
 

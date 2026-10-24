@@ -5,8 +5,8 @@
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
-import { commitAt, gitWith } from "./commands.js";
-import { testGitEnv } from "./test-git-env.js";
+import { commitAt, gitWith } from "@petrina/test-support/commands";
+import { testGitEnv } from "@petrina/test-support/test-git-env";
 
 export interface FakePr {
   number: number;

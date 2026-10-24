@@ -18,8 +18,8 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { CLEANUP_WORDS } from "@petrina/core";
 import { withGitConfig, withoutCredentials } from "./env.js";
 import { completeAll } from "./parallel.js";
-import { EXIT_GRACE_MS, lostExit } from "./process-tree.js";
-import { localFiles, type FileOperations } from "./file-operations.js";
+import { EXIT_GRACE_MS, lostExit } from "@petrina/platform/process-tree";
+import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
 
 export interface RunResult {
   code: number;
@@ -39,7 +39,7 @@ export interface StartFailure {
   systemCode?: string;
 }
 
-export { EXIT_GRACE_MS } from "./process-tree.js";
+export { EXIT_GRACE_MS } from "@petrina/platform/process-tree";
 export const EXIT_UNREPORTED = "Git finished, but the system did not report its exit";
 export const OUTPUT_INCOMPLETE = "Git finished, but its output did not finish arriving";
 export const OUTPUT_UNREADABLE = "Git's output could not be read";

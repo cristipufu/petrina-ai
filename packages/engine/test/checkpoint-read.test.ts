@@ -8,7 +8,7 @@ import { Coordination, type Result } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import { readText } from "../src/evidence-read.js";
 import { CHECK_EXIT_UNREPORTED, tidyOutput } from "../src/checks.js";
-import { CLEANUP_INCOMPLETE } from "../src/process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { checkCommandOutcome } from "../src/check-log-read.js";
 import { removeDir, tempDir } from "./fixtures.js";
 import { saveExactMessage } from "../src/exact-input.js";

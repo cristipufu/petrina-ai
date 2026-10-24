@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { runGit } from "../commands.js";
+import { runGit } from "@petrina/test-support/commands";
 import { isSource, impactPlan, type CoverageMap, type ImpactPlan } from "./impact.js";
 import { conventions as sourceConventions } from "./conventions.js";
 import { layerStructure, TEST_LAYER_INVENTORY } from "./layers.js";

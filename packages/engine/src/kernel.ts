@@ -1,5 +1,5 @@
 import { CheckQueue } from "./check-queue.js";
-import { localFiles, type FileOperations } from "./file-operations.js";
+import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator, type Selection } from "./usage-coordinator.js";

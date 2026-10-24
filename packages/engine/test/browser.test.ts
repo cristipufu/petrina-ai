@@ -1,6 +1,6 @@
 import { TEST_RUNNER } from "@petrina/test-support/run";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import type { ObservedProcess } from "../src/process-tree.js";
+import type { ObservedProcess } from "@petrina/platform/process-tree";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
@@ -15,7 +15,7 @@ import * as browserRecovery from "../src/browser.js";
 import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowserTemps } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
-import { parseDescendants, parseProcessState, processList, readProcessList } from "../src/process-tree.js";
+import { parseDescendants, parseProcessState, processList, readProcessList } from "@petrina/platform/process-tree";
 import { defunctProcess, engineEnv, Fakes, finishedHelper, firstLine, HARNESS, makeProduct, removeDir, runChecks, runCommand, SLOW, tempDir, testBrowserRoot, waitFor } from "./support.js";
 
 const root = tempDir("petrina-browser-");

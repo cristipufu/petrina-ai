@@ -3,7 +3,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import type { FileOperations } from "./file-operations.js";
+import type { FileOperations } from "@petrina/platform/file-operations";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";

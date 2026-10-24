@@ -17,7 +17,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { git, runGit } from "./commands.js";
+import { git, runGit } from "@petrina/test-support/commands";
 import { recordPrompt } from "./prompt-records.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";

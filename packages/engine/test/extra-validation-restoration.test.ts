@@ -7,7 +7,7 @@ import { git, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
-import * as processTree from "../src/process-tree.js";
+import * as processTree from "@petrina/platform/process-tree";
 import { ExtraContainer } from "../src/extra-container.js";
 import { CheckQueue } from "../src/check-queue.js";
 import { ExtraFixtures } from "./extra-fixtures.js";

@@ -6,7 +6,7 @@
 // bun fake-cli.ts <dir> <the tool's arguments...>
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "./commands.js";
+import { git } from "@petrina/test-support/commands";
 
 export interface CliScript {
   /** Stay open while this file exists. */

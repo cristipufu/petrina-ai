@@ -5,3 +5,8 @@ export * from "./fixture-json.js";
 export * from "./slow.js";
 export * from "./temp-parent.js";
 export * from "./process-lease.js";
+export * from "./commands.js";
+export * from "./repositories.js";
+export * from "./test-git-env.js";
+export * from "./defunct-process.js";
+export * from "./file-faults.js";

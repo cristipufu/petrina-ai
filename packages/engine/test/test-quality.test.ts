@@ -93,10 +93,22 @@ describe("test programs and the waits on them", () => {
   const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "@petrina/test-support/rejections";\n`;
 
   it("applies Bun assertion rules to every native workspace and accepts the shared rejection helper", () => {
-    for (const file of ["packages/storage/test/contracts/sqlite/calls.test.ts", "packages/test-support/test/contracts/processes/calls.test.ts"]) {
+    for (const file of ["packages/storage/test/contracts/sqlite/calls.test.ts", "packages/test-support/test/contracts/processes/calls.test.ts", "packages/platform/test/contracts/processes/calls.test.ts"]) {
       expect(found('await expect(work()).rejects.toThrow();', file)).toEqual([expect.stringContaining("do not use Bun's promise matchers")]);
       expect(found('import { rejectionOf } from "@petrina/test-support/rejections";\nasync function check() { await rejectionOf(work()); }', file)).toEqual([]);
     }
+  });
+
+  it("recognizes the shared command-failure collector only through its actual fixture import", () => {
+    const fixture = `import { runCommand } from "@petrina/test-support/commands";\n`;
+    const collector = `import { failureOf as failed } from "../../fixtures/command-failure.js";\n`;
+    expect(found(fixture + collector + `await failed(runCommand(args));`)).toEqual([]);
+    expect(found(fixture + collector + `failed(runCommand(args));`)).toContainEqual(expect.stringMatching(/await failed/));
+    for (const imported of [
+      `import { failureOf as failed } from "./unrelated.js";`,
+      `import type { failureOf as failed } from "../../fixtures/command-failure.js";`,
+      `import { type failureOf as failed } from "../../fixtures/command-failure.js";`,
+    ]) expect(found(fixture + imported + `\nawait failed(runCommand(args));`)).toContainEqual(expect.stringMatching(/await runCommand/));
   });
 
   it("keeps engine shutdown owned through cleanup and restart, including optional and computed calls", () => {
@@ -131,7 +143,7 @@ describe("test programs and the waits on them", () => {
       `Bun.spawnSync(["git", "status"]);`,
       `const sync = Bun.spawnSync; sync(["git"]);`,
       `const { spawnSync } = Bun;`,
-    ]) expect(found(source)).toEqual([expect.stringMatching(/^1: run test programs with runCommand or git from test\/commands/)]);
+    ]) expect(found(source)).toEqual([expect.stringMatching(/^1: run test programs with runCommand or git from @petrina\/test-support\/commands/)]);
     expect(found(`import { spawnSync } from "node:child_process";`, "apps/desktop/test/a.test.tsx")).toHaveLength(1);
     expect(found([
       `import { readFileSync } from "node:fs"; import { execFile, spawn } from "node:child_process";`,
@@ -154,8 +166,12 @@ describe("test programs and the waits on them", () => {
       `const world = { made: makeWorld("x") };`,
       `const label = \`at \${runCommand(["git", "--version"])}\`;`,
     ]) expect(found(`${fixtures}it("x", async () => { ${body} });`)).toEqual([expect.stringMatching(/^2: await (git|makeWorld|runCommand)\(…\), return it or collect it/)]);
+    for (const module of ["@petrina/test-support", "@petrina/test-support/repositories", "../../../src/repositories.js"]) {
+      expect(found(`import { makeProduct as prepare } from "${module}";\nprepare(root);`)).toEqual([expect.stringMatching(/^2: await prepare/)]);
+      expect(found(`import { makeProduct as prepare } from "${module}";\nawait prepare(root);`)).toEqual([]);
+    }
     expect(found(`import { git as run } from "./support.js";\nrun(repo, "add", ".");`)).toHaveLength(1);
-    expect(found(`import { git } from "../test/commands.js";\nconst alias = git;\nalias(repo, "add", ".");`)).toEqual([expect.stringMatching(/^3: await alias/)]);
+    expect(found(`import { git } from "@petrina/test-support/commands";\nconst alias = git;\nalias(repo, "add", ".");`)).toEqual([expect.stringMatching(/^3: await alias/)]);
     expect(found(`${fixtures}const head = (repo: string) => git(repo, "rev-parse", "HEAD");\nasync function commit(repo: string) { await git(repo, "commit", "-qm", "x"); }\nit("x", async () => { expect(head(repo)).toBe("abc"); commit(repo); });`))
       .toEqual([expect.stringMatching(/^4: await commit/), expect.stringMatching(/^4: await head/)]);
     expect(found(`${fixtures}it("x", async () => { engine.subscribe(async () => { await git(repo, "rev-parse", "HEAD"); }); w.setGitHub(async (github) => { github.offline = true; }); });`))

@@ -23,8 +23,9 @@ export interface SourceFacts {
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
 /** What the fixtures export as asynchronous work: their callers must wait for it. */
 const ASYNC_HELPERS = new Set(["git", "gitWith", "runGit", "runCommand", "commitAt", "makeProduct", "makeWorld", "repositorySeed", "remoteRef"]);
-const FIXTURE_MODULE = /^\.\.?\/(?:.*\/)?(?:fixtures|support|commands)(?:\.[jt]s)?$/;
+const FIXTURE_MODULE = /^(?:\.\.?\/(?:.*\/)?(?:fixtures|support|commands|repositories)(?:\.[jt]s)?|@petrina\/test-support(?:\/(?:fixtures|commands|repositories))?)$/;
 const REJECTIONS = /^(?:\.\.?\/(?:.*\/)?rejections(?:\.[jt]s)?|@petrina\/test-support\/rejections)$/;
+const COMMAND_FAILURE = /^\.\.?\/(?:.*\/)?fixtures\/command-failure(?:\.[jt]s)?$/;
 const COMBINATORS = new Set(["all", "allSettled", "race", "any"]);
 /** Array methods that use a callback's answer at once: a promise there is never waited for. */
 const SYNC_CALLBACKS = new Set(["forEach", "filter", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "sort"]);
@@ -115,8 +116,12 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
     if (statement.type === "ImportDeclaration" && statement.importKind !== "type" && /^(?:\.\.\/)+src\/parallel\.[jt]s$/.test(text(statement.source) ?? "")) {
       for (const specifier of statement.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type" && name(specifier.imported) === "completeAll") collectors.add(name(specifier.local)!);
     }
-    if (statement.type === "ImportDeclaration" && REJECTIONS.test(text(statement.source) ?? "")) {
-      for (const specifier of statement.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && ["rejectionOf", "expectRejection"].includes(name(specifier.imported) ?? "")) awaiting.set(name(specifier.local)!, [0]);
+    if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
+      const path = text(statement.source) ?? "";
+      const names = REJECTIONS.test(path) ? ["rejectionOf", "expectRejection"] : COMMAND_FAILURE.test(path) ? ["failureOf"] : [];
+      for (const specifier of statement.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type" && names.includes(name(specifier.imported) ?? "")) {
+        awaiting.set(name(specifier.local)!, [0]); tracked.add(name(specifier.local)!);
+      }
     }
     if (statement.type !== "ImportDeclaration" || statement.importKind === "type" || !FIXTURE_MODULE.test(text(statement.source) ?? "")) continue;
     for (const specifier of statement.specifiers as Node[]) {

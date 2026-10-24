@@ -3,7 +3,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fetchBranch, fetchRef, push, remoteRefs } from "../../../src/git.js";
 import { git, makeProduct, removeDir, remoteRef, tempDir, testGitEnv } from "../../fixtures.js";
-import { runGit } from "../../commands.js";
+import { runGit } from "@petrina/test-support/commands";
 import { plantedGitProgram } from "../../fixtures/git-program.js";
 import { unsafeGitSettings } from "../../fixtures/git-safety.js";
 

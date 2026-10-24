@@ -1,7 +1,7 @@
 import { expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { AgentRun } from "../../../src/acp-run.js";
-import { CLEANUP_INCOMPLETE } from "../../../src/process-tree.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { AgentBrowser } from "../../../src/browser.js";
 import { ENGINE_PROFILES } from "../../../src/tools.js";
 import { FAKE_AGENT, removeDir, tempDir, waitFor } from "../../fixtures.js";

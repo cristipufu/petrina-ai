@@ -1,8 +1,10 @@
-import { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
+export { defunctProcess } from "@petrina/test-support/defunct-process";
+export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
+import { tempDir, removeDir } from "@petrina/test-support/fixtures";
 export { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
 import { ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { State } from "@petrina/core";
 import type { Scenario } from "./fake-agent.js";
@@ -11,13 +13,12 @@ import { shortTempParent, TEST_BROWSERS } from "@petrina/test-support/temp-paren
 import type { MachineRecords } from "../src/check-interruption.js";
 import { runChecks as runProductChecks } from "../src/checks.js";
 import { PromptReader, type PromptRecord } from "./prompt-records.js";
-import { commitAt, git } from "./commands.js";
+import { commitAt } from "@petrina/test-support/commands";
 import { currentSlow } from "@petrina/test-support/slow";
-import { processList } from "../src/process-tree.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
-export { testGitEnv } from "./test-git-env.js";
+export { testGitEnv } from "@petrina/test-support/test-git-env";
 export { SLOW, currentSlow } from "@petrina/test-support/slow";
-export { CommandFailure, commitAt, git, gitWith, runCommand, runGit } from "./commands.js";
+export { CommandFailure, commitAt, git, gitWith, runCommand, runGit } from "@petrina/test-support/commands";
 
 /** The real CLI parser with the canonical fixture launch policy; no native account readers. */
 export const CLI = join(import.meta.dir, "cli.ts");
@@ -38,71 +39,6 @@ export function testBrowserRoot(): string {
   return realpathSync.native(mkdtempSync(owned ? `${owned}${sep}` : join(shortTempParent(), "pb-")));
 }
 
-/** A product with a GitHub-like origin: a bare repository and a clone of it, on main. */
-export async function makeProduct(root: string): Promise<string> {
-  const seed = await repositorySeed(undefined, true);
-  const origin = join(root, "origin.git");
-  const clone = join(root, "clone");
-  mkdirSync(root, { recursive: true });
-  cpSync(seed.origin, origin, { recursive: true });
-  cpSync(seed.clone, clone, { recursive: true });
-  await git(clone, "remote", "set-url", "origin", origin);
-  return clone;
-}
-
-/** Reuse only the immutable starting commit. Each fixture copies its objects, refs and config. */
-interface RepositorySeed { readonly path: string; readonly origin: string; readonly clone: string; readonly head: string }
-// Concurrent fixtures asking for one recipe share its preparation while it runs. Only a completed seed is
-// ever handed out; a failed one leaves no entry and no folder behind, so the next fixture prepares it afresh.
-const repositorySeeds = new Map<string, Promise<RepositorySeed>>();
-const seedFolders = new Set<string>();
-export function repositorySeed(version?: string, versionFile = false, objectFormat?: "sha1" | "sha256"): Promise<RepositorySeed> {
-  const key = JSON.stringify([version ?? "", versionFile, objectFormat]);
-  const saved = repositorySeeds.get(key);
-  if (saved) return saved;
-  const path = tempDir("petrina-repository-seed-");
-  seedFolders.add(path);
-  const preparing = prepareSeed(path, version, versionFile, objectFormat).catch((error: unknown) => {
-    if (repositorySeeds.get(key) === preparing) repositorySeeds.delete(key);
-    removeDir(path);
-    // A folder that could not be removed yet stays for the exit cleanup.
-    if (!existsSync(path)) seedFolders.delete(path);
-    throw new Error(`Could not prepare the starting repository in ${path}: ${error instanceof Error ? error.message : String(error)}`);
-  });
-  repositorySeeds.set(key, preparing);
-  return preparing;
-}
-
-async function prepareSeed(path: string, version: string | undefined, versionFile: boolean, objectFormat: "sha1" | "sha256" | undefined): Promise<RepositorySeed> {
-  const source = join(path, "source"), origin = join(path, "origin.git"), clone = join(path, "clone");
-  mkdirSync(source);
-  await git(source, "init", "-q", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
-  writeFileSync(join(source, "README.md"), "# Demo\n");
-  if (versionFile) writeFileSync(join(source, "VERSION"), "1.0.0\n");
-  if (version) writeFileSync(join(source, "package.json"), `${JSON.stringify({ name: "demo", version }, null, 2)}\n`);
-  await git(source, "add", ".");
-  await git(source, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "-m", "init");
-  if (versionFile) await git(path, "clone", "-q", "--bare", "--no-hardlinks", source, origin);
-  else {
-    await git(path, "init", "-q", "--bare", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []), origin);
-    await git(source, "push", "-q", origin, "main");
-  }
-  // Files check out exactly as tests write them, whatever line endings this machine's own Git settings ask for: Git for
-  // Windows converts text to CRLF by default. Copies of the clone carry its settings and their linked working copies
-  // share them, so Petrina's own Git keeps files as written there too. A test exercising conversion sets its own.
-  await git(path, "clone", "-q", "--no-hardlinks", "-c", "user.email=test@example.com", "-c", "user.name=Test", "-c", "core.autocrlf=false", "-c", "core.eol=lf", origin, clone);
-  if (versionFile) await git(clone, "remote", "set-url", "origin", ADDRESS);
-  else {
-    // Worlds originally pushed an initial commit to a bare repository by path, without tracking
-    // refs or upstream configuration. Product fixtures are real clones and keep those defaults.
-    await git(clone, "remote", "remove", "origin");
-    await git(clone, "remote", "add", "origin", ADDRESS);
-  }
-  return Object.freeze({ path, origin, clone, head: await git(source, "rev-parse", "HEAD") });
-}
-// Standalone diagnostic scripts import these helpers too. The parallel runner owns cleanup when
-// Bun's isolated workers bypass exit hooks; ordinary scripts clean their seeds on exit.
-process.on("exit", () => { for (const path of seedFolders) removeDir(path); });
 
 /**
  * Stops at once, saying why, when this machine holds back programs written a moment ago. Take-over
@@ -266,7 +202,7 @@ export class Fakes {
 export const FAKE_AGENT = join(import.meta.dir, "fake-agent.ts");
 export const FAKE_GH = join(import.meta.dir, "fake-gh.ts");
 export const REPO = "acme/demo";
-export const ADDRESS = "https://github.com/acme/demo.git";
+
 
 /**
  * The commit a working copy's HEAD names at this moment, read from Git's own files without starting a program:
@@ -306,86 +242,6 @@ export function finishedHelper(): ChildProcess {
   return Object.defineProperty(new ChildProcess(), "stdout", { value: { readableEnded: true } });
 }
 
-/**
- * A real defunct process in its own group. Its Bun parent pauses before the test ends the child,
- * so it cannot collect the exit until release resumes it. The parent then reaps its own child:
- * neither shell job control, an extra interpreter nor a container's PID 1 is responsible for cleanup.
- */
-export async function defunctProcess(beforeRead?: (holderPid: number) => void): Promise<{ pid: number; holderPid: number; self: string; release(): Promise<void> }> {
-  if (process.platform === "win32") throw new Error("Defunct processes are a POSIX-only boundary; use the Windows termination controls on Windows.");
-  const root = tempDir("petrina-defunct-"), record = join(root, "child");
-  const sleep = Bun.which("sleep");
-  if (!sleep) { removeDir(root); throw new Error("The native process fixture requires the system's sleep program."); }
-  const program = `
-    const { writeFileSync, renameSync } = require("node:fs");
-    const child = Bun.spawn([${JSON.stringify(sleep)}, "120"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-    const exited = child.exited;
-    try {
-      writeFileSync(${JSON.stringify(record + ".tmp")}, String(child.pid));
-      renameSync(${JSON.stringify(record + ".tmp")}, ${JSON.stringify(record)});
-      process.kill(process.pid, "SIGSTOP");
-      await exited;
-    } finally { child.kill("SIGKILL"); await exited; }
-  `;
-  const holder = Bun.spawn([process.execPath, "-e", program], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  const holderExited = holder.exited;
-  let pid: number | undefined, released: Promise<void> | undefined;
-  const present = (id: number) => {
-    try { process.kill(id, 0); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
-  };
-  const childNumber = () => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined;
-  const holderPaused = async () => {
-    const rows = (await processList(["-A", "-o", "pid=,ppid=,pgid=,stat="], 4_000 * currentSlow()))?.split("\n").map(line => line.trim().split(/\s+/));
-    return rows?.some(([id, , , state]) => Number(id) === holder.pid && state?.startsWith("T"));
-  };
-  const release = () => released ??= (async () => {
-    try {
-      if (pid === undefined) {
-        const saved = await waitFor(() => {
-          const id = childNumber();
-          return id ? { id } : holder.exitCode !== null ? {} : undefined;
-        }, "the owned child's complete cleanup record or failed setup's exit", 5_000);
-        pid = saved.id;
-      }
-      if (pid !== undefined) try { process.kill(pid, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-      // A setup failure may precede the pause. Sending CONT too soon would be lost when the
-      // parent reaches STOP, so observe that boundary before letting it reap and exit normally.
-      if (holder.exitCode === null) {
-        await waitFor(holderPaused, "the owned holder's pause before cleanup", 5_000);
-        // Bun's subprocess kill handle does not deliver CONT to a stopped child.
-        // This is the live owned holder, observed paused above, never a saved process number.
-        process.kill(holder.pid, "SIGCONT");
-      }
-      await waitFor(() => holder.exitCode !== null, "the owned holder to reap its child and exit", 5_000);
-    } finally {
-      if (holder.exitCode === null) {
-        try { process.kill(holder.pid, "SIGCONT"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-        holder.kill("SIGKILL");
-      }
-      await holderExited;
-    }
-    if (pid !== undefined) await waitFor(() => !present(pid!) && !present(-pid!), "the owned defunct process and group to be collected", 5_000);
-    removeDir(root);
-  })();
-  try {
-    beforeRead?.(holder.pid);
-    pid = await waitFor(childNumber, "the owned child's complete process record", 5_000);
-    const target = pid;
-    await waitFor(async () => {
-      const rows = (await processList(["-A", "-o", "pid=,ppid=,pgid=,stat=,comm="], 4_000 * currentSlow()))?.split("\n").map(line => line.trim().split(/\s+/));
-      const parent = rows?.find(([id]) => Number(id) === holder.pid), child = rows?.find(([id]) => Number(id) === target);
-      return parent && parent[3]?.startsWith("T") && child && Number(child[1]) === holder.pid && Number(child[2]) === target;
-    }, "the owned holder to pause before its child ends", 10_000);
-    process.kill(target, "SIGKILL");
-    const self = await waitFor(async () => {
-      const rows = (await processList(["-A", "-o", "pid=,pgid=,stat="], 4_000 * currentSlow()))?.split("\n").map(line => line.trim().split(/\s+/));
-      return rows?.some(([id, group, state]) => Number(id) === target && Number(group) === target && state?.startsWith("Z") && present(target))
-        ? rows.find(([id]) => Number(id) === process.pid)?.join(" ") : undefined;
-    }, "the real owned process and group to remain defunct", 10_000);
-    return { pid: target, holderPid: holder.pid, self, release };
-  } catch (error) { await release(); throw error; }
-}
 
 /** Synthetic failures' sleep evidence: no records, and this Mac's power log is never read. */
 export const noMachineRecords: MachineRecords = async () => "";

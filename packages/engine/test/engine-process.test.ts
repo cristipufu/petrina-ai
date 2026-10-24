@@ -1,6 +1,6 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { childState } from "../src/process-tree.js";
+import { childState } from "@petrina/platform/process-tree";
 import { EngineProcess, removeDir, tempDir } from "./support.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 

@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test": "bun src/run.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@petrina/platform": "workspace:*"
+  },
   "devDependencies": {
     "@types/bun": "1.3.4",
     "typescript": "7.0.2"

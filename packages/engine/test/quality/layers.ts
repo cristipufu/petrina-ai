@@ -51,7 +51,7 @@ export function layerBoundaries(files: ReadonlyMap<string, string>): string[] {
 export function packageBoundaries(files: ReadonlyMap<string, string>): string[] {
   const pure = new Set(["packages/core", "packages/orchestrator"]);
   const allowed = new Map<string, readonly string[]>([["packages/core", []], ["packages/orchestrator", ["packages/core"]],
-    ["packages/storage", ["packages/core"]], ["packages/test-support", []]]);
+    ["packages/storage", ["packages/core"]], ["packages/platform", []], ["packages/test-support", ["packages/platform"]]]);
   const roots = [...files.keys()].filter(file => isSource(file) && [...allowed.keys()].some(workspace => file.startsWith(`${workspace}/src/`)));
   const errors = dependencyBoundaries(files, roots.filter(file => pure.has(workspaceOf(file)!)).map(file => ({ file, label: "pure package" })));
   for (const file of roots) {

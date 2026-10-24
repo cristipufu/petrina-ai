@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Task } from "@petrina/core";
 import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, parseCommand } from "../src/checks.js";
 import { checkCommandOutcome } from "../src/check-log-read.js";
-import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
+import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "@petrina/platform/process-tree";
 import { Engine } from "./engine.js";
 import { Store } from "@petrina/storage/store";
 import { defunctProcess, EngineProcess, Fakes, HARNESS, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir, waitFor } from "./support.js";

@@ -4,23 +4,19 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { childState, processList, type ProcessListRead } from "../src/process-tree.js";
-import { CLEANUP_MS, CommandFailure, commitAt, git, gitWith, runCommand, runGit, type Started } from "./commands.js";
-import { currentSlow, defunctProcess, makeProduct, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
-import { MOST_SLOW } from "@petrina/test-support/slow";
-import { rejectionOf } from "@petrina/test-support/rejections";
+import { childState, processList, type ProcessListRead } from "@petrina/platform/process-tree";
+import { CLEANUP_MS, runCommand, type Started } from "@petrina/test-support/commands";
+import { removeDir, tempDir, waitFor } from "../../../src/fixtures.js";
+import { currentSlow, SLOW, MOST_SLOW } from "@petrina/test-support/slow";
+import { rejectionOf } from "../../../src/rejections.js";
+import { failureOf } from "../../fixtures/command-failure.js";
+import { defunctProcess } from "../../../src/defunct-process.js";
 import { createProcessLease } from "@petrina/test-support/process-lease";
 
 const root = tempDir("petrina-commands-");
 afterAll(() => removeDir(root));
 const bun = (script: string) => [process.execPath, "-e", script];
 const unix = process.platform !== "win32";
-
-async function failureOf(work: Promise<unknown>): Promise<CommandFailure> {
-  const error = await rejectionOf(work);
-  expect(error).toBeInstanceOf(CommandFailure);
-  return error as CommandFailure;
-}
 
 /** A running process's state from the system's list; "unknown" where it cannot be read. */
 const alive = async (pid: number) => (await childState(pid)) === "running";
@@ -757,41 +753,5 @@ await Bun.sleep(60_000);`;
     }));
     expect(failure.reason).toBe("unreadable");
     expect(failure.message).toContain("could not have its output read (pipe broke)");
-  });
-});
-
-describe("Git in the tests' private environment", () => {
-  it("returns trimmed or exact output, passes input and fails a non-zero exit with everything Git said", async () => {
-    const clone = await makeProduct(join(root, "git"));
-    expect(await git(clone, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
-    expect(await gitWith({ cwd: clone, raw: true }, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main\n");
-    const blob = await gitWith({ cwd: clone, input: "stored from input\n" }, "hash-object", "-w", "--stdin");
-    expect(await git(clone, "cat-file", "blob", blob)).toBe("stored from input");
-    const failure = await failureOf(git(clone, "rev-parse", "--verify", "no-such-ref"));
-    expect(failure.reason).toBe("exit");
-    expect(failure.code).toBe(128);
-    expect(failure.message).toContain(`git rev-parse --verify no-such-ref failed (128) in ${clone}`);
-    expect(failure.message).toContain("fatal: Needed a single revision");
-    expect((await runGit(["rev-parse", "--verify", "--quiet", "no-such-ref"], { cwd: clone })).code).toBe(1);
-  });
-
-  it("names a missing ref absent only when Git confirms it, and fails every other answer", async () => {
-    const clone = await makeProduct(join(root, "refs"));
-    const origin = join(root, "refs", "origin.git");
-    expect(await commitAt(origin, "refs/heads/main")).toBe(await git(clone, "rev-parse", "HEAD"));
-    expect(await commitAt(origin, "refs/heads/no-such-branch")).toBeUndefined();
-    const broken = await failureOf(commitAt(join(root, "not-a-repository"), "refs/heads/main"));
-    expect(broken.reason).toBe("exit");
-    expect(broken.message).toContain("not a git repository");
-  });
-
-  it.skipIf(!unix)("fails a lookup whose Git never finishes instead of naming the ref absent", async () => {
-    const origin = join(root, "refs", "origin.git");
-    const stub = join(root, "stuck-git");
-    mkdirSync(stub, { recursive: true });
-    writeFileSync(join(stub, "git"), "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
-    const late = await failureOf(commitAt(origin, "refs/heads/no-such-branch", { env: { ...testGitEnv(), PATH: `${stub}:${process.env.PATH}` }, timeoutMs: 300 }));
-    expect(late.reason).toBe("timeout");
-    expect(late.cleanup).toBe("confirmed");
   });
 });
