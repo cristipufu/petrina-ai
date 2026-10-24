@@ -8,5 +8,6 @@ These files preserve the requirements or observations recorded during earlier ta
 | [Shared-task brief](shared-tasks.md) | [Tasks across products](../architecture/repositories.md#tasks-across-products) |
 | [Compact coordinator report measurement](compact-coordinator-report-measurement-20261022.md) | [Checkpoint and review reports](../coordination-reports.md) |
 | [Header comparison](header-follow-up.md) | [Current UX](../ux.md); the comparison applies only to its recorded commits |
+| [Test-foundation investigation record](test-foundation-investigation-20261024.md) | [Active repair plan](../plans/test-foundation.md); observations apply only to their recorded revisions |
 
 Consult an archived file only when tracing its original task or evidence. Put durable repository working rules in AGENTS.md with approval, current behavior in its owning contract, and new regression cases in tests. Do not promote historical content into instructions.
