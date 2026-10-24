@@ -29,6 +29,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   Socket.instances = [];
   vi.stubGlobal('WebSocket', Socket);
+  // Recovery timers probe health too. Never consult a real process at the fixture address.
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('The scripted engine is unreachable')));
   sessionStorage.clear();
   sessionStorage.setItem('petrina.engine', JSON.stringify(address));
   localStorage.clear();
@@ -87,6 +89,9 @@ describe('the real browser connection', () => {
       socket.close(); notify.mockClear();
       const disconnected = client.getState();
       await advance(15_000); expect(client.getState()).toBe(disconnected);
+      expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:43210/api/health'), expect.objectContaining({
+        headers: { authorization: `Bearer ${address.token}` }, signal: expect.any(AbortSignal),
+      }));
     } finally { client.dispose(); }
   });
   it('acknowledges after processing state and keeps background inbox updates moving without a paint', async () => {
