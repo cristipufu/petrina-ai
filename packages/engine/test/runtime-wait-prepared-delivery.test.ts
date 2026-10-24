@@ -41,7 +41,7 @@ async function fixture(mode: DeliveryMode = "pull-request", prepare = true) {
   scope.work.report = { summary: "Improved the product", title: "Improve the product", changes: ["An approved improvement"], description: "The approved product improvement" };
   const log = join(world.dir, "checks.jsonl"), script = join(world.dir, "check.ts");
   writeFileSync(script, `import { appendFileSync, existsSync, writeFileSync } from "node:fs";
-import { git } from ${JSON.stringify(join(import.meta.dir, "commands.ts"))};
+import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
 if (process.argv[3]) {
   writeFileSync(process.argv[3] + ".started", "The final check is running");
   while (!existsSync(process.argv[3] + ".release")) await Bun.sleep(10);

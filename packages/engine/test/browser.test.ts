@@ -561,7 +561,7 @@ it.skipIf(process.platform === "win32")("keeps browser ownership when a dead con
   const script = join(directory, "owner.ts");
   writeFileSync(script, `import { writeFileSync, existsSync, readdirSync } from "node:fs";
 import { AgentBrowser } from ${JSON.stringify(join(import.meta.dir, "../src/browser.ts"))};
-import { descendantsKnown } from ${JSON.stringify(join(import.meta.dir, "../src/process-tree.ts"))};
+import { descendantsKnown } from ${JSON.stringify(import.meta.resolve("@petrina/platform/process-tree"))};
 import { Client } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/index.js"))};
 import { StreamableHTTPClientTransport } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/streamableHttp.js"))};
 const registry = ${JSON.stringify(join(directory, "registry"))};

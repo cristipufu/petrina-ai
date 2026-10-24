@@ -22,7 +22,7 @@ export interface SourceFacts {
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
 /** What the fixtures export as asynchronous work: their callers must wait for it. */
-const ASYNC_HELPERS = new Set(["git", "gitWith", "runGit", "runCommand", "commitAt", "makeProduct", "makeWorld", "repositorySeed", "remoteRef"]);
+const ASYNC_HELPERS = new Set(["git", "gitWith", "runGit", "runCommand", "commitAt", "makeProduct", "makeWorld", "repositorySeed", "remoteRef", "waitFor", "waitForFile"]);
 const FIXTURE_MODULE = /^(?:\.\.?\/(?:.*\/)?(?:fixtures|support|commands|repositories)(?:\.[jt]s)?|@petrina\/test-support(?:\/(?:fixtures|commands|repositories))?)$/;
 const REJECTIONS = /^(?:\.\.?\/(?:.*\/)?rejections(?:\.[jt]s)?|@petrina\/test-support\/rejections)$/;
 const COMMAND_FAILURE = /^\.\.?\/(?:.*\/)?fixtures\/command-failure(?:\.[jt]s)?$/;

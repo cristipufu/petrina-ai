@@ -170,6 +170,8 @@ describe("test programs and the waits on them", () => {
       expect(found(`import { makeProduct as prepare } from "${module}";\nprepare(root);`)).toEqual([expect.stringMatching(/^2: await prepare/)]);
       expect(found(`import { makeProduct as prepare } from "${module}";\nawait prepare(root);`)).toEqual([]);
     }
+    expect(found(`import { waitForFile as ready } from "@petrina/test-support/fixtures";\nready(marker, { during: work });`)).toContainEqual(expect.stringMatching(/await ready/));
+    expect(found(`import { waitForFile as ready } from "@petrina/test-support/fixtures";\nawait ready(marker, { during: work });`)).toEqual([]);
     expect(found(`import { git as run } from "./support.js";\nrun(repo, "add", ".");`)).toHaveLength(1);
     expect(found(`import { git } from "@petrina/test-support/commands";\nconst alias = git;\nalias(repo, "add", ".");`)).toEqual([expect.stringMatching(/^3: await alias/)]);
     expect(found(`${fixtures}const head = (repo: string) => git(repo, "rev-parse", "HEAD");\nasync function commit(repo: string) { await git(repo, "commit", "-qm", "x"); }\nit("x", async () => { expect(head(repo)).toBe("abc"); commit(repo); });`))

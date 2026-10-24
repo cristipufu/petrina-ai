@@ -319,7 +319,7 @@ for (const [signal, code, scenario, ran] of [
   const root = await fixture(scenario);
   const runner = Bun.spawn(command(root), { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" });
   const stdout = new Response(runner.stdout).text();
-  await waitForFile(join(root, "started"), 20_000);
+  await waitForFile(join(root, "started"), { timeoutMs: 20_000 });
   const pid = Number(readFileSync(join(root, "started"), "utf8"));
   runner.kill(signal);
   expect(await runner.exited).toBe(code);

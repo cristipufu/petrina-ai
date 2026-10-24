@@ -1,3 +1,4 @@
+import { completeAll as probes } from "../src/parallel.js";
 import { afterAll, expect, it } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -82,13 +83,6 @@ async function probe(label: string, args: string[], cwd: string): Promise<{ code
   try { body = readFileSync(report, "utf8"); }
   catch { throw new Error(`The ${label} probe wrote no report (exit ${finished[0]}):\n${output}`); }
   return { code: finished[0], output: `${label}, ${Date.now() - started}ms:\n${output}`, outcomes: outcomes(body, output) };
-}
-
-/** Every probe finishes and stops its workers before the first failure is reported. */
-async function probes<T>(runs: Promise<T>[]): Promise<T[]> {
-  const results = await Promise.allSettled(runs);
-  for (const result of results) if (result.status === "rejected") throw result.reason;
-  return results.map(result => (result as PromiseFulfilledResult<T>).value);
 }
 
 it("an explicit command limit holds through the runner and direct Bun with shared helpers, and a test's own limit still wins", async () => {

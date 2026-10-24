@@ -305,7 +305,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
     await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Set the original review context");
     product.checksBy = "coordinator";
     // A product check: the engine's check runner bounds this program and stops its whole process group.
-    product.checks = [{ name: "Exact code", argv: [process.execPath, "-e", `import { testGitEnv } from ${JSON.stringify(join(import.meta.dir, "test-git-env.ts"))}; console.log('CHECKED-CODE:' + Bun.spawnSync(['git','rev-parse','HEAD'], { env: testGitEnv() }).stdout.toString().trim()); if (require('node:fs').existsSync(${JSON.stringify(join(root, "fail-check"))})) process.exit(1);`], why: "Prove checks run on the current code" }];
+    product.checks = [{ name: "Exact code", argv: [process.execPath, "-e", `import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))}; console.log('CHECKED-CODE:' + await git(process.cwd(), 'rev-parse', 'HEAD')); if (require('node:fs').existsSync(${JSON.stringify(join(root, "fail-check"))})) process.exit(1);`], why: "Prove checks run on the current code" }];
   }
   const taskId = engine.addTask({ productId, title: "Reuse independent reviewers", description: "ORIGINAL-REVIEW-REQUEST [no-check]", approvePlan: true, ...(second ? { worksOn: [productId, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "local" as const })) } : {}) });
   const task = () => engine.task(taskId)!;

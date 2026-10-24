@@ -2602,6 +2602,15 @@
       "area": "delivery",
       "review": "Twelve actual-controller cases with production-created single/shared tasks and the existing typed repair host: proof invalidation, independent budgets, asymmetric renewal bounded at two, affected owner/owed stage routing, unrepairable and already-published owners, lead ordering, genuine misses and bound preparation reset. No Engine, Git, SQLite, subprocess or account. The first pass reproduced two old published-owner allowance resets; guarded single-owner reset fixes both while unpublished shared owners still renew.",
       "validation": "delivery-return-first.json: 10 pass / 2 regression failures; delivery-return-reviewed.json: all 102 package cases pass; delivery-return-extraction.json proves the routing body after explicit substitutions and the exact shared preparation reset; delivery-return-neighborhood.xml: 257 native engine cases / 3,023 assertions / five files / 104.94s. Workspace types and conventions pass."
+    },
+    {
+      "file": "packages/test-support/test/contracts/filesystem/waits.test.ts",
+      "status": "reviewed",
+      "review": "Real private-file progress controls retain file-only deadlines and distinguish observed progress, completed work, rejected work and undefined rejection reasons. Uses the canonical fixture wait; no Engine, Git or native account.",
+      "validation": {
+        "artifact": "platform-progress-waits.xml",
+        "qualification": "Six passes; the two deadline/runner controls and 132 affected engine cases also pass. Full qualification remains due."
+      }
     }
   ],
   "rust": [

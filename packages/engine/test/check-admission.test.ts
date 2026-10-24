@@ -22,7 +22,7 @@ async function fixture() {
   const initial = await git(clone, "rev-parse", "HEAD");
   const log = join(root, "checks.jsonl"), script = join(root, "check.ts");
   writeFileSync(script, `import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { git } from ${JSON.stringify(join(import.meta.dir, "commands.ts"))};
+import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
 const [log, root, command] = process.argv.slice(2);
 const name = readFileSync("task-name", "utf8");
 const sha = await git(process.cwd(), "rev-parse", "HEAD");
@@ -69,7 +69,7 @@ for (const paused of [false, true]) it(`prepares queued review checks on current
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second);
     await waitFor(() => f.engine.checkQueue.waiting === 1, "second review checks to queue");
     const queuedHead = await git(second.copy, "rev-parse", "HEAD");
@@ -110,7 +110,7 @@ it("returns a queued conflict to the Builder without commands and hands the plac
   const firstReview = f.review(first);
   let conflictReview: ReturnType<typeof f.review> | undefined, nextReview: ReturnType<typeof f.review> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     conflictReview = f.review(conflict); await waitFor(() => f.engine.checkQueue.waiting === 1, "conflicting review checks to queue");
     nextReview = f.review(next); await waitFor(() => f.engine.checkQueue.waiting === 2, "next review checks to queue");
     const latest = await f.land(true);
@@ -136,7 +136,7 @@ it("captures changed check definitions at admission and preserves the earlier ru
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second); await waitFor(() => f.engine.checkQueue.waiting === 1, "second review checks to queue");
     await f.land(); f.define("new-required-command"); f.release();
     expect(await firstReview).toBe("continue"); expect(await secondReview).toBe("continue");
@@ -169,7 +169,7 @@ it("gives up check capacity while new check inputs need discovery, then rejoins 
   let follower: Promise<() => void> | undefined, late: Promise<() => void> | undefined;
   let followerPlace: (() => void) | undefined, latePlace: (() => void) | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second); await waitFor(() => f.engine.checkQueue.waiting === 1, "second review to queue before discovery");
     const product = f.engine.productOf(second.scope)!;
     product.checksBy = "finder"; product.checksFingerprint = checksFingerprint(second.copy);
@@ -206,7 +206,7 @@ it("captures a newly configured commit hook before a queued review starts", asyn
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second); await waitFor(() => f.engine.checkQueue.waiting === 1, "second review to queue before the hook changes");
     await f.land();
     const folder = join(f.root, "hooks"), hookLog = join(f.root, "hook-runs"); mkdirSync(folder);
@@ -238,7 +238,7 @@ for (const savedTester of [false, true]) it(`acceptance ${savedTester ? "finishe
   const firstReview = f.review(first);
   let driving: Promise<void> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     if (savedTester) await f.land();
     f.engine.startDriver(acceptance.task.id, true); driving = f.engine.settling.get(acceptance.task.id)!;
     if (savedTester) {
@@ -285,7 +285,7 @@ for (const admission of ["queued", "immediate", "conflict"] as const) it(`update
   const firstReview = first ? f.review(first) : undefined;
   let driving: Promise<void> | undefined;
   try {
-    if (firstReview) await waitForFile(join(f.root, "first.started"));
+    if (firstReview) await waitForFile(join(f.root, "first.started"), { during: firstReview });
     f.engine.startDriver(acceptance.task.id, true); driving = f.engine.settling.get(acceptance.task.id)!;
     await Promise.race([entered.promise, driving.then(() => { throw new Error(`Acceptance ended before its saved discovery: ${acceptance.task.statusLine}`); })]);
     expect(updates.mock.calls.filter(call => call[0].task.id === acceptance.task.id)).toHaveLength(0);
@@ -324,7 +324,7 @@ it("updates a queued delivery check before capturing the change the coordinator 
   const firstReview = f.review(first);
   let driving: Promise<void> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     f.engine.startDriver(delivery.task.id, true); driving = f.engine.settling.get(delivery.task.id)!;
     await waitFor(() => f.engine.checkQueue.waiting === 1, "delivery-check commands to queue");
     const latest = await f.land(); f.release(); expect(await firstReview).toBe("continue"); await driving;
@@ -354,7 +354,7 @@ it("retains an earlier failure and its return allowance until the combined curre
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
   try {
-    await waitForFile(join(f.root, "first.started"));
+    await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second); await waitFor(() => f.engine.checkQueue.waiting === 1, "repaired review to queue");
     await f.land();
     expect(second.scope.work.checks!.results[0]!.ok).toBe(false);

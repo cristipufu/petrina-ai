@@ -1,7 +1,7 @@
 export { defunctProcess } from "@petrina/test-support/defunct-process";
 export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
 import { tempDir, removeDir } from "@petrina/test-support/fixtures";
-export { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
+export { tempDir, removeDir, waitFor, waitForFile } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
 import { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -224,15 +224,6 @@ export function headNow(worktree: string): string {
 
 /** A ref's commit on the stand-in GitHub, or undefined when Git confirms the ref is absent. */
 export const remoteRef = (remote: string, ref: string): Promise<string | undefined> => commitAt(remote, ref);
-
-/** Wait until a file exists (the fake gh writes one when it starts holding). */
-export async function waitForFile(path: string, ms = 60_000): Promise<void> {
-  const started = Date.now();
-  while (!existsSync(path)) {
-    if (Date.now() - started > ms * currentSlow()) throw new Error(`Timed out waiting for ${path}`);
-    await Bun.sleep(30);
-  }
-}
 
 /**
  * A stand-in for a process-list helper whose exit a test reports itself. Its output has ended, as a real

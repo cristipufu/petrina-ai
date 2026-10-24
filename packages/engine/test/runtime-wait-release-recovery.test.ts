@@ -18,7 +18,7 @@ async function fixture() {
   writeFileSync(notesHold, "Hold the first release notes");
   world.setScript(script => { script.hold = { role: "release manager", title: "Deliver the approved improvement", file: notesHold }; });
   writeFileSync(check, `import { appendFileSync, existsSync } from "node:fs";
-import { git } from ${JSON.stringify(import.meta.resolve("./commands.js"))};
+import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
 const sha = await git(process.cwd(), "rev-parse", "HEAD");
 appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-fix.txt") }) + "\\n");`);
   const open = () => {
