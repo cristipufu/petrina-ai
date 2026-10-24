@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Task } from "@petrina/core";
+import { owedAcceptanceTest, type Task } from "@petrina/core";
 import type { Section } from "./context.js";
 
 /** An index of existing reports, never a replacement for current checks or independent verification. */
-export async function verificationContext(dataDir: string, task: Pick<Task, "id" | "journey" | "retest">, currentVersions?: Readonly<Record<string, string | undefined>>): Promise<Section[]> {
+export async function verificationContext(dataDir: string, task: Pick<Task, "id" | "journey" | "retest" | "repairCheck" | "repair" | "stageIndex" | "plan" | "proofDeliveryGate">, currentVersions?: Readonly<Record<string, string | undefined>>): Promise<Section[]> {
   const records = (task.journey ?? []).flatMap((step) => step.endedAt === undefined ? [] : (step.agentResults ?? []).flatMap((result) => {
     const value = result.value as { summary?: unknown; tests?: unknown; changes?: unknown; checks?: unknown } | null;
     if (!value || typeof value.summary !== "string") return [];
@@ -33,13 +33,14 @@ export async function verificationContext(dataDir: string, task: Pick<Task, "id"
   const latestTest = records.findLast((entry) => entry.kind === "acceptance");
   const selected = [...new Set([firstBuild, ...records.slice(-3), latestTest].filter((entry) => entry !== undefined))];
   const sections = [{ title: "Earlier implementation and verification evidence", body: `Recorded reports are available at ${JSON.stringify(file)} (reference ${digest}). These are navigation leads, not proof that the current code passes. Builder claims are not independent review votes. Read the relevant report and compare its recorded version before reusing evidence; verify every required acceptance item on the current work. Earlier records without versions or confirmed tool settings remain unknown.\n${selected.map((entry) => `- Node ${entry.node}: ${entry.kind}, profile ${entry.profileId}, ${new Date(entry.at).toISOString()}; ${entry.versions ? `code trees ${JSON.stringify(entry.versions)}` : "code version not recorded"}`).join("\n")}` }];
-  if (task.retest) {
+  const owed = owedAcceptanceTest(task);
+  if (owed) {
     const previous = latestTest?.versions;
     const known = (value: string | undefined): value is string => !!value && value !== "unavailable";
     const products = [...new Set([...Object.keys(previous ?? {}), ...Object.keys(currentVersions ?? {})])];
     const changed = currentVersions && previous ? products.filter(id => known(previous[id]) && known(currentVersions[id]) && previous[id] !== currentVersions[id]) : undefined;
     const unknown = products.filter(id => !known(previous?.[id]) || !known(currentVersions?.[id]));
-    sections.push({ title: "Why acceptance testing runs again", body: `This is the final acceptance pass after review: the prior acceptance evidence did not cover the final code or did not pass. Prior acceptance report: ${latestTest ? `node ${latestTest.node}` : "not recorded"}. Current code trees: ${currentVersions ? JSON.stringify(currentVersions) : "not recorded"}. ${changed ? `Products with changed trees: ${changed.join(", ") || "none; examine the prior failed or incomplete evidence"}. ${unknown.length ? `Products whose tree comparison is unknown: ${unknown.join(", ")}. Do not infer a change from missing evidence. ` : ""}Compare the prior recorded trees with the current work to inspect the intervening changes.` : "The previous code version was not recorded; do not assume a narrower retest scope."} Use the current product-check evidence provided separately; old passes never automatically satisfy this run.` });
+    sections.push({ title: "Why acceptance testing runs again", body: `${owed.final ? "This is the final acceptance pass after review: the prior acceptance evidence did not cover the final code or did not pass." : "This run checks the builder's repair of the prior acceptance run, which did not pass; the planned reviews follow."} Prior acceptance report: ${latestTest ? `node ${latestTest.node}` : "not recorded"}. Current code trees: ${currentVersions ? JSON.stringify(currentVersions) : "not recorded"}. ${changed ? `Products with changed trees: ${changed.join(", ") || "none; examine the prior failed or incomplete evidence"}. ${unknown.length ? `Products whose tree comparison is unknown: ${unknown.join(", ")}. Do not infer a change from missing evidence. ` : ""}Compare the prior recorded trees with the current work to inspect the intervening changes.` : "The previous code version was not recorded; do not assume a narrower retest scope."} Use the current product-check evidence provided separately; old passes never automatically satisfy this run.` });
   }
   return sections;
 }

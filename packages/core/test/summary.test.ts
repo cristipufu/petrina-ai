@@ -366,8 +366,49 @@ describe("what comes next", () => {
     stages.splice(build + 1, 0, { id: "test", title: "Test", kind: "do", roleId: "tester", profileIds: ["sol-high"] });
     const fixing: Task = { ...task, plan: { ...task.plan!, stages }, state: "running", stageIndex: build, fixing: true, testedPatch: "earlier" };
     expect(nextLine(state, fixing)).toBe("Next: code review (Claude Code · Opus 5.5 and Codex · sol), then final acceptance testing (Codex · sol) if the code changed");
-    expect(nextLine(state, { ...fixing, stageIndex: build + 1, retest: true })).toBe("Next: your OK to ship, or fixes by the builder if acceptance checks fail");
+    const tester = { roleId: "tester", profileId: "sol-high", since: 0, step: 0 };
+    expect(nextLine(state, { ...fixing, stageIndex: build + 1, retest: true, agent: tester })).toBe("Next: your OK to ship, or fixes by the builder if acceptance checks fail");
+    // While Petrina's own checks prepare it, the final test has not started: it still comes first.
+    expect(nextLine(state, { ...fixing, stageIndex: build + 1, retest: true, agent: undefined })).toBe("Next: final acceptance testing (Codex · sol), then your OK to ship");
     expect(startClock({ ...fixing, stageIndex: build + 1, fixing: false, retest: true }, "tester", 0).repeat).toBe(true);
+  });
+
+  it("names the repair's acceptance test and the reviews still owed, or the final test and the delivery check, during a shared acceptance repair", () => {
+    const { sim, id } = feature();
+    until(sim, () => item(sim, "design") !== undefined);
+    const state = sim.getState();
+    const task = taskOf(sim, id);
+    const stages = [...task.plan!.stages];
+    const build = stages.findIndex((stage) => stage.roleId === "builder");
+    stages.splice(build + 1, 0, { id: "test", title: "Test", kind: "do", roleId: "tester", profileIds: ["sol-high"] });
+    const base: Task = { ...task, plan: { ...task.plan!, stages }, state: "running", testedPatch: "earlier", acceptancePassed: false };
+    const early: Task = { ...base, stageIndex: build, fixing: true, repair: { products: ["a"], index: 0, returnStage: build + 1, kind: "acceptance" } };
+    expect(nextLine(state, early)).toBe("Next: acceptance testing of the repair (Codex · sol), then code review (Claude Code · Opus 5.5 and Codex · sol)");
+    // A repair of what final testing found goes back to it, then straight to the delivery check.
+    expect(nextLine(state, { ...early, repair: { ...early.repair!, final: true } })).toBe("Next: final acceptance testing (Codex · sol), then your OK to ship");
+    // Checking the repair: the owed review follows, then the delivery check without inventing another test.
+    const tester = { roleId: "tester", profileId: "sol-high", since: 0, step: 0 };
+    const checking: Task = { ...base, stageIndex: build + 1, repairCheck: true, agent: tester };
+    expect(nextLine(state, checking)).toBe("Next: code review (Claude Code · Opus 5.5 and Codex · sol), then your OK to ship");
+    expect(startClock(checking, "tester", 0).repeat).toBe(true);
+    // The repair is finished and its test has not started: paused, waiting for a slot or while Petrina's own checks
+    // prepare it, that test still comes first.
+    const repairTest = "Next: acceptance testing of the repair (Codex · sol), then code review (Claude Code · Opus 5.5 and Codex · sol)";
+    for (const waiting of ["paused", "waiting", "running"] as const) {
+      expect(nextLine({ ...state, inbox: [] }, { ...checking, state: waiting, agent: undefined })).toBe(repairTest);
+      expect(nextLine({ ...state, inbox: [] }, { ...checking, state: waiting, agent: undefined, repairCheck: false, retest: true })).toBe("Next: final acceptance testing (Codex · sol), then your OK to ship");
+    }
+    // Failing product checks before that test send the work back first: the test still follows the check repair.
+    const checkRepair: Task = { ...base, stageIndex: build, fixing: true, repairCheck: true, repair: { products: ["a"], index: 0, returnStage: build + 1, kind: "checks" }, agent: { roleId: "builder", profileId: "sol-high", since: 0, step: 0 } };
+    expect(nextLine(state, checkRepair)).toBe(repairTest);
+    expect(nextLine({ ...state, inbox: [] }, { ...checkRepair, state: "paused", agent: undefined })).toBe("Next: fixes by the builder (Codex · sol), then acceptance testing of the repair (Codex · sol)");
+    // A task saved before repairs recorded their route, at a delivery check Petrina added: its reviews have not run, so its
+    // test is a repair check and the reviews follow, as the engine routes it.
+    const gate = stages.find((stage) => stage.kind === "gate" && stage.gate === "delivery")!;
+    const older: Task = { ...checking, repairCheck: false, retest: true, proofDeliveryGate: gate.id };
+    expect(nextLine(state, older)).toBe("Next: code review (Claude Code · Opus 5.5 and Codex · sol), then your OK to ship");
+    expect(nextLine(state, { ...older, agent: undefined })).toBe(repairTest);
+    expect(nextLine(state, { ...older, proofDeliveryGate: undefined })).toBe("Next: your OK to ship, or fixes by the builder if acceptance checks fail");
   });
 
   it("previews final acceptance with current profiles, without inventing a test when evidence is unchanged or blocked", () => {

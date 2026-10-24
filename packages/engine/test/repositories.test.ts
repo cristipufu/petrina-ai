@@ -1178,7 +1178,8 @@ describe.concurrent("shared-task repair regressions", () => {
       expect(taskOf(ready, id).error).toBeUndefined();
       expect(taskOf(ready, id).acceptanceBlocked).toBe(true);
       expect(taskOf(ready, id).repositories!.map((work) => work.acceptanceReturns)).toEqual([2, 2]);
-      expect(fakes.received("code reviewer")).toHaveLength(0);
+      // The planned review still runs before the decision, and the held failure starts no review fix round.
+      expect(fakes.received("code reviewer")).toHaveLength(2);
       expect(fakes.received("builder")).toHaveLength(6);
       await engine.shutdown(); engine = start();
       expect(engine.task(id)!.repositories!.map((work) => work.acceptanceReturns)).toEqual([2, 2]);

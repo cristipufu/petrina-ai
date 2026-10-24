@@ -4,6 +4,7 @@
 // The screen only draws what they recorded, and what the plan says comes next.
 
 import { callOn, followingCall } from "./call.js";
+import { exhaustedAcceptanceFailure, owedAcceptanceTest } from "./acceptance.js";
 import type { AgentProfile, Cleanup, Id, InboxItem, InboxKind, JourneyAcceptanceCheck, JourneyAsk, JourneyStep, JourneyTone, JourneyWait, JourneyWork, RepositoryState, Role, Stage, Task } from "./model.js";
 import { decisionEvidence, evidenceFor, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "./check-evidence.js";
 import { queueOf } from "./scheduler.js";
@@ -192,7 +193,7 @@ export const PETRINA_STEP_NAMES: Readonly<Record<JourneyWork, string>> = {
 // ── Recording: the engine and the simulator call these as the task moves ───────────────────
 
 /** What the recording helpers read and write: the engine's and the simulator's working copies of a task. */
-export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> & Partial<Pick<Task, "findings" | "maintenance">> & { journey?: JourneyStep[] };
+export type JourneyTask = Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "updating" | "portReview"> & Partial<Pick<Task, "findings" | "maintenance" | "repositories" | "acceptanceBlocked">> & { journey?: JourneyStep[] };
 
 /** How a step ended, in a few words, and why the work moved on. */
 export interface StepEnd {
@@ -315,7 +316,7 @@ export function beginAgentStep(task: JourneyTask, roleId: Id, profileId: Id, at:
   }
   if (open) close(open, at);
   const fixingFindings = task.fixing && (task.maintenance?.role.id === roleId ? task.maintenance.role : roles.find(role => role.id === roleId))?.result === "build"
-    ? { findingIds: (task.findings ?? []).filter((finding) => finding.status === "open" && finding.severity !== "pre-existing").map((finding) => finding.id) }
+    ? { findingIds: (task.findings ?? []).filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && !exhaustedAcceptanceFailure(task, finding)).map((finding) => finding.id) }
     : {};
   return push(task, { kind: "agent", usageTracked: true, ...key, ...fixingFindings, profileId: team?.[0] ?? profileId, ...many, startedAt: at });
 }
@@ -693,8 +694,9 @@ function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyCo
     case "gate":
       return from === 0 ? [{ ...base, kind: "you", waitsFor: stage.gate ?? "delivery" }] : [];
     case "do": {
-      // After its first pass, the tester runs again only when the engine schedules the final-code pass.
-      if (ctx.roles.find(role => role.id === stage.roleId)?.result === "checks" && task.testedPatch !== undefined && !task.retest) return [];
+      // After its first pass, the tester runs again only for the testing it still owes: checking an acceptance repair, or
+      // the final-code pass the engine schedules.
+      if (ctx.roles.find(role => role.id === stage.roleId)?.result === "checks" && task.testedPatch !== undefined && owedAcceptanceTest(task)?.stage !== index) return [];
       const agent: Planned = { ...base, kind: "agent", roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) };
       if (!isDelivery(stage, ctx.roles)) return from === 0 ? [{ ...agent, ...(task.updating && index === task.stageIndex ? { update: true } : task.fixing && index === task.stageIndex ? { fixing: true } : {}) }] : [];
       // The release notes are written once: an interrupted delivery only publishes again.
@@ -753,12 +755,12 @@ function plannedSteps(task: Task, open: JourneyStep | undefined, ctx: JourneyCon
   // Petrina's checks come before the stage's own steps; once Petrina publishes, nothing else is left.
   else if (mine?.kind === "petrina") here = mine.work === "delivery" ? [] : all;
   else here = all;
-  // A final-code tester pass returns straight to the delivery check; it does not repeat the reviewers.
-  const deliveryCheck = task.retest && current.kind === "do" && ctx.roles.find(role => role.id === current.roleId)?.result === "checks"
-    ? stages.findIndex((stage) => stage.kind === "gate" && stage.gate === "delivery")
-    : -1;
-  const next = deliveryCheck >= 0 ? deliveryCheck : task.stageIndex + 1;
-  return [...here, ...stages.slice(next).flatMap((stage, offset) => stageSteps(task, stage, next + offset, ctx))];
+  // A final-code tester pass, and a repair of what it found, return straight to the delivery check; they do not repeat the reviewers.
+  // An earlier acceptance repair is tested, then the rest of the plan follows.
+  const owed = owedAcceptanceTest(task);
+  const finalTester = owed?.final ? owed.stage : -1;
+  const deliveryCheck = finalTester >= 0 ? stages.findIndex((stage) => stage.kind === "gate" && stage.gate === "delivery") : -1;
+  return [...here, ...stages.flatMap((stage, index) => index > task.stageIndex && (deliveryCheck < 0 || index <= finalTester || index >= deliveryCheck) ? stageSteps(task, stage, index, ctx) : [])];
 }
 
 const FINISHED: readonly Task["state"][] = ["done", "pr-open", "cancelled"];
@@ -908,6 +910,9 @@ export function journeyViewKey(task: Task, ctx: JourneyContext): string {
     reviewedTree: task.reviewedTree,
     testedPatch: task.testedPatch,
     retest: task.retest,
+    repairCheck: task.repairCheck,
+    repair: task.repair,
+    proofDeliveryGate: task.proofDeliveryGate,
     delivery: task.delivery,
     shippingPrepared: task.shipping?.prepared,
     agent: task.agent && [task.agent.roleId, task.agent.profileId, task.agent.since],

@@ -12,6 +12,7 @@ import { historyItem, historyStatus, type HistoryStatus } from "./history.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
 import { roleForTask } from "./roles.js";
 import { findingReportCounts, outstandingReportsFirst } from "./finding-reports.js";
+import { exhaustedAcceptanceFailure } from "./acceptance.js";
 import { runtimeWaitView, type RuntimeWaitTask } from "./runtime-wait.js";
 
 export const WORKFLOW_EVENT_KINDS = [
@@ -246,7 +247,8 @@ interface WorkFacts {
   approvedFor?: Work["approvedFor"];
   cleanup?: Work["cleanup"];
 }
-interface FindingFacts { text: string; tracking?: Finding["tracking"]; id: Id; status: Finding["status"]; severity: Finding["severity"]; raisedBy: Id; roleId?: Id; reopenedAt?: number; answerFixed?: boolean; answerAt?: number; confirmed: number; verdict?: string; productIds?: readonly Id[]; evidence: boolean }
+/** `held`: a shared acceptance failure whose automatic repairs are used up, still open and Important, held for the delivery decision. */
+interface FindingFacts { text: string; tracking?: Finding["tracking"]; id: Id; status: Finding["status"]; severity: Finding["severity"]; raisedBy: Id; roleId?: Id; reopenedAt?: number; answerFixed?: boolean; answerAt?: number; confirmed: number; verdict?: string; productIds?: readonly Id[]; evidence: boolean; held?: true }
 
 /** A lone participant's handoff closes its node; parallel participants keep theirs. Follow only the
  * recorded handoff at the same workflow position, never a prior round, product or unrelated step. */
@@ -451,7 +453,7 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
       ...(work.baseSha ? { baseSha: work.baseSha } : {}), ...(work.reviewedSha ? { reviewedSha: work.reviewedSha } : {}), ...(work.reviewedTree ? { reviewedTree: work.reviewedTree } : {}),
       ...(work.approvedFor ? { approvedFor: work.approvedFor } : {}), ...(work.cleanup ? { cleanup: work.cleanup } : {}),
     })),
-    findings: task.findings.map((finding) => ({ id: finding.id, text: clip(finding.text, 160)!, ...(finding.tracking ? { tracking: finding.tracking } : {}), status: finding.status, severity: finding.severity, raisedBy: finding.raisedBy, ...(finding.roleId ? { roleId: finding.roleId } : {}), ...(finding.reopenedAt !== undefined ? { reopenedAt: finding.reopenedAt } : {}), ...(finding.answer ? { answerFixed: finding.answer.fixed, answerAt: finding.answer.at } : {}), confirmed: finding.confirmedBy.length, ...(finding.verification ? { verdict: finding.verification.verdict } : {}), productIds: assignedProducts(task as Task, finding.productIds), evidence: !!finding.evidence })),
+    findings: task.findings.map((finding) => ({ id: finding.id, text: clip(finding.text, 160)!, ...(finding.tracking ? { tracking: finding.tracking } : {}), status: finding.status, severity: finding.severity, raisedBy: finding.raisedBy, ...(finding.roleId ? { roleId: finding.roleId } : {}), ...(finding.reopenedAt !== undefined ? { reopenedAt: finding.reopenedAt } : {}), ...(finding.answer ? { answerFixed: finding.answer.fixed, answerAt: finding.answer.at } : {}), confirmed: finding.confirmedBy.length, ...(finding.verification ? { verdict: finding.verification.verdict } : {}), productIds: assignedProducts(task as Task, finding.productIds), evidence: !!finding.evidence, ...(exhaustedAcceptanceFailure(task as Task, finding) ? { held: true as const } : {}) })),
     capacityRetries: (task.capacityRetries ?? []).map((entry) => ({ key: `${entry.roleId}|${entry.profileId}|${entry.member ?? ""}`, tried: entry.tried })),
     landing,
     ...(shared ? { shared } : {}),
@@ -603,12 +605,12 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
         const reports = outstandingReportsFirst(next.findings).map((finding) => {
           const result = node.results.find((result) => result.findingIds?.includes(finding.id));
           const read = { taskId: next.id, nodeId: node.id, findingId: finding.id };
-          return { id: finding.id, text: finding.text, severity: finding.severity, status: finding.status, productIds: finding.productIds ?? [],
+          return { id: finding.id, text: finding.text, severity: finding.severity, status: finding.status, productIds: finding.productIds ?? [], ...(finding.held ? { heldForDecision: true } : {}),
             ...(finding.tracking ? { tracking: finding.tracking } : {}),
             evidence: node.resultFindings.some((copy) => copy.id === finding.id) ? { read } : result ? { read: { ...read, result: result.index } } : { unavailable: "This review saved no copy of this report. Current status may differ." } };
         });
         push({ at: node.endedAt, kind: "review.finished", ...at,
-          summary: `${node.name} finished: ${reconciliation.opening} ${reconciliation.opening === 1 ? "report" : "reports"} before, ${reconciliation.closing} after; ${counts.open.total} open ${counts.open.total === 1 ? "report" : "reports"} (${counts.open.important} Important, ${counts.open.nits} ${counts.open.nits === 1 ? "nit" : "nits"}, ${counts.open.preExisting} pre-existing ${counts.open.preExisting === 1 ? "follow-up" : "follow-ups"}); raised ${reconciliation.raised.length}, fixed ${reconciliation.fixed.length}, reopened ${reconciliation.reopened.length}, dismissed ${reconciliation.dismissed.length}, unverified ${reconciliation.unverified.length}`,
+          summary: `${node.name} finished: ${reconciliation.opening} ${reconciliation.opening === 1 ? "report" : "reports"} before, ${reconciliation.closing} after; ${counts.open.total} open ${counts.open.total === 1 ? "report" : "reports"} (${counts.open.important} Important, ${counts.open.nits} ${counts.open.nits === 1 ? "nit" : "nits"}, ${counts.open.preExisting} pre-existing ${counts.open.preExisting === 1 ? "follow-up" : "follow-ups"})${reconciliation.heldForDecision ? `; ${reconciliation.heldForDecision.length === 1 ? "1 of the Important is an acceptance failure" : `${reconciliation.heldForDecision.length} of the Important are acceptance failures`} held for your delivery decision, not review work` : ""}; raised ${reconciliation.raised.length}, fixed ${reconciliation.fixed.length}, reopened ${reconciliation.reopened.length}, dismissed ${reconciliation.dismissed.length}, unverified ${reconciliation.unverified.length}`,
           ...reconciliation, reports, omitted: { reportBodies: "Use each report’s evidence.read for full text, answers and verification, or its unavailable reason." }, ...(role ? { roleId: node.roleId } : {}), ...(node.team ? { team: node.team } : {}),
           refs: { node: { taskId: next.id, nodeId: node.id }, ...(node.reviewInput ? { reviewInput: { taskId: next.id, nodeId: node.id } } : {}), findings: { taskId: next.id, nodeId: node.id }, results: reviewNodes.flatMap(entry => resultRefs(next.id, entry)), inputs: reviewNodes.flatMap(entry => entry.inputs.map((input) => ({ taskId: next.id, nodeId: entry.id, seat: input.seat, index: input.attempt - 1 }))), currentRequests: { taskId: next.id } } });
       }
@@ -826,7 +828,13 @@ export function reviewRoundSteps(task: Pick<Task, "journey" | "maintenance">, no
   return group;
 }
 
-/** Claims not yet examined by an earlier completed review, using the same completion rule as its event. */
+/** A Builder's claim about an acceptance failure is tested by the next acceptance run, never by a review after it. */
+const testedByAcceptance = (finding: { text: string }, at: number, tested: number) => finding.text.startsWith("Failed acceptance check:") && at <= tested;
+
+/**
+ * Claims not yet examined by an earlier completed review, using the same completion rule as its event. A claim about an
+ * acceptance failure that a completed acceptance run already tested is that run's, not the review's.
+ */
 export function reviewClaimIds(task: Pick<Task, "journey" | "findings" | "maintenance">, nodeId: Id, roles: WorkflowContext["roles"]): Id[] {
   const steps = task.journey ?? [];
   const index = steps.findIndex(step => step.id === nodeId);
@@ -837,7 +845,8 @@ export function reviewClaimIds(task: Pick<Task, "journey" | "findings" | "mainte
     inputs: (step.agentInputs ?? []).map(input => ({ ...input, seat: seatOf(input, roles, task) })),
     results: (step.agentResults ?? []).map(result => ({ seat: resultSeatOf(step, result, roles, task) })),
   }).examined).map(step => step.endedAt!));
-  return task.findings.filter(finding => finding.answer?.fixed && (finding.answer.at ?? 0) > reviewed).map(finding => finding.id);
+  const tested = Math.max(-Infinity, ...prior.filter(step => step.kind === "agent" && step.endedAt !== undefined && step.acceptanceChecks !== undefined).map(step => step.endedAt!));
+  return task.findings.filter(finding => finding.answer?.fixed && (finding.answer.at ?? 0) > reviewed && !testedByAcceptance(finding, finding.answer.at ?? 0, tested)).map(finding => finding.id);
 }
 
 /** Each accepted result on a step, by seat, with how many finding copies it left. */
@@ -845,11 +854,13 @@ const resultRefs = (taskId: Id, node: NodeFacts) => node.results.map((result) =>
 
 /**
  * The Builder's fix claims a review examines: claims made since the last completed review, whatever status
- * the claim already gave the finding. Claims an earlier review already examined are not under test again.
+ * the claim already gave the finding. Claims an earlier review, or for an acceptance failure an earlier completed
+ * acceptance run, already examined are not under test again.
  */
 function claimsUnderTest(facts: Pick<WorkflowFacts, "nodes" | "findings">, node: Pick<NodeFacts, "index">, roles: WorkflowContext["roles"]): Id[] {
   const reviewed = Math.max(-Infinity, ...facts.nodes.filter((entry) => entry.index < node.index && entry.kind === "agent" && reviewEnd(entry).examined && roles.find((role) => role.id === entry.roleId)?.result === "findings").map((entry) => entry.endedAt!));
-  return facts.findings.filter((finding) => finding.answerFixed && (finding.answerAt ?? 0) > reviewed).map((finding) => finding.id);
+  const tested = Math.max(-Infinity, ...facts.nodes.filter((entry) => entry.index < node.index && entry.acceptance !== undefined && entry.endedAt !== undefined).map((entry) => entry.endedAt!));
+  return facts.findings.filter((finding) => finding.answerFixed && (finding.answerAt ?? 0) > reviewed && !testedByAcceptance(finding, finding.answerAt ?? 0, tested)).map((finding) => finding.id);
 }
 
 interface Reconciliation {
@@ -868,6 +879,11 @@ interface Reconciliation {
   openImportant: Id[];
   openNits: Id[];
   openPreExisting: Id[];
+  /**
+   * Which of the open Important reports are shared acceptance failures whose automatic repairs are used up: they stay in
+   * the task-wide counts and lists above, are held for the delivery decision, and were no work for this review.
+   */
+  heldForDecision?: Id[];
   reportCounts: { opening: ReturnType<typeof findingReportCounts>; closing: ReturnType<typeof findingReportCounts> };
   shortened?: true;
 }
@@ -884,10 +900,13 @@ function reconcile(baseline: FindingBaseline, closing: FindingFacts[]): Reconcil
   const dismissed = closing.filter((finding) => finding.status === "dismissed" && was.get(finding.id)?.status !== "dismissed").map((finding) => finding.id);
   const unverified = closing.filter((finding) => finding.status === "unverified" && was.get(finding.id)?.status !== "unverified").map((finding) => finding.id);
   const stillOpen = closing.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id);
+  // Task-wide populations, as documented; the held acceptance failures among them are only named.
+  const held = closing.filter((finding) => finding.held && finding.status === "open").map((finding) => finding.id);
   return { opening: opening.length, closing: closing.length, since: baseline.since, raised, fixed, claimedFixed, reopened, dismissed, unverified, stillOpen,
     stillOpenPopulation: "open-important", openImportant: stillOpen,
     openNits: closing.filter((finding) => finding.status === "open" && finding.severity === "suggestion").map((finding) => finding.id),
     openPreExisting: closing.filter((finding) => finding.status === "open" && finding.severity === "pre-existing").map((finding) => finding.id),
+    ...(held.length ? { heldForDecision: held } : {}),
     reportCounts: { opening: findingReportCounts(opening), closing: findingReportCounts(closing) } };
 }
 

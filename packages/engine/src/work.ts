@@ -5,7 +5,7 @@ import { openProofs, refreshProofs, restorationReason, sameVersions } from "@pet
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, noteReproduction, openStep, type Task } from "@petrina/core";
+import { builderFindings, builderReturnWords, checkProblem, recordStepResult, endAgentStep, lastIndexWhere, JOURNEY_WORDS as W, noteReproduction, openStep, owedAcceptanceTest, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -61,8 +61,9 @@ export class Work {
       const startingTree = repository.conversation?.roleId === roleId && repository.conversation.head
         ? repository.conversation.builderTree
         : await git.contentTree(repository.worktree!).catch(() => undefined);
-      // In a fix round the builder answers every finding it was given, by id.
-      const given = task.fixing ? task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(repository.productId))) : [];
+      // In a fix round the builder answers every finding it was given, by id. Acceptance failures whose returns are used up
+      // wait for the coordinator: no repair of another finding hands them over.
+      const given = task.fixing ? builderFindings(task, repository.productId) : [];
       // Bind to the failure attempt now; mutable finding ids can be reused by a later check run.
       const checkFailures = assignedCheckFailures(scope);
       // Fix rounds and updates go back to its own conversation, except when it is asked to step back and rethink.
@@ -275,6 +276,7 @@ export class Work {
       task.testedChanges = { ...run.changes };
       delete task.acceptanceRun;
       delete task.proofRetestReason;
+      delete task.repairCheck;
       const testedPatch = (await acceptanceVersion(task, testedVersions)) ?? (await this.updates.patch(scope));
       if (testerStep?.kind === "agent" && testerStep.roleId === roleId) testerStep.acceptancePatch = testedPatch;
       task.testedPatch = testedPatch ?? task.testedPatch;
@@ -289,10 +291,24 @@ export class Work {
           : `Added your delivery check: ${required.length === 1 ? "a required acceptance check" : `${required.length} required acceptance checks`} could not be verified, so delivery waits for your decision`);
       }
       if (task.repositories && failed.length) {
+        // Testing the delivery check started, and repairs of what it found, return to that check. Earlier testing and
+        // its repairs go on through the rest of the plan: the owed reviews still run before any delivery decision.
+        const final = owedAcceptanceTest(task)?.final === true;
         this.k.finishStep(scope);
         delete task.retest;
-        if (beginRepair(this.k, task, "acceptance", task.stageIndex)) return "continue";
+        if (beginRepair(this.k, task, "acceptance", task.stageIndex, { final })) return "continue";
         task.acceptanceBlocked = true;
+        const planned = task.plan!.stages.some((entry) => entry.kind === "gate" && entry.gate === "delivery");
+        // Even with delivery approval off, failures still open wait for the coordinator's explicit decision.
+        if (!final && addDeliveryCheck(this.k, task)) {
+          if (!planned) this.k.log(scope, "milestone", "Added your delivery check: acceptance still fails, so delivery waits for your decision");
+          const reviews = task.plan!.stages.some((entry, index) => index > task.stageIndex && entry.kind === "review-chain");
+          this.k.log(scope, "warn", `Acceptance still fails: the builder returns are unavailable or used up. ${reviews ? "The remaining reviews run first, then" : "Next,"} the decision goes to you at your delivery check`);
+          task.stageIndex += 1;
+          task.sub = 0;
+          this.k.commitNow();
+          return "continue";
+        }
         this.k.log(scope, "warn", "Acceptance still fails: the builder returns are unavailable or used up, so the decision goes to you");
         const gate = task.plan!.stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
         task.stageIndex = gate >= 0 ? gate : task.plan!.stages.length;
@@ -304,6 +320,7 @@ export class Work {
       }
       if (task.retest) {
         // The final pass before the delivery check: on to the check, or back to the builder with what failed.
+        const final = owedAcceptanceTest(task)?.final === true;
         delete task.retest;
         this.k.finishStep(scope);
         const stages = task.plan?.stages ?? [];
@@ -321,10 +338,9 @@ export class Work {
               ? "Acceptance still fails: the builder returns are used up, so the decision goes to you"
               : "Acceptance could not be fully verified, so the decision goes to you");
           }
+          // Final testing returns to the delivery check; any other goes on through the planned steps that have not run yet.
           const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
-          // A delivery check Petrina added for this decision never skips planned steps that have not run yet.
-          const skips = gate >= 0 && stages[gate]!.id === task.proofDeliveryGate && stages.slice(task.stageIndex + 1, gate).some((entry) => !task.journey?.some((step) => step.stageId === entry.id && step.endedAt !== undefined));
-          task.stageIndex = gate >= 0 && !skips ? gate : task.stageIndex + 1;
+          task.stageIndex = gate >= 0 && final ? gate : task.stageIndex + 1;
         }
         task.sub = 0;
         this.k.commit();
@@ -376,7 +392,9 @@ export class Work {
           this.k.commitNow();
           return "continue";
         }
-        if (task.repair.kind === "acceptance") task.retest = true;
+        // A repair of final testing goes back to it; an earlier one is checked by ordinary acceptance testing.
+        if (task.repair.kind === "acceptance" && task.repair.final) task.retest = true;
+        else if (task.repair.kind === "acceptance") task.repairCheck = true;
         task.stageIndex = task.repair.returnStage;
         delete task.repair;
         task.sub = 0;

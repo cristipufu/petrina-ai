@@ -484,6 +484,33 @@ describe("recorded the way the engine records", () => {
     expect(view.nodes.filter((node) => ["now", "next", "ahead"].includes(node.state)).map((node) => `${node.name}: ${node.state}`)).toEqual(["Tester: now", "Your delivery check: next", "Publish delivery: ahead"]);
   });
 
+  it("shows an acceptance repair's test, then the reviews still owed; a repair of final testing returns to the delivery check", () => {
+    const task = atBuild();
+    const stages = [...task.plan!.stages];
+    const index = task.stageIndex + 1;
+    stages.splice(index, 0, { id: "try", title: "Try the change", kind: "do", roleId: "tester", profileIds: ["opus-high"] });
+    const early = { ...task, plan: { ...task.plan!, stages }, fixing: true, testedPatch: "earlier-code", repair: { products: ["p"], index: 0, returnStage: index, kind: "acceptance" as const } };
+    const ahead = (view: Task) => journeyView(view, contextOf(emptyState())).nodes.filter((node) => ["next", "ahead"].includes(node.state)).map((node) => node.name);
+    expect(ahead(early)).toEqual(["Tester", "Code reviewers", "Your delivery check", "Publish delivery"]);
+    expect(ahead({ ...early, repair: { ...early.repair, final: true } })).toEqual(["Tester", "Your delivery check", "Publish delivery"]);
+    // A review repair still leaves acceptance, already tried, out of the fix round.
+    expect(ahead({ ...early, repair: { ...early.repair, kind: "review" } })).toEqual(["Code reviewers", "Your delivery check", "Publish delivery"]);
+    // The repair is finished and its test has not started yet, as while paused or waiting for a slot: that test is next.
+    const { repair: _done, ...finished } = early;
+    const checking = { ...finished, stageIndex: index, fixing: false, repairCheck: true, state: "paused" as const };
+    expect(ahead(checking)).toEqual(["Tester", "Code reviewers", "Your delivery check", "Publish delivery"]);
+    expect(journeyViewKey(checking, contextOf(emptyState()))).not.toBe(journeyViewKey({ ...checking, repairCheck: false }, contextOf(emptyState())));
+    // Failing product checks before that test send the work back first: the test, then the reviews, still follow.
+    expect(ahead({ ...early, repair: { ...early.repair, kind: "checks" }, repairCheck: true })).toEqual(["Tester", "Code reviewers", "Your delivery check", "Publish delivery"]);
+    // A task saved before repairs recorded their route, at a delivery check Petrina added: its reviews never ran, so they
+    // follow its test, as the engine routes it. At a planned check, final testing goes straight there.
+    const gate = stages.find((stage) => stage.kind === "gate" && stage.gate === "delivery")!;
+    const older = { ...checking, repairCheck: false, retest: true, proofDeliveryGate: gate.id };
+    expect(ahead(older)).toEqual(["Tester", "Code reviewers", "Your delivery check", "Publish delivery"]);
+    expect(ahead({ ...older, proofDeliveryGate: undefined })).toEqual(["Tester", "Your delivery check", "Publish delivery"]);
+    expect(journeyViewKey(older, contextOf(emptyState()))).not.toBe(journeyViewKey({ ...older, proofDeliveryGate: undefined }, contextOf(emptyState())));
+  });
+
   it("a stuck step shows its failed box, a Stuck step and a new box for the next attempt", () => {
     const task = atBuild();
     const t = task.journey!.at(-1)!.startedAt;

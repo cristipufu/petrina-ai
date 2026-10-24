@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoState } from "../src/demo.js";
-import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteReproduction, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
+import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteReproduction, noteRoundEnd, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
 import { BUILT_IN_ROLES } from "../src/library.js";
 import type { Finding, Stage, Task } from "../src/model.js";
 
@@ -138,5 +138,28 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
     expect(coveredByDecision(task, { shop: "s1", api: "a2" })).toEqual(new Set(["shop"]));
     expect(coveredByDecision(task, { shop: "s2", api: "a1" })).toEqual(new Set());
     expect(reviewRoundEnd(task, review, 1, BUILT_IN_ROLES, coveredByDecision(task, { shop: "s1", api: "a2" })).kind).toBe("send back");
+  });
+
+  it("holds a shared acceptance failure whose repairs are used up for the delivery decision, outside every review round", () => {
+    const chain = at((stage) => stage.kind === "review-chain");
+    const review = { ...stages[chain]!, maxRounds: 2 };
+    const failure: Finding = { ...important(), id: "f2", text: "Failed acceptance check: People see the greeting", productIds: ["a"] };
+    const shared = { ...planned, stageIndex: chain, repositories: [], acceptanceBlocked: true } as unknown as Task;
+    // Alone it neither sends the work back nor asks for a review decision; beside a review finding only that one counts.
+    expect(reviewRoundEnd({ ...shared, findings: [failure] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "passed" });
+    expect(reviewRoundEnd({ ...shared, findings: [failure] }, review, 2, BUILT_IN_ROLES)).toEqual({ kind: "passed" });
+    expect(reviewRoundEnd({ ...shared, findings: [failure, important()] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "send back", builder: at((stage) => stage.roleId === "builder"), open: 1 });
+    const round = copy({ ...shared, findings: [failure, important()] });
+    noteRoundEnd(round, review.id, 1);
+    expect(round.blockingFindingsAfter![review.id]!.at(-1)).toEqual(["f1"]);
+    // A review decision is about the review's findings only.
+    expect(reviewDecisionFor({ ...shared, findings: [failure, important()] }, review.id, 2, 200, {}).covers).toEqual(["f1"]);
+    // At the decision it stays open and named, without claiming review rounds ran out.
+    expect(gateTitle({ ...shared, findings: [failure] }, "delivery")).toBe(`Your call on “${planned.title}”: 1 blocking finding still open`);
+    expect(gateStatus({ ...shared, findings: [failure] }, "delivery")).toBe("Acceptance still fails after the builder's returns. Your call");
+    expect(gateStatus({ ...shared, findings: [failure, important()] }, "delivery")).toBe("Review rounds ran out with 1 blocking finding open. Your call");
+    // Asking for changes clears the hold: it is an ordinary open finding again, as it is in a single-product task.
+    expect(reviewRoundEnd({ ...shared, acceptanceBlocked: false, findings: [failure] }, review, 1, BUILT_IN_ROLES).kind).toBe("send back");
+    expect(reviewRoundEnd({ ...planned, stageIndex: chain, acceptanceBlocked: true, findings: [failure] }, review, 1, BUILT_IN_ROLES).kind).toBe("send back");
   });
 });

@@ -1,5 +1,5 @@
 import { executionFor, scopesFor } from "./repository-context.js";
-import { assignedProducts, repairOrder, repositoryPublished, type Task } from "@petrina/core";
+import { assignedProducts, exhaustedAcceptanceFailure, repairOrder, repositoryPublished, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import type { Kernel, MTask } from "./kernel.js";
 
@@ -21,15 +21,17 @@ export async function acceptanceVersion(task: MTask, versions?: Record<string, s
 
 /**
  * A pass visits only named owners. Each owner's applicable allowance is charged once before work starts. Findings a
- * decision to continue still `covered` name no owner.
+ * decision to continue still `covered` name no owner. `final`: an acceptance repair of testing the delivery check started,
+ * which returns to that final testing and then the check.
  */
-export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number, covered: ReadonlySet<string> = new Set()): boolean {
+export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, kind: "checks" | "acceptance" | "review", returnStage: number, { covered = new Set<string>(), final = false }: { covered?: ReadonlySet<string>; final?: boolean } = {}): boolean {
   if (!task.repositories) return false;
 
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking" && !covered.has(finding.id));
   // A check repair visits only products whose checks fail: their episode, and its allowance, stay open until a
   // genuine pass. Petrina's other findings, such as a deleted test, go through review with everything else.
-  const affected = repairOrder(task as Task, open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : true));
+  // Acceptance failures whose returns are used up wait for the coordinator: they send no product back.
+  const affected = repairOrder(task as Task, open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : !exhaustedAcceptanceFailure(task as Task, finding)));
   const field = kind === "checks" ? "checkReturns" : kind === "acceptance" ? "acceptanceReturns" : undefined;
   // An unavailable owner keeps its findings for the coordinator, without consuming another owner's tries.
   const products = affected.filter((id) => {
@@ -43,7 +45,7 @@ export function beginRepair(k: Pick<Kernel, "role" | "commitNow">, task: MTask, 
     const work = task.repositories.find((entry) => entry.productId === id)!;
     if (field) work[field] = (work[field] ?? 0) + 1;
   }
-  task.repair = { products, index: 0, returnStage, kind };
+  task.repair = { products, index: 0, returnStage, kind, ...(kind === "acceptance" && final ? { final: true as const } : {}) };
   task.activeProductId = products[0]!;
   task.stageIndex = builder;
   task.sub = 0;

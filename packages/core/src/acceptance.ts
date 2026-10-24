@@ -1,4 +1,4 @@
-import type { AcceptanceGap, AcceptanceRestoration, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
+import type { AcceptanceGap, AcceptanceRestoration, Finding, Id, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
 
 /** Why every item and proof answer from a run whose changes Petrina undid is unverified. */
 export const ACCEPTANCE_RESTORED = "Petrina undid changes during acceptance testing. This run cannot verify the restored product.";
@@ -8,6 +8,43 @@ export const ACCEPTANCE_UNACCOUNTED = "Petrina stopped during acceptance testing
 /** Why an invalidated run's answers are unverified: what Petrina undid, or that nothing shows what it undid. */
 export function restorationReason(restored: AcceptanceRestoration): string {
   return restored.products.length ? ACCEPTANCE_RESTORED : ACCEPTANCE_UNACCOUNTED;
+}
+
+/**
+ * A shared task's acceptance failure whose automatic repairs are used up: it waits for the coordinator's delivery
+ * decision after the remaining planned steps. No automatic repair hands it to a Builder, it neither starts nor counts
+ * toward review rounds, votes or decisions, and only a passing acceptance run closes it. Asking for changes at the
+ * delivery check reopens it for another bounded attempt.
+ */
+export function exhaustedAcceptanceFailure(task: Pick<Task, "repositories" | "acceptanceBlocked">, finding: Pick<Finding, "status" | "text">): boolean {
+  return !!task.repositories && task.acceptanceBlocked === true && finding.status === "open" && finding.text.startsWith("Failed acceptance check:");
+}
+
+/**
+ * What a Builder fixing a product answers by id: the open findings for that product, except pre-existing ones and
+ * acceptance failures held for the delivery decision. Fresh and continued conversations and their saved context all use
+ * this one list.
+ */
+export function builderFindings<F extends Finding>(task: Pick<Task, "repositories" | "acceptanceBlocked"> & { findings: readonly F[] }, productId: Id): F[] {
+  return task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || !!finding.productIds?.includes(productId)) && !exhaustedAcceptanceFailure(task, finding));
+}
+
+/**
+ * The acceptance testing a tester stage still owes before the plan moves on: checking an acceptance repair, under way or
+ * finished, or final testing the delivery check started. It stays owed until the Tester's run is recorded, also while
+ * Petrina runs or repairs product checks first. Final testing, and a repair of what it found, return straight to the
+ * delivery check. A delivery check Petrina added never skips planned steps that have not run yet, such as the reviews a
+ * task saved before repairs recorded their route still owes: that testing goes on through the rest of the plan.
+ */
+export function owedAcceptanceTest(task: Pick<Task, "repair" | "retest" | "repairCheck" | "stageIndex" | "plan" | "journey" | "proofDeliveryGate">): { stage: number; final: boolean } | undefined {
+  if (task.repair?.kind === "acceptance") return { stage: task.repair.returnStage, final: task.repair.final === true };
+  if (!task.retest && !task.repairCheck) return undefined;
+  const stage = task.repair?.returnStage ?? task.stageIndex;
+  if (!task.retest) return { stage, final: false };
+  const stages = task.plan?.stages ?? [];
+  const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
+  const skips = gate >= 0 && stages[gate]!.id === task.proofDeliveryGate && stages.slice(stage + 1, gate).some((entry) => !task.journey?.some((step) => step.stageId === entry.id && step.endedAt !== undefined));
+  return { stage, final: !skips };
 }
 
 /** A completed acceptance run whose results were saved, including a run Petrina invalidated that had nothing to report. */

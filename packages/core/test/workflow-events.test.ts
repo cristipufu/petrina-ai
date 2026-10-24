@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginAgentStep, endAgentStep, JOURNEY_WORDS as W, BUILT_IN_ROLES, createDemoState, publishingResult, publishingWords, reviewRoundSteps, seatOf, workflowEvents, workflowFacts, WorkflowObserver, type Finding, type InboxItem, type JourneyStep, type Task, type TaskRepository, type TaskState, type WorkflowContext, type WorkflowEvent } from "../src/index.js";
+import { beginAgentStep, endAgentStep, JOURNEY_WORDS as W, BUILT_IN_ROLES, createDemoState, publishingResult, publishingWords, reviewClaimIds, reviewRoundSteps, seatOf, workflowEvents, workflowFacts, WorkflowObserver, type Finding, type InboxItem, type JourneyStep, type Task, type TaskRepository, type TaskState, type WorkflowContext, type WorkflowEvent } from "../src/index.js";
 
 const state = createDemoState(1_000_000);
 const ctx = (inbox: InboxItem[] = [], now = 5_000): WorkflowContext => ({ roles: state.roles, profiles: state.profiles, inbox, products: state.products.map(({ id, name }) => ({ id, name })), now });
@@ -547,6 +547,49 @@ describe("compact facts become ordered events", () => {
     const openBefore = task({ ...started, findings: [...started.findings, { id: "f3", text: "Petrina's", severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }] });
     const during = workflowEvents(workflowFacts(openBefore, context), workflowFacts(closedDuring, context), context, new Map([["j3", { findings: workflowFacts(openBefore, context).findings, since: "node-start", claims: ["f1", "f2"] }]])).find((event) => event.kind === "review.finished")!;
     expect(during).toMatchObject({ claimedFixed: ["f1", "f2"], fixed: ["f1", "f3"], stillOpen: ["f2"] });
+  });
+
+  it("leaves a Builder's acceptance claim that a later acceptance run already tested out of the review's claims", () => {
+    const claim = { fixed: true, text: "Added the welcome page", at: 15 };
+    const repair: JourneyStep = { id: "j1", kind: "agent", roleId: "builder", profileId: "sol-high", round: 1, sub: 0, fixing: true, findingIds: ["a1", "f1"], startedAt: 10, endedAt: 16, end: "done", outcome: "Fixed 2 findings", reason: "fixes ready" };
+    const tested: JourneyStep = { id: "j2", kind: "agent", roleId: "tester", profileId: "opus-high", round: 1, sub: 0, startedAt: 20, endedAt: 30, end: "done", outcome: "1 of 1 checks failed", reason: "1 check failed", acceptanceChecks: [{ text: "Greeting", result: "fail", evidence: "No greeting on the welcome page" }] };
+    const review = seated({ id: "j3", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 40 });
+    const failure: Finding = { id: "a1", text: "Failed acceptance check: Greeting", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open", answer: claim };
+    const ordinary: Finding = { id: "f1", text: "Ordinary", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "fixed", answer: claim };
+    const started = task({ state: "running", journey: [repair, tested, review], findings: [failure, ordinary] });
+    // The acceptance run already tested the claim about its failure; the claim about another finding is the review's.
+    expect(reviewClaimIds(started, "j3", state.roles)).toEqual(["f1"]);
+    const context = ctx(), baselines = new Map();
+    workflowEvents(workflowFacts(task({ state: "running", journey: [repair, tested], findings: [failure, ordinary] }), context), workflowFacts(started, context), context, baselines);
+    expect(baselines.get("j3")).toMatchObject({ claims: ["f1"] });
+    // Control: a claim made after the latest acceptance run, as in a review's own fix round, is under the review's test.
+    const later = task({ ...started, findings: [{ ...failure, answer: { ...claim, at: 35 } }, ordinary] });
+    expect(reviewClaimIds(later, "j3", state.roles)).toEqual(["a1", "f1"]);
+  });
+
+  it("names an acceptance failure whose repairs are used up as held for the decision, within a review's task-wide counts", () => {
+    const review = seated({ id: "j1", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 40 });
+    const failure: Finding = { id: "a1", text: "Failed acceptance check: Greeting", severity: "blocking", raisedBy: "opus-high", confirmedBy: [], status: "open", productIds: ["shop"] };
+    const nit: Finding = { id: "n1", text: "Friendlier greeting", severity: "suggestion", raisedBy: "sol-high", confirmedBy: [], status: "open", productIds: ["shop"] };
+    const finished = (held: boolean) => {
+      const shared = (changes: Partial<TaskState>) => task({ repositories: [{ productId: "shop", delivery: "pull-request", completedStages: [] }], acceptanceBlocked: held, ...changes } as Partial<TaskState>);
+      const started = shared({ journey: [review], findings: [failure] });
+      const context = ctx(), baselines = new Map();
+      workflowEvents(workflowFacts(shared({ journey: [], findings: [failure] }), context), workflowFacts(started, context), context, baselines);
+      const ended = shared({ journey: [handedBack({ ...review, endedAt: 60, end: "done", outcome: "1 nit", reason: "review passed" })], findings: [failure, nit] });
+      return workflowEvents(workflowFacts(started, context), workflowFacts(ended, context), context, baselines).find((event) => event.kind === "review.finished")!;
+    };
+    // The task-wide counts and lists keep it: it really is still open and Important. They only name it as held for your decision.
+    const counted = { openImportant: ["a1"], stillOpen: ["a1"], openNits: ["n1"], reportCounts: { closing: { total: 2, open: { total: 2, important: 1, nits: 1 } } } };
+    const held = finished(true);
+    expect(held).toMatchObject({ ...counted, heldForDecision: ["a1"] });
+    expect(held.summary).toContain("2 open reports (1 Important, 1 nit, 0 pre-existing follow-ups); 1 of the Important is an acceptance failure held for your delivery decision, not review work;");
+    expect((held.reports as { id: string; heldForDecision?: true }[]).find((report) => report.id === "a1")).toMatchObject({ heldForDecision: true });
+    // Control: while acceptance still has returns, or after you ask for changes, it is an ordinary open Important report.
+    const ordinary = finished(false);
+    expect(ordinary).toMatchObject(counted);
+    expect(ordinary.heldForDecision).toBeUndefined();
+    expect(ordinary.summary).not.toContain("held for your delivery decision");
   });
 
   it("carries a removed request to the next observation so its recorded decision names it, and reports an unrecorded removal as handled", () => {

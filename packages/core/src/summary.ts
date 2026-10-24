@@ -3,7 +3,7 @@
 // it, roughly how long the current step has left. The engine and the simulator keep the data;
 // these read it, so the demo and the real squad say the same things.
 
-import { requiredUnverified } from "./acceptance.js";
+import { owedAcceptanceTest, requiredUnverified } from "./acceptance.js";
 import { CALL_WORDS, followingCall } from "./call.js";
 import { allowsReviewFix, coveredByDecision, reviewRoundEnd } from "./flow.js";
 import { portReviewerIndex } from "./journey.js";
@@ -86,10 +86,10 @@ export const MIN_HISTORY = 3;
 export const HISTORY = 10;
 
 /** Whether the task's current step repeats earlier work: a later design or review round, fixing findings, or following the coordinator's call. */
-export function isRepeat(task: Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "retest">): boolean {
+export function isRepeat(task: Pick<Task, "plan" | "stageIndex" | "rounds" | "sub" | "fixing" | "call" | "retest" | "repairCheck">): boolean {
   const stage = task.stageIndex < 0 ? undefined : task.plan?.stages[task.stageIndex];
   if (!stage) return false;
-  return task.retest === true || task.fixing || (task.rounds[stage.id] ?? 1) > 1 || (stage.kind === "converge" && task.sub === 0 && followingCall(task) !== undefined);
+  return task.retest === true || task.repairCheck === true || task.fixing || (task.rounds[stage.id] ?? 1) > 1 || (stage.kind === "converge" && task.sub === 0 && followingCall(task) !== undefined);
 }
 
 /** A new clock for a step that starts fresh. */
@@ -242,7 +242,8 @@ function reviewersOf(task: Task, state: People, stage: Stage, at: number, from: 
 /** Final preparation resolves single-product patch equivalence; until then name the conditional test. */
 function finalTesting(state: People, task: Task): string | undefined {
   if (!task.retest && task.proofRequests?.some(request => request.status === "pending" || request.status === "stale") && !task.acceptanceUnverified && (task.proofRefreshes ?? 0) < 2) return "final acceptance testing for requested proof";
-  if (task.retest || task.testedPatch === undefined || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
+  // Testing still owed, such as an acceptance repair's own run, comes first.
+  if (owedAcceptanceTest(task) || task.testedPatch === undefined || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
   // Required acceptance that could not be verified is never tried again unchanged; a reproduced failure keeps its retest.
   const reproduced = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && roleForTask(state.roles, step.roleId ?? "", task)?.result === "checks")?.acceptanceChecks?.some((check) => check.result === "fail");
   if (requiredUnverified(task) && !reproduced) return undefined;
@@ -263,6 +264,7 @@ function finalTesting(state: People, task: Task): string | undefined {
 function upcoming(state: People, task: Task, index: number, sub: number, limit = 2): string[] {
   const stages: readonly Stage[] = task.plan?.stages ?? [];
   const steps: string[] = [];
+  const owed = owedAcceptanceTest(task);
   for (let at = index, from = sub; at < stages.length && steps.length < limit; at += 1, from = 0) {
     const stage = stages[at]!;
     const again = (task.rounds[stage.id] ?? 1) > 1 ? " again" : "";
@@ -295,9 +297,17 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         break;
       }
       case "do": {
-        // After the first acceptance pass, the engine skips this stage in fix rounds and decides on
-        // a final pass at the delivery check. A tester already on that final pass goes straight to the check.
-        if (roleForTask(state.roles, stage.roleId, task)?.result === "checks" && task.testedPatch !== undefined && !(task.retest && at === task.stageIndex)) break;
+        // Testing still owed here: checking an acceptance repair, then the rest of the plan; final testing, and a repair of
+        // what it found, then straight to the delivery check.
+        const checks = roleForTask(state.roles, stage.roleId, task)?.result === "checks";
+        if (checks && owed?.stage === at) {
+          steps.push(`${owed.final ? "final acceptance testing" : "acceptance testing of the repair"}${by(state, stage.profileIds[0])}`);
+          const gate = owed.final ? stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery") : -1;
+          if (gate > at) at = gate - 1;
+          break;
+        }
+        // After the first acceptance pass, the engine skips this stage in fix rounds and decides on a final pass at the delivery check.
+        if (checks && task.testedPatch !== undefined) break;
         if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") {
           // Petrina publishes by itself: a release's notes come from the Release Manager first.
           if (task.delivery === "release") steps.push(`${WORK[stage.roleId]}${by(state, stage.profileIds[0])}`);
@@ -383,9 +393,14 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
       return shaped(after, canFixReview(state, task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : "your call if blocking issues are found");
     }
     default:
-      if (task.retest && roleForTask(state.roles, stage.roleId, task)?.result === "checks") {
-        const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
-        return shaped(upcoming(state, task, gate >= 0 ? gate : task.stageIndex + 1, 0), "fixes by the builder if acceptance checks fail");
+      if (roleForTask(state.roles, stage.roleId, task)?.result === "checks") {
+        // Petrina's own checks only prepare acceptance testing: until the Tester starts, any test still owed comes first.
+        if (task.agent?.roleId !== stage.roleId) return shaped(upcoming(state, task, task.stageIndex, 0));
+        const owed = owedAcceptanceTest(task);
+        if (owed?.final && owed.stage === task.stageIndex) {
+          const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
+          return shaped(upcoming(state, task, gate >= 0 ? gate : task.stageIndex + 1, 0), "fixes by the builder if acceptance checks fail");
+        }
       }
       // The Release Manager writing a release's notes: Petrina publishes it next.
       if (roleForTask(state.roles, stage.roleId, task)?.result === "delivery") return task.delivery === "release" ? { steps: [PUBLISH.release] } : undefined;

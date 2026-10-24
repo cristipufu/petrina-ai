@@ -4,13 +4,18 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, NOTES_HANDOFF_RULE, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
 import { hintProducts } from "./source-pointers.js";
 
-const acceptanceStart = ({ task }: PromptContext) => task.retest ? "This is final acceptance testing after review. Earlier acceptance did not cover the final code or did not pass. Use the earlier evidence index to inspect what changed; old passes do not automatically satisfy this run. " : "";
+const acceptanceStart = ({ task }: PromptContext) => {
+  const owed = owedAcceptanceTest(task);
+  return owed?.final ? "This is final acceptance testing after review. Earlier acceptance did not cover the final code or did not pass. Use the earlier evidence index to inspect what changed; old passes do not automatically satisfy this run. "
+    : owed ? "This acceptance run checks the builder's repair of an earlier run that did not pass, before review. Try every item again on the current code; use the earlier evidence index to inspect what changed, and do not reuse old passes as this run's results. "
+    : "";
+};
 
 /** Optional navigation: the engine keeps each valid entry, so malformed hints never cost an otherwise usable result. */
 const SourcePointers = z.unknown().optional();

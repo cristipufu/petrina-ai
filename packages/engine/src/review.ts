@@ -4,7 +4,7 @@ import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { runtimeWaitHolds, acceptsAnswer, authorProfile, ballotOf, choosePanel, coveredByDecision, decide, endAgentStep, engagedTools, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReproduction, noteReviewTag, noteRoundEnd, openStep, panelAnswers, passedOpenWords, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewClaimIds, reviewDecisionFor, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import { runtimeWaitHolds, acceptsAnswer, authorProfile, ballotOf, choosePanel, coveredByDecision, decide, endAgentStep, engagedTools, exhaustedAcceptanceFailure, findingCount, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS as W, noteReproduction, noteReviewTag, noteRoundEnd, openStep, panelAnswers, passedOpenWords, pickStarts, planThirdAnswers, portReviewerIndex, recordStepResult, replacementFor, reopensUnresolved, reviewBlocking, reviewClaimIds, reviewDecisionFor, reviewRoundEnd, reviewRoundSteps, reviewedCode, reviewerAt, seatAnswered, seatRemaining, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Finding, type Hunt, type Id, type JourneyStep, type PanelCandidate, type ReadinessRecheck, type Role, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -141,9 +141,10 @@ export class Reviews {
    */
   async runReview(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const scope = executionFor(task);
-    // Older saved tasks could reopen a fix while retaining the verdict on its previous code.
+    // Older saved tasks could reopen a fix while retaining the verdict on its previous code. An acceptance failure held for
+    // the delivery decision is no review's to reopen: acceptance testing already tested its claims.
     for (const finding of task.findings) {
-      if (finding.raisedBy !== "petrina" && finding.status === "open" && finding.answer?.fixed && (finding.reopenedAt ?? -Infinity) < finding.answer.at && (!finding.verification || finding.verification.at < finding.answer.at)) reopenFinding(finding, Date.now());
+      if (finding.raisedBy !== "petrina" && finding.status === "open" && finding.answer?.fixed && (finding.reopenedAt ?? -Infinity) < finding.answer.at && (!finding.verification || finding.verification.at < finding.answer.at) && !exhaustedAcceptanceFailure(task as unknown as Task, finding)) reopenFinding(finding, Date.now());
     }
     // Older saved port marks did not prove the feature had completed ordinary review.
     if (scope.work.portReview && !scope.work.reviewedTree) {
@@ -232,10 +233,10 @@ export class Reviews {
     return this.closeReviewRound(task, stage, round, outcome, reviewedVersions);
   }
 
-  /** What this round's reviewers raised, in plain counts. */
+  /** What this round's reviewers raised, in plain counts. An acceptance failure held for the delivery decision is no review finding. */
   private raised(task: MTask): string {
     const recorded = openStep(task)?.result?.findings;
-    return findingCount(recorded ? recorded.filter((finding) => finding.status === "open") : task.findings.slice(task.hunt?.findings ?? 0));
+    return findingCount((recorded ? recorded.filter((finding) => finding.status === "open") : task.findings.slice(task.hunt?.findings ?? 0)).filter((finding) => !exhaustedAcceptanceFailure(task as unknown as Task, finding)));
   }
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
@@ -547,7 +548,7 @@ export class Reviews {
   private ballotFindings(task: MTask): Task["findings"] {
     const toolOf = (profileId: Id) => this.k.profile(profileId)?.toolId;
     return task.findings.filter((finding) => {
-      if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification || finding.unresolved) return false;
+      if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification || finding.unresolved || exhaustedAcceptanceFailure(task as unknown as Task, finding)) return false;
       if (task.repositories && !productsFor(task, finding.productIds).length) return false;
       const judgments = finding.judgments ?? [];
       const clashed = judgments.some((entry) => entry.severity === "pre-existing") && judgments.some((entry) => entry.severity === "blocking");
@@ -1297,7 +1298,8 @@ export class Reviews {
    */
   private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
     const scope = executionFor(task);
-    const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+    // Acceptance failures held for the delivery decision neither send the work back nor count toward the round.
+    const open = reviewBlocking(task as unknown as Task);
     // The coordinator's decision to continue still covers its findings only on the task's own change it was made on.
     const continued = task.reviewDecision?.accepted && task.reviewDecision.covers?.length;
     let changes = continued ? await this.ownChanges(task) : undefined;
@@ -1340,7 +1342,7 @@ export class Reviews {
     if (end.kind === "send back") {
       task.rounds[stage.id] = round + 1;
       if (task.repositories) {
-        if (beginRepair(this.k, task, "review", task.stageIndex, covered)) return "continue";
+        if (beginRepair(this.k, task, "review", task.stageIndex, { covered })) return "continue";
         this.releaseRoundInput(task);
         // Continue through any remaining acceptance stage after the decision, before delivery approval.
         const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
@@ -1369,7 +1371,7 @@ export class Reviews {
       this.k.gate(task, "delivery");
       return "stop";
     } else {
-      this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings, covered)}`);
+      this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings.filter((finding) => !exhaustedAcceptanceFailure(task as unknown as Task, finding)), covered)}`);
     }
     this.k.commit();
     return "continue";

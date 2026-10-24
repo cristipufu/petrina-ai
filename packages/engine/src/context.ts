@@ -2,7 +2,7 @@ import { repositoryView, type RepositoryContext } from "./repository-context.js"
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
-import { dueAnswers, followingCall, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
+import { builderFindings, dueAnswers, exhaustedAcceptanceFailure, followingCall, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
@@ -43,7 +43,8 @@ export const renderCoordinatorNote = (note: NonNullable<Task["notes"]>[number]) 
 /** Beside the reports exactly as they were handed back: evidence to check and proposals to weigh, never extra requirements. */
 export const EARLIER_REPORTS_RULE = `These are the reports earlier agents saved, not their conversations. Check the facts and sources your work relies on yourself: they may be out of date or hold only for a particular version or platform. Proposals, such as suggested approaches or proposed screens and words, can guide your work but add no requirements: the task request, any approved brief and the coordinator's notes and decisions remain authoritative.`;
 
-const reviewFindings = ({ task }: RepositoryContext) => task.findings.filter((finding) => finding.raisedBy !== "petrina" || finding.status === "open");
+/** What reviewers confirm or dispute: never an acceptance failure held for the delivery decision, which no review settles. */
+const reviewFindings = ({ task }: RepositoryContext) => task.findings.filter((finding) => (finding.raisedBy !== "petrina" || finding.status === "open") && !exhaustedAcceptanceFailure(task as Task, finding));
 
 export class Context {
   private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean, member?: string) => Section[]> = {
@@ -225,7 +226,8 @@ export class Context {
   private findingsToAnswer(scope: RepositoryContext): Section[] {
     const { task, work: repository } = scope;
     if (!task.fixing) return [];
-    const open = task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(repository.productId)));
+    // Acceptance failures whose returns are used up wait for the coordinator, even when this product fixes another finding.
+    const open = builderFindings(task, repository.productId);
     const logs = repository.checks?.results.filter((run) => !run.ok).flatMap((run) => {
       const saved = run.logPath ? `- ${run.name}: ${JSON.stringify(run.logPath)}${run.logError ? " (incomplete)" : ""}` : "";
       const error = run.logError ? `- ${run.name}: Could not save the complete output: ${run.logError}` : "";

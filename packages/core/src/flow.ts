@@ -5,7 +5,7 @@
 import { roleForTask } from "./roles.js";
 import { checkProblem } from "./check-evidence.js";
 import { proofGap } from "./proof-requests.js";
-import { restoredAcceptance } from "./acceptance.js";
+import { exhaustedAcceptanceFailure, restoredAcceptance } from "./acceptance.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
 import { assignedProducts, taskProductIds } from "./repositories.js";
 import { findingCount } from "./findings.js";
@@ -79,8 +79,10 @@ export function gateStatus(task: Task, gate: GateKind): string {
   const open = stillBlocking(task);
   if (checkProblem(task) === "failing") return CHECKS_STILL_FAIL;
   if (checkProblem(task)) return "Checks unverified. Your call";
-  // Never "done" while Important findings are open: the rounds ran out and the coordinator decides.
-  if (open) return `Review rounds ran out with ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} open. Your call`;
+  // Never "done" while Important findings are open: the rounds ran out, or acceptance repairs did, and the coordinator decides.
+  const review = reviewBlocking(task).length;
+  if (review) return `Review rounds ran out with ${review === 1 ? "1 blocking finding" : `${review} blocking findings`} open. Your call`;
+  if (open) return "Acceptance still fails after the builder's returns. Your call";
   const gap = proofGap(task);
   if (gap) return `${gap}. Your call`;
   const unverified = task.brief?.acceptance.filter((item) => item.verification === "blocked").length ?? 0;
@@ -142,9 +144,12 @@ export function designRoundEnd(blocking: number, round: number, stage: Stage): "
  */
 export type ReviewRoundEnd = { kind: "send back"; builder: number; open: number } | { kind: "passed"; covered?: number } | { kind: "used up"; open: number };
 
-/** The coordinator's decision about an exhausted review: the open Important findings it is about, and the task's own change then. */
-export function reviewDecisionFor(task: Pick<Task, "findings">, stageId: Id, round: number, at: number, versions: Readonly<Record<Id, string>>): DeepMutable<NonNullable<Task["reviewDecision"]>> {
-  const covers = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id);
+/**
+ * The coordinator's decision about an exhausted review: the open Important findings it is about, and the task's own change
+ * then. Acceptance failures held for the delivery decision are not the review's.
+ */
+export function reviewDecisionFor(task: Pick<Task, "findings" | "repositories" | "acceptanceBlocked">, stageId: Id, round: number, at: number, versions: Readonly<Record<Id, string>>): DeepMutable<NonNullable<Task["reviewDecision"]>> {
+  const covers = reviewBlocking(task).map((finding) => finding.id);
   return { stageId, round, accepted: false, covers, at, versions: { ...versions } };
 }
 
@@ -189,10 +194,15 @@ export function passedOpenWords(findings: readonly Finding[], covered: ReadonlyS
 /** The most review rounds a stage runs on its own, however well it converges: past it the coordinator decides. */
 export const MAX_REVIEW_ROUNDS = 5;
 
+/** The Important findings a review round acts on: every open one, except acceptance failures held for the delivery decision. */
+export function reviewBlocking(task: Pick<Task, "findings" | "repositories" | "acceptanceBlocked">): Task["findings"] {
+  return task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking" && !exhaustedAcceptanceFailure(task, finding));
+}
+
 /** Shared convergence decision. No open findings previews whether one newly found blocker could return. */
 export function allowsReviewFix(task: Task, stage: Stage, round: number): boolean {
   if (round < (stage.maxRounds ?? 2)) return true;
-  const current = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+  const current = reviewBlocking(task);
   const currentIds = new Set(current.map((finding) => finding.id));
   const previous = task.blockingFindingsAfter?.[stage.id]?.at(-1);
   const before = task.blockingAfter?.[stage.id]?.at(-1);
@@ -207,7 +217,7 @@ export function allowsReviewFix(task: Task, stage: Stage, round: number): boolea
  * Findings the coordinator's decision to continue still `covered` alone never send work back or use rounds up.
  */
 export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: readonly Role[], covered: ReadonlySet<Id> = new Set()): ReviewRoundEnd {
-  const blocking = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
+  const blocking = reviewBlocking(task);
   const open = blocking.length;
   if (open === 0) return { kind: "passed" };
   if (blocking.every((finding) => covered.has(finding.id))) return { kind: "passed", covered: open };
@@ -220,6 +230,6 @@ export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: r
 /** How many Important findings a review round ended with, for the next round's convergence check. */
 export function noteRoundEnd(task: DeepMutable<Task>, stageId: string, open: number): void {
   task.blockingAfter = { ...(task.blockingAfter ?? {}), [stageId]: [...(task.blockingAfter?.[stageId] ?? []), open] };
-  const ids = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking").map((finding) => finding.id);
+  const ids = reviewBlocking(task as Task).map((finding) => finding.id);
   task.blockingFindingsAfter = { ...(task.blockingFindingsAfter ?? {}), [stageId]: [...(task.blockingFindingsAfter?.[stageId] ?? []), ids] };
 }

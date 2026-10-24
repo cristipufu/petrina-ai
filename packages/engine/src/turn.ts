@@ -7,7 +7,7 @@ import type { Sources } from "./sources.js";
 // One agent working one step: opening or reopening its conversation, its instructions, the turns until
 // it hands back a valid result, and what it asks the coordinator on the way.
 
-import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
+import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, owedAcceptanceTest, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult } from "./acp-run.js";
 import * as git from "./git.js";
@@ -402,7 +402,9 @@ export class Turns {
     if (role.result === "build") journeyStep.buildProductId = repository.productId;
     if (role.result === "checks" && task.acceptanceRun) journeyStep.proofRun = structuredClone(task.acceptanceRun);
     if (["findings", "votes"].includes(role.result) && task.hunt?.input) journeyStep.reviewInput = structuredClone(task.hunt.input);
-    if (role.result === "checks" && task.retest && !journeyStep.agentInputs?.length) journeyStep.trigger = { ...journeyStep.trigger, reason: task.proofRetestReason === "requested" ? "A reviewer asked for proof on the final code" : task.proofRetestReason === "main-moved" ? "Main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "The task's code changed since acceptance testing" : "Final acceptance testing after review: the final code needs current acceptance evidence" };
+    const owed = role.result === "checks" && !journeyStep.agentInputs?.length ? owedAcceptanceTest(task) : undefined;
+    if (owed?.final) journeyStep.trigger = { ...journeyStep.trigger, reason: task.proofRetestReason === "requested" ? "A reviewer asked for proof on the final code" : task.proofRetestReason === "main-moved" ? "Main moved since the proof was recorded" : task.proofRetestReason === "code-changed" ? "The task's code changed since acceptance testing" : "Final acceptance testing after review: the final code needs current acceptance evidence" };
+    else if (owed) journeyStep.trigger = { ...journeyStep.trigger, reason: "Checking the builder's repair of the failed acceptance checks; the planned reviews follow" };
     if (saved) {
       task.statusLine = options.status ?? `${role.name} is getting back to work`;
     } else {

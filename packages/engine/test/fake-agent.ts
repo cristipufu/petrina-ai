@@ -103,6 +103,8 @@ export interface Scenario {
   testerChecks?: { text: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; productIds?: string[] }[];
   /** What the Tester reports instead once its copy has the builder's fix ("fixes": "change"). */
   testerChecksFixed?: { text: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; productIds?: string[] }[];
+  /** Exact acceptance results for each Tester run in turn, the last one repeating; in place of `testerChecks`. */
+  testerRuns?: { text: string; result: "pass" | "fail" | "blocked"; evidence?: string; reason?: string; productIds?: string[] }[][];
   /**
    * Files a Tester on `model` (any, unset) writes as its turn starts, before a usage limit can stop it: in any
    * product's copy, by absolute folder. `commit` also commits the file there.
@@ -608,7 +610,8 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         report.findings = report.findings.map((finding) => ({ ...finding, productIds: ids }));
         if (plan.unassignedFinding && report.findings.some((finding) => finding.severity === "important")) report.findings.push({ text: "The shared ownership needs a coordinator decision.", severity: "important" });
       }
-      if (report.checks && session.role === "tester") report.checks = report.checks.map((check) => ({ ...check, productIds: ids, ...(typeof check.pass === "boolean" ? { result: check.pass ? "pass" : "fail", pass: undefined } : {}) }));
+      // Exact Tester results keep the products they name; the others go to the affected products.
+      if (report.checks && session.role === "tester") report.checks = report.checks.map((check) => ({ ...check, productIds: check.productIds ?? ids, ...(typeof check.pass === "boolean" ? { result: check.pass ? "pass" : "fail", pass: undefined } : {}) }));
     }
     let result = learned.length && value && typeof value === "object" && !("needsInput" in value) ? { ...value, learnings: learned } : value;
     if (plan.sourcePointers && Object.hasOwn(plan.sourcePointers, session.role) && result && typeof result === "object" && !("needsInput" in result)) result = { ...result, sourcePointers: plan.sourcePointers[session.role] };
@@ -1305,6 +1308,12 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         mark("tester-worked");
         await say("Trying it out");
         return hang(sessionId, "tester-working");
+      }
+      if (plan.testerRuns?.length && dir) {
+        const unused = plan.testerRuns.findIndex((_, index) => !marked(`tester-run-${index}`));
+        const index = unused < 0 ? plan.testerRuns.length - 1 : unused;
+        mark(`tester-run-${index}`);
+        return done({ summary: "Tried every acceptance item.", checks: plan.testerRuns[index]!.map((check) => ({ ...check })) });
       }
       if (plan.testerChecks) {
         const checks = plan.testerChecksFixed && existsSync(join(session.cwd, "welcome.txt")) ? plan.testerChecksFixed : plan.testerChecks;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { BuilderContext, Finding, Role, Task } from "@petrina/core";
+import { builderFindings, type BuilderContext, type Finding, type Role, type Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import { saveImmutable } from "./immutable-file.js";
 import { FINDING_TAG, formatFindings } from "./prompts.js";
@@ -31,7 +31,7 @@ export async function builderContext(dataDir: string, task: Task, role: Role, se
   const versions = (task.repositories ?? [task]).map((work) => `${work.productId}: base ${work.baseSha ?? "not prepared"}`).join("\n");
   const answering = (title: string) => title === "Review findings (answer every one by id; fix every Important one)";
   const findingSection = (title: string) => title === "Findings so far (confirm or dispute by id)" || answering(title);
-  const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? task.findings.filter(finding => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || finding.productIds?.includes(task.productId))) : undefined) : undefined;
+  const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? builderFindings(task, task.productId) : undefined) : undefined;
   // Empty note metadata tracks withdrawals without adding an empty heading to the saved packet.
   const packetSections = sections.filter(section => section.coordinatorNotes === undefined || (section.background ?? section.body));
   const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${packetSections.map((section) => `## ${section.title}\n${section.background ?? section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(findingRecords, null, 2)}\n` : ""}`;

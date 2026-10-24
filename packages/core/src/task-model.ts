@@ -159,6 +159,12 @@ export interface TaskScopeState {
     kind: "checks" | "acceptance" | "review";
     /** Owners added only to port conflicts, without an owed findings repair. Other owners retain their original repair. */
     portProducts?: readonly Id[];
+    /**
+     * An acceptance repair of testing the delivery check started: it returns to that final testing, then straight to the
+     * check. Any other acceptance repair, including one saved without this mark, returns to ordinary acceptance testing,
+     * then continues through the rest of the plan, its reviews included.
+     */
+    final?: true;
   };
   /** Explicit New task choices stay authoritative until the coordinator approves a change. */
   explicitStart?: boolean;
@@ -327,6 +333,8 @@ export interface TaskAcceptanceState {
   acceptanceUnverified?: boolean;
   /** The tester is trying the final code right before the delivery check; the check follows, or the builder if it fails. */
   retest?: boolean;
+  /** The tester is checking the builder's repair of an earlier acceptance run; the rest of the plan follows, its reviews included. */
+  repairCheck?: boolean;
 }
 
 export interface ProofDecision {
