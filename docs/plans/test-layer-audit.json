@@ -277,11 +277,22 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/acceptance.test.ts",
+      "file": "packages/core/test/rules/acceptance/evidence.test.ts",
       "declarations": 16,
       "assertionSites": 69,
       "baselineDigest": "d8ebdf2c894fb065b449dc7d14f73d21c59ab72ea9a4d623eda21d7444adb236",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/acceptance.test.ts",
+      "review": "All 25 generated cases and every assertion site retained. Acceptance/version/history/gap rules consume fresh canonical data, actual demo checks keep both demo generators, and the custom-role simulator control owns its real tick transitions. Shared acceptance data uses stateFixture/taskFixture rather than generating unrelated demo workflows.",
+      "splitFiles": [
+        "packages/core/test/rules/acceptance/evidence.test.ts",
+        "packages/core/test/contracts/demo/acceptance.test.ts",
+        "packages/core/test/orchestration/simulator/acceptance.test.ts"
+      ],
+      "validation": {
+        "artifact": "core-acceptance-reconciliation.json",
+        "qualification": "core-acceptance-split.json: 25 passes. All workspace types and layer/assertion conventions pass; full combined qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/analytics.test.ts",

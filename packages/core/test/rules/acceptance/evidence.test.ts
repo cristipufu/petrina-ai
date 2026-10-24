@@ -1,36 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceGap, acceptanceSummary, recordedAcceptance, requiredUnverified, restorationReason, restoredAcceptance, sameAcceptanceGap, undecidedAcceptanceGap, unverifiedRequirements } from "../src/acceptance.js";
-import { gateStatus, gateTitle } from "../src/flow.js";
-import { createDemoState, createPortfolioDemo } from "../src/demo.js";
-import { journeyView } from "../src/journey.js";
-import { BUILT_IN_ROLES } from "../src/library.js";
-import { displayTask } from "../src/repositories.js";
-import { Simulator } from "../src/sim.js";
-import type { JourneyStep, Role } from "../src/model.js";
+import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceGap, acceptanceSummary, recordedAcceptance, requiredUnverified, restorationReason, restoredAcceptance, sameAcceptanceGap, undecidedAcceptanceGap, unverifiedRequirements } from "../../../src/acceptance.js";
+import { gateStatus, gateTitle } from "../../../src/flow.js";
+import { journeyView } from "../../../src/journey.js";
+import { displayTask } from "../../../src/repositories.js";
 
-const roles: readonly Role[] = [...BUILT_IN_ROLES,
-  { ...BUILT_IN_ROLES.find((role) => role.result === "checks")!, id: "custom-test", name: "Quality partner" },
-  { ...BUILT_IN_ROLES.find((role) => role.result === "build")!, id: "custom-build", name: "Repair partner" },
-];
-const roleFor = (id?: string) => roles.find((role) => role.id === id);
-const step = (value: Partial<JourneyStep>): JourneyStep => ({ id: "step", kind: "agent", round: 1, sub: 0, startedAt: 10, endedAt: 20, end: "done", ...value });
-
-function fixture(roleId = "tester") {
-  const task = createDemoState(1_000_000_000_000).tasks[0]!;
-  task.brief = { summary: "", forUsers: [], areas: [], risks: [], acceptance: [
-    { text: "The total is correct", verification: "passed", met: true },
-    { text: "Delivery is retained", verification: "failed", met: false },
-    { text: "A real account works", verification: "blocked", reason: "Account unavailable" },
-  ] };
-  task.repository = { productId: task.productId, lessons: [], delivery: "pull-request", checks: { at: 20, tree: "tested-tree", current: true, results: [] } };
-  delete task.repositories;
-  task.journey = [step({ id: "tester", roleId, acceptanceChecks: [
-    { text: "The total is correct", result: "pass", evidence: "The total includes delivery" },
-    { text: "Delivery is retained", result: "fail", evidence: "Changing delivery reset the choice", reason: "Choice was lost" },
-    { text: "A real account works", result: "blocked", reason: "Account unavailable" },
-  ], agentResults: [{ roleId, profileId: "sol-high", at: 20, value: {}, versions: { [task.productId]: "tested-tree" } }] })];
-  return task;
-}
+import { acceptanceFixture as fixture, roles, roleFor, step } from "../../fixtures/acceptance.js";
 
 describe("acceptance evidence attribution", () => {
   it.each(["tester", "custom-test"])("keeps current %s passes and failures when a single-product task is prepared for the screen", (roleId) => {
@@ -216,43 +190,4 @@ describe("acceptance evidence attribution", () => {
     expect(acceptanceSummary(task, roleFor).items.every((item) => !item.current)).toBe(true);
     expect(task.journey![0]).toEqual(saved);
   });
-});
-
-
-it.each(["default", "portfolio"])("the %s demo records acceptance on each completed Tester and retains current examples", (demo) => {
-  const state = demo === "default" ? createDemoState(1_000_000_000_000) : createPortfolioDemo(1_000_000_000_000).state;
-  const findRole = (id?: string) => state.roles.find((role) => role.id === id);
-  const tested = state.tasks.filter((task) => task.journey?.some((step) => step.kind === "agent" && step.endedAt !== undefined && findRole(step.roleId)?.result === "checks" && task.brief?.acceptance.length));
-  expect(tested.length).toBeGreaterThan(0);
-  for (const task of tested) {
-    for (const step of task.journey!.filter((step) => step.kind === "agent" && step.endedAt !== undefined && findRole(step.roleId)?.result === "checks")) {
-      expect(step.acceptanceChecks?.length).toBe(task.brief!.acceptance.length);
-      expect(step.acceptanceChecks!.every((check) => check.evidence?.startsWith("Demo scenario:"))).toBe(true);
-      expect(step.agentResults![0]!.versions).toBeDefined();
-    }
-    expect(task.journey!.filter((step) => step.work === "checks").every((step) => step.acceptanceChecks === undefined)).toBe(true);
-  }
-  expect(tested.some((task) => acceptanceSummary(displayTask(task), findRole).current)).toBe(true);
-});
-
-it("the simulator records a custom Builder and Tester's versions and acceptance separately from commands", () => {
-  const state = createDemoState(1_000_000_000_000);
-  const task = displayTask(fixture("custom-test"));
-  task.plan = { rationale: "", plannerProfileId: "sol-high", stages: [
-    { id: "build", kind: "do", title: "Build", roleId: "custom-build", profileIds: ["sol-high"] },
-    { id: "test", kind: "do", title: "Test", roleId: "custom-test", profileIds: ["sol-high"] },
-    { id: "deliver", kind: "gate", title: "Delivery check", roleId: "release-manager", profileIds: [], gate: "delivery" },
-  ] };
-  Object.assign(task, { state: "waiting", column: "building", stageIndex: 0, sub: 0, rounds: {}, journey: [], findings: [], checks: undefined, agent: undefined, holdsSlot: false });
-  const sim = new Simulator({ ...state, tasks: [task], inbox: [], roles, pool: { limit: 1, paused: false, toolCaps: {} } });
-  for (let tick = 0; tick < 50 && !sim.getState().inbox.some((item) => item.kind === "delivery"); tick++) sim.tick();
-  const completed = sim.getState().tasks[0]!;
-  const build = completed.journey!.find((step) => step.roleId === "custom-build")!;
-  const tester = completed.journey!.find((step) => step.roleId === "custom-test")!;
-  expect(build.buildVersions?.[task.productId]).toBeDefined();
-  expect(tester.acceptanceChecks).toHaveLength(3);
-  expect(tester.agentResults![0]!.versions).toEqual(build.buildVersions);
-  expect(completed.journey!.filter((step) => step.work === "checks")).toHaveLength(1);
-  expect(completed.journey!.find((step) => step.work === "checks")!.acceptanceChecks).toBeUndefined();
-  expect(acceptanceSummary(completed, roleFor).current).toBe(true);
 });
