@@ -312,11 +312,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/check-evidence.test.ts",
+      "file": "packages/core/test/rules/checks/evidence.test.ts",
       "declarations": 16,
       "assertionSites": 67,
       "baselineDigest": "7a60f243b5f90e0896f0b07d434ecb04a119982d883438daad6be49bc642a891",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/check-evidence.test.ts",
+      "layer": "rules",
+      "area": "checks",
+      "review": "Twenty-one executed cases test actual value transformations: applicable/reused/fresh/interrupted/skipped evidence, exact attempt and product provenance, truthful gate/Builder summaries, idempotent reuse and history immutability. One production-created task replaces unrelated full demo setup; immutable role/profile definitions supply journey labels. No Engine, native boundary or simulator execution.",
+      "validation": {
+        "caseBodiesAndAssertionsUnchanged": true,
+        "executedCasesReconciled": 40,
+        "artifact": "core-evidence-reconciliation.json",
+        "run": "core-evidence-final.json: all 1,063 core cases pass; workspace types and conventions pass"
+      }
     },
     {
       "file": "packages/core/test/dependency-creation.test.ts",
@@ -385,11 +395,26 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/node-usage.test.ts",
-      "declarations": 16,
-      "assertionSites": 58,
+      "file": "packages/core/test/rules/usage/node.test.ts",
+      "declarations": 14,
+      "assertionSites": 49,
       "baselineDigest": "f97a079782fc1ac61c7bebb2b048f4036c77b048bf37c436d9c24d0a60caafa4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/node-usage.test.ts",
+      "layer": "rules",
+      "area": "usage",
+      "splitInto": [
+        "packages/core/test/orchestration/simulator/node-usage.test.ts"
+      ],
+      "baselineDeclarations": 16,
+      "baselineAssertionSites": 58,
+      "review": "Sixteen executed rule cases exercise actual nodeUsage and memory log: exact step/seat/start ownership, repeated reports, cache/model parts, missing/partial/zero reports, archived lookup, ambiguous legacy ranges and continuation identity. Narrowed NodeUsageContext removes unrelated workspace requirements; one task uses the production initializer. All nineteen original runtime cases and their bodies remain across this file and the three simulator controls.",
+      "validation": {
+        "caseBodiesAndAssertionsUnchanged": true,
+        "executedCasesReconciled": 40,
+        "artifact": "core-evidence-reconciliation.json",
+        "run": "core-evidence-final.json: all 1,063 core cases pass; workspace types and conventions pass"
+      }
     },
     {
       "file": "packages/core/test/products.test.ts",
@@ -2276,6 +2301,22 @@
       "area": "repositories",
       "review": "Canonical single/shared owners, exclusions, cursor-independent bindings, missing/empty maps, projection, detach and idempotent restore. Direct data tests, no native I/O.",
       "validation": "orchestrator-reviewed-unit.json: all 25 package cases pass in 808ms; type checks and package direction pass"
+    },
+    {
+      "file": "packages/core/test/orchestration/simulator/node-usage.test.ts",
+      "declarations": 2,
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "simulator",
+      "from": "packages/core/test/node-usage.test.ts",
+      "assertionSites": 9,
+      "review": "Three retained original cases run the real Simulator with its own memory log and explicit ticks: exact sample step/seat accounting and screen/question continuation on the original start. Retains usageView dispatch integration after isolated node rules call their actual owner directly. No real accounts, filesystem or native programs.",
+      "validation": {
+        "caseBodiesAndAssertionsUnchanged": true,
+        "executedCasesReconciled": 40,
+        "artifact": "core-evidence-reconciliation.json",
+        "run": "core-evidence-final.json: all 1,063 core cases pass; workspace types and conventions pass"
+      }
     }
   ],
   "rust": [

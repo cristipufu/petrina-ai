@@ -1,21 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { builderCheckSummary, builderReturnWords, checkDecisionLabel, checkProblem, decisionEvidence, evidenceFor, checkResult, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "../src/check-evidence.js";
-import { beginYouStep, journeyView, recordCheckReuse } from "../src/journey.js";
-import { gateTitle } from "../src/flow.js";
-import { createDemoState } from "../src/demo.js";
-import type { CheckRun, Task } from "../src/model.js";
-import type { DeepMutable } from "../src/flow.js";
-
-const now = 1_000_000_000_000;
-function fixture(ok = false) {
-  const state = createDemoState(now);
-  const task = JSON.parse(JSON.stringify(state.tasks.find((task) => task.id === "pricing-refresh")!)) as DeepMutable<Task>;
-  const run: CheckRun = { name: "Tests", command: "bun run test", ok, ms: 41_000, output: ok ? "passed" : "Original failure diagnostic", startedAt: now - 90_000, endedAt: now - 49_000, source: { stepId: "original", attemptId: "run-2", checkId: "run-2:check-0" } };
-  task.checks = { at: now - 49_000, current: true, results: [run] };
-  task.checkReturns = 2;
-  task.journey = [{ id: "original", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: run.startedAt!, endedAt: run.endedAt, productChecks: [{ id: run.source!.checkId, attemptId: "run-2", productId: task.productId, name: run.name, result: ok ? "pass" : "fail", run }] }, { id: "builder", kind: "agent", roleId: "renamed-builder", fixing: true, round: 1, sub: 0, startedAt: now - 40_000, endedAt: now - 1, builderReturn: { productId: task.productId, changed: false, claimedFixes: 0, outcome: builderReturnWords(false, ok ? undefined : "failing") } }];
-  return { state, task, run };
-}
+import { builderCheckSummary, builderReturnWords, checkDecisionLabel, checkProblem, decisionEvidence, evidenceFor, checkResult, incompleteCheckOutcome, latestCheckResults, reusedCheckWords } from "../../../src/check-evidence.js";
+import { beginYouStep, journeyView, recordCheckReuse } from "../../../src/journey.js";
+import { gateTitle, type DeepMutable } from "../../../src/flow.js";
+import type { Task } from "../../../src/model.js";
+import { fixture, now } from "../../fixtures/check-evidence.js";
 
 describe("saved check evidence", () => {
   it("retains a real failure alongside interrupted verification in actual and reused outcomes", () => {

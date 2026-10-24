@@ -1,6 +1,6 @@
 // Usage belongs to a recorded step and an agent start, never a stage/round or native conversation.
-import { figures, type Detail, type UsageContext } from "./analytics.js";
-import type { Id, JourneyStep } from "./model.js";
+import { figures, type Detail } from "./analytics.js";
+import type { Id, JourneyStep, Task } from "./model.js";
 import { listWords, type Figure } from "./numbers.js";
 import { tallyOf, turnModelLabel, lineModelLabel, type TokenLine, type WorkLogReader, type WorkTurn } from "./worklog.js";
 
@@ -66,7 +66,14 @@ function contains(step: JourneyStep, turn: WorkTurn, now: number): boolean {
     && (turn.endedAt ?? now) <= (step.endedAt ?? Infinity);
 }
 
-export function nodeUsage(log: WorkLogReader, request: { taskId: Id; nodeId: Id }, ctx: UsageContext): NodeUsage {
+/** Only the node accounting inputs; task and aggregate views have wider naming requirements. */
+export interface NodeUsageContext {
+  now: number;
+  state: { tasks: readonly Task[] };
+  task?: (taskId: Id) => Task | undefined;
+}
+
+export function nodeUsage(log: WorkLogReader, request: { taskId: Id; nodeId: Id }, ctx: NodeUsageContext): NodeUsage {
   const task = ctx.state.tasks.find(task => task.id === request.taskId) ?? ctx.task?.(request.taskId);
   const step = task?.journey?.find(step => step.id === request.nodeId);
   const result: NodeUsage = { view: "node", ...request, ...amounts([]), explanation: "", runs: [] };
