@@ -1593,7 +1593,33 @@
       "declarations": 39,
       "assertionSites": 294,
       "baselineDigest": "6f08e0329b6c80ae00cf1ca088730635c04d9e0ab90f334469face72c5a7facf",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "resolves shared source rows concurrently, retaining their order and independent errors",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "cases": [
+            "resolves shared rows concurrently with ordered, independent failures in shop",
+            "resolves shared rows concurrently with ordered, independent failures in api"
+          ]
+        },
+        {
+          "original": "rejects duplicate repository rows after concurrent validation finishes",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "cases": [
+            "rejects separately registered product rows that name the same repository"
+          ]
+        },
+        {
+          "original": "keeps a newer source proposal when older parallel reads finish late",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "cases": [
+            "ignores a superseded shared result (failed: false), retaining newer rows and flags",
+            "ignores a superseded shared result (failed: true), retaining newer rows and flags"
+          ]
+        }
+      ],
+      "review": "Partial audit only: three source-proposal decisions moved to their actual portable controller. Other repository-context cases remain pending; native Git/release/storage interactions stay intact."
     },
     {
       "file": "packages/engine/test/repository-paths.test.ts",
@@ -1918,18 +1944,80 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/source-validation.test.ts",
+      "file": "packages/engine/test/contracts/sources/validation.test.ts",
       "declarations": 4,
       "assertionSites": 16,
       "baselineDigest": "b8c0f97ebafc34cfd4de10d328dfe5340ef6115593e4f87bd8855608c7d64070",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/source-validation.test.ts",
+      "layer": "contracts",
+      "area": "sources",
+      "review": "Four original declarations audited. Three actual engine/API boundaries retain every original assertion: durable in-flight validation, rejecting absent shared products through commands/coordination, and native addition-folder validation error formatting. The superseded single-product race moves to the actual SourceSelections controller with scripted branch queries, explicit release events and both success/failure variants; no Engine, SQLite, spies on the controller or native calls.",
+      "replacements": [
+        {
+          "original": "ignores superseded source successes and failures without clearing the newer validation",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "cases": [
+            "ignores a superseded single-product result (failed: false) without releasing newer validation",
+            "ignores a superseded single-product result (failed: true) without releasing newer validation"
+          ]
+        }
+      ]
     },
     {
       "file": "packages/engine/test/sources.test.ts",
       "declarations": 38,
       "assertionSites": 293,
       "baselineDigest": "fcba224cbaa4b6450bbf831e73ae329708ea83be295fa72fa4912647590bd7fc",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "clears a mismatched link error when corrected to a number and permits approval before setup",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "case": "clears a mismatched PR error when corrected to number before preparation",
+          "integrationControls": [
+            "retained default correction journey",
+            "retained branch and same-repository/fork PR delivery journeys"
+          ]
+        },
+        {
+          "original": "clears a mismatched link error when corrected to a link and permits approval before setup",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "case": "clears a mismatched PR error when corrected to link before preparation",
+          "integrationControls": [
+            "retained default correction journey",
+            "retained branch and same-repository/fork PR delivery journeys"
+          ]
+        },
+        {
+          "original": "shows a planner multiple proposal in the existing plan check and keeps explicit choices until approval",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "case": "keeps explicit choices until approval of a planner multiple proposal",
+          "integrationControls": [
+            "retained unknown-product proposal recovery journey",
+            "retained exact branch/local/PR delivery controls"
+          ]
+        },
+        {
+          "original": "shows a planner branch proposal in the existing plan check and keeps explicit choices until approval",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "case": "keeps explicit choices until approval of a planner branch proposal",
+          "integrationControls": [
+            "retained unknown-product proposal recovery journey",
+            "retained exact branch/local/PR delivery controls"
+          ]
+        },
+        {
+          "original": "shows a planner delivery proposal in the existing plan check and keeps explicit choices until approval",
+          "file": "packages/orchestrator/test/orchestration/sources/selection.test.ts",
+          "case": "keeps explicit choices until approval of a planner delivery proposal",
+          "integrationControls": [
+            "retained unknown-product proposal recovery journey",
+            "retained exact branch/local/PR delivery controls"
+          ]
+        }
+      ],
+      "review": "Partial audit: five source-selection variants moved to the real source controller. Retain one complete error-correction and one complete invalid-plan recovery, plus all exact Git delivery, PR identities, restart and integration controls. Other source journeys remain pending semantic review."
     },
     {
       "file": "packages/engine/test/sql-log.test.ts",

@@ -11,14 +11,14 @@ apps/desktop            Tauri 2 shell + React UI
   src/                  UI (board, inbox, task sheet, session, agents, library, settings)
   src-tauri/            Rust host: starts the engine, notifications, single instance
 packages/core           Domain model, scheduler, the flow rules, review numbers, demo simulator
-packages/orchestrator   Portable execution handles and repair controller; no native adapters
+packages/orchestrator   Portable execution handles, repair and source-choice controllers; no native adapters
 packages/engine         The engine process (Bun): agents over ACP, git, SQLite, the local API
 docs/                   This document and the UX notes
 ```
 
 Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's commands. Each part of the work is a module of its own, sharing state and bookkeeping (lookups, the timeline, the inbox, saving) through the kernel (`kernel.ts`):
 
-Portable controllers are being extracted into `@petrina/orchestrator`, which depends only on core. It currently owns `RuntimeTask`, canonical repository execution handles and repair routing. `RepairHost` supplies role lookup and `commitNow(task)`; the controller has no dependency on Kernel, Git, SQLite or agent processes. The engine supplies these effects and retains durable restart/integration tests. Remaining workflow modules and native adapters still live in the engine during this extraction. [Test layers](../testing/layers.md#production-package-boundaries) defines the target package direction and interface policy; convention checks enforce the current pure package boundary, including type-only references.
+Portable controllers are being extracted into `@petrina/orchestrator`, which depends only on core. It currently owns `RuntimeTask`, canonical repository execution handles, repair routing and source selection. Narrow host/query contracts supply task-aware role lookup, recording/checkpoints, repository identity and branch/PR queries; controllers have no dependency on Kernel, Git, SQLite or agent processes. The engine supplies these effects and retains durable restart/integration tests. Its `source-queries.ts` validates CLI replies; `sources.ts` retains native folder/cloning and source-refresh/fetch operations. Remaining workflow modules and native adapters still live in the engine during this extraction. [Test layers](../testing/layers.md#production-package-boundaries) defines the target package direction and interface policy; convention checks enforce the current pure package boundary, including type-only references.
 
 | Module | Owns |
 |---|---|

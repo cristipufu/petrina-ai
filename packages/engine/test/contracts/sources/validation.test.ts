@@ -1,10 +1,10 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "../../rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import type { TaskSource, WorkChoice } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { Coordination } from "../src/coordination.js";
-import { removeDir, tempDir } from "./fixtures.js";
+import { Engine } from "../../engine.js";
+import { Coordination } from "../../../src/coordination.js";
+import { removeDir, tempDir } from "../../fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -33,25 +33,6 @@ it("saves in-flight single-product validation and blocks edits and approval unti
     finish(resolved("one")); await pending;
     expect(task.workValidating).toBe(false); expect(task.workError).toBeUndefined();
     expect(task.proposedSource?.start.branch).toBe("one");
-  } finally { resolve.mockRestore(); await engine.shutdown(); }
-});
-
-it("ignores superseded source successes and failures without clearing the newer validation", async () => {
-  const { engine, task, sources } = await fixture();
-  const jobs: { resolve: (source: TaskSource) => void; reject: (error: Error) => void }[] = [];
-  const resolve = spyOn(sources, "resolve").mockImplementation(() => new Promise((resolve, reject) => { jobs.push({ resolve, reject }); }));
-  try {
-    for (const failed of [false, true]) {
-      const old = sources.propose(task, [choice("old")]), latest = sources.propose(task, [choice("latest")]);
-      const earlier = jobs.shift()!, current = jobs.shift()!;
-      if (failed) earlier.reject(new Error("Old failure")); else earlier.resolve(resolved("old"));
-      await old;
-      expect(task.workValidating).toBe(true); expect(task.proposedSource).toBeUndefined();
-      expect(task.workError).toContain("Checking the product");
-      current.resolve(resolved("latest")); await latest;
-      expect(task.workValidating).toBe(false); expect(task.workError).toBeUndefined();
-      expect(task.proposedSource?.start.branch).toBe("latest");
-    }
   } finally { resolve.mockRestore(); await engine.shutdown(); }
 });
 

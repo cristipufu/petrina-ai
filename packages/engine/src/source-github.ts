@@ -1,5 +1,6 @@
 // Read-only GitHub background. `pr view` uses --repo; API reads use the same exact
 // repository in their endpoint (gh api has no --repo option). All run outside repositories.
+import { prNumber } from "@petrina/core";
 import { tmpdir } from "node:os";
 import * as github from "./github.js";
 import * as git from "./git.js";
@@ -9,14 +10,6 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export interface SourcePr {
   number: number; url: string; state: "open" | "closed" | "merged"; title: string; body: string;
   branch: string; headRepo: string; head: string;
-}
-
-export function prNumber(value: string, repo: string): number {
-  const link = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?(?:[?#].*)?$/i.exec(value);
-  if (link && link[1]!.toLowerCase() !== repo.toLowerCase()) throw new Error(`That pull request belongs to ${link[1]}, not ${repo}. Choose the matching product or correct the link.`);
-  const number = Number(link?.[2] ?? (/^#?\d+$/.test(value) ? value.replace("#", "") : NaN));
-  if (!Number.isSafeInteger(number) || number < 1) throw new Error("Enter a pull request number or a GitHub pull request link.");
-  return number;
 }
 
 export async function sourcePr(repo: string, number: number, cmd: git.Gh = GH): Promise<SourcePr> {

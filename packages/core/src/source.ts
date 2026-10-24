@@ -51,3 +51,11 @@ export function workSummary(source: TaskSource): string {
   const action = source.start.kind === "pull-request" ? `Update PR #${source.start.number}` : source.destination.kind === "new-pr" ? "Open a pull request into" : source.destination.kind === "release" ? "Publish a release from" : source.destination.repo.startsWith("local/") ? "Commit to" : "Commit and push to";
   return `Works on: ${source.product.name} (${sourceLabel(source)})\n${action} ${where}`;
 }
+
+export function prNumber(value: string, repo: string): number {
+  const link = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?(?:[?#].*)?$/i.exec(value);
+  if (link && link[1]!.toLowerCase() !== repo.toLowerCase()) throw new Error(`That pull request belongs to ${link[1]}, not ${repo}. Choose the matching product or correct the link.`);
+  const number = Number(link?.[2] ?? (/^#?\d+$/.test(value) ? value.replace("#", "") : NaN));
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error("Enter a pull request number or a GitHub pull request link.");
+  return number;
+}

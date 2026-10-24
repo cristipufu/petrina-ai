@@ -189,7 +189,8 @@ describe.concurrent("one approved product and starting point", () => {
     } finally { await engine.shutdown(); }
   });
 
-  for (const corrected of ["default", "number", "link"] as const) it(`clears a mismatched link error when corrected to a ${corrected} and permits approval before setup`, async () => {
+  // All correction variants have controller coverage; this journey proves the approval/delivery wiring.
+  for (const corrected of ["default"]) it(`clears a mismatched link error when corrected to a ${corrected} and permits approval before setup`, async () => {
     const { w, start } = await setup(`wrong-link-${corrected}`); await pull(w); const engine = start();
     try {
       const productId = await engine.addProduct(w.clone);
@@ -243,7 +244,8 @@ describe.concurrent("one approved product and starting point", () => {
     } finally { await engine.shutdown(); }
   });
 
-  for (const proposed of ["unknown", "multiple", "branch", "delivery"] as const) it(`shows a planner ${proposed} proposal in the existing plan check and keeps explicit choices until approval`, async () => {
+  // Proposal decisions run independently in the orchestrator; retain one complete invalid-plan recovery.
+  for (const proposed of ["unknown"]) it(`shows a planner ${proposed} proposal in the existing plan check and keeps explicit choices until approval`, async () => {
     const { w, fakes, start } = await setup(`proposal-${proposed}`); await branch(w);
     const engine = start();
     try {
