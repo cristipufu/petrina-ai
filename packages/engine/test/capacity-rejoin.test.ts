@@ -34,7 +34,7 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume", ...scenario });
   const data = join(root, "data");
-  const settings = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => "/bin/true" };
+  const settings = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath };
   const recorded: Recorded[] = [];
   const waits: string[] = [];
   let engine!: Engine;

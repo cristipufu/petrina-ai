@@ -16,7 +16,7 @@ async function fixture(limit = 2) {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ controlled: true, reopen: "resume" });
   const engine = new Engine(join(root, "data"), {
-    agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => "/bin/true",
+    agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath,
   });
   engine.schedule = () => {};
   await engine.waitUntilReady();

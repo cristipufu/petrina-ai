@@ -18,7 +18,7 @@ it("hands a notes report's facts, sources and limits on exactly as returned, nev
   const root = tempDir("petrina-notes-handoff-");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume", reports: { researcher: { summary: SUMMARY, notes: [FACT, SOURCE, LIMIT], prose: `${COMMENTARY}\nThe notes below are what I found.` } } });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
   try {
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));

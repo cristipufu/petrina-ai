@@ -9,7 +9,7 @@ import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 it("starts one late rethink, then continues that Builder for unchanged and reopened same-round repairs", async () => {
   const root = tempDir("petrina-repair-conversation-");
   const fakes = new Fakes(join(root, "fake")); fakes.scenario({ builder: "plain", reopen: "resume" });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
   try {
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));

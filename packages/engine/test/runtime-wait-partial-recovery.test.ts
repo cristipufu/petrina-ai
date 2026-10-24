@@ -21,7 +21,7 @@ async function fixture() {
   ] }] });
   script(true);
   const open = async () => {
-    const owner = new Engine(home, { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir, ...(existsSync(startupGate) ? [`--hold-open=${startupGate}`] : [])], toolPath: () => "/bin/true", terminals: () => [] });
+    const owner = new Engine(home, { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir, ...(existsSync(startupGate) ? [`--hold-open=${startupGate}`] : [])], toolPath: () => process.execPath, terminals: () => [] });
     owner.schedule = () => {};
     await owner.waitUntilReady();
     owner.s.setup!.checks = owner.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));

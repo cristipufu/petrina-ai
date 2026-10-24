@@ -94,7 +94,7 @@ describe("the engine slows a tool down before its limit", () => {
     fakes.scenario({ planner: "short", builder: "plain", controlled: true });
     const repo = await makeProduct(root);
     await git(repo, "config", "branch.autoSetupMerge", "false");
-    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fakeAgent, fakes.dir], usageCommands: { codex: server.command }, toolPath: () => "/bin/true" });
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fakeAgent, fakes.dir], usageCommands: { codex: server.command }, toolPath: () => process.execPath });
     try {
       engine.setPoolPaused(true);
       engine.setPoolLimit(4);

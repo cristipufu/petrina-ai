@@ -22,7 +22,7 @@ function engineIn(root: string, checkTimeoutMs = 8_000 * SLOW) {
   const inChecks: Record<string, string[]> = {};
   const engine = new Engine(join(root, "data"), {
     agentCommand: (profile) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`, ...(inChecks[profile.toolId] ?? [])],
-    toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },
+    toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
     toolCheckTimeoutMs: checkTimeoutMs,
   });
   engine.schedule = () => {};

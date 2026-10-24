@@ -16,7 +16,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", ...scenario });
-  const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(!antigravity && profile.toolId === "antigravity" ? ["--logged-out"] : [])], toolPath: () => "/bin/true", usageCommands: { codex: null } };
+  const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(!antigravity && profile.toolId === "antigravity" ? ["--logged-out"] : [])], toolPath: () => process.execPath, usageCommands: { codex: null } };
   let engine = new Engine(join(root, "data"), options);
   engine.setPoolPaused(true);
   await engine.checkTools();

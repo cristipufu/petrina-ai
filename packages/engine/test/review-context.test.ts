@@ -288,7 +288,7 @@ async function run(reopen: Scenario["reopen"], options: { single?: boolean; shar
     writeFileSync(hold, "");
     writeFileSync(script, JSON.stringify({ hold: { title: "You are fixing the review findings", file: hold } }));
   }
-  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null }, browser: true, browserTempRoot: browsers };
+  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null }, browser: true, browserTempRoot: browsers };
   let engine = new Engine(data, engineOptions);
   engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
   const productId = await engine.addProduct(await makeProduct(root)); engine.setProductDelivery(productId, "local", true);

@@ -18,7 +18,7 @@ it("keeps a refused model or shared window until reset despite later account and
     const root = tempDir("petrina-claude-refusal-refresh-"); roots.push(root);
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ limited: [{ model: "opus", type: kind, resetsInMs: 72 * 3_600_000 }] });
-    const engine = new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => "/bin/true" });
+    const engine = new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => process.execPath });
     await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "p", name: "Product", repo: "local/p", tone: "blue" });

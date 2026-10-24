@@ -24,7 +24,7 @@ async function fixture(scenario: Scenario = {}) {
       if (flag) nextGrokCheck = undefined;
       return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(flag ? [flag] : [])];
     },
-    toolPath: () => "/bin/true", usageCommands: { codex: null }, toolCheckTimeoutMs: 8000 * SLOW,
+    toolPath: () => process.execPath, usageCommands: { codex: null }, toolCheckTimeoutMs: 8000 * SLOW,
   };
   let engine = new Engine(join(root, "data"), options);
   engine.setPoolPaused(true);
@@ -179,7 +179,7 @@ describe("Builder continuity boundaries", () => {
   it("keeps usage, readiness, models, seats, pauses, plan changes and step-back rules", async () => {
     const root = tempDir("petrina-builder-boundaries-");
     roots.push(root);
-    const engine = new Engine(root, { agentCommand: () => ["unused"], toolPath: () => "/bin/true" });
+    const engine = new Engine(root, { agentCommand: () => ["unused"], toolPath: () => process.execPath });
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "product", name: "Product", repo: "a/b", tone: "blue", delivery: "local", approveDelivery: true });
     const id = engine.addTask({ productId: "product", title: "Build" });

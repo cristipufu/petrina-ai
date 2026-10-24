@@ -17,7 +17,7 @@ async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"]
   const data = join(root, "data");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "limits", builder: "plain", controlled: true, reviseBrief: true, reopen, limited });
-  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" };
+  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath };
   let engine = new Engine(data, options);
   engine.setPoolPaused(true); await engine.checkTools();
   const productId = await engine.addProduct(await makeProduct(root));

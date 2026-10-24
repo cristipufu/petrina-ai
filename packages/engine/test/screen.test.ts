@@ -639,7 +639,7 @@ describe("internal roles and reviewers asking for the screen", () => {
 describe("screen requests and checked tools", () => {
   it.each([false, true])("keeps the login fix when the waiting agent's tool is logged out (parallel: %s)", async (parallel) => {
     const role = parallel ? "code reviewer" : "builder";
-    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume" }, 1, { toolPath: () => "/bin/true" });
+    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume" }, 1, { toolPath: () => process.execPath });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -668,7 +668,7 @@ describe("screen requests and checked tools", () => {
 describe("screen requests when a tool runs out of usage", () => {
   it.each([false, true])("keeps the stand-in's conversation when the planned tool becomes free (parallel: %s)", async (parallel) => {
     const role = parallel ? "code reviewer" : "builder";
-    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role }] }, 1, { toolPath: () => "/bin/true" });
+    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role }] }, 1, { toolPath: () => process.execPath });
     const [id] = f.ids as [string];
     try {
       f.engine.setPoolPaused(false);
@@ -696,7 +696,7 @@ describe("screen requests when a tool runs out of usage", () => {
 
   it.each([false, true])("returns the screen when an agent runs out mid-check, and holds its stand-in while Off (parallel: %s)", async (parallel) => {
     const role = parallel ? "code reviewer" : "builder";
-    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role, onScreen: true }] }, 1, { toolPath: () => "/bin/true" });
+    const f = await fixture({ planner: parallel ? "parallel" : "short", screenRoles: [role], reopen: "resume", limited: [{ model: parallel ? "opus" : "gpt-6.1-sol", role, onScreen: true }] }, 1, { toolPath: () => process.execPath });
     const [id] = f.ids as [string];
     let switchedOff = false;
     const unsubscribe = f.engine.subscribe(() => {

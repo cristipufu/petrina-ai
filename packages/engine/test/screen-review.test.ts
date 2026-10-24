@@ -312,7 +312,7 @@ it.each([false, true])("keeps earlier peers ahead of later tasks after a usage r
 });
 
 it("reopens a saved reviewer once when switching Off during a live grant, keeping its peer's seat and holding its usage replacement", async () => {
-  const f = await fixture("code reviewer", { controlled: true, screenModels: ["opus"], limited: [{ model: "opus", role: "code reviewer", onScreen: true }] }, { toolPath: () => "/bin/true" });
+  const f = await fixture("code reviewer", { controlled: true, screenModels: ["opus"], limited: [{ model: "opus", role: "code reviewer", onScreen: true }] }, { toolPath: () => process.execPath });
   let switchedOff = false;
   const unsubscribe = f.engine.subscribe(() => {
     if (!switchedOff && f.task().screen?.granted) {

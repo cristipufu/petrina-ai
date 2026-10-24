@@ -17,7 +17,7 @@ async function fixture(inTurn = false) {
   let checking = false;
   const engine = new Engine(join(root, "data"), {
     agentCommand: profile => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`, ...(checking && profile.toolId === "codex" ? [`--hold-open-in-checks=${gate}`] : [])],
-    toolPath: () => "/bin/true",
+    toolPath: () => process.execPath,
   });
   engine.schedule = () => {};
   await engine.waitUntilReady();

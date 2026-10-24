@@ -75,7 +75,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
         launches.push({ at: Date.now(), profileId: profile.id, toolId: profile.toolId });
         return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`, "--trace-startup"];
       },
-      toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },
+      toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
     });
     engines.add(made);
     return made;

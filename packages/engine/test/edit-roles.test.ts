@@ -218,7 +218,7 @@ describe("roles the coordinator edits and adds", () => {
   it("keeps added reviewers on their planned tool near its usage limit, just like built-in reviewers", async () => {
     const root = tempDir("petrina-reviewer-usage-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { toolPath: () => "/bin/true" });
+    const engine = new Engine(join(root, "data"), { toolPath: () => process.execPath });
     try {
       const reviewer = engine.addRole(start("security"));
       // A provider warning at low measured usage moves no role off its planned profile.
@@ -243,7 +243,7 @@ describe("roles the coordinator edits and adds", () => {
   it("keeps added and built-in reviewers independent of each other's saved verdicts and the latest port builder", async () => {
     const root = tempDir("petrina-added-independence-");
     roots.push(root);
-    const engine = new Engine(join(root, "data"), { toolPath: () => "/bin/true", usageCommands: { codex: null } });
+    const engine = new Engine(join(root, "data"), { toolPath: () => process.execPath, usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const added = engine.addRole(start("security"));

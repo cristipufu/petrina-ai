@@ -17,7 +17,7 @@ async function start(scenario: Scenario, options: { description?: string; before
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
   options.before?.(engine);
   const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);

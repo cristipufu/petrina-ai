@@ -48,7 +48,7 @@ async function start(scenario: Scenario, options: { description?: string; before
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
   const stops = holdCapacityWaits(engine);
   options.before?.(engine);
   const productId = await engine.addProduct(await makeProduct(root));
@@ -834,7 +834,7 @@ describe("choosing who continues after a model fills up", () => {
   function choiceEngine() {
     const root = tempDir("petrina-capacity-choice-");
     roots.push(root);
-    const engine = new Engine(root, { agentCommand: () => ["unused"], toolPath: () => "/bin/true" });
+    const engine = new Engine(root, { agentCommand: () => ["unused"], toolPath: () => process.execPath });
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "product", name: "Product", repo: "a/b", tone: "blue", delivery: "local", approveDelivery: true });
     engine.s.setup!.checks = ["claude-code", "codex", "grok", "antigravity"].map((id) => ({ id: id as "codex", status: "ready" as const }));

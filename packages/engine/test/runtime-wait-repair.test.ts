@@ -17,7 +17,7 @@ async function fixture(shared: boolean, kind: "review" | "checks" | "acceptance"
   fakes.scenario({ builder: "plain", reopen: "resume" });
   const home = join(root, "data");
   const open = () => {
-    const engine = new Engine(home, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => "/bin/true" });
+    const engine = new Engine(home, { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
     engine.s.tools.forEach(tool => { tool.status = "ready"; });

@@ -62,7 +62,7 @@ async function fixture() {
   fakes.scenario({ builder: "plain", reopen: "resume" });
   const engine = new Engine(join(root, "data"), {
     agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir],
-    toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },
+    toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
   });
   engine.schedule = () => {};
   engine.setPoolPaused(true);

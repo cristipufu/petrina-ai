@@ -14,7 +14,7 @@ afterAll(() => roots.forEach(removeDir));
 
 async function fixture() {
   const root = tempDir("petrina-claude-allowances-"); roots.push(root);
-  const engine = new Engine(root, { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => "/bin/true" });
+  const engine = new Engine(root, { admissionsClosed: true, agentCommand: () => undefined, toolPath: () => process.execPath });
   await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
   engine.setPoolPaused(true);
   engine.s.products.push({ id: "p", name: "Product", repo: "local/p", tone: "blue" });
