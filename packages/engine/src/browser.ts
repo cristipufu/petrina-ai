@@ -1,4 +1,5 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { processHost } from "./process-host.js";
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -223,20 +224,20 @@ async function stopBrowser(child: ChildProcess, directory: string, lifecycle: { 
     // exit can precede the final stdout acknowledgement. close observes the drained pipe.
     const closed = await within(exited, 1_500);
     if (unused()) return;
-    if (process.platform === "win32") throw new Error("The headless browser did not stop.");
+    if (!processHost.groups) throw new Error("The headless browser did not stop.");
     attempt.stage = "exited-before-close";
     attempt.helper = helperState(child, closed, lifecycle);
     await reap(directory, undefined, attempt);
     return;
   }
-  if (process.platform === "win32") {
+  if (processHost.stopTree) {
     // Once an unexpected exit loses the parent relationship, taskkill cannot prove
     // that its browsers stopped. Keep the marker and report incomplete cleanup.
     child.stdin?.end();
     if (await within(exited, 4_000)) {
       if (child.exitCode !== 0 || child.signalCode !== null) throw new Error("The headless browser did not stop.");
     } else {
-      const stopped = await new Promise<boolean>((resolve) => execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, timeout: 3_000 }, (error) => resolve(!error)));
+      const stopped = await processHost.stopTree(pid, 3_000);
       if (!await within(exited, 1_000)) child.kill("SIGKILL");
       await exited;
       if (!stopped) throw new Error("The headless browser did not stop.");
@@ -289,7 +290,7 @@ async function reap(directory: string, owned: number[] | undefined, attempt: Att
   const remaining = await attempt.scan(directory);
   // A process can finish between the first wait and the final scan. Judge the final
   // ownership evidence, keeping every earlier target; a provisional timeout is not a sticky failure.
-  const failure = attempt.judge(process.platform === "win32" ? owned !== undefined || marked !== undefined || remaining !== undefined : attempt.clear);
+  const failure = attempt.judge(!processHost.groups ? owned !== undefined || marked !== undefined || remaining !== undefined : attempt.clear);
   if (failure) throw failure;
 }
 
@@ -403,7 +404,7 @@ export async function recoverBrowserTemps(registry: string, root = browserTempRo
       // the marker stays for the next startup to retry. Windows keeps its earlier wording.
       try { await reap(directory, undefined, new Attempt()); }
       catch (error) {
-        if (!(error instanceof StopUnconfirmed) || process.platform === "win32") throw error;
+        if (!(error instanceof StopUnconfirmed) || !processHost.groups) throw error;
         log(error.note);
         throw new Error(["Petrina could not confirm that a background browser from an earlier session stopped.", ...error.reasons.map((reason) => UNCONFIRMED[reason])].join(" "));
       }

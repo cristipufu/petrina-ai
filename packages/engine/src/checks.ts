@@ -3,7 +3,7 @@
 // arrays, never a shell, and they run in the task's working copy without credentials.
 
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { processHost } from "./process-host.js";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -251,7 +251,7 @@ async function checkLog(directory: string): Promise<CheckLog> {
  */
 function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }> {
   return new Promise((resolve) => {
-    const windows = process.platform === "win32";
+    const windows = !processHost.groups;
     let kept = "";
     let cut = false;
     let timedOut = false;
@@ -363,7 +363,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
 async function stopAll(pid: number | undefined, windows: boolean, processList?: (timeout: number) => Promise<string | undefined>, leaderEnded = false): Promise<boolean> {
   if (!pid) return true;
   if (windows) {
-    return new Promise<boolean>((resolve) => execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, (error) => resolve(!error)));
+    return processHost.stopTree?.(pid, 3000) ?? false;
   }
   // Detached workers outlive both the check and its process group, so take a bounded snapshot
   // while the parent is still alive. Failure must remain distinguishable from an empty process tree.

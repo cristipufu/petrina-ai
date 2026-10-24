@@ -2,7 +2,8 @@
 // worktree (or reopen an earlier one), pin model, effort and mode, then send turns and report
 // what happens. It also reads back what the tool says the session runs on, and what each turn used.
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { processHost } from "./process-host.js";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
@@ -250,9 +251,9 @@ export const AGENT_CLEANUP_NOTE = "Agent cleanup incomplete:";
  */
 export async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean, note?: (line: string) => void, read: ProcessListRead = readProcessGroups): Promise<boolean> {
   if (child.pid === undefined) return true;
-  if (process.platform === "win32") {
+  if (processHost.stopTree) {
     if (!running(child)) return true;
-    return new Promise<boolean>((resolve) => execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 3000 }, (error) => resolve(!error)));
+    return processHost.stopTree(child.pid, 3000);
   }
   // Login probes never receive work. Stop their group at once, so a process lookup cannot hold
   // their forced stop past the tool check's deadline for starting the next probe.
@@ -430,7 +431,7 @@ export class AgentRun {
     adapter.prepareEnv?.(env);
 
     // windowsHide: no console window flashes up on Windows when an agent starts.
-    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env, detached: process.platform !== "win32", windowsHide: true });
+    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env, ...processHost.ownedSpawn });
     options.onProcess?.(child);
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
     const killed = new Promise<never>((_, reject) => {

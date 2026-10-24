@@ -69,6 +69,8 @@ Keep the real transport, storage or process boundary when that interaction is th
 
 Shared fixtures use portable APIs. Keep operations requiring native behavior behind an explicit fixture interface, with real contract tests for each supported implementation. `test/fixture-files.ts` owns directory aliases (Windows junctions and POSIX directory links), file links and native path spelling; `test/commands.ts` owns bounded test commands and their platform-specific cleanup. Reuse these boundaries instead of repeating OS switches in workflow setup. A native behavior test may assert its platform's contract; a workflow test should use the shared operation. Unavailable inspection is not a successful cleanup, and substituting an ordinary file for a symlink does not test symlink behavior.
 
+Production and fixture commands share `src/process-host.ts` for process-group capability, owned spawn flags and bounded Windows tree termination. Adapter tests inject a private native executor and deadline, alongside a real owned-process control on Windows. The adapter performs the native operation; each caller must still establish which processes it owns and confirm its cleanup.
+
 `EngineProcess` uses that same command runner for app-mode fixtures: bounded startup, both output pipes drained, and owned cleanup on startup or exit-wait failure. Its `errors()` method reads collected stderr; do not read its process's already-owned output streams separately. Forced kills remain forced interruptions so the restart controls still exercise production recovery.
 
 ## Choose a focused test

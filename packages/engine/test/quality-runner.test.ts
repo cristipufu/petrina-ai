@@ -18,7 +18,7 @@ afterAll(() => roots.forEach(removeDir));
  */
 const ENGINE = join(import.meta.dir, "..");
 /** The engine files the copied runner imports from outside its own folder: the tests' bounded Git path and its helpers. */
-const SUPPORT = ["test/test-git-env.ts", "test/commands.ts", "test/slow.ts", "test/environment.ts", "test/temp-parent.ts", "test/fixture-files.ts", "src/process-tree.ts"];
+const SUPPORT = ["test/test-git-env.ts", "test/commands.ts", "test/slow.ts", "test/environment.ts", "test/temp-parent.ts", "test/fixture-files.ts", "src/process-tree.ts", "src/process-host.ts"];
 const PACKAGES = (() => {
   const manifest = JSON.parse(readFileSync(join(ENGINE, "package.json"), "utf8")) as Record<"dependencies" | "devDependencies", Record<string, string>>;
   const declared = new Set(Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }));

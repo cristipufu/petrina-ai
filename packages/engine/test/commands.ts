@@ -8,6 +8,8 @@
 import { parseDescendants, type ProcessListRead } from "../src/process-tree.js";
 import { SLOW } from "./slow.js";
 import { testGitEnv } from "./test-git-env.js";
+import { execFile } from "node:child_process";
+import { createProcessHost } from "../src/process-host.js";
 
 /** Git's allowance per command; like the fixtures' other hang-catching limits, it stretches on a busy machine. */
 export const GIT_TIMEOUT_MS = 30_000;
@@ -33,6 +35,8 @@ export type Start = (argv: string[], options: { cwd?: string; env: NodeJS.Proces
 // A private reference: a test that replaces Bun.spawn or node's child_process to watch or redirect its own
 // commands never intercepts repository preparation, another test's programs or their cleanup.
 const spawn = Bun.spawn.bind(Bun);
+const execute = execFile.bind(undefined);
+const host = createProcessHost(process.platform, (command, args, options, done) => execute(command, [...args], options, error => done(error)));
 const start: Start = (argv, options) => spawn(argv, { ...options, stdout: "pipe", stderr: "pipe", windowsHide: true }) as unknown as Started;
 
 /**
@@ -116,10 +120,10 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
   // A timer outside this range fires at once or never: neither is a deadline.
   if (!(timeoutMs > 0 && timeoutMs <= 2_147_483_647)) return Promise.reject(new RangeError(`${what} needs a deadline between 1 and 2147483647 ms, not ${timeoutMs}`));
   if (options.signal?.aborted) return Promise.reject(new CommandFailure(`${what} was cancelled before it started, in ${where}`, "cancelled"));
-  const windows = process.platform === "win32";
+  const windows = !host.groups;
   let child: Started;
   try {
-    child = (options.start ?? start)([...argv], { ...(options.cwd ? { cwd: options.cwd } : {}), env: options.env ?? process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), detached: !windows });
+    child = (options.start ?? start)([...argv], { ...(options.cwd ? { cwd: options.cwd } : {}), env: options.env ?? process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), detached: host.ownedSpawn.detached });
   } catch (error) {
     return Promise.reject(new CommandFailure(`${what} could not start in ${where}: ${messageOf(error)}`, "start"));
   }
@@ -332,13 +336,13 @@ async function stopUnix(child: Started, reported: () => boolean, read: ProcessLi
 async function stopWindows(child: Started, reported: () => boolean, end: number): Promise<Cleanup> {
   const pid = child.pid;
   if (pid === undefined || reported()) return "unconfirmed";
-  const killed = await helper(["taskkill", "/pid", String(pid), "/T", "/F"], Math.max(100, Math.min(2_500 * SLOW, (end - Date.now()) / 2)));
+  const killed = await host.stopTree?.(pid, Math.max(100, Math.min(2_500 * SLOW, (end - Date.now()) / 2))) ?? false;
   // The handle stops the program itself even when taskkill failed or ran out of time.
   try { child.kill("SIGKILL"); } catch { /* Already gone. */ }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const exited = await Promise.race([child.exited.then(() => true, () => false), new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, end - Date.now())); })]);
   clearTimeout(timer);
-  return exited && killed !== undefined ? "confirmed" : "unconfirmed";
+  return exited && killed ? "confirmed" : "unconfirmed";
 }
 
 export type GitOptions = Pick<CommandOptions, "cwd" | "env" | "input" | "timeoutMs" | "signal"> & {
