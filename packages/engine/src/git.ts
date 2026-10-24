@@ -19,6 +19,7 @@ import { CLEANUP_WORDS } from "@petrina/core";
 import { withGitConfig, withoutCredentials } from "./env.js";
 import { completeAll } from "./parallel.js";
 import { EXIT_GRACE_MS, lostExit } from "./process-tree.js";
+import { localFiles, type FileOperations } from "./file-operations.js";
 
 export interface RunResult {
   code: number;
@@ -998,12 +999,12 @@ export async function mainClone(path: string): Promise<string | undefined> {
  * never follows a link out of it, so shared caches and the files they link to stay. Safe to run again
  * after a failure or an interruption. Throws a plain-language reason; returns false when nothing was left.
  */
-export function removeWorktree(root: string, path: string): Promise<boolean> {
-  return removeKnownWorktree(root, path);
+export function removeWorktree(root: string, path: string, files: Pick<FileOperations, "removeTree"> = localFiles): Promise<boolean> {
+  return removeKnownWorktree(root, path, undefined, files);
 }
 
 /** Batch cleanup shares one registration observation, then verifies the complete batch. */
-async function removeKnownWorktree(root: string, path: string, known?: readonly string[]): Promise<boolean> {
+async function removeKnownWorktree(root: string, path: string, known?: readonly string[], files: Pick<FileOperations, "removeTree"> = localFiles): Promise<boolean> {
   try {
     if (!existsSync(root)) {
       const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
@@ -1025,7 +1026,7 @@ async function removeKnownWorktree(root: string, path: string, known?: readonly 
       );
     const folder = await there();
     if (!folder && !record) return false;
-    if (folder) await rm(path, { recursive: true, force: true });
+    if (folder) await files.removeTree(path);
     if (await there()) throw new Reason("its folder could not be deleted");
     // With the folder gone, git only drops its record. Forced twice: also when the copy was locked.
     if (record) await oneAtATime(root, () => run(["git", "worktree", "remove", "--force", "--force", record], root, undefined, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS }));
@@ -1063,7 +1064,7 @@ export async function addCopy(root: string, path: string, sha: string): Promise<
 }
 
 /** A finished task has no reviewer left to resume. Recover both folders and records left by a crash. */
-export async function removeFinishedCopies(root: string, folder: string): Promise<boolean> {
+export async function removeFinishedCopies(root: string, folder: string, files: Pick<FileOperations, "removeTree"> = localFiles): Promise<boolean> {
   const entry = await lstat(folder).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
@@ -1073,14 +1074,14 @@ export async function removeFinishedCopies(root: string, folder: string): Promis
     throw new Reason("the product's folder could not be found");
   }
   // Unlink a replacement before inspecting children; never follow it into somebody else's copy.
-  if (entry && !entry.isDirectory()) await rm(folder, { force: true });
+  if (entry && !entry.isDirectory()) await files.removeTree(folder);
   const names = entry?.isDirectory() ? await readdir(folder) : [];
   const location = worktreeLocation(folder);
   const recorded = (await linkedWorktrees(root)).filter((copy) => worktreeLocation(dirname(copy)) === location);
   const copies = [...new Set([...names.map((name) => join(folder, name)), ...recorded])];
-  await completeAll(copies.map(copy => removeKnownWorktree(root, copy, recorded)));
+  await completeAll(copies.map(copy => removeKnownWorktree(root, copy, recorded, files)));
   if (recorded.length && (await linkedWorktrees(root)).some(copy => worktreeLocation(dirname(copy)) === location)) throw new Reason("the repository still lists it as a working copy");
-  await rm(folder, { recursive: true, force: true });
+  await files.removeTree(folder);
   return entry !== undefined || recorded.length > 0;
 }
 

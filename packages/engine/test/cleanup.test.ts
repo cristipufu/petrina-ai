@@ -3,7 +3,8 @@ import { executionFor } from "../src/repository-context.js";
 import { Coordination } from "../src/coordination.js";
 // Real worktrees and fake agents/GitHub: no network, no windows, and branches/history survive removal.
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { FileFaults } from "./file-faults.js";
 import { basename, dirname, join } from "node:path";
 import { CLEANUP_WORDS, type Task } from "@petrina/core";
 import type { Engine } from "./engine.js";
@@ -11,8 +12,10 @@ import { addCopy, branchName, ensureWorktree, removeWorktree } from "../src/git.
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, waitFor, waitForFile, type World } from "./support.js";
 
 const worlds: World[] = [];
-async function world(name: string): Promise<World> {
+async function world(name: string): Promise<World & { faults: FileFaults }> {
   const w = await makeWorld(`cleanup-${name}`);
+  const faults = new FileFaults(), start = w.start;
+  w.start = options => start({ files: faults.files, ...options });
   worlds.push(w);
   // The fake builder leaves the same ignored packages/build output as real tools do.
   writeFileSync(join(w.clone, ".git", "info", "exclude"), "node_modules/\ntarget/\n");
@@ -20,7 +23,7 @@ async function world(name: string): Promise<World> {
   mkdirSync(cache);
   writeFileSync(join(cache, "keep"), "shared");
   w.setScript((script) => (script.installs = { cache }));
-  return w;
+  return Object.assign(w, { faults });
 }
 afterAll(() => { for (const w of worlds) removeDir(w.dir); });
 
@@ -306,7 +309,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("finds a cancelled setup's copy after quitting and retries its locked output after restart", async () => {
+  it("finds a cancelled setup's copy after quitting and retries its locked output after restart", async () => {
     const w = await world("setup-cancel-quit");
     const hold = join(w.dir, "checkout-hold");
     const filter = join(w.dir, "smudge.mjs");
@@ -323,16 +326,16 @@ describe.concurrent("Finished tasks free their working copies", () => {
     await git(w.clone, "add", ".gitattributes");
     await git(w.clone, "commit", "-qm", "Hold checkout for the test");
     let engine = w.start({ checkEveryMs: 100 });
-    let locked: string | undefined;
+    let allowRemoval = () => {};
     try {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Cancel during checkout", delivery: "local" });
       await waitForFile(`${hold}.reached`);
       const copy = join(w.data, "worktrees", productId, id);
-      locked = join(copy, "target", "locked");
+      const locked = join(copy, "target", "locked");
       mkdirSync(locked, { recursive: true });
       writeFileSync(join(locked, "output"), "build output");
-      chmodSync(locked, 0o555);
+      allowRemoval = w.faults.blockRemoval(copy);
       engine.cancel(id);
       // Shutdown saves and closes the store while checkout still holds the copy.
       const quitting = engine.shutdown();
@@ -345,14 +348,14 @@ describe.concurrent("Finished tasks free their working copies", () => {
       await until(engine, (state) => !!taskOf(state, id).cleanup?.error, () => {});
       expect(taskOf(engine.getState(), id).state).toBe("cancelled");
       expect(taskOf(engine.getState(), id).cleanup?.removedAt).toBeUndefined();
-      chmodSync(locked, 0o755);
+      allowRemoval();
       const task = await cleaned(engine, id);
       await gone(w, { ...task, worktree: copy, branch: branchName("Cancel during checkout", id) });
       expect(task.state).toBe("cancelled");
       expect(texts(task).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
     } finally {
       rmSync(hold, { force: true });
-      if (locked && existsSync(locked)) chmodSync(locked, 0o755);
+      allowRemoval();
       await engine.shutdown();
     }
   });
@@ -629,17 +632,16 @@ describe.concurrent("Finished tasks free their working copies", () => {
   });
 
   it("retries a locked copy once a minute without crowding the timeline, then succeeds", async () => {
-    if (process.platform === "win32") return; // Windows read-only directories do not prevent deletion.
     const w = await world("retry");
-    w.setScript((script) => (script.locked = "Locked build"));
     const engine = w.start({ checkEveryMs: 100 });
-    let locked: string | undefined;
+    let allowRemoval = () => {};
     try {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "Locked build", description: "[quick]", delivery: "local", approveDelivery: false });
+      allowRemoval = w.faults.blockRemoval(join(w.data, "worktrees", productId, id));
       await until(engine, (s) => !!taskOf(s, id).cleanup?.error);
       let task = taskOf(engine.getState(), id);
-      locked = join(task.worktree!, "target", "locked");
+      expect(readFileSync(join(task.worktree!, "target", "debug", "greeting.bin"), "utf8")).toBe("build output\n");
       expect(task.state).toBe("done");
       expect(task.cleanup?.removedAt).toBeUndefined();
       expect(await listed(w, task.worktree!)).toBe(true);
@@ -648,11 +650,11 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(taskOf(engine.getState(), id).timeline).toEqual(timeline);
       expect(texts(task).at(-1)).toBe(CLEANUP_WORDS.failed(CLEANUP_WORDS.locked));
       expect(engine.getState().inbox.some((item) => item.taskId === id)).toBe(false);
-      chmodSync(locked, 0o755);
+      allowRemoval();
       task = await cleaned(engine, id);
       await gone(w, task);
       expect(texts(task).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
-    } finally { if (locked && existsSync(locked)) chmodSync(locked, 0o755); await engine.shutdown(); }
+    } finally { allowRemoval(); await engine.shutdown(); }
   });
 
   it("catches up older tasks across products at startup while a stalled pull request leaves others free", async () => {

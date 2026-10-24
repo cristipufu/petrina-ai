@@ -91,8 +91,8 @@ export class Cleanup {
       }
       const root = this.k.productOf(task)?.path ?? (await git.mainClone(path));
       if (!root) throw new Error("the product's repository could not be found");
-      const peersRemoved = await git.removeFinishedCopies(root, copies);
-      outcome = { removed: await git.removeWorktree(root, path) || peersRemoved };
+      const peersRemoved = await git.removeFinishedCopies(root, copies, this.k.files);
+      outcome = { removed: await git.removeWorktree(root, path, this.k.files) || peersRemoved };
     } catch (error) {
       outcome = { error: error instanceof Error ? error.message : String(error) };
     } finally {
@@ -141,8 +141,8 @@ export class Cleanup {
         try {
           const root = work.source?.product.path ?? this.k.productOf(scope)?.path ?? await git.mainClone(path);
           if (!root) throw new Error("the product's repository could not be found");
-          const peersRemoved = await git.removeFinishedCopies(root, copies);
-          const removed = await git.removeWorktree(root, path) || peersRemoved;
+          const peersRemoved = await git.removeFinishedCopies(root, copies, this.k.files);
+          const removed = await git.removeWorktree(root, path, this.k.files) || peersRemoved;
           if ((removed && !again) || work.cleanup?.error !== undefined) this.k.log(scope, "done", CLEANUP_WORDS.removed);
           work.cleanup = { ...work.cleanup, removedAt: Date.now(), reviewCopiesRemovedAt: Date.now() };
           delete work.cleanup.error;

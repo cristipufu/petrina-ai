@@ -1,4 +1,5 @@
 import { fixtureFiles } from "./fixture-files.js";
+import { FileFaults } from "./file-faults.js";
 import { expectRejection } from "./rejections.js";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
@@ -7,7 +8,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { addCopy, commitAll, commitTree, contains, copyFolderName, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
 import { childState } from "../src/process-tree.js";
-import { defunctProcess, firstLine, git, gitWith, removeDir, testGitEnv, waitFor } from "./fixtures.js";
+import { defunctProcess, firstLine, git, gitWith, makeProduct, removeDir, testGitEnv, waitFor } from "./fixtures.js";
 
 const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 
@@ -130,6 +131,29 @@ describe("Petrina's own git steps", () => {
       expect(await removeWorktree(repo, join(temp, "already-gone"))).toBe(false);
       expect(listed).toHaveBeenCalledTimes(1);
     } finally { listed.mockRestore(); }
+  });
+
+  it("retains a refused worktree's files and Git registration, and retries a partially removed review batch", async () => {
+    const repo = await makeProduct(join(temp, "refused-removal")), faults = new FileFaults();
+    const sha = await git(repo, "rev-parse", "HEAD"), folder = join(temp, "refused-removal.copies");
+    const blocked = join(folder, "blocked"), clear = join(folder, "clear");
+    await addCopy(repo, blocked, sha); await addCopy(repo, clear, sha);
+    writeFileSync(join(blocked, "keep"), "Still recoverable");
+    const release = faults.blockRemoval(blocked);
+    try {
+      await expectRejection(removeWorktree(repo, blocked, faults.files), "in use or locked");
+      expect(readFileSync(join(blocked, "keep"), "utf8")).toBe("Still recoverable");
+      expect(await git(repo, "worktree", "list", "--porcelain", "-z")).toContain(realpathSync.native(blocked));
+      await expectRejection(removeFinishedCopies(repo, folder, faults.files), "in use or locked");
+      expect(existsSync(clear)).toBe(false);
+      expect(readFileSync(join(blocked, "keep"), "utf8")).toBe("Still recoverable");
+      release();
+      expect(await removeFinishedCopies(repo, folder, faults.files)).toBe(true);
+      expect(existsSync(folder)).toBe(false);
+      const recorded = await git(repo, "worktree", "list", "--porcelain", "-z");
+      expect(recorded).not.toContain(blocked); expect(recorded).not.toContain(clear);
+      expect(await git(repo, "rev-parse", "HEAD")).toBe(sha);
+    } finally { release(); }
   });
 
   it("prunes deleted review copies in one batch, preserving saved screen copies and unrelated worktrees", async () => {
