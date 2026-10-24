@@ -39,7 +39,7 @@ describe("one engine per Petrina folder", () => {
     expect(log).toContain("Petrina engine stopped");
     // The key is in no log and no other output.
     expect(log).not.toContain(connection.token);
-    expect(await new Response(engine.proc.stderr).text()).not.toContain(connection.token);
+    expect(await engine.errors()).not.toContain(connection.token);
     const sql = readFileSync(join(home, "sql-executions.jsonl"), "utf8");
     expect(sql).toContain('"sql":"');
     expect(sql).not.toContain(connection.token);

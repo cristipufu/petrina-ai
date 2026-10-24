@@ -14,10 +14,12 @@ import type { AgentScript } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 import { testGitEnv } from "./test-git-env.js";
 import { writeFixtureJson } from "./fixture-json.js";
+import { CommandFailure, runCommand, type CommandResult, type Started } from "./commands.js";
+import { FALLBACK_TIMEOUT } from "./run.js";
 export { testGitEnv } from "./test-git-env.js";
 
 export * from "./fixtures.js";
-import { ADDRESS, FAKE_AGENT, FAKE_GH, HARNESS, REPO, currentSlow, firstLine, git, repositorySeed, testBrowserRoot, waitFor } from "./fixtures.js";
+import { ADDRESS, FAKE_AGENT, FAKE_GH, HARNESS, REPO, currentSlow, git, repositorySeed, testBrowserRoot, waitFor } from "./fixtures.js";
 
 // Git's config environment is inherited by child processes even when Bun's mutable process.env is
 // cleaned up. Every test Git process gets its own explicitly sanitized environment instead.
@@ -36,8 +38,8 @@ export function engineEnv(home: string): Record<string, string | undefined> {
   return env;
 }
 
-export function spawnEngine(args: readonly string[], home: string) {
-  return Bun.spawn([process.execPath, ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: engineEnv(home) });
+export function spawnEngine(args: readonly string[], home: string, detached = false) {
+  return Bun.spawn([process.execPath, ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: engineEnv(home), detached, windowsHide: true });
 }
 
 /** An app-mode engine process, and what it told its "shell". */
@@ -46,13 +48,52 @@ export class EngineProcess {
     readonly proc: Spawned,
     readonly hello: ShellMessage,
     readonly home: string,
+    private readonly completion: Promise<CommandResult>,
+    private readonly controller: AbortController,
   ) {}
 
-  static async start(home: string, args: readonly string[]): Promise<EngineProcess> {
-    const proc = spawnEngine(args, home);
-    const line = await firstLine(proc.stdout);
-    if (!line) throw new Error(`The engine said nothing: ${await new Response(proc.stderr).text()}`);
-    return new EngineProcess(proc, JSON.parse(line) as ShellMessage, home);
+  static async start(home: string, args: readonly string[], options: { startupTimeoutMs?: number; onProcess?: (proc: Spawned) => void } = {}): Promise<EngineProcess> {
+    const ms = options.startupTimeoutMs ?? 30_000 * currentSlow();
+    if (!(ms > 0 && ms <= 2_147_483_647)) throw new RangeError("Engine fixture startup needs a positive, finite deadline.");
+    const controller = new AbortController();
+    let proc: Spawned | undefined, output = "", errors = "", supplied = false, first!: (line: string) => void;
+    const opening = new Promise<string>(resolve => { first = resolve; });
+    const completion = runCommand([process.execPath, ...args], {
+      env: engineEnv(home), signal: controller.signal, timeoutMs: FALLBACK_TIMEOUT,
+      start: (_argv, launch) => {
+        proc = spawnEngine(args, home, launch.detached);
+        return proc as unknown as Started;
+      },
+      onOutput: (chunk, stream) => {
+        if (stream === "stderr") errors = (errors + chunk).slice(-8000);
+        else if (!supplied) {
+          output += chunk;
+          const end = output.indexOf("\n");
+          if (end >= 0) { supplied = true; first(output.slice(0, end)); output = ""; }
+        }
+      },
+    });
+    // A process can exit after a ready message, before the test next waits for it.
+    void completion.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (proc) options.onProcess?.(proc);
+      const line = await Promise.race([
+        opening,
+        completion.then(result => {
+          if (!result.stdout) throw new Error(`The engine exited with code ${result.code} without a startup answer`);
+          return result.stdout.split("\n")[0]!;
+        }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`The engine gave no startup answer within ${ms}ms`)), ms); }),
+      ]);
+      if (!line) throw new Error("The engine said nothing");
+      return new EngineProcess(proc!, JSON.parse(line) as ShellMessage, home, completion, controller);
+    } catch (error) {
+      controller.abort();
+      const stopped = await completion.catch(failure => failure as unknown);
+      const unconfirmed = stopped instanceof CommandFailure && stopped.cleanup === "unconfirmed";
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${errors ? `\n${errors}` : ""}${unconfirmed ? "\nEngine fixture cleanup could not be confirmed." : ""}`, { cause: stopped instanceof Error ? stopped : error });
+    } finally { clearTimeout(timer); }
   }
 
   /** The engine on fake agents, with its fake dir, and the folder standing in for GitHub when there is one. */
@@ -128,11 +169,19 @@ export class EngineProcess {
   async exited(ms: number): Promise<number> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([this.proc.exited, new Promise<never>((_, reject) => {
+      return await Promise.race([this.completion.then(result => result.code), new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`The engine did not stop within ${ms / 1000} seconds`)), ms);
       })]);
+    } catch (error) {
+      this.controller.abort();
+      const stopped = await this.completion.catch(failure => failure as unknown);
+      if (stopped instanceof CommandFailure && stopped.cleanup === "unconfirmed") throw new Error(`${error instanceof Error ? error.message : String(error)}\nEngine fixture cleanup could not be confirmed.`, { cause: stopped });
+      throw error;
     } finally { clearTimeout(timer); }
   }
+
+  /** Collected while running, so a full stderr pipe never holds up startup or shutdown. */
+  async errors(): Promise<string> { return (await this.completion).stderr; }
 }
 
 // ── The delivery tests' world ──────────────────────────────────────────

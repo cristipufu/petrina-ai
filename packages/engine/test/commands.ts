@@ -71,6 +71,8 @@ export interface CommandOptions {
   start?: Start;
   /** Runner tests only: a private stand-in for the system's process list. */
   processList?: ProcessListRead;
+  /** Observe decoded output while the command runs. Callbacks stay synchronous. */
+  onOutput?: (text: string, stream: "stdout" | "stderr") => undefined;
 }
 
 export interface CommandResult {
@@ -162,12 +164,16 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
     readers.forEach((reader, index) => {
       const decoder = new TextDecoder();
       void (async () => {
+        const append = (text: string) => {
+          output[index] += text;
+          if (text) options.onOutput?.(text, index ? "stderr" : "stdout");
+        };
         for (;;) {
           const next = await reader.read();
           if (next.done) break;
-          output[index] += decoder.decode(next.value, { stream: true });
+          append(decoder.decode(next.value, { stream: true }));
         }
-        output[index] += decoder.decode();
+        append(decoder.decode());
         closed[index] = true;
         if (closed.every(Boolean)) ended();
         finish();
