@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Scenario } from "./fake-agent.js";
 import { executionFor } from "../src/repository-context.js";
-import { runtimeWaitView, type Task } from "@petrina/core";
+import { runtimeWaitView, slotUses, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
@@ -34,11 +34,26 @@ async function fixture(parallel = false, scenario: Partial<Scenario> = {}) {
       else if (item.kind === "question") owner.answer(item.id, item.options?.[0] ?? "Yes");
     }
   };
+  /** What decides the task's next admission, bounded. */
+  const admission = (owner = engine) => {
+    const current = task(owner), view = runtimeWaitView(current, other => owner.taskDetails(other)), active = owner.activeState();
+    return JSON.stringify({
+      state: current.state, status: current.statusLine, holdsSlot: current.holdsSlot, agent: current.agent?.roleId,
+      driver: owner.drivers.has(id), settling: owner.settling.has(id),
+      wait: view && { held: view.held, phase: view.phase, releaseReason: view.releaseReason, refreshPending: current.runtimeWait?.refreshPending, prerequisites: view.prerequisites.map(entry => ({ id: entry.id, state: entry.state })) },
+      pool: { limit: active.pool.limit, paused: active.pool.paused, slots: slotUses(active).map(use => ({ taskId: use.taskId, roleId: use.roleId })) },
+      inbox: active.inbox.filter(item => item.taskId === id).map(item => ({ kind: item.kind, title: item.title })),
+    });
+  };
+  // A wait that cannot finish prints what still decides admission on its own line, which a saved Tests log keeps.
   const until = <T>(read: () => T | undefined | false, words: string, owner = engine) => waitFor(() => {
     answer(owner);
     if (task(owner).state === "failed") throw new Error(task(owner).error);
     return read();
-  }, words, 60_000);
+  }, words, 60_000).catch((error: unknown) => {
+    try { console.warn(`Admission state after waiting for ${words}: ${admission(owner)}`); } catch { /* Diagnostics never replace the test's result. */ }
+    throw error;
+  });
   const builder = await until(() => {
     for (const p of fakes.received()) if (p.role !== "builder") release(p.session);
     return fakes.received("builder")[0];
@@ -135,9 +150,18 @@ describe.concurrent("runtime prerequisites", () => {
       await r.until(() => r.engine.taskDetails(other)?.agent?.roleId === "planner", "another task to use the seat");
       expect(r.task().holdsSlot).toBe(false);
       r.engine.cancel(other);
+      // The cancelled task's seat is free at once, but nothing has landed: the hold still keeps the reviewer out.
+      expect(slotUses(r.engine.activeState())).toEqual([]);
+      expect(runtimeWaitView(r.task(), id => r.engine.taskDetails(id))).toMatchObject({ held: true, phase: "active", decisionNeeded: false });
+      expect(r.fakes.received("code reviewer")).toHaveLength(0);
+      const sha = await git(r.clone, "rev-parse", "HEAD");
+      // Any save, including the engine's own timed one, moves a finished task without a working copy to History. Marked done
+      // before a slow read and given its landing after it, the prerequisite was archived as done without a confirmed delivery,
+      // and the wait rightly held for a decision. This save makes that order fail every time; the finish and landing go together.
+      r.engine.commitNow();
       const required = r.engine.task(r.prerequisite)!;
       required.state = "done";
-      required.repository!.landed = { branch: "main", sha: await git(r.clone, "rev-parse", "HEAD") };
+      required.repository!.landed = { branch: "main", sha };
       required.repository!.localUpdate = { ...required.repository!.landed, pushed: true };
       r.engine.commitNow(required); r.engine.schedule();
       await r.until(() => r.fakes.received("code reviewer")[0], "normal admission after landing");
