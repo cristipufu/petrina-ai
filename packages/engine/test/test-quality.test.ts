@@ -72,6 +72,22 @@ it("parses TypeScript/TSX imports and ignores mentions of forbidden patterns in 
   expect(conventions(new Map([["apps/desktop/test/a.test.tsx", `import { test as check } from 'vitest'; check.concurrent.each([]).only('example', () => {});`]]))).toHaveLength(1);
 });
 
+it("keeps fixture import guards effective for package aliases, extensionless paths and nested tests", () => {
+  for (const path of ["@petrina/engine", "../src/engine", "../src/index", "../src/./engine.ts", "../src/../src/index.js"]) {
+    for (const code of [`import { Engine as Alias } from '${path}';`, `export * from '${path}';`, `await import('${path}');`]) {
+      expect(conventions(new Map([["packages/engine/test/a.test.ts", code]]))).toEqual([expect.stringContaining("import Engine from the isolated")]);
+    }
+  }
+  for (const [name, path, message] of [["EngineClient", "engine-client", "import EngineClient from test/client"], ["runChecks", "checks", "import runChecks from test/fixtures"]]) {
+    for (const suffix of ["", ".ts", ".js"]) {
+      expect(conventions(new Map([["packages/engine/test/nested/a.test.ts", `import { ${name} as aliased } from '../../src/${path}${suffix}';`]]))).toEqual([expect.stringContaining(message!)]);
+    }
+  }
+  expect(conventions(new Map([["packages/engine/test/nested/a.test.ts", "import { Engine } from '../engine';"]]))).toEqual([]);
+  expect(conventions(new Map([["packages/engine/test/a.test.ts", "import type { Engine } from '@petrina/engine'; import { parseResult } from '@petrina/engine';"]]))).toEqual([]);
+  expect(conventions(new Map([["packages/engine/test/a.test.ts", "import { Engine } from '../../core/src/engine.ts';"]]))).toEqual([]);
+});
+
 describe("test programs and the waits on them", () => {
   const found = (source: string, file = "packages/engine/test/a.test.ts") => conventions(new Map([[file, source]])).map((error) => error.slice(file.length + 1));
   const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "./rejections.js";\n`;

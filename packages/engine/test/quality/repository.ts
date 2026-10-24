@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { runGit } from "../commands.js";
 import { isSource, isTest, impactPlan, type CoverageMap, type ImpactPlan } from "./impact.js";
 import { sourceFacts } from "./source.js";
+import { sourceCandidates } from "./source-paths.js";
 
 export const ROOT = resolve(import.meta.dir, "../../../..");
 export async function readGit(root: string, args: string[]): Promise<string> {
@@ -34,14 +35,15 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
     let facts;
     try { facts = sourceFacts(source, file); }
     catch (error) { errors.push(`${file}: cannot parse test source: ${error instanceof Error ? error.message : String(error)}`); continue; }
+    const fromProduction = (path: string, ...modules: readonly string[]) => sourceCandidates(file, path).some(candidate => modules.some(module => candidate === `packages/engine/src/${module}.ts`));
     if (engine && file !== "packages/engine/test/engine.ts") for (const entry of facts.imports) {
-      if (entry.runtime && /(?:^|\/)src\/(?:engine|index)\.[jt]s$/.test(entry.path) && entry.names.some(name => ["Engine", "*", "default"].includes(name))) errors.push(`${file}: import Engine from the isolated test/engine fixture`);
+      if (entry.runtime && fromProduction(entry.path, "engine", "index") && entry.names.some(name => ["Engine", "*", "default"].includes(name))) errors.push(`${file}: import Engine from the isolated test/engine fixture`);
     }
     if (engine && file !== "packages/engine/test/client.ts") for (const entry of facts.imports) {
-      if (entry.runtime && /(?:^|\/)src\/engine-client\.[jt]s$/.test(entry.path) && entry.names.some(name => ["EngineClient", "*", "default"].includes(name))) errors.push(`${file}: import EngineClient from test/client so lifecycle starts use the isolated fixture CLI`);
+      if (entry.runtime && fromProduction(entry.path, "engine-client") && entry.names.some(name => ["EngineClient", "*", "default"].includes(name))) errors.push(`${file}: import EngineClient from test/client so lifecycle starts use the isolated fixture CLI`);
     }
     if (engine && file !== "packages/engine/test/fixtures.ts") for (const entry of facts.imports) {
-      if (entry.runtime && /(?:^|\/)src\/checks\.[jt]s$/.test(entry.path) && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
+      if (entry.runtime && fromProduction(entry.path, "checks") && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
     }
     if (engine) for (const line of facts.promiseMatchers) errors.push(`${file}:${line}: await rejectionOf/expectRejection or the ordinary Promise before asserting; do not use Bun's promise matchers`);
     for (const line of facts.blockingCalls) errors.push(`${file}:${line}: run test programs with runCommand or git from test/commands; a synchronous child call holds the whole test worker until its exit is reported`);

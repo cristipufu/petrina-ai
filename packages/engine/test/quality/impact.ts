@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { builtinModules } from "node:module";
-import { dirname, posix } from "node:path";
 import { sourceFacts } from "./source.js";
+import { sourceCandidates } from "./source-paths.js";
 
 export const WORKSPACES = ["packages/core", "packages/engine", "apps/desktop"] as const;
 export const isTest = (file: string): boolean => /(?:^|\/)(?:[^/]+[._])?(?:test|spec)\.[cm]?[jt]sx?$/.test(file);
 export const isSource = (file: string): boolean => /\.[cm]?[jt]sx?$/.test(file);
 export const workspaceOf = (file: string): string | undefined => WORKSPACES.find(workspace => file.startsWith(`${workspace}/`));
-const aliases = new Map([["@petrina/core", "packages/core/src/index.ts"], ["@petrina/engine", "packages/engine/src/index.ts"]]);
 const builtins = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
 export interface CoverageMap { version: 1; fingerprint: string; tests: Record<string, string[]> }
 export interface ImpactPlan {
@@ -45,18 +44,13 @@ export function impactPlan(files: ReadonlyMap<string, string>, changes: readonly
     reasons.add(reason);
     for (const test of tests) if (!workspace || workspaceOf(test) === workspace) selected.add(test);
   };
-  const resolve = (from: string, path: string): string | undefined => {
-    const target = aliases.get(path) ?? (path.startsWith(".") ? posix.normalize(posix.join(dirname(from), path)) : undefined);
-    if (!target) return;
-    return [target, target.replace(/\.js$/, ".ts"), target.replace(/\.js$/, ".tsx"), `${target}.ts`, `${target}.tsx`, `${target}/index.ts`].find(file => files.has(file));
-  };
   for (const [file, source] of files) {
     if (!isSource(file)) continue;
     try {
       const facts = sourceFacts(source, file);
       if (facts.uncertain) uncertain.add(file);
       for (const entry of facts.imports) {
-        const dependency = resolve(file, entry.path);
+        const dependency = sourceCandidates(file, entry.path).find(file => files.has(file));
         if (dependency) {
           const users = reverse.get(dependency) ?? new Set(); users.add(file); reverse.set(dependency, users);
         } else if (entry.path.startsWith(".") || entry.path.startsWith("@petrina/") || (!builtins.has(entry.path) && !entry.path.startsWith("bun:") && !declared.get(workspaceOf(file) ?? "")?.has(entry.path.startsWith("@") ? entry.path.split("/").slice(0, 2).join("/") : entry.path.split("/")[0]!))) {
