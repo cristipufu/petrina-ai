@@ -25,6 +25,7 @@ describe.concurrent("scripted workflow sessions", () => {
       expect(next.sessionId).toBe(first.sessionId);
       expect(parseResult((await next.prompt("repair")).text, BuildResult)).toMatchObject({ ok: true, value: { summary: "repair" } });
       expect(agents.received("build").map(prompt => prompt.turn)).toEqual([1, 2]);
+      expect(agents.received()[0]).toMatchObject({ profileId: launch.profile.id, toolId: launch.profile.toolId, model: launch.profile.modelId ?? launch.profile.model });
       for (const [owner, launchOptions, participant] of [
         [new ScriptedAgents(() => ""), { ...options(), reopen: first.sessionId }, role],
         [agents, { ...options(), reopen: first.sessionId, profile: { ...launch.profile, modelId: "different-model" } }, role],

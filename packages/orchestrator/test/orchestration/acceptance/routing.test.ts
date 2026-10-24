@@ -33,8 +33,10 @@ it.each([true, false])("keeps exhausted early acceptance open for one decision a
   expect(task.acceptanceBlocked).toBe(true); expect(task.findings).toEqual(findings); expect(task.rounds).toEqual(rounds);
   expect(task.repositories!.map(work => work.acceptanceReturns)).toEqual([2, 2]);
   expect(task.plan!.stages.filter(stage => stage.gate === "delivery")).toHaveLength(1);
+  expect(task.proofDeliveryGate === undefined).toBe(planned);
   expect(events.some(event => event.kind === "decision")).toBe(false);
   expect(events.filter(event => event.kind === "note" && event.tone === "milestone")).toHaveLength(planned ? 0 : 1);
+  if (!planned) expect(events.find(event => event.kind === "note" && event.tone === "milestone")?.text).toBe("Added your delivery check: acceptance still fails, so delivery waits for your decision");
   expect(events.find(event => event.kind === "note" && event.tone === "warn")?.text).toContain("The remaining reviews run first");
   expect(checkpoints).toHaveLength(1); expect(checkpoints[0]!.stageIndex).toBe(2);
 });

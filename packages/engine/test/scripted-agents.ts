@@ -6,6 +6,9 @@ export interface ScriptedPrompt {
   readonly sessionId: string;
   readonly roleId: string;
   readonly result: Role["result"];
+  readonly profileId: string;
+  readonly toolId: string;
+  readonly model: string;
   readonly cwd: string;
   readonly text: string;
   readonly turn: number;
@@ -44,7 +47,7 @@ export class ScriptedAgents {
     const session = saved ?? { roleId: role.id, toolId: options.profile.toolId, model, turns: 0 };
     this.sessions.set(sessionId, session);
     return new ScriptedSession(options, sessionId, !!saved, text => {
-      const prompt = { sessionId, roleId, result, cwd: options.cwd, text, turn: ++session.turns };
+      const prompt = { sessionId, roleId, result, profileId: options.profile.id, toolId: options.profile.toolId, model, cwd: options.cwd, text, turn: ++session.turns };
       this.prompts.push(prompt);
       return prompt;
     }, this.respond);

@@ -597,7 +597,28 @@
       "declarations": 9,
       "assertionSites": 142,
       "baselineDigest": "b81e1ac2cd1b1812c222a8da36a5baeb8cb9b95ff79475eeb936d8b993fe3370",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "keeps used-up acceptance failures open for one decision after every owed review, at an added delivery check",
+          "file": "packages/orchestrator/test/orchestration/acceptance/routing.test.ts",
+          "case": "keeps exhausted early acceptance open for one decision after every owed review (planned gate: false)",
+          "integrationControls": [
+            "Retained planned-gate nonmixed journey proves the complete repair/review/report/restart/publish sequence.",
+            "Retained added-gate mixed-evidence journey proves persistence and delivery of an inserted proof gate."
+          ],
+          "review": "The removed variant repeated the complete nonmixed failure sequence solely with a missing initial gate. Its gate insertion position, unchanged allowances, review-before-decision route, exact milestone text, proofDeliveryGate identity and checkpoint are tested on the actual extracted controller; native report/context/restart/delivery guarantees remain in the two retained richer journeys."
+        }
+      ],
+      "review": "Partial audit: one composite exhausted-acceptance variant split between the actual routing owner and retained planned/mixed-evidence journeys. All fifteen retained case bodies/assertions reconcile after replacing provider transport with typed scripted responses; actual Git/SQLite, context packets, restart, findings and delivery stay real. Private Driver admission overrides and the remaining multi-owner layer split still require review.",
+      "validation": {
+        "retainedRuntimeCases": 15,
+        "nativeAndScriptedCaseBodiesMatch": true,
+        "journeyRun": "acceptance-scripted-reviewed.xml (19 cases including 4 fixture controls, 268 assertions, 38.42s)",
+        "priorSameFifteenNativeTransportCases": "acceptance-migrated-journeys.xml (15 cases, 246 assertions, 54.86s)",
+        "fixtureControls": "acceptance-fixture-contracts.xml (9 cases including shared sessions, 51 assertions, 81ms)",
+        "reconciliation": "acceptance-journey-reconciliation.json"
+      }
     },
     {
       "file": "packages/engine/test/accepted-points.test.ts",
