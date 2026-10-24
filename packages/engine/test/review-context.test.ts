@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import * as gitOps from "../src/git.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beginAgentStep, BUILT_IN_ROLES, createDemoState, panelAnswers, seatRemaining, type DeepMutable, type Finding, type Task } from "@petrina/core";
+import { beginAgentStep, BUILT_IN_ROLES, createDemoState, findingsNeedingVotes, panelAnswers, seatRemaining, type DeepMutable, type Finding, type Task } from "@petrina/core";
 import { Context } from "../src/context.js";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
@@ -1100,7 +1100,7 @@ describe("bounded verifier places after handoffs", () => {
       // A confirmation without a reproduction keeps the unresolved episode, and its completed ballot is not repeated.
       expect(kept.unresolved).toBeDefined();
       expect(kept.votes).toHaveLength(2);
-      expect(f.reviews["ballotFindings"](f.task).map((finding) => finding.id)).toEqual(["u"]);
+      expect(findingsNeedingVotes(f.task, id => f.engine.profile(id)?.toolId).map((finding) => finding.id)).toEqual(["u"]);
     } finally { await f.engine.shutdown(); }
   });
 
@@ -1123,7 +1123,7 @@ describe("bounded verifier places after handoffs", () => {
       expect(finding.reopenedAt).toBeUndefined();
       expect(finding.earlierReviews).toBeUndefined();
       expect(finding.confirmedBy).toEqual(["argon-high", "opus-high"]);
-      expect(f.reviews["ballotFindings"](f.task)).toEqual([]);
+      expect(findingsNeedingVotes(f.task, id => f.engine.profile(id)?.toolId)).toEqual([]);
     } finally { await f.engine.shutdown(); }
   });
 });

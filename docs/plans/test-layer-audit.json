@@ -597,11 +597,20 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/verifier-panel.test.ts",
+      "file": "packages/core/test/rules/reviews/panel.test.ts",
       "declarations": 18,
       "assertionSites": 76,
       "baselineDigest": "38684c09e5544068c93562d7c102bd03d80f56f7986150f56c1d807a810f9266",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/verifier-panel.test.ts",
+      "layer": "rules",
+      "area": "reviews",
+      "review": "Eighteen pure cases exercise actual panel selection and mixed authors, exhaustive/majority/bounded verdicts, provenance and corrected per-tool answers, place ownership and independent replacements, reopening only on reproduced changed code, and targeted/shared/unavailable third answers. Shared immutable maps and fresh answer factories live in the owned fixture module. Every case body and assertion remains; no Engine, simulator or native effect is involved.",
+      "validation": {
+        "caseBodiesAndAssertionsUnchanged": true,
+        "artifact": "verifier-panel-case-reconciliation.json",
+        "run": "verifier-core-reviewed.json records the complete core suite; controller and native neighbors are recorded in the implementation tracker"
+      }
     },
     {
       "file": "packages/core/test/workflow-events.test.ts",

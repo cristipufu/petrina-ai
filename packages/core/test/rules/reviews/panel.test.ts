@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Hunt, VerifierPanel, Vote } from "../src/model.js";
-import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, engagedTools, inBallot, panelAnswers, planThirdAnswers, reopensUnresolved, replacementFor, reviewedCode, seatRemaining } from "../src/verifier-panel.js";
-
-const NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", antigravity: "Antigravity" };
-const name = (tool: string) => NAMES[tool] ?? tool;
-const PROFILE: Record<string, string> = { "claude-code": "opus-high", codex: "sol-high", grok: "grok-high", antigravity: "argon-high" };
-const candidate = (toolId: string, usableNow = true) => ({ toolId, profileId: PROFILE[toolId]!, usableNow });
-const hunt: Pick<Hunt, "stageId" | "round" | "input"> = { stageId: "review", round: 1, input: { file: "input.json", digest: "d1", heads: { product: "abc" } } };
-const answer = (seat: string, toolId: string, verdict: Vote["verdict"], reason = `${toolId} checked it`): Vote => ({ by: PROFILE[toolId]!, toolId, plannedProfileId: seat, verdict, reason, ballot: ballotOf(hunt, seat) });
+import type { VerifierPanel } from "../../../src/model.js";
+import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, engagedTools, inBallot, panelAnswers, planThirdAnswers, reopensUnresolved, replacementFor, reviewedCode, seatRemaining } from "../../../src/verifier-panel.js";
+import { answer, candidate, hunt, name } from "../../fixtures/verifier-panel.js";
 
 describe("choosing a new ballot's panel", () => {
   it("starts two fresh places on distinct tools, not one per registered provider", () => {

@@ -410,7 +410,7 @@ for (const rule of ["majority", "bounded"] as const) it(`keeps the reviewers' pr
   const step = f.task.journey!.at(-1)!;
   step.agentResults = [{ roleId: "verifier", profileId: "sol-high", at: Date.now(), value: { verdicts: f.task.findings.map(finding => ({ id: finding.id, verdict: finding.votes![0]!.verdict, reason: finding.votes![0]!.reason })) }, findings: structuredClone(f.task.findings) }];
   const own = structuredClone(step.agentResults);
-  const outcome = f.engine["reviews"]["tally"](f.task, { findings: f.task.findings, seats: [], voters: [], panel });
+  const outcome = f.engine["reviews"]["ballots"].finish(f.task, { findings: f.task.findings, seats: [], voters: [], panel });
   expect(outcome).toBe("5 checked: 1 must be fixed in this change, 1 already there before this change, 1 minor, 2 not a bug");
   expect(f.task.findings.map(finding => [finding.status, finding.severity])).toEqual([["open", "blocking"], ["open", "pre-existing"], ["open", "suggestion"], ["dismissed", "blocking"], ["fixed", "blocking"]]);
   expect(f.task.journey!.at(-1)!.result).toEqual({ findings: f.task.findings, findingsSettled: true });
@@ -437,7 +437,7 @@ for (const [verdict, label] of [["pre-existing", "an older bug unrelated to the 
   repair.votes = panel.seats.map(seat => ({ by: seat.profileId, toolId: seat.toolId, verdict: seat.key === "real" ? "real" : verdict, reason: seat.key === "real" ? realReason : disputeReason, ballot: ballotOf(f.task.hunt!, seat.key) }));
   f.task.journey!.push({ id: "vote", kind: "agent", roleId: "verifier", profileId: "sol-high", stageId: "review", round: 1, sub: 0, startedAt: Date.now() });
   const votes = structuredClone(repair.votes);
-  const outcome = f.engine["reviews"]["tally"](f.task, { findings: f.task.findings, seats: [], voters: [], panel });
+  const outcome = f.engine["reviews"]["ballots"].finish(f.task, { findings: f.task.findings, seats: [], voters: [], panel });
   expect(outcome).toBe("1 checked: 1 must be fixed in this change (1 disputed)");
   expect(repair.status).toBe("open"); expect(repair.severity).toBe("blocking");
   expect(repair.verification?.verdict).toBe("real");

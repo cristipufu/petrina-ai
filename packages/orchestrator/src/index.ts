@@ -14,3 +14,5 @@ export { ReopenFailed } from "./ports/agents.js";
 export type { AgentSession, AgentSessionOptions, AgentSessionCallbacks, StartAgentSession, AgentInputReceipt, AgentMessage, PermissionInfo, ToolActivityEvent, RetryCause, NativeRetryReport, SessionSettings, TurnNotes, TurnResult } from "./ports/agents.js";
 export type { ToolProbe, ToolProbeRequest, ToolProbeResult, ToolCheckHost, ToolCheckClock } from "./ports/tool-checks.js";
 export { ToolCheckCoordinator, TOOL_CHECK_LINGER_MS } from "./tool-checks.js";
+export type { PendingVerification, VerifierAnswerSource, VerifierVerdict, VerifierCatalog, VerifierResolution, VerifierSelection, VerifierRecording } from "./ports/verifiers.js";
+export { VerifierBallots } from "./verifier-ballots.js";

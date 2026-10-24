@@ -1,8 +1,26 @@
 // Bounded verifier panels: which tools check a round's Important findings, which answers count, when a third
 // independent tool is asked, and who may take over a place. Decisions only; the engine admits and records them.
 
-import type { Finding, Hunt, Id, VerifierPanel, VerifierSeat, Vote } from "./model.js";
+import type { Finding, Hunt, Id, Task, VerifierPanel, VerifierSeat, Vote } from "./model.js";
 import { independentVotes } from "./reviews.js";
+import { assignedProducts } from "./repositories.js";
+import { exhaustedAcceptanceFailure } from "./acceptance.js";
+
+/** Open Important reports that lack support from two independent tools. */
+export function findingsNeedingVotes<F extends Finding>(task: Pick<Task, "productId" | "repositories" | "selectedProducts" | "workRows" | "acceptanceBlocked"> & { findings: readonly F[] }, toolOf: (profileId: Id) => Id | undefined): F[] {
+  return task.findings.filter((finding) => {
+    if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification || finding.unresolved || exhaustedAcceptanceFailure(task, finding)) return false;
+    if (task.repositories && !assignedProducts(task, finding.productIds).length) return false;
+    const judgments = finding.judgments ?? [];
+    const clashed = judgments.some((entry) => entry.severity === "pre-existing") && judgments.some((entry) => entry.severity === "blocking");
+    // A reviewer who says the bug is older is not a second tool agreeing that it is Important.
+    const older = new Set(judgments.filter((entry) => entry.severity === "pre-existing").map((entry) => entry.by));
+    const supporters = clashed
+      ? [...judgments.filter((entry) => entry.severity === "blocking").map((entry) => entry.by), ...finding.confirmedBy.filter((id) => !older.has(id))]
+      : [...((finding.reopenedAt !== undefined || finding.answer?.fixed) ? [] : [finding.raisedBy]), ...finding.confirmedBy];
+    return new Set(supporters.map(toolOf).filter(Boolean)).size < 2;
+  });
+}
 
 type Ballot = Pick<Hunt, "stageId" | "round" | "input">;
 

@@ -61,7 +61,7 @@ export function withoutProduct(task: Task, productId: Id): Task | undefined {
   return next;
 }
 
-export function assignedProducts(task: Task, ids: readonly Id[] | undefined): Id[] {
+export function assignedProducts(task: Pick<Task, "productId" | "repositories" | "selectedProducts" | "workRows">, ids: readonly Id[] | undefined): Id[] {
   const products = taskProductIds(task);
   if (!task.repositories) return ids?.length ? ids.filter((id) => products.includes(id)) : products;
   // Partial or invalid assignments are not repaired by guessing.
