@@ -5,3 +5,6 @@ export { beginRepair } from "./repair.js";
 export type { SourceQueries, SourcePullRequest, SourceSelectionEffects, SourceSelectionHost } from "./ports/source.js";
 export { resolveSource } from "./source-resolution.js";
 export { SourceSelections } from "./source-selection.js";
+export type { AcceptanceRoutingHost, AcceptanceRoutingInput } from "./ports/acceptance.js";
+export { routeAcceptance } from "./acceptance-routing.js";
+export { addDeliveryCheck } from "./delivery-gate.js";

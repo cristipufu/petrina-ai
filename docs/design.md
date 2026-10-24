@@ -70,7 +70,7 @@ Shared transitions receive state and an explicit time. Callers retain persistenc
 |---|---|
 | `apps/desktop` | React UI and a thin Tauri host for engine ownership, windows and notifications |
 | `packages/core` | Domain types, pure rules, analytics definitions and the scripted demo |
-| `packages/orchestrator` | Portable workflow controllers and execution handles, consuming narrow effect contracts; currently repository context, repairs and source selection |
+| `packages/orchestrator` | Portable workflow controllers and execution handles, consuming narrow effect contracts; currently repository context, repairs, source selection and acceptance routing |
 | `packages/engine` | Bun process coordinating agents, repositories, checks, storage and local API |
 
 `Engine` implements coordinator commands. The kernel shares lookups, recording and persistence; stage modules own their workflows. Detailed module ownership is in [Engine runtime](architecture/engine-runtime.md#architecture).

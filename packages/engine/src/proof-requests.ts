@@ -1,3 +1,4 @@
+import { addDeliveryCheck } from "@petrina/orchestrator";
 import { proofOwner, proofStatus, sameVersions, type DeepMutable, type ProofRequest, type Task } from "@petrina/core";
 import type { z } from "zod";
 import type { Kernel, MTask, MStage } from "./kernel.js";
@@ -13,21 +14,6 @@ export function checkProofRequests(k: Pick<Kernel, "s" | "role">, task: MTask, r
     if (!request.productIds.length || request.productIds.some(id => !ids.includes(id)) || new Set(request.productIds).size !== request.productIds.length) return `Assign every proof request to valid, distinct product ids: ${ids.join(", ")}.`;
     if (request.checklistText !== undefined && !task.brief?.acceptance.some(item => item.text === request.checklistText)) return "A proof request's checklistText must exactly match a saved acceptance item, or omit that optional link.";
   }
-}
-
-/**
- * A plan that omitted delivery approval gains the delivery check before its delivery step, so evidence that must be
- * current is prepared and checked there; the task's own approval choice still applies once it is. False without a delivery step.
- */
-export function addDeliveryCheck(k: Pick<Kernel, "role">, task: MTask): boolean {
-  if (task.plan!.stages.some(entry => entry.kind === "gate" && entry.gate === "delivery")) return true;
-  const index = task.plan!.stages.findIndex(entry => entry.kind === "do" && k.role(entry.roleId, task)?.result === "delivery");
-  if (index < 0) return false;
-  const id = `${task.id}:proof-delivery`;
-  task.plan!.stages.splice(index, 0, { id, title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] });
-  task.proofDeliveryGate = id;
-  if (task.stageIndex >= index) task.stageIndex += 1;
-  return true;
 }
 
 /** Called with the accepted seat result; identity is its position in this execution, never similar wording. */
