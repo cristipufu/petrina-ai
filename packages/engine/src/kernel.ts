@@ -276,6 +276,8 @@ export abstract class Kernel {
   onTaskDone?: (task: MTask) => void;
   /** Set by the Engine: copy follow-up pictures before a done task's captures are removed. */
   beforeCaptureRemoval?: (task: MTask) => Promise<void>;
+  /** A coordinator decision yields pre-publication resource ownership before waiting for its reply. */
+  onCoordinatorWait?: (task: MTask) => void;
   private readonly followUpHolds = new Map<Id, number>();
 
   /** Keep a just-finished task in memory until its follow-up card has copied what it needs. */
@@ -652,6 +654,8 @@ export abstract class Kernel {
       ...(extra.stageId !== undefined ? { stageId: extra.stageId } : {}),
     });
     this.tracking.asked(scope, this.s.inbox.at(-1)!);
+    // Offers let the caller carry on; only a decision that stops work yields its resources.
+    if (kind !== "learnings" && kind !== "guide") this.onCoordinatorWait?.(task);
     return id;
   }
 

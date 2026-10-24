@@ -33,6 +33,12 @@ function checkDiagnostic(output: string): string | undefined {
 type CheckEntries = Map<string, DeepMutable<JourneyProductCheck>>;
 type CheckState = { sha?: string; tree?: string; trackedChanged: boolean; hooks: string[]; definition: string; message?: string };
 
+/** Repeat the owning step's source/approval policy only when its check batch waited. */
+export type CheckPreparation = (() => Promise<boolean | void>) & { beforeQueue?: () => boolean | void };
+export class CheckPreparationChanged extends Error {
+  constructor() { super("The work needs its existing update or approval step before checks can run"); }
+}
+
 /**
  * Nothing to run: no check with a command and no commit hook. Such a run still records a checks step and its
  * attempt's versions, so later steps can tell "no checks configured" from missing evidence, but it needs no turn
@@ -46,6 +52,10 @@ export class ProductChecks {
    * multiplies CPU and memory pressure and can make both slower or cause timeouts.
    */
   private readonly preparations = new Set<Id>();
+  /** A source update may ask about a saved repository address; that decision owns no check place. */
+  private readonly decisionReleases = new Map<Id, () => boolean>();
+  /** A local delivery keeps its original check order while waiting for its destination turn. */
+  readonly deliveryOrders = new Map<Id, number>();
 
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
 
@@ -96,6 +106,13 @@ export class ProductChecks {
   }
 
   releasePreparation(taskId: Id): void { this.preparations.delete(taskId); }
+
+  releaseForDecision(taskId: Id): boolean {
+    // Discovery can ask too, after returning check capacity. Its decision must not reserve preparation room.
+    const preparation = this.preparations.delete(taskId);
+    const checks = this.decisionReleases.get(taskId)?.() ?? false;
+    return preparation || checks;
+  }
 
   private async turnToRun(scope: RepositoryContext, signal: AbortSignal, order = this.k.checkQueue.reserveOrder()): Promise<(() => void) & { waited: boolean }> {
     const { task } = scope;
@@ -222,12 +239,22 @@ export class ProductChecks {
     return product.checks ?? [];
   }
 
+  /** Undefined means discovery needs an agent, which must happen outside the check place. */
+  private cachedChecks(scope: RepositoryContext): readonly ProductCheck[] | undefined {
+    const product = this.k.productOf(scope), repository = scope.work;
+    if (!product || !repository.worktree) return [];
+    if (product.checksBy === "coordinator") return product.checks ?? [];
+    const fingerprint = checksFingerprint(repository.worktree);
+    if (product.checks && product.checksFingerprint === fingerprint) return product.checks;
+    return product.checksSeen?.find(entry => entry.fingerprint === fingerprint)?.checks;
+  }
+
   /**
    * Petrina runs the product's checks itself, without credentials, and then the repository's own commit
    * hooks on the task's whole change. Failures become blocking findings, with the output as evidence. A check
    * only looks: whatever one changes in files git tracks is undone, so nothing unreviewed joins the work.
    */
-  async runProductChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[], prepared?: CheckState): Promise<number> {
+  async runProductChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[], prepared?: CheckState, prepare?: CheckPreparation): Promise<number> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return 0;
     // A check queue entry is not a model conversation. No agent still runs on this copy.
@@ -237,11 +264,11 @@ export class ProductChecks {
     }
     if (!this.claimPreparation(task.id)) throw new WaitingForUsage(this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : "Waiting for room to prepare the product checks");
     this.k.schedule();
-    try { return await this.runPreparedChecks(scope, checks, signal, kept, prepared); }
+    try { return await this.runPreparedChecks(scope, checks, signal, kept, prepared, prepare); }
     finally { this.releasePreparation(task.id); }
   }
 
-  private async runPreparedChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[], prepared?: CheckState): Promise<number> {
+  private async runPreparedChecks(scope: RepositoryContext, checks: readonly ProductCheck[], signal: AbortSignal, kept?: readonly CheckRun[], prepared?: CheckState, prepare?: CheckPreparation): Promise<number> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return 0;
     let state = prepared ?? await this.captureState(scope, checks);
@@ -258,7 +285,7 @@ export class ProductChecks {
     const resumingNotes = open?.kind === "agent" && this.k.role(open.roleId ?? "")?.result === "delivery" && open.stageId === task.plan?.stages[task.stageIndex]?.id;
     // A checks step's elapsed time includes waiting for another task's run.
     if (!resumingNotes) beginPetrinaStep(task, "checks", Date.now(), repository);
-    const step = openStep(task);
+    let step = openStep(task);
     const prefix = step?.productChecks?.length ? `run-${step.productChecks.length}:` : "";
     const attempt = { attemptId: `run-${step?.productChecks?.length ?? 0}`, queuedAt: Date.now(), productId: repository.productId };
     const entries: CheckEntries = new Map<string, DeepMutable<JourneyProductCheck>>([
@@ -277,14 +304,82 @@ export class ProductChecks {
     this.k.commit();
     let finished: Awaited<ReturnType<ProductChecks["turnToRun"]>> | undefined;
     let complete = false;
-    const order = nothing ? undefined : this.k.checkQueue.reserveOrder();
+    let recapture = false;
+    let discoveries = 0;
+    const order = nothing ? undefined : this.deliveryOrders.get(task.id) ?? this.k.checkQueue.reserveOrder();
+    const reopenChecks = () => {
+      if (step?.endedAt === undefined) return;
+      step = beginPetrinaStep(task, "checks", Date.now(), repository);
+      const refreshed: DeepMutable<JourneyProductCheck>[] = [...entries.values()].map(check => ({ ...check, result: "pending", detail: undefined, endedAt: undefined }));
+      step.productChecks = refreshed;
+      entries.clear();
+      for (const check of refreshed) entries.set(check.id!.slice(prefix.length), check);
+    };
     try {
       for (;;) {
-        finished = nothing ? undefined : await this.turnToRun(scope, signal, order);
-        if (finished?.waited) {
+        // A discovery conversation can yield a local delivery's turn. Reacquire before joining the line,
+        // without reserving check capacity or fetching twice for an unwaited run.
+        const reacquired = prepare?.beforeQueue?.();
+        if (!this.preparations.has(task.id) && !this.claimPreparation(task.id)) throw new WaitingForUsage(this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : "Waiting for room to prepare the product checks");
+        finished = nothing ? undefined : await this.turnToRun(scope, signal, this.deliveryOrders.get(task.id) ?? order);
+        if (finished?.waited || recapture || reacquired) {
+          // Discovery needs fresh captured inputs, but only another queue wait or a regained delivery
+          // turn needs another source update. An immediately available place adds no second fetch.
+          if ((finished?.waited || reacquired) && prepare) {
+            let yieldedForDecision = false;
+            const release = () => {
+              const released = finished !== undefined;
+              finished?.(); finished = undefined;
+              this.releasePreparation(task.id);
+              yieldedForDecision = true;
+              return released;
+            };
+            this.decisionReleases.set(task.id, release);
+            try { if (await prepare() === false) throw new CheckPreparationChanged(); }
+            finally { if (this.decisionReleases.get(task.id) === release) this.decisionReleases.delete(task.id); }
+            if (yieldedForDecision) {
+              recapture = true;
+              reopenChecks();
+              continue;
+            }
+          }
+          if (signal.aborted || this.k.stopped) throw new Aborted();
+          if (this.k.taskAdmissionsClosed(task) && !queueWhilePaused()) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
+          if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
+          if (prepare) {
+            const current = this.cachedChecks(scope);
+            if (!current) {
+              if (discoveries++ >= 3) throw new Error("The files defining this product's checks kept changing before they could start. Your work is preserved; try again once they are stable.");
+              // Discovery can wait for a model or the coordinator. It must never retain check capacity.
+              finished?.(); finished = undefined;
+              checks = await this.ensureChecks(scope, signal);
+              recapture = true;
+              // Discovery ended the earlier checks step. Its stopped evidence is historical; any
+              // later admission or preparation result belongs to a new step, including a conflict.
+              reopenChecks();
+              task.holdsSlot = false;
+              delete task.agent;
+              this.k.schedule();
+              continue;
+            }
+            checks = current;
+          }
           state = await this.captureState(scope, checks);
+          recapture = false;
           // Another run held the lane. Files and external hook inputs may have changed while waiting.
           kept = await this.savedProductResults(scope, checks, state);
+          // An update may record its own journey moment. The admitted run needs an open check step.
+          reopenChecks();
+          const declared = new Map(checks.filter(check => check.argv.length).map((check, index) => [`check-${index}`, check.name]));
+          for (const [id, entry] of entries) if (id.startsWith("check-")) {
+            if (declared.has(id)) { entry.name = declared.get(id)!; entry.result = "pending"; }
+            else entry.result = "skipped";
+          }
+          for (const [id, name] of declared) if (!entries.has(id)) {
+            const entry: DeepMutable<JourneyProductCheck> = { ...attempt, id: `${prefix}${id}`, name, result: "pending" };
+            entries.set(id, entry);
+            if (step) step.productChecks = [...(step.productChecks ?? []), entry];
+          }
           for (const [id, entry] of entries) if (id.startsWith("hook-") && !state.hooks.includes(id.slice(5))) entry.result = "skipped";
           for (const hook of state.hooks) if (!entries.has(`hook-${hook}`)) {
             const entry: DeepMutable<JourneyProductCheck> = { ...attempt, id: `${prefix}hook-${hook}`, name: hook === "pre-commit" ? "Pre-commit hook" : "Commit message hook", result: "pending" };
@@ -301,6 +396,16 @@ export class ProductChecks {
       const failures = await this.runAll(scope, checks, state, signal, entries, kept, attempt.attemptId);
       complete = true;
       return failures;
+    } catch (error) {
+      if (error instanceof CheckPreparationChanged) {
+        for (const check of entries.values()) if (check.result === "pending" || check.result === "stopped") {
+          check.result = "skipped";
+          check.detail = scope.work.updating ? "The starting branch moved and conflicts need the Builder before checks can run" : "The updated change needs approval before checks can run";
+          check.endedAt = Date.now();
+        }
+        if (step) { step.outcome = "Not run"; step.reason = entries.values().next().value?.detail; }
+      }
+      throw error;
     } finally {
       if (step && !complete) {
         for (const check of entries.values()) if (check.result === "pending" || check.result === "running") {
@@ -575,8 +680,9 @@ export class ProductChecks {
    * A failure sends the work back to the builder while its failure episode has returns left; after that the
    * coordinator sees it. Exhausted returns are a failure, never permission to start final acceptance.
    */
-  async checksBeforeDelivery(scope: RepositoryContext, signal: AbortSignal): Promise<"passed" | "returned" | "exhausted"> {
-    if (!(await this.failing(scope, signal, undefined, "delivery-check"))) return "passed";
+  async checksBeforeDelivery(scope: RepositoryContext, signal: AbortSignal, prepare?: CheckPreparation): Promise<"passed" | "returned" | "exhausted"> {
+    try { if (!(await this.failing(scope, signal, undefined, "delivery-check", prepare))) return "passed"; }
+    catch (error) { if (error instanceof CheckPreparationChanged) return "returned"; throw error; }
     return this.backToBuilder(scope, "right before your delivery check") ? "returned" : "exhausted";
   }
 
@@ -584,9 +690,10 @@ export class ProductChecks {
    * Right before shipping: the checks pass on exactly what ships. Failing, the work goes back to the builder
    * while the episode has returns left, and then to the coordinator's delivery check.
    */
-  async checksBeforeShipping(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
+  async checksBeforeShipping(scope: RepositoryContext, signal: AbortSignal, prepare?: CheckPreparation): Promise<boolean> {
     const { task, work: repository } = scope;
-    if (!(await this.failing(scope, signal, undefined, "publishing"))) return false;
+    try { if (!(await this.failing(scope, signal, undefined, "publishing", prepare))) return false; }
+    catch (error) { if (error instanceof CheckPreparationChanged) return true; throw error; }
     if (this.backToBuilder(scope, "on what was about to ship")) return true;
     const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
     if (check < 0) throw new Error("The product's checks fail on the work about to ship");
@@ -604,9 +711,9 @@ export class ProductChecks {
    * Reuse a completed run, including failures, until the code or check definition changes. A reuse is recorded
    * on the step that ran the original, with its basis, so the evidence survives restarts and later runs.
    */
-  async failing(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance"): Promise<boolean> {
+  async failing(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance", prepare?: CheckPreparation): Promise<boolean> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (await this.failingOnce(scope, signal, checks, purpose)) return true;
+      if (await this.failingOnce(scope, signal, checks, purpose, prepare)) return true;
       if (!scope.work.worktree) return false;
       const product = this.k.productOf(scope);
       const required = product ? checksFor(product, scope.work.worktree) : checks ?? [];
@@ -626,7 +733,7 @@ export class ProductChecks {
     throw new Error("The product's check inputs kept changing during verification. Nothing was approved or published; run the checks again once they are stable.");
   }
 
-  private async failingOnce(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance"): Promise<boolean> {
+  private async failingOnce(scope: RepositoryContext, signal: AbortSignal, checks?: readonly ProductCheck[], purpose: JourneyCheckReuse["purpose"] = "acceptance", prepare?: CheckPreparation): Promise<boolean> {
     const { task, work: repository } = scope;
     if (!repository.worktree) return false;
     const product = this.k.productOf(scope);
@@ -657,7 +764,7 @@ export class ProductChecks {
       this.k.commit();
       return saved.results.some((run) => !run.ok || run.interruption || run.interrupted);
     }
-    return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks, state), state)) > 0;
+    return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks, state), state, prepare)) > 0;
   }
 
   /** The repository's commit hooks, as git would run them now, noted on the product for the builder's instructions. */

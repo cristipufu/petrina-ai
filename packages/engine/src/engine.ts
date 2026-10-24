@@ -137,6 +137,12 @@ export class Engine extends Kernel implements Commands {
     this.checks = new ProductChecks(this, this.turns, this.context);
     this.updates = new Updates(this, this.connections, this.sources);
     this.shipping = new Shipping(this, this.turns, this.updates, this.checks, this.connections, this.tools);
+    this.onCoordinatorWait = task => {
+      const checks = this.checks.releaseForDecision(task.id);
+      const delivery = this.shipping.yieldForDecision(task);
+      // Only a resource handoff needs a wake. The asking caller records its question first.
+      if (checks || delivery) queueMicrotask(() => this.schedule());
+    };
     this.learnings = new Learnings(this);
     this.reviews = new Reviews(this, this.turns, this.context, this.checks, this.learnings, this.updates);
     this.design = new Design(this, this.turns, this.context);

@@ -21,6 +21,7 @@ import { ExtraContainer } from "../src/extra-container.js";
 import { CheckQueue } from "../src/check-queue.js";
 import { expectRejection } from "./rejections.js";
 import { Store } from "../src/store.js";
+import { readGitHub, writeGitHub } from "./fake-gh.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];
@@ -471,6 +472,54 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(delivery).toHaveBeenCalledTimes(1);
       expect(f.engine.checkQueue.running).toBe(0);
     } finally { released.resolve(); delivery.mockRestore(); tidy.mockRestore(); await f.engine.shutdown(); }
+  });
+
+  it("joins a deferred extra run in the pass that notices its prerequisite pull request merged", async () => {
+    const githubRoot = tempDir("petrina-extra-pr-wake-"); roots.push(githubRoot);
+    const githubState = join(githubRoot, "github.json");
+    const f = await fixture({ gh: [process.execPath, join(import.meta.dir, "fake-gh.ts"), githubState, githubRoot] });
+    await f.engine.waitUntilReady();
+    const prerequisite = await f.add(), work = executionFor(prerequisite).work;
+    f.engine.setRuntimeWait(f.task.id, [prerequisite.id], "Wait for the merged fix", "pr-merge-hold");
+    const first = await f.submit("pr-merge-deferred", ["probe", "hold"]);
+    const second = await f.submit("pr-merge-ready", ["probe", "pass"], (await f.add()).id);
+    prerequisite.state = "pr-open";
+    work.delivery = "pull-request";
+    work.pr = { number: 7, url: "https://github.com/acme/demo/pull/7", state: "open", openedAt: Date.now() };
+    const product = f.engine.s.products.find(product => product.id === f.productId)!;
+    writeGitHub(githubState, { repo: product.repo, prs: [{ number: 7, url: work.pr.url, headRefName: "required-fix", baseRefName: "main",
+      headRefOid: work.savedVersion!.commit, state: "MERGED", isCrossRepository: false, title: "Required fix", body: "" }], releases: [], calls: [] });
+    // The saved request stays on its original version even if the task's next saved version changes.
+    writeFileSync(join(product.path!, "later.txt"), "Saved after the extra request\n");
+    await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Later saved version");
+    executionFor(f.task).work.savedVersion = { commit: await git(product.path!, "rev-parse", "HEAD"), tree: await git(product.path!, "rev-parse", "HEAD^{tree}") };
+    const occupied = f.engine.checkQueue.hold();
+    const tidy = spyOn(f.engine, "tidy").mockImplementation(() => {});
+    const scheduled = spyOn(f.engine, "schedule");
+    try {
+      f.engine.setPoolPaused(false);
+      expect(f.engine.checkQueue.waiting).toBe(1);
+      expect((f.engine.extraValidations.get(first.requestId)!.validation as ExtraValidation).waitingReason).toContain("prerequisite");
+      scheduled.mockClear();
+      await f.engine["shipping"].monitor.pollPullRequests(); // The monitor owns the only scheduling call.
+      expect(scheduled).toHaveBeenCalledTimes(1);
+      expect(work.pr.state).toBe("merged"); expect(f.engine.task(prerequisite.id)!.state).toBe("done");
+      expect(f.task.runtimeWait!.releasedAt).toBeDefined();
+      expect(f.engine.checkQueue.running).toBe(1); expect(f.engine.checkQueue.waiting).toBe(2);
+      const joined = f.engine.extraValidations.get(first.requestId)!.validation as ExtraValidation;
+      expect(joined.waitingReason).toBeUndefined(); expect(joined.queuePosition).toBe(2);
+      expect([joined.commit, joined.tree, joined.queueOrder, joined.queuedAt]).toEqual([first.commit, first.tree, first.queueOrder, first.queuedAt]);
+      occupied(); await f.started(first);
+      expect(await git(first.snapshot, "rev-parse", "HEAD")).toBe(first.commit);
+      expect(existsSync(join(first.snapshot, "later.txt"))).toBe(false);
+      f.release(first);
+      expect((await f.finished(first)).result).toBe("passed"); expect((await f.finished(second)).result).toBe("passed");
+      const runs = readFileSync(join(f.service, "calls"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]).filter(args => args[0] === "run");
+      expect(runs.map(args => args[args.indexOf("--name") + 1])).toEqual([first.containerName, second.containerName]);
+      expect(readGitHub(githubState).calls.filter(args => args[0] === "pr" && args[1] === "view")).toHaveLength(1);
+      expect(f.engine.s.extraValidations).toEqual([]); expect(f.engine.checkQueue.running).toBe(0);
+      expect(readdirSync(join(f.service, "containers"))).toEqual([]);
+    } finally { occupied(); scheduled.mockRestore(); tidy.mockRestore(); await f.engine.shutdown(); }
   });
 
   for (const boundary of ["queued", "handoff", "inspection", "copy", "log", "running"] as const) it(`honors a task prerequisite wait for extra validation at ${boundary}`, async () => {

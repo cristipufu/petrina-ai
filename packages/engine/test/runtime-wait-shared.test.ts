@@ -158,11 +158,22 @@ describe.concurrent("runtime waits on a task across products", () => {
 
   it("settles interrupted admitted publishing while the refreshed companion can proceed", async () => {
     const { engine, products, task, hold, shipping, signal } = await fixture();
+    const updates = engine["updates"], upToDate = updates.upToDate.bind(updates);
+    const refreshed: string[] = [];
+    updates.upToDate = (...args) => { refreshed.push(args[0].work.productId); return upToDate(...args); };
+    // These settled, unwaited empty batches need no new discovery conversation. Fail at its
+    // admission instead of leaving a controlled Check finder waiting for an unrelated release.
+    let discoveries = 0;
+    engine["checks"].ensureChecks = async () => {
+      discoveries++;
+      throw new Error("An unwaited settled shared delivery unexpectedly started check discovery");
+    };
     try {
       for (const scope of scopesFor(task)) {
         expect(await shipping["readyToShip"](scope, signal)).toBe("ready");
         expect(await shipping["prepare"](scope, task.plan!.stages[2]!, signal)).toBe("ready");
       }
+      expect(refreshed).toEqual(products.map(product => product.id));
       const first = task.repositories![0]!;
       // A restart can find the durable write admission saved before its local move happened.
       first.shipping!.step = "update";
@@ -177,6 +188,8 @@ describe.concurrent("runtime waits on a task across products", () => {
       expect(await git(products[0]!.path!, "rev-parse", "main")).toBe(admitted);
       expect(task.runtimeWait?.refreshPending).toBeUndefined();
       expect(task.rounds).toEqual({});
+      expect(discoveries).toBe(0);
+      expect(refreshed).toEqual([products[0]!.id, products[1]!.id, products[1]!.id, products[1]!.id]);
     } finally { await engine.shutdown(); }
   });
 

@@ -101,6 +101,7 @@ it("evicts only dirty archive entries without retiring live tasks during a detai
 it("does not retry checkpoints or questions, and handles concurrent retries and replacement inbox items", async () => {
   const { engine, task } = await fixture();
   const check = spyOn(engine["tools"], "stillNotReady");
+  const scheduled = spyOn(engine, "schedule");
   try {
     for (const kind of ["plan", "design", "delivery", "question", "permission", "screen"] as const) {
       const id = engine.raise(task, kind, "Keep this request", true);
@@ -111,6 +112,8 @@ it("does not retry checkpoints or questions, and handles concurrent retries and 
       engine.s.inbox = engine.s.inbox.filter(entry => entry.id !== id);
     }
     expect(check).not.toHaveBeenCalled();
+    // Ordinary requests release no check or delivery resource; raising them adds no scheduling pass.
+    expect(scheduled).not.toHaveBeenCalled();
     const id = engine.raise(task, "stuck", "A tool stopped", false, { toolId: "codex" });
     let release!: (value: boolean) => void;
     check.mockImplementation(() => new Promise(resolve => { release = resolve; }));
@@ -127,7 +130,7 @@ it("does not retry checkpoints or questions, and handles concurrent retries and 
     release(false); await pending;
     expect(engine.s.inbox.find(entry => entry.id === next)?.kind).toBe("delivery");
     expect(task.timeline.filter(entry => entry.text === "You asked to try again")).toHaveLength(1);
-  } finally { check.mockRestore(); await engine.shutdown(); }
+  } finally { check.mockRestore(); scheduled.mockRestore(); await engine.shutdown(); }
 });
 
 it("returns Retry failures to the command caller when approving a stuck request", async () => {

@@ -33,6 +33,12 @@ process.exit(ok ? 0 : 1);`);
     engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, log]) }]);
     const signal = new AbortController().signal;
     const tasks: NonNullable<ReturnType<typeof engine.task>>[] = [];
+    // These direct calls exercise the last ref-movement defense with two already-prepared candidates.
+    // Return their delivery turns when an attempt ends, as the real task driver does in its cleanup.
+    const attempt = async <T>(task: NonNullable<ReturnType<typeof engine.task>>, run: () => Promise<T>): Promise<T> => {
+      try { return await run(); }
+      finally { engine["shipping"].releaseDeliveryTurn(task.id); }
+    };
     for (const name of ["a", "b"]) {
       const task = engine.task(engine.addTask({ productId, title: `Feature ${name}` }))!;
       const work = executionFor(task).work;
@@ -57,15 +63,16 @@ process.exit(ok ? 0 : 1);`);
       scope.work.approvedPatch = await engine["updates"].patch(scope);
       scope.work.shipping = { moves: 0, failures: 0, base, start: tested, prepared: { tested, summary: task.title } };
     }
-    const results = await Promise.all(tasks.map(task => engine["shipping"]["publishLocal"](executionFor(task), signal)));
+    const results = await Promise.all(tasks.map(task => attempt(task, () => engine["shipping"]["publishLocal"](executionFor(task), signal))));
     expect([...results].sort()).toEqual(["again", "done"]);
+    expect(tasks.every(task => !engine["checks"].deliveryOrders.has(task.id))).toBe(true);
     const landed = tasks[results.indexOf("done")]!;
     const second = tasks[results.indexOf("again")]!;
     const firstTip = await git(repo, "rev-parse", "main");
     expect(firstTip).toBe(executionFor(landed).work.approvedSha!);
     expect(executionFor(second).work.shipping?.prepared).toBeUndefined();
     // Re-enter the real preparation boundary. Its integrated tree fails, so it cannot publish.
-    expect(await engine["shipping"]["readyToShip"](executionFor(second), signal)).toBe("back");
+    expect(await attempt(second, () => engine["shipping"]["readyToShip"](executionFor(second), signal))).toBe("back");
     const evidence = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line) as { tree: string; ok: boolean });
     expect(evidence.map(run => run.ok)).toEqual([true, true, false]);
     expect(evidence[2]!.tree).not.toBe(evidence[0]!.tree);
@@ -74,5 +81,6 @@ process.exit(ok ? 0 : 1);`);
     expect(executionFor(second).work.approvedSha).toBeUndefined();
     expect(await git(repo, "rev-parse", "main")).toBe(firstTip);
     expect(second.stageIndex).toBe(0);
+    expect(engine["checks"].deliveryOrders.has(second.id)).toBe(false);
   } finally { await engine.shutdown(); }
 });

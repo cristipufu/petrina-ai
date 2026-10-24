@@ -14,7 +14,7 @@ import type { Planning } from "./planning.js";
 import type { Work } from "./work.js";
 import type { Design } from "./design.js";
 import type { Reviews } from "./review.js";
-import type { ProductChecks } from "./product-checks.js";
+import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import type { Updates } from "./update.js";
 import type { Learnings } from "./learnings.js";
@@ -95,6 +95,7 @@ export class Driver {
   schedule(): void {
     if (this.k.stopped) return;
     this.syncRuntimeWaits();
+    this.shipping.syncDeliveryTurns();
     for (const id of this.preparedTesters.keys()) {
       const task = this.k.s.tasks.find((task) => task.id === id);
       if (!task || !["running", "waiting"].includes(task.state)) this.preparedTesters.delete(id);
@@ -260,9 +261,11 @@ export class Driver {
 
   /** Take the slot and name its agent together, or start work needing no agent, before any I/O. */
   private reserveAgent(task: MTask): boolean {
+    const deliveryWait = !this.k.taskAdmissionsClosed(task) ? this.shipping.waitingForTurn(task) : undefined;
     const { agent: next, toolId, waiting: noOne, readiness } = this.seatFor(task);
     const preparing = this.needsCheckPreparation(task);
-    let waiting = runtimeWaitHolds(task) ? this.k.taskAdmissionWait(task) : noOne ?? (this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : next ? slotWait(this.k.activeState(), { ...this.k.profile(next.profileId), taskId: task.id, toolId }) : undefined);
+    let waiting = runtimeWaitHolds(task) ? this.k.taskAdmissionWait(task) : deliveryWait ?? noOne ?? (this.k.taskAdmissionsClosed(task) ? this.k.taskAdmissionWait(task) : next ? slotWait(this.k.activeState(), { ...this.k.profile(next.profileId), taskId: task.id, toolId }) : undefined);
+    if (deliveryWait) this.checks.releasePreparation(task.id);
     if (!waiting && preparing && !this.checks.claimPreparation(task.id)) waiting = "Waiting for room to prepare the product checks";
     if (!preparing) this.checks.releasePreparation(task.id);
     if (waiting) {
@@ -449,7 +452,7 @@ export class Driver {
               // What the coordinator checks is the work as it would land: one commit on top of the latest main.
               if ((await this.updates.upToDate(scope, signal)) === "conflict") { sentBack = true; break; }
               // Right before the coordinator is asked to ship, the checks run again on what would ship.
-              const checkResult = await this.checks.checksBeforeDelivery(scope, signal);
+              const checkResult = await this.checks.checksBeforeDelivery(scope, signal, async () => await this.updates.upToDate(scope, signal) !== "conflict");
               if (checkResult === "returned") { sentBack = true; break; }
               if (checkResult === "exhausted") {
                 this.checks.blocked(current);
@@ -541,14 +544,24 @@ export class Driver {
         // Read-only review reuses this same run; changing code still requires fresh evidence.
         if (this.testerNeedsChecks(current)) {
           // Resolve an already-known stale base before spending checks or acceptance on it.
-          // A saved Tester or Check finder first finishes the version it was already examining.
+          // A saved helper finishes its version first; completed discovery does not defer the checks' update.
           let failed = false;
           let conflict = false;
           for (const scope of scopesFor(current)) {
             const work = scope.work;
             if (current.repositories) current.activeProductId = work.productId;
-            if (!scope.work.conversation && await this.updates.upToDate(scope, signal) === "conflict") { conflict = true; break; }
-            failed = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "acceptance") || failed;
+            const deferred = !!work.conversation;
+            const testerFinishing = () => this.k.role(work.conversation?.roleId ?? "", current)?.result === "checks";
+            if (!deferred && await this.updates.upToDate(scope, signal) === "conflict") { conflict = true; break; }
+            let required = await this.checks.ensureChecks(scope, signal);
+            if (deferred && !testerFinishing()) {
+              const update = await this.updates.upToDate(scope, signal);
+              if (update === "conflict") { conflict = true; break; }
+              if (update === "moved") required = await this.checks.ensureChecks(scope, signal);
+            }
+            try {
+              failed = await this.checks.failing(scope, signal, required, "acceptance", async () => testerFinishing() || await this.updates.upToDate(scope, signal) !== "conflict") || failed;
+            } catch (error) { if (error instanceof CheckPreparationChanged) { conflict = true; break; } throw error; }
 
           }
           if (conflict) continue;
@@ -623,7 +636,9 @@ export class Driver {
       if (this.k.task(taskId)?.state !== "waiting") this.preparedTesters.delete(taskId);
       if (this.k.drivers.get(taskId) === controller) this.k.drivers.delete(taskId);
       // Cancelled during a publishing step: what went out is looked up and kept.
-      if (signal.aborted && !this.k.stopped) await this.shipping.monitor.settleCancelled(taskId, true);
+      try {
+        if (signal.aborted && !this.k.stopped) await this.shipping.monitor.settleCancelled(taskId, true);
+      } finally { this.shipping.finishDeliveryTurn(taskId); }
     }
   }
 

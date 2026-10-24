@@ -15,7 +15,7 @@ import { Kernel, type MStage, type MTask, ScreenWait, SourceRefreshRequired } fr
 import { CAPACITY_WAIT, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
-import type { ProductChecks } from "./product-checks.js";
+import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
 import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
@@ -134,6 +134,28 @@ export class Reviews {
     private readonly updates: Updates,
   ) {}
 
+  /** Bring review checks onto their current source and reconcile Petrina's own findings. */
+  private async prepareChecks(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
+    const { task, work } = scope;
+    if (await this.updates.upToDate(scope, signal) === "conflict") return false;
+    // Repeat the whole review preflight on the code actually admitted, including Petrina's own findings.
+    delete task.handChanges;
+    const [problems, sha] = await Promise.all([
+      git.tamperCheck(work.worktree!, work.baseSha ?? work.base!), git.head(work.worktree!),
+    ]);
+    work.tamper = { at: Date.now(), sha, problems };
+    for (const finding of task.findings) {
+      if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(work.productId)) && !problems.includes(finding.text)) finding.status = "fixed";
+    }
+    for (const problem of problems) {
+      if (!task.findings.some(finding => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(work.productId)))) {
+        task.findings.push({ ...(task.repositories ? { productIds: [work.productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      }
+    }
+    this.k.log(scope, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
+    return true;
+  }
+
   /**
    * A review round: Petrina's own checks first; then every reviewer looks at the change at once, each on
    * its own; then fresh agents vote on the Important findings no second tool has backed yet; then the round
@@ -163,26 +185,12 @@ export class Reviews {
       let failedChecks = false;
       for (const scope of scopesFor(task)) {
         if (task.repositories) task.activeProductId = scope.work.productId;
-        if ((await this.updates.upToDate(scope, signal)) === "conflict") return "continue";
-        // The chain starts again from its first reviewer: changes made by hand are in what it reviews.
-        delete task.handChanges;
-        const [problems, sha] = await Promise.all([
-          git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!), git.head(scope.work.worktree!),
-        ]);
-        scope.work.tamper = { at: Date.now(), sha, problems };
-        // Petrina's own findings settle on what it sees now, whatever anyone answered.
-        for (const finding of task.findings) {
-          if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(scope.work.productId)) && !problems.includes(finding.text)) finding.status = "fixed";
-        }
-        for (const problem of problems) {
-          if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(scope.work.productId)))) {
-            task.findings.push({ ...(task.repositories ? { productIds: [scope.work.productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-          }
-        }
-        this.k.log(scope, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
+        if (!await this.prepareChecks(scope, signal)) return "continue";
         // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
         // A failed run is evidence too: it returns to the builder without spending a review round.
-        failedChecks = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review") || failedChecks;
+        try {
+          failedChecks = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review", () => this.prepareChecks(scope, signal)) || failedChecks;
+        } catch (error) { if (error instanceof CheckPreparationChanged) return "continue"; throw error; }
       }
       if (failedChecks) {
         // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.

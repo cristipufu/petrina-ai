@@ -79,6 +79,43 @@ it("cleans question waiters on cancellation, on an answer and when already abort
   } finally { await engine.shutdown(); }
 });
 
+it("keeps preparation room for lesson and guide offers, but gives it back for a real question", async () => {
+  const { engine, task, scope } = await fixture();
+  const scheduled = spyOn(engine, "schedule").mockImplementation(() => {});
+  const controller = new AbortController();
+  let question: Promise<string> | undefined;
+  try {
+    engine.draining = false; engine.s.pool.limit = 1; task.state = "running";
+    const checks = engine["checks"];
+    const peer = engine.task(engine.addTask({ productId: "p", title: "Waiting for preparation room", backlog: true }))!;
+    scheduled.mockClear();
+    expect(checks.claimPreparation(task.id)).toBe(true);
+    scope.work.lessons = [{ text: "Use the focused checks before a full run.", roleId: "builder", profileId: "sol-high", at: 0 }];
+    await engine["learnings"].offer(scope);
+    expect(engine.s.inbox.find(item => item.taskId === task.id && item.kind === "learnings")).toMatchObject({ blocking: false, body: "- Use the focused checks before a full run." });
+    expect(task.state).toBe("running");
+    expect(checks.preparingCount).toBe(1);
+    expect(checks.claimPreparation(peer.id)).toBe(false);
+
+    // The Guide keeper's offer also lets its caller carry on in the same step.
+    engine.raise(scope, "guide", "Add a review point?", false);
+    task.state = "running";
+    await Promise.resolve();
+    expect(checks.preparingCount).toBe(1);
+    expect(checks.claimPreparation(peer.id)).toBe(false);
+    expect(checks.claimPreparation(task.id)).toBe(true);
+    expect(scheduled).not.toHaveBeenCalled();
+
+    question = engine["turns"]["wait"](scope, "question", "A decision that really waits", true, {}, controller.signal, "Waiting", { roleId: "builder", profileId: "sol-high" }, false);
+    await Promise.resolve();
+    expect(checks.preparingCount).toBe(0);
+    expect(checks.claimPreparation(peer.id)).toBe(true);
+    expect(scheduled).toHaveBeenCalledTimes(1);
+    engine.answer(engine.s.inbox.find(item => item.kind === "question")!.id, "Continue");
+    expect(await question).toBe("Continue");
+  } finally { controller.abort(); await Promise.allSettled(question ? [question] : []); scheduled.mockRestore(); await engine.shutdown(); }
+});
+
 it("rejects answer and denial actions for other inbox kinds without consuming their identity or resolving a waiter", async () => {
   const { engine, task } = await fixture();
   try {

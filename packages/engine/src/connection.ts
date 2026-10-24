@@ -62,6 +62,7 @@ export class Connections {
       }
       const pending = this.confirming.get(product.id);
       if (pending) {
+        this.k.onCoordinatorWait?.(scope.task);
         await abortable(pending, signal);
         if (signal.aborted) throw new Aborted();
         continue;
