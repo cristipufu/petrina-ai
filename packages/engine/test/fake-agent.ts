@@ -1,3 +1,4 @@
+import { promptSection as section, answersTo, findingIds } from "./scripted-findings.js";
 import type { WorkChoice } from "@petrina/core";
 // A scripted ACP agent for tests. It reads which role it is from the prompt and answers
 // like that role would, so the engine can be tested end to end without spending tokens.
@@ -404,35 +405,12 @@ const DISPUTE_REASON = "The greeting's wording is the copywriter's call, not a r
 /** The finding an added reviewer disputed without a reason, by conversation, until it gives one. */
 const undisputed = new Map<string, string>();
 
-/** The body of a `## title` section of the prompt. */
-function section(text: string, title: string): string | undefined {
-  const start = text.indexOf(`## ${title}\n`);
-  if (start < 0) return undefined;
-  const body = text.slice(start + title.length + 4);
-  const end = body.indexOf("\n## ");
-  return (end < 0 ? body : body.slice(0, end)).trim();
-}
-
 /** What the screen builder needs the screen for (tests repeat it: importing this file would start a fake agent). */
 const SCREEN_REASON = "Check that the quick note window opens from the menu bar";
-
-/** The finding ids listed in a section of the prompt. */
-function findingIds(text: string, title: string): string[] {
-  return [...(section(text, title) ?? "").matchAll(/^- \[([^\]]+)\]/gm)].map((match) => match[1]!);
-}
 
 /** The planner's risk rating, when the scenario sets one. */
 function riskOf(plan: Scenario) {
   return { ...(plan.worksOn ? { worksOn: plan.worksOn } : {}), ...(plan.risk ? { risk: { level: plan.risk, why: plan.risk === "high" ? "It changes how people sign in." : "Only the greeting's words change." } } : {}) };
-}
-
-/** A builder in a fix round answers every finding it was given, by id. */
-function answersTo(text: string, answer: { fixed: boolean; text: string } = { fixed: true, text: "Fixed it." }) {
-  // Continued fixes receive the current open-ID index; unchanged records stay in native context.
-  const index = section(text, "Current finding status index");
-  const ids = index !== undefined ? [...index.matchAll(/^- ([^:\n]+): open,/gm)].map(match => match[1]!)
-    : findingIds(text, "Review findings (answer every one by id; fix every Important one)");
-  return ids.map(id => ({ id, ...answer }));
 }
 
 const NOTES = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";

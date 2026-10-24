@@ -7,7 +7,8 @@ import { executionOf, type RepositoryContext } from "./repository-context.js";
 
 import { randomUUID } from "node:crypto";
 import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
-import type { AgentRun, TurnNotes, TurnResult } from "./acp-run.js";
+import type { TurnNotes, TurnResult } from "./acp-run.js";
+import type { AgentSession } from "./agent-session.js";
 import type { Kernel, MStage, MTask } from "./kernel.js";
 import { ModelAtCapacity, UsageLimited, WaitingForCapacity, WaitingForUsage } from "./usage.js";
 import { WaitClock, WorkLog } from "./worklog.js";
@@ -347,7 +348,7 @@ export class Tracking {
   // ── Turns ──────────────────────────────────────────────────────────────
 
   /** One message to an agent and the reply it waits for: one entry in the work log. */
-  async turn(target: MTask | RepositoryContext, agent: TurnAgent, run: AgentRun, text: string, reason: TurnReason, signal: AbortSignal): Promise<TurnResult> {
+  async turn(target: MTask | RepositoryContext, agent: TurnAgent, run: AgentSession, text: string, reason: TurnReason, signal: AbortSignal): Promise<TurnResult> {
     const scope = executionOf(target);
     const { task } = scope;
     const { profile, roleId, waits } = agent;

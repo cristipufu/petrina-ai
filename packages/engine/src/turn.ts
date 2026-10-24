@@ -10,6 +10,7 @@ import type { Sources } from "./sources.js";
 import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, owedAcceptanceTest, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
 import type { z } from "zod";
 import { AgentRun, ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult } from "./acp-run.js";
+import type { AgentSession, AgentSessionOptions } from "./agent-session.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
@@ -892,14 +893,14 @@ export class Turns {
    * coordinator, and an unusable result back to it twice at most. Each parallel conversation hears
    * its own share of the coordinator's messages. An open question stays with the conversation that asked it.
    */
-  private async converse<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; openingMessages?: ReturnType<typeof takeMessages>; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }): Promise<T> {
+  private async converse<T>(scope: RepositoryContext, run: AgentSession, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; openingMessages?: ReturnType<typeof takeMessages>; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }): Promise<T> {
     const messages = options.main || options.member ? new MessageTurn(this.k, scope, run, agent.profile, role.id, options.member, options.reviewerKey, signal) : undefined;
     messages?.start();
     try { return await this.conversation(scope, run, agent, opening, reason, role, profileId, schema, signal, options, messages); }
     finally { messages?.dispose(); }
   }
 
-  private async conversation<T>(scope: RepositoryContext, run: AgentRun, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; openingMessages?: ReturnType<typeof takeMessages>; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }, messages?: MessageTurn): Promise<T> {
+  private async conversation<T>(scope: RepositoryContext, run: AgentSession, agent: TurnAgent, opening: string, reason: TurnReason, role: Role, profileId: Id, schema: z.ZodType<T>, signal: AbortSignal, options: { check?: Check<T>; main: boolean; openingMessages?: ReturnType<typeof takeMessages>; member?: string; askScreen?: (reason: string) => boolean; reviewKey?: string; reviewerKey?: string; beforeContinue?: (reply: TurnResult) => Promise<void>; pendingInput?: () => PendingInput | undefined }, messages?: MessageTurn): Promise<T> {
     const { task, work: repository } = scope;
     const by = { roleId: role.id, profileId };
     // Every message to the agent and the reply it waits for is one entry in the work log.
@@ -1121,7 +1122,7 @@ export class Turns {
 
   /** Shared startup, callbacks and reopen fallback for main turns and parallel members. */
   private async openAgentRun(scope: RepositoryContext, role: Role, profile: AgentProfile, cwd: string, signal: AbortSignal, agent: TurnAgent,
-    options: { main: boolean; reviewKey?: string; reviewerKey?: string; sessionId?: string; reselect?: boolean; onStarting?: () => void }): Promise<{ run: AgentRun; off?: string; reopenFailure?: string }> {
+    options: { main: boolean; reviewKey?: string; reviewerKey?: string; sessionId?: string; reselect?: boolean; onStarting?: () => void }): Promise<{ run: AgentSession; off?: string; reopenFailure?: string }> {
     const { task } = scope, roleId = role.id, profileId = profile.id;
     const callbacks = {
       onMessage: this.messageStream(scope, roleId, profileId, options.reviewerKey, signal, options.main),
@@ -1183,11 +1184,12 @@ export class Turns {
     const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) => {
       // Resolve the command for each process, including a fallback or sandbox retry.
       const command = agentCommandFor(this.k.options, profile);
-      return AgentRun.start({ profile, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
+      const launch: AgentSessionOptions = { profile, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
         cwd, browser, browserRoot: join(this.k.dataDir, "browser-temp"), ...(browserTempRoot ? { browserTempRoot } : {}), signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), callbacks,
-      });
+      };
+      return this.k.options.startAgentSession ? this.k.options.startAgentSession(launch, role) : AgentRun.start(launch);
     }).catch(async (error: unknown) => {
       if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
       throw await this.tools.problem(profile.toolId, error);
@@ -1318,7 +1320,7 @@ export class Turns {
    * start, the same conversation opens again without it, and later agents skip it. `off` says why it is off.
    * Other tools keep their own session settings.
    */
-  private async inSandbox(profile: AgentProfile, start: (sandbox?: ClaudeSandbox) => Promise<AgentRun>): Promise<{ run: AgentRun; off?: string }> {
+  private async inSandbox(profile: AgentProfile, start: (sandbox?: ClaudeSandbox) => Promise<AgentSession>): Promise<{ run: AgentSession; off?: string }> {
     if (!ADAPTERS[profile.toolId]?.sandboxMeta) return { run: await start() };
     if (this.k.sandboxOff === undefined) {
       try {

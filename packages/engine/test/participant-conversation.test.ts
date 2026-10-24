@@ -1,3 +1,4 @@
+import { nativeAgentProcess } from "./native-agent.js";
 import { expectRejection, rejectionOf } from "./rejections.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -87,7 +88,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
     copyCleanups: [...engine.copyCleanups.keys()], cleanupJobs: [...engine.cleanupJobs],
     runs: [...engine.runs.values(), ...[...engine.helperRuns.values()].flatMap((runs) => [...runs])].map((run) => ({
       sessionId: run.sessionId, prompting: run.prompting, settings: run.settings,
-      pid: run["child"].pid, exitCode: run["child"].exitCode, signalCode: run["child"].signalCode,
+      pid: nativeAgentProcess(run).pid, exitCode: nativeAgentProcess(run).exitCode, signalCode: nativeAgentProcess(run).signalCode,
     })),
     toolChecks: [...engine["tools"]["checking"].keys()], lingeringTools: [...engine["tools"]["lingering"].keys()],
     profileReads: [...engine["profileReader"]["pending"].keys()], lingeringProfiles: [...engine["profileReader"]["lingering"].keys()],

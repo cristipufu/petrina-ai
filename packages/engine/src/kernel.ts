@@ -16,7 +16,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
 import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
-import { AgentRun } from "./acp-run.js";
+import type { AgentSession, StartAgentSession } from "./agent-session.js";
 import * as git from "./git.js";
 import type { DeveloperToolsResult, Which } from "./setup.js";
 import type { MachineRecords } from "./check-interruption.js";
@@ -92,6 +92,8 @@ export const MAX_TIMELINE = 400;
 export interface EngineOptions {
   /** Private storage effects for a host or fixture; never loaded from product settings or saved state. */
   files?: FileOperations;
+  /** Tests: scripted workflow sessions. Native ACP/process tests keep the real AgentRun. */
+  startAgentSession?: StartAgentSession;
   /** Record every shared SQLite driver execution, without bindings or results, for local analysis. */
   debugSql?: boolean;
   /** The launcher opens scheduling only once the local connection is ready. */
@@ -389,11 +391,11 @@ export abstract class Kernel {
   /** An internal preparation role that still needs ordinary tool and pool admission. */
   readonly pendingAgentAdmissions = new Map<Id, { step: string; roleId: Id; profileId: Id }>();
 
-  readonly runs = new Map<Id, AgentRun>();
+  readonly runs = new Map<Id, AgentSession>();
   readonly messageTurns = new Map<Id, Map<string, import("./messages.js").MessageTurn>>();
 
   /** Agents working beside a task's main one on the same step (reviewers hunting at once, voters). */
-  readonly helperRuns = new Map<Id, Set<AgentRun>>();
+  readonly helperRuns = new Map<Id, Set<AgentSession>>();
 
   /** A live review group can reopen its waiting screen member without stopping its peers. */
   get screenGroups() { return this.screens.groups; }

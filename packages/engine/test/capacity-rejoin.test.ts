@@ -1,3 +1,4 @@
+import { nativeAgentProcess } from "./native-agent.js";
 // A review or vote member whose model is full rejoins its running group when its own wait ends, while a peer is
 // still held mid-turn. Every wait is recorded as the engine sets it, then held until the test ends it.
 import { afterAll, describe, expect, it } from "bun:test";
@@ -475,7 +476,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
       const opus = await heldOne(run, "code reviewer");
       const sol = await sessionOn(run, "code reviewer", SOL);
       const group = run.engine.screenGroups.get(run.taskId)!;
-      owned.push(...[...(run.engine.helperRuns.get(run.taskId) ?? [])].map((agent) => agent["child"]));
+      owned.push(...[...(run.engine.helperRuns.get(run.taskId) ?? [])].map((agent) => nativeAgentProcess(agent)));
       const input = structuredClone(run.task().hunt!.input);
       const prerequisite = run.engine.addTask({ productId: run.productId, title: "Fix the capacity checks", backlog: true });
       run.engine.setRuntimeWait(run.taskId, [prerequisite], "Wait for the capacity checks to land", "hold-capacity-review");

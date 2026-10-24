@@ -1,3 +1,4 @@
+import { nativeAgentProcess } from "./native-agent.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +52,7 @@ describe.concurrent("screen ownership while a review closes", () => {
       writeFileSync(join(f.fakes.dir, `release-${first.session}`), "go");
       await waitFor(() => existsSync(join(f.fakes.dir, `on-screen-${first.session}`)), "the admitted reviewer to use its stand-in screen");
       const runs = [...f.engine.helperRuns.get(f.task.id)!];
-      owned.push(...runs.map(run => run["child"]));
+      owned.push(...runs.map(run => nativeAgentProcess(run)));
       const holder = runs.find(run => run.sessionId === first.session)!;
       const peer = runs.find(run => run !== holder)!;
       const stop = holder.stop.bind(holder);

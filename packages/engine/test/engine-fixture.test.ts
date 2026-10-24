@@ -8,6 +8,7 @@ import { ADAPTERS, agentCommandFor } from "../src/tools.js";
 import { FAKE_AGENT, Fakes, removeDir, tempDir } from "./fixtures.js";
 import { rejectionOf } from "./rejections.js";
 import { TAKE_OVER_WORDS } from "@petrina/core";
+import { ScriptedAgents } from "./scripted-agents.js";
 
 const root = tempDir("petrina-engine-boundary-");
 afterAll(() => removeDir(root));
@@ -19,6 +20,10 @@ it("rejects process-local adapters before replacing a child fixture's settings",
   expect(readFileSync(path, "utf8")).toBe("Existing settings");
   const absent = join(root, "absent-child-options.json");
   expect(() => writeFixtureEngineOptions(absent, { files: new FileFaults().files })).toThrow("File effects are process-local");
+  expect(existsSync(absent)).toBe(false);
+  expect(() => writeFixtureEngineOptions(path, { startAgentSession: new ScriptedAgents(() => "").start })).toThrow("Agent sessions are process-local");
+  expect(readFileSync(path, "utf8")).toBe("Existing settings");
+  expect(() => writeFixtureEngineOptions(absent, { startAgentSession: new ScriptedAgents(() => "").start })).toThrow("Agent sessions are process-local");
   expect(existsSync(absent)).toBe(false);
 });
 

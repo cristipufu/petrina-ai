@@ -2,7 +2,8 @@
 import { addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
 import { Aborted, type Kernel, type MTask } from "./kernel.js";
 import type { RepositoryContext } from "./repository-context.js";
-import type { AgentRun, TurnResult } from "./acp-run.js";
+import type { TurnResult } from "./acp-run.js";
+import type { AgentSession } from "./agent-session.js";
 
 export const messageMember = (member?: string) => member ?? "main";
 
@@ -207,7 +208,7 @@ export class MessageTurn {
   private disposed = false;
   readonly member: string;
 
-  constructor(private k: Kernel, private scope: RepositoryContext, private run: AgentRun,
+  constructor(private k: Kernel, private scope: RepositoryContext, private run: AgentSession,
     private profile: AgentProfile, private roleId: string, member: string | undefined,
     private reviewerKey: string | undefined, private signal: AbortSignal) {
     this.member = messageMember(member);

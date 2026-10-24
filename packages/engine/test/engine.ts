@@ -7,6 +7,7 @@ import { writeFixtureJson } from "./fixture-json.js";
 /** Child fixtures reconstruct their runtime effects; JSON must never turn them into empty adapters. */
 export function writeFixtureEngineOptions(path: string, options: EngineOptions): void {
   if (options.files !== undefined) throw new TypeError("File effects are process-local. Configure them inside the child fixture instead of serializing them.");
+  if (options.startAgentSession !== undefined) throw new TypeError("Agent sessions are process-local. Configure them inside the child fixture instead of serializing them.");
   writeFixtureJson(path, options);
 }
 
