@@ -7,8 +7,7 @@ import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 
 import { randomUUID } from "node:crypto";
 import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
-import type { TurnNotes, TurnResult } from "./acp-run.js";
-import type { AgentSession } from "./agent-session.js";
+import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
 import type { Kernel, MStage, MTask } from "./kernel.js";
 import { ModelAtCapacity, UsageLimited, WaitingForCapacity, WaitingForUsage } from "./usage.js";
 import { WaitClock, WorkLog } from "./worklog.js";

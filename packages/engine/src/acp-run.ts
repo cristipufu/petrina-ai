@@ -4,7 +4,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { processHost } from "./process-host.js";
-import { ReopenFailed } from "./agent-session.js";
+import { ReopenFailed, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentInputReceipt, type PermissionInfo, type NativeRetryReport, type SessionSettings, type TurnNotes, type TurnResult, type RetryCause } from "@petrina/orchestrator";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
@@ -13,92 +13,25 @@ import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser, cleanupNote } from "./browser.js";
 import { descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "./process-tree.js";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
-import type { RetryCause, SessionNotice } from "./provider-interruptions.js";
-import { AgentMessages, type AgentMessage } from "./agent-messages.js";
+import type { SessionNotice } from "./provider-interruptions.js";
+import { AgentMessages } from "./agent-messages.js";
 import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
 import { ownSession } from "./env.js";
-import { ToolInvocations, type ToolActivityEvent } from "./tool-invocations.js";
+import { ToolInvocations } from "./tool-invocations.js";
 
-export interface PermissionInfo {
-  title: string;
-  kind: string;
-  /** The command, when the agent wants to run one. */
-  command?: string;
-  /** Paths the tool call touches. */
-  paths: string[];
-  /** A plain description of a browser target, when the tool actually names it. */
-  target?: string;
-}
-
-export interface RunCallbacks {
-  /** A public progress message, updated in place as its text arrives. Never private reasoning. */
-  onMessage?(message: AgentMessage): void;
-  /** A plain-language line about what the agent is doing. */
-  onActivity(text: string): void;
-  /** Actual invocations and their streamed evidence, separate from public text. */
-  onToolActivity?(event: ToolActivityEvent): void;
-  /** The step of its own plan the agent is on. */
-  onPlanStep(text: string): void;
-  onPermission(info: PermissionInfo): Promise<"allow" | "deny">;
+export interface RunCallbacks extends AgentSessionCallbacks {
   onLog?(text: string): void;
-  /** A bounded stop could not confirm that all programs started by this tool have exited. */
-  onCleanupIncomplete?(): void;
   /** The tool said how much of a usage limit is used (every report, whether or not it is close). */
   onUsage?(info: UsageInfo): void;
   /** A complete native account response, including changed quota groups after a subscription change. */
   onAccountUsage?(reports: readonly UsageInfo[]): void;
   /** What the tool says it is logged in with, when it says: "none" means not logged in. */
   onAuthStatus?(kind: string): void;
-  /**
-   * The tool reported that it is retrying the current turn by itself, or (undefined) that the retry is over:
-   * fresh model output or a new tool call arrived, or the turn ended. Sent only when that changes.
-   * Petrina does not retry on top of it.
-   */
-  onRetrying?(report: NativeRetryReport | undefined): void;
-}
-
-/** A native retry, as the shared contract carries it: which tool, model and conversation, and why. */
-export interface NativeRetryReport {
-  toolId: string;
-  profileId: string;
-  sessionId: string;
-  cause: RetryCause;
-  /** An explicit delay the tool named before its next try. */
-  retryAfterMs?: number;
 }
 
 /** The notification Claude Code's and Codex's connectors send, unasked, with the login they run on. */
 const AUTH_STATUS_UPDATE = "_auth/status_update";
-
-/** What the tool confirmed the session runs on. A missing value: not confirmed. */
-export interface SessionSettings {
-  model?: string;
-  /** The tool's own name for the model, e.g. "Opus 5.5". */
-  modelName?: string;
-  effort?: string;
-}
-
-/** What the tool said during a turn about how it ran, kept even when the turn never finished. */
-export interface TurnNotes {
-  /** What the tool switched the model or effort to during the turn. */
-  changed: { model?: string; effort?: string };
-  /** Codex rerouted the turn to another model. */
-  rerouted: boolean;
-  /** Helper agents the agent started during the turn. */
-  helpers: number;
-  /** The model the tool said answered (Claude Code names it on its context updates). */
-  modelSeen?: string;
-}
-
-export interface TurnResult extends TurnNotes {
-  stopReason: string;
-  text: string;
-  /** Public messages have already reached the saved conversation through onMessage. */
-  streamed?: boolean;
-  /** What the tool reported about tokens. Missing: nothing reported. */
-  report?: TurnReport;
-}
 
 type ConfigOption = { id: string; currentValue?: unknown; options?: ({ value?: string; name?: string; options?: { value?: string; name?: string }[] } | undefined)[] };
 
@@ -325,7 +258,7 @@ export async function stopAll(child: ChildProcess, graceMs: number, collectProgr
   }
 }
 
-export class AgentRun {
+export class AgentRun implements AgentSession {
   private notes: TurnNotes | undefined;
   private accountBefore: AccountReading | undefined;
   private acceptsLiveInput = false;
@@ -335,7 +268,7 @@ export class AgentRun {
   get prompting(): boolean { return this.state.turn !== undefined; }
 
   /** A lost reply is uncertain: it must never become an automatic second delivery. */
-  async guide(text: string, messageId: string): Promise<"unsupported" | "unknown" | "current-turn" | "accepted" | "separate-turn" | "prompt-required" | "rejected"> {
+  async guide(text: string, messageId: string): Promise<AgentInputReceipt> {
     const live = ADAPTERS[this.profile.toolId]?.liveInput;
     if (!live || !this.acceptsLiveInput || !this.prompting) return "unsupported";
     const request = live.request(this.sessionId, text, messageId);
@@ -396,24 +329,16 @@ export class AgentRun {
    * With `sandbox`, the conversation opens in Claude Code's own sandbox; when Claude Code says it
    * cannot start, new or reopened, this throws SandboxUnavailable instead.
    */
-  static async start(options: {
-    profile: AgentProfile;
-    cwd: string;
+  static async start(options: AgentSessionOptions & {
     callbacks: RunCallbacks;
-    signal: AbortSignal;
     command?: readonly string[];
     env?: NodeJS.ProcessEnv;
-    reopen?: string;
-    reopenTimeoutMs?: number;
-    startTimeoutMs?: number;
     onGone?: (gone: Promise<void>) => void;
     onProcess?: (child: ChildProcess) => void;
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
     /** Run the tool's native sign-in, only after an explicit coordinator action. */
     authenticate?: string;
-    /** When false, no browser is started. Identity checks do not look at a page. Defaults to true. */
-    browser?: boolean;
     sandbox?: ClaudeSandbox;
     /** Where the browser registers its temporary folder, so startup can recover it after a crash. */
     browserRoot?: string;

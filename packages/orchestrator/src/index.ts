@@ -10,3 +10,5 @@ export { routeAcceptance } from "./acceptance-routing.js";
 export { addDeliveryCheck } from "./delivery-gate.js";
 export type { DeliveryReturnInput, DeliveryReturnRoute } from "./ports/delivery.js";
 export { clearDeliveryPreparation, prepareDeliveryReturn } from "./delivery-return.js";
+export { ReopenFailed } from "./ports/agents.js";
+export type { AgentSession, AgentSessionOptions, AgentSessionCallbacks, StartAgentSession, AgentInputReceipt, AgentMessage, PermissionInfo, ToolActivityEvent, RetryCause, NativeRetryReport, SessionSettings, TurnNotes, TurnResult } from "./ports/agents.js";

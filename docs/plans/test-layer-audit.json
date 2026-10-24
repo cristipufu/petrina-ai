@@ -1914,11 +1914,19 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/scripted-agents.test.ts",
+      "file": "packages/engine/test/contracts/fixtures/scripted-agents.test.ts",
       "declarations": 5,
       "assertionSites": 26,
       "baselineDigest": "9cfa78a5aa85de4f8223cbae64db859df95daf2e8b008fe1ccfa5347786ce27d",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/scripted-agents.test.ts",
+      "layer": "contracts",
+      "area": "fixtures",
+      "review": "The five cases test the scripted session adapter itself: participant and owner identity, parser transparency, independent seats, pre-abort and callback-abort admission, no overlapping prompts, stop confirmation after callback effects, and explicit refusal of browser coverage. No real process or provider is launched. All original case bodies and assertions are preserved; real ACP controls remain separate.",
+      "validation": {
+        "caseBodiesAndAssertionsUnchanged": true,
+        "run": "session-port-first.xml: five fixture cases plus actual host composition and adjacent fixture controls passed; native neighborhood qualification recorded in the implementation tracker"
+      }
     },
     {
       "file": "packages/engine/test/security.test.ts",

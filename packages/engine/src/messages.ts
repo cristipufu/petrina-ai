@@ -2,8 +2,7 @@
 import { addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
 import { Aborted, type Kernel, type MTask } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
-import type { TurnResult } from "./acp-run.js";
-import type { AgentSession } from "./agent-session.js";
+import type { TurnResult, AgentSession } from "@petrina/orchestrator";
 
 export const messageMember = (member?: string) => member ?? "main";
 

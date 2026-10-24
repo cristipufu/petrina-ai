@@ -7,15 +7,10 @@
 // - A native retry: the tool is still working the turn and is trying again by itself. Petrina only shows it.
 // A native retry warning never establishes why a later turn ended.
 import { RequestError } from "@agentclientprotocol/sdk";
+import type { RetryCause } from "@petrina/orchestrator";
 
 /** A turn ended because the selected model is full. `retryAfterMs` is an explicit provider delay. */
 export interface CapacityStop { retryAfterMs?: number }
-
-/**
- * What a native retry is about. "network": the tool reported its connection to the service was
- * interrupted. "transient": another passing problem it is retrying, with no claim about the network.
- */
-export type RetryCause = "network" | "transient";
 
 /** A session update, or an extension notification on the tool's own route, received during a turn. */
 export type SessionNotice =

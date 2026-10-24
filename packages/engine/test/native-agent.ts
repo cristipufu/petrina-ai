@@ -1,5 +1,5 @@
 import { AgentRun } from "../src/acp-run.js";
-import type { AgentSession } from "../src/agent-session.js";
+import type { AgentSession } from "@petrina/orchestrator";
 
 /** Native lifecycle assertions must name an actual ACP child, never a scripted workflow session. */
 export function nativeAgentProcess(session: AgentSession) {

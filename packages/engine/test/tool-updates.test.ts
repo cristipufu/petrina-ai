@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
 import { removeDir, tempDir } from "./fixtures.js";
-import type { ToolActivityEvent } from "../src/tool-invocations.js";
+import type { ToolActivityEvent } from "@petrina/orchestrator";
 
 it("publishes richer metadata only for the latest visible tool, without duplicate or plumbing activity", async () => {
   const root = tempDir("tool-updates-");

@@ -3,7 +3,7 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AgentRun } from "../src/acp-run.js";
-import { ReopenFailed } from "../src/agent-session.js";
+import { ReopenFailed } from "@petrina/orchestrator";
 import type { ChildProcess } from "node:child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";

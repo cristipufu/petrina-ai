@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, type Role } from "@petrina/core";
-import type { AgentSessionOptions } from "../../../src/agent-session.js";
+import type { AgentSessionOptions } from "@petrina/orchestrator";
 import { acceptanceAgents, type AcceptanceScript } from "../../fixtures/acceptance-agents.js";
 import { removeDir, tempDir } from "../../fixtures.js";
 import { expectRejection } from "../../rejections.js";

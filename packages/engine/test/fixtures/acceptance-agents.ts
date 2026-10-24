@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ReopenFailed, type StartAgentSession } from "../../src/agent-session.js";
+import { ReopenFailed, type StartAgentSession } from "@petrina/orchestrator";
 import { answersTo, findingIds } from "../scripted-findings.js";
 import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
 

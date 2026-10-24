@@ -9,15 +9,13 @@ import type { Sources } from "./sources.js";
 
 import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, owedAcceptanceTest, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
 import type { z } from "zod";
-import { AgentRun, type NativeRetryReport, type PermissionInfo, type TurnResult } from "./acp-run.js";
-import { ReopenFailed } from "./agent-session.js";
-import type { AgentSession, AgentSessionOptions } from "./agent-session.js";
+import { AgentRun, type RunCallbacks } from "./acp-run.js";
+import { ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentMessage, type ToolActivityEvent } from "@petrina/orchestrator";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";
 import { claudeSandbox, SandboxUnavailable, type ClaudeSandbox } from "./sandbox.js";
 import { browserPrompt, buildPrompt, capacityContinuePrompt, continuePrompt, currentStepAssignment, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
 import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, ModelAtCapacity, sameCapacityModel, UsageLimited, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
-import type { AgentMessage } from "./agent-messages.js";
 import { ADAPTERS, agentCommandFor } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
@@ -33,7 +31,6 @@ import { builderContext } from "./builder-context.js";
 import type { ContextOmission } from "./coordinator-note-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
 import { discardParticipant, ParticipantUnavailable } from "./participant-conversation.js";
-import type { ToolActivityEvent } from "./tool-invocations.js";
 import type { ReadinessRecheck, ReadinessWait } from "@petrina/core";
 import { inputManifest, numberInputManifest, saveExactMessage } from "./exact-input.js";
 
@@ -1125,7 +1122,7 @@ export class Turns {
   private async openAgentRun(scope: RepositoryContext, role: Role, profile: AgentProfile, cwd: string, signal: AbortSignal, agent: TurnAgent,
     options: { main: boolean; reviewKey?: string; reviewerKey?: string; sessionId?: string; reselect?: boolean; onStarting?: () => void }): Promise<{ run: AgentSession; off?: string; reopenFailure?: string }> {
     const { task } = scope, roleId = role.id, profileId = profile.id;
-    const callbacks = {
+    const callbacks: AgentSessionCallbacks = {
       onMessage: this.messageStream(scope, roleId, profileId, options.reviewerKey, signal, options.main),
       onActivity: () => {},
       onToolActivity: (event: ToolActivityEvent) => {
@@ -1174,27 +1171,34 @@ export class Turns {
       },
       onRetrying: (report?: NativeRetryReport) => this.showRetrying(scope, role, profile, report, signal, options),
       onPermission: (info: PermissionInfo) => this.permission(scope, info, signal, { roleId, profileId }, agent.waits, options.reviewKey),
-      onLog: (text: string) => void this.k.agentLog(task.id, text),
       onCleanupIncomplete: () => { if (this.k.task(task.id)) this.k.log(scope, "warn", CLEANUP_INCOMPLETE); },
-      onUsage: (info: import("./usage.js").UsageInfo) => this.k.recordUsage(info),
-      onAccountUsage: (reports: readonly import("./usage.js").UsageInfo[]) => this.k.recordAccountUsage(profile.toolId, reports),
     };
     // New, reopened and replacement conversations share the engine's browser folders and recovery.
     const browser = opensBrowser(role, this.k.options);
     const browserTempRoot = this.k.options.browserTempRoot;
-    const start = (sessionId?: string) => this.inSandbox(profile, (sandbox) => {
-      // Resolve the command for each process, including a fallback or sandbox retry.
-      const command = agentCommandFor(this.k.options, profile);
-      const launch: AgentSessionOptions = { profile, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
-        cwd, browser, browserRoot: join(this.k.dataDir, "browser-temp"), ...(browserTempRoot ? { browserTempRoot } : {}), signal,
+    const start = async (sessionId?: string): Promise<{ run: AgentSession; off?: string }> => {
+      const launch: AgentSessionOptions = { profile, cwd, browser, signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
         ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), callbacks,
       };
-      return this.k.options.startAgentSession ? this.k.options.startAgentSession(launch, role) : AgentRun.start(launch);
-    }).catch(async (error: unknown) => {
-      if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
-      throw await this.tools.problem(profile.toolId, error);
-    });
+      try {
+        if (this.k.options.startAgentSession) return { run: await this.k.options.startAgentSession(launch, role) };
+        return await this.inSandbox(profile, (sandbox) => {
+          // Resolve native launch details for each process, including a fallback or sandbox retry.
+          const command = agentCommandFor(this.k.options, profile);
+          const nativeCallbacks: RunCallbacks = { ...callbacks,
+            onLog: text => void this.k.agentLog(task.id, text),
+            onUsage: info => this.k.recordUsage(info),
+            onAccountUsage: reports => this.k.recordAccountUsage(profile.toolId, reports),
+          };
+          return AgentRun.start({ ...launch, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
+            browserRoot: join(this.k.dataDir, "browser-temp"), ...(browserTempRoot ? { browserTempRoot } : {}), callbacks: nativeCallbacks });
+        });
+      } catch (error) {
+        if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
+        throw await this.tools.problem(profile.toolId, error);
+      }
+    };
     // Ordinary starts remain visible even when the tool fails to open. A cross-round
     // reopen is only a probe until it succeeds, and must not announce abandoned work.
     let announced = false;

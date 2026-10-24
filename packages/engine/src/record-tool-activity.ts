@@ -1,6 +1,7 @@
 import type { Id } from "@petrina/core";
 import type { MTask } from "./kernel.js";
-import { MAX_TOOL_INVOCATIONS, type ToolActivityEvent } from "./tool-invocations.js";
+import { MAX_TOOL_INVOCATIONS } from "./tool-invocations.js";
+import type { ToolActivityEvent } from "@petrina/orchestrator";
 
 /** Shared bookkeeping for main agents, reviewer seats and voter seats. */
 export function recordToolActivity(task: MTask, journeyId: Id, worker: { seat: string; roleId: Id; profileId: Id; productId: Id }, event: ToolActivityEvent) {

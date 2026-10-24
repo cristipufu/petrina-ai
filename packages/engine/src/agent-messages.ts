@@ -1,6 +1,6 @@
-/** Public agent messages, kept separate and published in bounded batches instead of once per token. */
-export interface AgentMessage { id: number; text: string }
+import type { AgentMessage } from "@petrina/orchestrator";
 
+/** Public agent messages, kept separate and published in bounded batches instead of once per token. */
 export class AgentMessages {
   private serial = 0;
   private current?: { id: number; source?: string; text: string; published: string; sealed: boolean };

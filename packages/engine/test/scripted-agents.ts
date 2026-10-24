@@ -1,6 +1,5 @@
 import type { Role } from "@petrina/core";
-import type { TurnResult } from "../src/acp-run.js";
-import { ReopenFailed, type AgentSession, type AgentSessionOptions, type StartAgentSession } from "../src/agent-session.js";
+import { ReopenFailed, type AgentSession, type AgentSessionOptions, type StartAgentSession, type TurnResult } from "@petrina/orchestrator";
 
 export interface ScriptedPrompt {
   readonly sessionId: string;

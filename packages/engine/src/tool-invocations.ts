@@ -1,20 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { AgentToolActivity, ToolInvocation, ToolInvocationStatus } from "@petrina/core";
+import type { ToolInvocation, ToolInvocationStatus } from "@petrina/core";
+import type { ToolActivityEvent } from "@petrina/orchestrator";
 import { commandOf, describeTool, fileOf, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
 
 export const MAX_TOOL_INVOCATIONS = 100;
 export const MAX_TOOL_COMMAND = 4096;
 const MAX_PATH = 512;
 const MAX_PATHS = 8;
-
-export interface ToolActivityEvent {
-  turnId: string;
-  invocation?: ToolInvocation;
-  isNew?: boolean;
-  lastActivity?: string;
-  runningTool?: AgentToolActivity["runningTool"];
-  turnEndedAt?: number;
-}
 
 type Update = ToolActivity & { toolCallId: string; status?: string | null };
 type Entry = { call: ToolActivity; invocation?: ToolInvocation };
