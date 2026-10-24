@@ -2661,6 +2661,22 @@
         "artifact": "review-proof-reconciliation.json",
         "qualification": "Both production function bodies are identical apart from declarations/imports. The original ten assertion sites are retained as eight controller and two schema assertions. All 189 orchestrator tests, five focused native schema/replay/acceptance controls, types and conventions pass. Whole original proof-requests.test.ts audit and complete new batch qualification remain due."
       }
+    },
+    {
+      "file": "packages/test-support/test/rules/testing/timings.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Pure validation of measured timing formats, current file membership, stale entries, native path spellings and invalid or duplicate aliases. No I/O, runner, Engine or program launch. Hints order tests without changing the required manifest.",
+      "validation": "timing-hints-rules-reviewed.xml: 13 passes / 14 assertions"
+    },
+    {
+      "file": "packages/engine/test/contracts/testing/timings.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "testing",
+      "review": "Private filesystem controls for atomic optional hint publication, exact retained seed/hash and invalid-cache preservation, plus a two-file actual Bun ordering contract. One worker is used only in this tiny dispatch-observation probe; required suite defaults remain unchanged.",
+      "validation": "timing-hints-reviewed.xml: all 57 native runner/timing controls pass / 405 assertions / 26.91s; workspace types and conventions pass"
     }
   ],
   "rust": [

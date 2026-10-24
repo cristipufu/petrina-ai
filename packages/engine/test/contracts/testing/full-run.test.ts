@@ -7,6 +7,7 @@ import { namedCheckFailures } from "../../../src/related-check-evidence.js";
 import { git, removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "../../fixtures.js";
 import { sourceFacts } from "../../quality/source.js";
 import { TEST_WORKSPACES } from "../../quality/workspaces.js";
+import { CommandFailure, type Started } from "@petrina/test-support/commands";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -32,7 +33,7 @@ const PACKAGES = (() => {
 
 type Suite = "core" | "desktop" | "orchestrator" | "test-support" | "storage" | "platform" | "engine";
 /** A controlled workspace: its exit code, structured report, printed output, and whether it edits an input or waits for a stop signal. */
-type StandIn = { code?: number; report?: "pass" | "fail" | "missing" | "truncated" | "omitted" | "counts" | "running" | "skipped"; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean };
+type StandIn = { code?: number; report?: "pass" | "fail" | "missing" | "truncated" | "omitted" | "counts" | "running" | "skipped"; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean; timings?: number };
 const NOT_STARTED = "core and desktop and orchestrator and test-support and storage and platform did not all pass", INTERRUPTED = "the run was interrupted first";
 
 /** The real root script and runner, without a repository to scan or any suites to run. */
@@ -58,16 +59,21 @@ async function fixture(scenario: Partial<Record<Suite, StandIn>>): Promise<strin
   const root = entryFixture();
   writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\n");
   const runner = join(root, "runner.ts");
-  writeFileSync(runner, `import { appendFileSync, renameSync, writeFileSync } from "node:fs";
+  writeFileSync(runner, `import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 const workspace = process.argv[2]!;
-const stand = (${JSON.stringify(scenario)} as Record<string, { code?: number; report?: string; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean }>)[workspace] ?? {};
+const stand = (${JSON.stringify(scenario)} as Record<string, { code?: number; report?: string; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean; timings?: number }>)[workspace] ?? {};
 const log = (line: string) => appendFileSync(${JSON.stringify(join(root, "runs.log"))}, line + "\\n");
 log(workspace);
 appendFileSync(${JSON.stringify(join(root, "environments.log"))}, JSON.stringify({ workspace, home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL, token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME }) + "\\n");
 if (stand.print) process.stdout.write(stand.print);
 const failed = stand.report === "fail";
 const output = process.argv.find(arg => arg.startsWith("--outputFile=") || arg.startsWith("--reporter-outfile="))!.split("=").slice(1).join("=");
+const timings = process.argv.find(arg => arg.startsWith("--timings="))?.slice("--timings=".length);
+if (timings) {
+  appendFileSync(${JSON.stringify(join(root, ".test-results", "hint-inputs.log"))}, JSON.stringify({ workspace, supplied: existsSync(timings) ? JSON.parse(readFileSync(timings, "utf8")) : null }) + "\\n");
+  writeFileSync(timings, JSON.stringify({ version: 1, files: { "test/contracts/testing/example.test.ts": stand.timings ?? 1 } }));
+}
 const skipped = stand.report === "skipped";
 const status = failed ? "failed" : skipped ? "skipped" : stand.report === "running" ? "pending" : "passed";
 let report = ["engine", "test-support", "storage", "platform"].includes(workspace)
@@ -104,7 +110,9 @@ const environment = () => ({ ...testGitEnv(), PETRINA_TEST_BASE: "HEAD", GH_TOKE
 
 /** What the run recorded, with timings that vary removed. */
 function recorded(root: string, stdout: string) {
-  const folder = join(root, ".test-results", readdirSync(join(root, ".test-results"))[0]!);
+  const reported = stdout.match(/Reports: ([^\r\n]+)/)?.[1];
+  if (!reported) throw new Error("The runner did not identify its evidence folder");
+  const folder = resolve(root, reported);
   const report = JSON.parse(readFileSync(join(folder, "results.json"), "utf8"));
   const lines = stdout.split("\n"), summary = lines.findIndex(line => line.startsWith("Test summary"));
   return {
@@ -121,7 +129,7 @@ async function run(scenario: Partial<Record<Suite, StandIn>>, expected: number) 
   const result = await runCommand([process.execPath, "run", "test"], { cwd: root, env: environment(), timeoutMs: 30_000 });
   const stdout = result.stdout;
   expect({ code: result.code, output: result.code === expected ? "" : `${stdout}\n${result.stderr}` }).toEqual({ code: expected, output: "" });
-  return { ...recorded(root, stdout), stdout, stderr: result.stderr };
+  return { root, ...recorded(root, stdout), stdout, stderr: result.stderr };
 }
 
 for (const args of [
@@ -287,16 +295,18 @@ it("rejects Vitest cases still running when the report was written", async () =>
 });
 
 it("compares inputs once at the end: a change during core still runs every workspace and cannot pass", async () => {
-  const { ran, report, stderr } = await run({ core: { change: true } }, 1);
+  const { root, ran, report, stderr } = await run({ core: { change: true } }, 1);
   expect(ran).toBe("core\ndesktop\norchestrator\ntest-support\nstorage\nplatform\nengine\n");
   expect({ scope: report.scope, stableInputs: report.stableInputs }).toEqual({ scope: "complete", stableInputs: false });
+  expect(existsSync(join(root, ".test-results", "timings"))).toBe(false);
   expect(stderr).toContain("Test inputs changed during the run, or the checkout revision moved. Results cannot authorize delivery.");
 });
 
 it("cannot authorize a different commit even when a concurrent commit preserves every input byte", async () => {
-  const { report, stderr } = await run({ core: { moveHead: true } }, 1);
+  const { root, report, stderr } = await run({ core: { moveHead: true } }, 1);
   expect({ scope: report.scope, stableInputs: report.stableInputs }).toEqual({ scope: "complete", stableInputs: false });
   expect(stderr).toContain("checkout revision moved");
+  expect(existsSync(join(root, ".test-results", "timings"))).toBe(false);
 });
 
 it("keeps core's real failure as the diagnostic when noisy desktop output follows", async () => {
@@ -315,21 +325,64 @@ it("keeps core's real failure as the diagnostic when noisy desktop output follow
 for (const [signal, code, scenario, ran] of [
   ["SIGTERM", 143, { core: { hold: true } }, "core\ncore received SIGTERM\n"],
   ["SIGINT", 130, { core: { code: 1, report: "fail" }, desktop: { hold: true } }, "core\ndesktop\ndesktop received SIGINT\n"],
-] as const) it.skipIf(process.platform === "win32")(`passes a gentle ${signal} to the running suite, stops it and starts nothing later`, async () => {
-  const root = await fixture(scenario);
-  const runner = Bun.spawn(command(root), { cwd: root, env: environment(), stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" });
-  const stdout = new Response(runner.stdout).text();
-  await waitForFile(join(root, "started"), { timeoutMs: 20_000 });
-  const pid = Number(readFileSync(join(root, "started"), "utf8"));
-  runner.kill(signal);
-  expect(await runner.exited).toBe(code);
-  const { ran: recordedRuns, report, outcomes, summary } = recorded(root, await stdout);
-  expect(recordedRuns).toBe(ran);
-  // The suite's own process has ended before the runner reports.
-  expect(() => process.kill(pid, 0)).toThrow();
-  expect({ interrupted: report.interrupted, scope: report.scope }).toEqual({ interrupted: code, scope: "partial" });
-  expect(outcomes.slice(signal === "SIGTERM" ? 1 : 2)).toEqual(signal === "SIGTERM"
-    ? [["apps/desktop", INTERRUPTED], ["packages/orchestrator", INTERRUPTED], ["packages/test-support", INTERRUPTED], ["packages/storage", INTERRUPTED], ["packages/platform", INTERRUPTED], ["packages/engine", INTERRUPTED]]
-    : [["packages/orchestrator", INTERRUPTED], ["packages/test-support", INTERRUPTED], ["packages/storage", INTERRUPTED], ["packages/platform", INTERRUPTED], ["packages/engine", INTERRUPTED]]);
-  expect(summary).toEqual([]);
+  ["SIGTERM", 143, { engine: { hold: true, timings: 900 } }, "core\ndesktop\norchestrator\ntest-support\nstorage\nplatform\nengine\nengine received SIGTERM\n"],
+] as const) it.skipIf(process.platform === "win32")(`passes a gentle ${signal} to the running ${"engine" in scenario ? "native" : "preliminary"} suite, stops it and starts nothing later`, async () => {
+  const root = await fixture(scenario), controller = new AbortController();
+  const cache = join(root, ".test-results", "timings"), earlier = { version: 1, files: { "test/contracts/testing/example.test.ts": 12 } };
+  mkdirSync(cache, { recursive: true }); writeFileSync(join(cache, "engine.json"), JSON.stringify(earlier));
+  let runner: Started | undefined;
+  const running = runCommand(command(root), {
+    cwd: root, env: environment(), timeoutMs: 30_000, signal: controller.signal,
+    start: (args, options) => runner = Bun.spawn(args, { ...options, stdout: "pipe", stderr: "pipe", windowsHide: true }) as unknown as Started,
+  });
+  const settled = running.then(result => ({ result }), (error: unknown) => ({ error }));
+  try {
+    await waitForFile(join(root, "started"), { timeoutMs: 20_000, during: running });
+    const pid = Number(readFileSync(join(root, "started"), "utf8"));
+    runner!.kill(signal);
+    const result = await running;
+    expect(result.code).toBe(code);
+    const { ran: recordedRuns, report, outcomes, summary } = recorded(root, result.stdout);
+    expect(recordedRuns).toBe(ran);
+    // The suite's own process has ended before the runner reports.
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect({ interrupted: report.interrupted, scope: report.scope }).toEqual({ interrupted: code, scope: "partial" });
+    const started = Object.keys(scenario).at(-1)!;
+    const at = TEST_WORKSPACES.findIndex(workspace => workspace.path.split("/").at(-1) === started);
+    expect(outcomes.slice(at + 1)).toEqual(TEST_WORKSPACES.slice(at + 1).map(workspace => [workspace.path, INTERRUPTED]));
+    expect(summary).toEqual([]);
+    expect(JSON.parse(readFileSync(join(cache, "engine.json"), "utf8"))).toEqual(earlier);
+    expect(existsSync(join(cache, "test-support.json"))).toBe(false);
+  } finally {
+    controller.abort();
+    const stopped = await settled;
+    if ("error" in stopped && stopped.error instanceof CommandFailure && stopped.error.cleanup === "unconfirmed") throw stopped.error;
+  }
+});
+
+it("reuses validated duration hints on the next complete run without leaving out any workspace", async () => {
+  const root = await fixture({ engine: { timings: 222 } });
+  const first = await runCommand(command(root), { cwd: root, env: environment() });
+  expect(first.code, first.stderr).toBe(0);
+  const cache = join(root, ".test-results", "timings", "engine.json");
+  expect(JSON.parse(readFileSync(cache, "utf8"))).toEqual({ version: 1, files: { "test/contracts/testing/example.test.ts": 222 } });
+  const second = await runCommand(command(root), { cwd: root, env: environment() });
+  expect(second.code, second.stderr).toBe(0);
+  const { report, ran } = recorded(root, second.stdout);
+  expect(report.results.find((result: { workspace: string }) => result.workspace === "packages/engine").durationHints).toMatchObject({ kind: "used", files: 1 });
+  expect(report.scope).toBe("complete"); expect(report.stableInputs).toBe(true);
+  expect(ran.trim().split("\n")).toHaveLength(TEST_WORKSPACES.length * 2);
+  const supplied = readFileSync(join(root, ".test-results", "hint-inputs.log"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  expect(supplied.filter(row => row.workspace === "engine").map(row => row.supplied)).toEqual([null, { version: 1, files: { "test/contracts/testing/example.test.ts": 222 } }]);
+});
+
+for (const report of ["fail", "missing"] as const) it(`keeps earlier duration hints when the next native report is ${report}`, async () => {
+  const root = await fixture({ engine: { report, timings: 900, ...(report === "fail" ? { code: 1 } : {}) } });
+  const folder = join(root, ".test-results", "timings"); mkdirSync(folder, { recursive: true });
+  const file = join(folder, "engine.json"), earlier = { version: 1, files: { "test/contracts/testing/example.test.ts": 12 } };
+  writeFileSync(file, JSON.stringify(earlier));
+  const result = await runCommand(command(root), { cwd: root, env: environment() });
+  expect(result.code, result.stderr).toBe(1);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(earlier);
+  expect(existsSync(join(folder, "test-support.json"))).toBe(false);
 });

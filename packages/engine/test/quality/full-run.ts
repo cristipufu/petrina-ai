@@ -8,6 +8,8 @@ import { fingerprint, impactPlan, isTest, WORKSPACES } from "./impact.js";
 import { requireFiles, testResults, type TestResults } from "./results.js";
 import { createTestRun } from "@petrina/test-support/environment";
 import { TEST_WORKSPACES } from "./workspaces.js";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { keepTestTimings, seedTestTimings, type TimingHintUse } from "./timings.js";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -26,7 +28,7 @@ Focused runs do not replace the required full check. See docs/testing.md for oth
 const PRELIMINARY: readonly string[] = TEST_WORKSPACES.filter(workspace => workspace.phase === "quick").map(workspace => workspace.path);
 const ORDER = [...PRELIMINARY, ...WORKSPACES.filter(workspace => !PRELIMINARY.includes(workspace))];
 const suite = (workspace: string) => workspace.split("/").at(-1)!;
-type Ran = { workspace: string; code: number; ms: number; failures?: string[]; missedFailures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string };
+type Ran = { workspace: string; code: number; ms: number; failures?: string[]; missedFailures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string; durationHints?: TimingHintUse };
 type Result = Ran | { workspace: string; notRun: string };
 const passed = (result: Result) => "code" in result && result.code === 0 && !result.error && !result.failures?.length;
 
@@ -53,6 +55,7 @@ const source = { head, tree, fingerprint: plan.fingerprint, clean: !(await readG
 const environment = { platform: process.platform, arch: process.arch, bun: Bun.version };
 console.log(`Affected-test observation: ${plan.selected.length}/${plan.total} candidates; it never changes which tests run. Order: ${PRELIMINARY.map(suite).join(" and ")}, then ${ORDER.slice(PRELIMINARY.length).map(suite).join(" and ")} only if they pass. Reports: ${relative(ROOT, folder)}`);
 const results: Result[] = [];
+const timingOutputs = new Map<string, string>();
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let interrupted: number | undefined;
 let finished = false;
@@ -69,13 +72,16 @@ try {
     }
     const engine = TEST_WORKSPACES.find(entry => entry.path === workspace)!.runner === "bun";
     const output = join(folder, `${suite(workspace)}.${engine ? "xml" : "json"}`);
-    // Per-file wall times expose serial files and idle-worker tails; cumulative case times
-    // in JUnit overcount concurrent cases. This records measurements, never selects tests.
-    const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`, `--timings=${join(folder, `${suite(workspace)}-timings.json`)}`, "--update-timings"] : ["--reporter=json", `--outputFile=${output}`];
+    // Bun uses existing durations to start slow files first at its normal worker count.
+    // Every required file still runs. Retain both the supplied hints and the new measurements.
+    const timings = join(folder, `${suite(workspace)}-timings.json`);
+    const durationHints = engine ? seedTestTimings(ROOT, workspace, timings, expectedFiles) : undefined;
+    if (engine) timingOutputs.set(workspace, timings);
+    const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`, `--timings=${timings}`, "--update-timings"] : ["--reporter=json", `--outputFile=${output}`];
     const start = performance.now();
     child = Bun.spawn([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, env: owned.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     const code = await child.exited;
-    const result: Ran = { workspace, code, ms: Math.round(performance.now() - start) };
+    const result: Ran = { workspace, code, ms: Math.round(performance.now() - start), ...(durationHints ? { durationHints } : {}) };
     try {
       const parsed = testResults(readFileSync(output, "utf8"), workspace, engine ? "bun" : "vitest", ROOT);
       const { files, failures, ...counts } = parsed;
@@ -99,14 +105,20 @@ try {
     for (const workspace of ORDER) if (!results.some(result => result.workspace === workspace)) results.push({ workspace, notRun: interrupted ? "the run was interrupted first" : "the runner stopped first" });
     const complete = !interrupted && results.every(result => "code" in result && result.reportComplete);
     const stable = fingerprint(await inputs(ROOT)) === plan.fingerprint && (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() === revision;
-    writeFileSync(join(folder, "results.json"), JSON.stringify({ mode: "observation", scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), results }, null, 2));
+    const successful = stable && complete && results.every(passed);
+    writeFixtureJson(join(folder, "results.json"), { mode: "observation", scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), results }, 2);
+    if (successful) {
+      const updates = [...timingOutputs].map(([workspace, file]) => ({ workspace, ...keepTestTimings(ROOT, workspace, file, expectedFiles) }));
+      try { writeFixtureJson(join(folder, "timing-cache-updates.json"), updates, 2); }
+      catch (error) { console.error(`Could not record optional duration-hint updates: ${error instanceof Error ? error.message : String(error)}`); }
+    }
     if (finished && !interrupted) {
       const unrun = results.filter(result => !("code" in result)).map(result => suite(result.workspace));
       console.log(unrun.length ? `Test summary: ${unrun.join(" and ")} did not run, so this run cannot pass and its affected-test observation covers only the suites that ran.` : "Test summary:");
       for (const result of results) console.log(`  ${suite(result.workspace)}: ${outcome(result)}`);
     }
     if (!stable) console.error("Test inputs changed during the run, or the checkout revision moved. Results cannot authorize delivery.");
-    process.exitCode = interrupted ?? (stable && complete && results.every(passed) ? 0 : 1);
+    process.exitCode = interrupted ?? (successful ? 0 : 1);
   } finally { owned.close(); }
 }
 
