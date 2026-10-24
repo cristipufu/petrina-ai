@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection, rejectionOf } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import * as processes from "node:child_process";
@@ -17,6 +17,29 @@ const profile = ENGINE_PROFILES.find(profile => profile.id === "sol-high")!;
 const command = [process.execPath, join(import.meta.dir, "fake-agent.ts")];
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
 type Signals = ReturnType<typeof spyOn<typeof process, "kill">>;
+
+for (const observer of ["onProcess", "onGone"] as const) for (const reopen of [false, true]) it(`reclaims a started agent when its ${observer} observer throws (${reopen ? "reopen" : "fresh"})`, async () => {
+  let child: ChildProcess | undefined;
+  const controller = new AbortController();
+  const failure = new Error("Startup observer failed");
+  try {
+    const error = await rejectionOf(AgentRun.start({ profile, command, cwd: root, browser: false, signal: controller.signal, callbacks,
+      ...(reopen ? { reopen: crypto.randomUUID() } : {}),
+      onProcess: proc => { child = proc; if (observer === "onProcess") throw failure; },
+      onGone: () => { if (observer === "onGone") throw failure; },
+    }));
+    expect(error).toBe(failure);
+    expect(child?.pid).toBeGreaterThan(0);
+    expect(await childState(child!.pid!)).toBe("ended");
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>(resolve => { child!.once("exit", () => resolve()); child!.once("error", () => resolve()); });
+      child.kill("SIGKILL");
+      await exited;
+    }
+  }
+});
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 /** One process's state column in a process list, if it is listed. */

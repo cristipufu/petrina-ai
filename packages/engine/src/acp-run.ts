@@ -432,19 +432,14 @@ export class AgentRun {
 
     // windowsHide: no console window flashes up on Windows when an agent starts.
     const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env, ...processHost.ownedSpawn });
-    options.onProcess?.(child);
     child.stderr?.on("data", (chunk: Buffer) => callbacks.onLog?.(chunk.toString()));
     const killed = new Promise<never>((_, reject) => {
       child.once("exit", (code) => reject(new Error(`${adapter.name} stopped (exit ${code ?? "signal"})`)));
       child.once("error", (error) => reject(error));
     });
     killed.catch(() => undefined);
-    // Login probes send no work. Every coding agent, including a parallel reviewer or a
-    // reopened builder, gets a new engine-owned browser within the opening deadline.
-    // An identity check never opens a page, so it starts no browser.
-    const showBrowser = !signal.aborted && !options.probe && options.browser !== false;
-    const browserReady = showBrowser ? AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog, options.browserTempRoot) : Promise.resolve(undefined);
-    browserReady.catch(() => undefined);
+    // Cleanup exists before external observers run; browser startup is admitted only after them.
+    let browserReady: Promise<AgentBrowser | undefined> = Promise.resolve(undefined);
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
     let disposableSession: string | undefined;
@@ -465,10 +460,10 @@ export class AgentRun {
       }
       return complete;
     }));
-    options.onGone?.(new Promise<void>((done) => {
+    const processGone = new Promise<void>((done) => {
       child.once("exit", () => done());
       child.once("error", () => done());
-    }).then(async () => { await stopping; }));
+    }).then(async () => { await stopping; });
     const abort = () => void stop();
     signal.addEventListener("abort", abort, { once: true });
     // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.
@@ -732,7 +727,19 @@ export class AgentRun {
         )),
     );
     deadline.catch(() => undefined);
+    let observerFailed = false;
     const ready = (async () => {
+      // External observers can throw or abort synchronously. All ownership, exit and abort
+      // handlers are installed now, and a failure here follows the same cleanup as a failed open.
+      try {
+        options.onProcess?.(child);
+        options.onGone?.(processGone);
+      } catch (error) { observerFailed = true; throw error; }
+      // Login/identity probes send no browser work. An observer can abort before this admission.
+      if (!signal.aborted && !options.probe && options.browser !== false) {
+        browserReady = AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog, options.browserTempRoot);
+        browserReady.catch(() => undefined);
+      }
       const session = await open();
       sessionOptions = ((session as { configOptions?: ConfigOption[] }).configOptions ?? []) as ConfigOption[];
       // Account probes send no work. Opening already tests authentication; model, thinking and
@@ -799,6 +806,8 @@ export class AgentRun {
       // A tool check must report its deadline promptly. It tracks onGone before checking again;
       // a task instead waits for all file handling before cleanup can remove its working copy.
       if (!options.probe) await gone;
+      // Host recording/ownership failures are not provider or saved-conversation failures.
+      if (observerFailed) throw error;
       const unsandboxed = options.sandbox && !signal.aborted ? sandboxFailure(error) : undefined;
       if (unsandboxed !== undefined) throw new SandboxUnavailable(unsandboxed);
       if (options.reopen !== undefined && !(error instanceof ReopenFailed) && !signal.aborted) throw new ReopenFailed(`${adapter.name} could not reopen the conversation`);
