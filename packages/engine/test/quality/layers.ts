@@ -28,8 +28,12 @@ export function layerStructure(files: ReadonlyMap<string, string>): string[] {
     const paths = inventory.files.map((row: { file?: unknown }) => row.file);
     if (paths.some((file: unknown) => typeof file !== "string" || !isTest(file)) || new Set(paths).size !== paths.length) throw new Error("Invalid test identities");
     if (inventory.files.some((row: { status?: unknown; file: string }) => !["pending", "reviewed"].includes(row.status as string) || row.status === "reviewed" && !testLayer(row.file))) throw new Error("Invalid audit status");
+    if (inventory.files.some((row: { status: string; file: string; splitFiles?: unknown }) => row.splitFiles !== undefined && (
+      row.status !== "reviewed" || !Array.isArray(row.splitFiles) || !row.splitFiles.includes(row.file) || new Set(row.splitFiles).size !== row.splitFiles.length
+      || row.splitFiles.some((file: unknown) => typeof file !== "string" || !isTest(file) || !testLayer(file))
+    ))) throw new Error("Invalid split ownership");
     pending = new Set(inventory.files.filter((row: { status: string }) => row.status === "pending").map((row: { file: string }) => row.file));
-    recorded = paths;
+    recorded = [...new Set<string>(inventory.files.flatMap((row: { file: string; splitFiles?: string[] }) => row.splitFiles ?? [row.file]))];
   } catch { return [`${TEST_LAYER_INVENTORY}: invalid test-layer migration inventory`]; }
   return [...recorded.filter(file => !files.has(file)).map(file => `${file}: missing inventoried test; audit its replacement before removing it`),
     ...[...files.keys()].filter(isTest).flatMap(file => testLayer(file) || pending.has(file) ? [] : [`${file}: place tests in test/<layer>/<area>; split mixed responsibilities instead of adding a flat test file`])];

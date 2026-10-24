@@ -3,7 +3,7 @@ import { layerBoundaries, layerStructure, packageBoundaries, testLayer } from ".
 
 const path = "packages/engine/test/rules/reviews/status.test.ts";
 const source = (body: string, extras: [string, string][] = []) => new Map([[path, body], ...extras]);
-const inventory = (files: { file: string; status: string }[]) => ["docs/plans/test-layer-audit.json", JSON.stringify({ version: 1, files })] as [string, string];
+const inventory = (files: { file: string; status: string; splitFiles?: unknown }[]) => ["docs/plans/test-layer-audit.json", JSON.stringify({ version: 1, files })] as [string, string];
 
 it("requires a named layer and subsystem while retaining an explicit pending migration inventory", () => {
   expect(testLayer(path)).toEqual({ layer: "rules", area: "reviews" });
@@ -16,6 +16,25 @@ it("requires a named layer and subsystem while retaining an explicit pending mig
   expect(layerStructure(source("", [inventory([{ file: old, status: "reviewed" }])]))).toEqual([expect.stringContaining("invalid")]);
   expect(layerStructure(source("", [inventory([{ file: old, status: "pending" }, { file: old, status: "pending" }])]))).toEqual([expect.stringContaining("invalid")]);
   expect(layerStructure(source("", [inventory([{ file: old, status: "pending" }])]))).toEqual([expect.stringContaining("missing inventoried test")]);
+});
+
+it("retains every audited split owner, including a companion whose deletion would otherwise be silent", () => {
+  const companion = "packages/core/test/orchestration/simulator/history.test.ts";
+  const files = source("", [inventory([{ file: path, status: "reviewed", splitFiles: [path, companion] }]), [companion, ""]]);
+  expect(layerStructure(files)).toEqual([]);
+  files.delete(companion);
+  expect(layerStructure(files)).toEqual([expect.stringContaining(`${companion}: missing inventoried test`)]);
+  files.set(companion, ""); files.delete(path);
+  expect(layerStructure(files)).toEqual([expect.stringContaining(`${path}: missing inventoried test`)]);
+});
+
+it("rejects malformed or unaudited split ownership instead of weakening the migration guard", () => {
+  const companion = "packages/core/test/orchestration/simulator/history.test.ts";
+  for (const splitFiles of [[], [path, path], [companion], [path, 42], [path, "packages/core/test/flat.test.ts"], "not an array"]) {
+    expect(layerStructure(source("", [inventory([{ file: path, status: "reviewed", splitFiles }])]))).toEqual([expect.stringContaining("invalid test-layer migration inventory")]);
+  }
+  expect(layerStructure(source("", [inventory([{ file: path, status: "pending", splitFiles: [path, companion] }]), [companion, ""]])))
+    .toEqual([expect.stringContaining("invalid test-layer migration inventory")]);
 });
 
 it("follows transitive helpers, normalized paths, aliases, re-exports and cycles without executing them", () => {
