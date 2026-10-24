@@ -1922,10 +1922,29 @@
     },
     {
       "file": "packages/engine/test/security.test.ts",
-      "declarations": 7,
-      "assertionSites": 44,
+      "declarations": 6,
+      "assertionSites": 37,
       "baselineDigest": "07ed018078153f3260dc208d77a00ef44f2c82f2816bcf5309b5a52029895689",
-      "status": "pending"
+      "status": "pending",
+      "baselineDeclarations": 7,
+      "baselineAssertionSites": 44,
+      "migratedCases": [
+        {
+          "original": "refuses to fetch or publish once unsafe settings are planted after setup, and runs none of them",
+          "files": [
+            "packages/engine/test/contracts/git/unsafe-settings.test.ts",
+            "packages/engine/test/journeys/repositories/unsafe-settings.test.ts"
+          ],
+          "review": "All seven original settings retain real native Git refusal coverage; fetchRef, credentialed lookups, all remote refs and a positive helper/hook control strengthen it. One representative complete task retains every original task assertion. Original matrix required seven complete task preparations; those repetitions tested the same common failure route. Each setting now has a private repository and a named native case. Existing publishing journeys share the verified hook fixture and retain all assertions."
+        }
+      ],
+      "review": "Partial audit: native unsafe-setting matrix and one representative task now have separate owners. All seven original declarations and assertion expressions reconcile across the retained file and journey. Remaining credentialed publication, SSH, confirmation, serialization and process-wide environment manipulation need their own complete layer/portability audit; this original file remains pending.",
+      "validation": {
+        "artifact": "security-case-reconciliation.json",
+        "neighborhood": "security-reviewed-neighborhood.xml: 54 passed / 567 assertions / 4 files / 38.63s",
+        "finalSelected": "security-boundary-after-2026-10-24T18-16-51-840Z/cases.xml: nine cases / 95 assertions pass",
+        "resourceComparison": "546 to 189 observed direct launches; 11.54s to 2.13s selected runner time, same observer and normal runner settings; full-suite effect not yet measured"
+      }
     },
     {
       "file": "packages/engine/test/server.test.ts",
@@ -2317,6 +2336,25 @@
         "artifact": "core-evidence-reconciliation.json",
         "run": "core-evidence-final.json: all 1,063 core cases pass; workspace types and conventions pass"
       }
+    },
+    {
+      "file": "packages/engine/test/contracts/git/unsafe-settings.test.ts",
+      "declarations": 2,
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "git",
+      "review": "One real-Git positive helper/hook control with spaces/apostrophes and seven actual local/worktree setting cases. Four real credentialed operation adapters refuse each setting, report its key, leave FETCH_HEAD absent, preserve all remote refs and execute no marker. Private writable repositories and explicit fake helper input; no Engine, agent transport, account or network. Native Linux/Windows qualification remains due.",
+      "validation": "security-native-first.xml; security-reviewed-neighborhood.xml; security-boundary-after-2026-10-24T18-16-51-840Z/cases.xml"
+    },
+    {
+      "file": "packages/engine/test/journeys/repositories/unsafe-settings.test.ts",
+      "declarations": 1,
+      "status": "reviewed",
+      "layer": "journeys",
+      "area": "repositories",
+      "fromCase": "packages/engine/test/security.test.ts: unsafe settings after setup",
+      "review": "Real Engine/Git/private SQLite and scripted ACP/GitHub services retain failure state, specific warning/error, no published branch, no planted program and no GitHub operation. Native setting permutations are separate adapter contracts. No Unix-only hook-program fixture or Windows skip is inherited by this representative journey.",
+      "validation": "security-reviewed-neighborhood.xml; final resource observation reruns this case after simplification; original assertion AST retained"
     }
   ],
   "rust": [

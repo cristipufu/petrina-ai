@@ -2,10 +2,11 @@
 // they refuse unsafe settings, use only the address saved when the product was added, carry only what
 // Petrina names, run no hook, and run one at a time per product.
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { Engine } from "./engine.js";
+import { plantedGitProgram } from "./fixtures/git-program.js";
 import { ADDRESS, commitAt, coordinator, FAKE_AGENT, FAKE_GH, finish, git, gitWith, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];
@@ -18,54 +19,7 @@ afterAll(() => {
   for (const made of worlds) removeDir(made.dir);
 });
 
-/** A program that leaves a mark when anything runs it. */
-function planted(w: World, name: string): { script: string; marks: () => string[] } {
-  const marks = join(w.dir, "marks");
-  mkdirSync(marks, { recursive: true });
-  const script = join(w.dir, `${name}.sh`);
-  writeFileSync(script, `#!/bin/sh\ntouch ${join(marks, name)}\nexit 1\n`);
-  chmodSync(script, 0o755);
-  return { script, marks: () => readdirSync(marks) };
-}
-
 describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps trust none of the repository's own settings", () => {
-  it("refuses to fetch or publish once unsafe settings are planted after setup, and runs none of them", async () => {
-    const w = await world("planted");
-    const program = planted(w, "evil");
-    const included = join(w.dir, "included.gitconfig");
-    writeFileSync(included, `[core]\n\tsshCommand = ${program.script}\n`);
-    const plants: [string, string[]][] = [
-      ["credential.helper", ["credential.helper", `!${program.script}`]],
-      ["core.sshcommand", ["core.sshCommand", program.script]],
-      ["url.", ["url.https://evil.example/.insteadOf", "https://github.com/"]],
-      ["http.proxy", ["http.proxy", "http://127.0.0.1:9"]],
-      ["include.path", ["include.path", included]],
-      ["core.fsmonitor", ["core.fsmonitor", program.script]],
-    ];
-    const engine = w.start();
-    try {
-      const productId = await engine.addProduct(w.clone);
-      engine.setProductDelivery(productId, "pull-request", false);
-      for (const [key, setting] of [...plants, ["credential.helper", ["--worktree", "credential.helper", `!${program.script}`]] as [string, string[]]]) {
-        if (setting[0] === "--worktree") await git(w.clone, "config", "extensions.worktreeConfig", "true");
-        await git(w.clone, "config", ...setting);
-        const taskId = engine.addTask({ productId, title: `Planted ${key}`, description: "A greeting file. [quick]" });
-        const task = taskOf(await finish(engine, taskId), taskId);
-        expect(task.state).toBe("failed");
-        expect(task.error).toContain("could not get the latest main from GitHub (the repository's git settings include");
-        expect(task.error).toContain(key);
-        expect(task.timeline.some((entry) => entry.tone === "warn" && entry.text.includes("could misuse your GitHub login"))).toBe(true);
-        expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
-        await git(w.clone, "config", ...(setting[0] === "--worktree" ? ["--worktree", "--unset-all", setting[1]!] : ["--unset-all", setting[0]!]));
-        if (setting[0] === "--worktree") await git(w.clone, "config", "--unset", "extensions.worktreeConfig");
-        engine.cancel(taskId);
-      }
-      expect(program.marks()).toEqual([]);
-      expect(w.github().calls).toEqual([]);
-    } finally {
-      await engine.shutdown();
-    }
-  });
 
   for (const mode of ["pull-request", "release"] as const) {
     it(`publishes a ${mode} only to the saved address, with no hooks, extra tags or submodules, whatever the remote, push address and hooks now say`, async () => {
@@ -91,14 +45,12 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
       await git(w.clone, "tag", "-a", "planted", "-m", "Should never travel", "HEAD");
       // Hooks that run around pushes, checkouts and ref changes: none of Petrina's own git steps may run them.
       // (Commit hooks are the repository's checks, which Petrina runs on purpose, without a login.)
-      const hook = planted(w, "hook");
+      const hook = plantedGitProgram(w.dir, "hook");
       const hooks = join(w.dir, "hooks");
       mkdirSync(hooks);
       for (const name of ["pre-push", "post-checkout", "reference-transaction", "post-merge"]) {
-        writeFileSync(join(hooks, name), `#!/bin/sh\n${hook.script}\n`);
-        chmodSync(join(hooks, name), 0o755);
-        writeFileSync(join(w.clone, ".git", "hooks", name), `#!/bin/sh\n${hook.script}\n`);
-        chmodSync(join(w.clone, ".git", "hooks", name), 0o755);
+        hook.writeHook(join(hooks, name));
+        hook.writeHook(join(w.clone, ".git", "hooks", name));
       }
       // The coordinator's own settings push tags along and push submodules too.
       const globalConfig = join(w.dir, "global.gitconfig");
