@@ -22,8 +22,8 @@ describe("Tasks that start after others land", () => {
   });
   const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake] });
 
-  afterAll(() => {
-    engine.shutdown();
+  afterAll(async () => {
+    await engine.shutdown();
     removeDir(temp);
   });
 

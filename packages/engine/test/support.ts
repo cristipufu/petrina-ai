@@ -2,7 +2,7 @@ import { displayTask } from "@petrina/core";
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { InboxKind, State, Task } from "@petrina/core";
@@ -13,6 +13,7 @@ import { Store } from "../src/store.js";
 import type { AgentScript } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 import { testGitEnv } from "./test-git-env.js";
+import { writeFixtureJson } from "./fixture-json.js";
 export { testGitEnv } from "./test-git-env.js";
 
 export * from "./fixtures.js";
@@ -168,7 +169,7 @@ export async function makeWorld(name: string, options: { version?: string; addre
   const ghState = join(dir, "github.json");
   writeGitHub(ghState, { repo: REPO, prs: [], releases: [], calls: [] });
   const scriptPath = join(dir, "agents.json");
-  writeFileSync(scriptPath, "{}");
+  writeFixtureJson(scriptPath, {});
   const data = join(dir, "data");
   const browsers = options.browser ? testBrowserRoot() : undefined;
   return {
@@ -185,7 +186,7 @@ export async function makeWorld(name: string, options: { version?: string; addre
     setScript: (change) => {
       const script = JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript;
       change(script);
-      writeFileSync(scriptPath, JSON.stringify(script, null, 2));
+      writeFixtureJson(scriptPath, script, 2);
     },
     editSaved: (change) => {
       const store = new Store(join(data, "petrina.db"));

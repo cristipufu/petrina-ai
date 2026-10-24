@@ -15,7 +15,8 @@ async function fixture(parallel = false, scenario: Partial<Scenario> = {}) {
   const root = tempDir("petrina-runtime-wait-"); roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ controlled: true, planner: parallel ? "parallel" : "short", builder: "plain", reopen: "resume", ...scenario });
-  const options = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], remote: join(root, "origin.git") };
+  // Voter selection uses installed tools, independently of the scripted agent command.
+  const options = { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], toolPath: () => process.execPath, remote: join(root, "origin.git") };
   const home = join(root, "data");
   const engine = new Engine(home, options);
   const clone = await makeProduct(root);

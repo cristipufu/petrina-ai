@@ -56,7 +56,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
       const planner = f.fakes.openings("planner")[0]!;
       for (const word of ["check-finder", "Check finder", "verifier", "Verifier", "security-reviewer", "Security reviewer", "release-manager"]) expect(planner).not.toContain(word);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -76,7 +76,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
           expect(task.risk?.level).toBe("low");
         }
       } finally {
-        f.engine.shutdown();
+        await f.engine.shutdown();
       }
     });
   }
@@ -99,7 +99,7 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
       expect(lines(task)).toContain("The work changed after you approved the delivery, so Petrina asks you again");
       expect(f.fakes.openings("release manager")).toHaveLength(0);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 });

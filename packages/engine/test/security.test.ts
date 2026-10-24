@@ -63,7 +63,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
       expect(program.marks()).toEqual([]);
       expect(w.github().calls).toEqual([]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -132,7 +132,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         await gitWith({ cwd: w.clone, env: { ...plain, GIT_CONFIG_GLOBAL: globalConfig } }, "-c", "core.hooksPath=/dev/null", "push", "-q", "--no-verify", w.remote, `${tested}:refs/heads/plain`);
         expect(await libHas()).toBe(true);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
         if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL;
         else process.env.GIT_CONFIG_GLOBAL = before;
       }
@@ -174,7 +174,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
         const calls = readFileSync(asked, "utf8").trim().split("\n");
         expect([...new Set(calls)].sort()).toEqual(["git@github.com git-receive-pack 'acme/demo.git'", "git@github.com git-upload-pack 'acme/demo.git'"]);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
         if (before === undefined) delete process.env.GIT_SSH_COMMAND;
         else process.env.GIT_SSH_COMMAND = before;
       }
@@ -214,7 +214,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
       expect(most).toBe(1);
       for (const id of tasks) engine.cancel(id);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
       server.stop(true);
     }
   });
@@ -231,7 +231,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);
-    engine.shutdown();
+    await engine.shutdown();
     forget(w);
     engine = w.start();
     try {
@@ -256,7 +256,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       expect(addressQuestions.size).toBe(1);
       expect(engine.getState().inbox.some((item) => item.title.startsWith("Is "))).toBe(false);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -265,7 +265,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);
-    engine.shutdown();
+    await engine.shutdown();
     forget(w);
     engine = w.start();
     try {
@@ -286,7 +286,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       expect(task.state).toBe("done");
       expect(await git(w.clone, "rev-parse", "main")).toBe(await git(w.clone, "rev-parse", task.branch!));
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -295,7 +295,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
     let engine = w.start();
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);
-    engine.shutdown();
+    await engine.shutdown();
     w.editSaved((state) => ((state.products[0] as { remote?: string }).remote = "git@github.com:evil/demo.git"));
     engine = w.start();
     try {
@@ -307,7 +307,7 @@ describe.concurrent("Products added before Petrina kept their GitHub address", (
       expect(existsSync(join(w.remote, "refs", "heads", task.branch!))).toBe(false);
       expect(itemOf(engine.getState(), taskId, "stuck")).toBeDefined();
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

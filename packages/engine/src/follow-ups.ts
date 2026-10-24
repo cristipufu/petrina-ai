@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, productsOn, takesFollowUps, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
 import { completeAll } from "./parallel.js";
 import { AgentRun } from "./acp-run.js";
+import { agentCommandFor } from "./tools.js";
 import type { Kernel, MTask } from "./kernel.js";
 import { parseResult } from "./prompts.js";
 import { extraSlot, limitOf } from "@petrina/core";
@@ -468,7 +469,7 @@ export class FollowUps {
       const parent = join(this.k.dataDir, "matching");
       await mkdir(parent, { recursive: true });
       cwd = await mkdtemp(join(parent, "follow-up-"));
-      const command = this.k.options.agentCommand?.(profile);
+      const command = agentCommandFor(this.k.options, profile);
       run = await AgentRun.start({
         profile,
         cwd,

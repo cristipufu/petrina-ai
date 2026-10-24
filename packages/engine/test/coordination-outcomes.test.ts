@@ -4,7 +4,7 @@ import { linkSync, mkdirSync, renameSync, statSync, symlinkSync, unlinkSync, uti
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { matchesCheckLogIdentity } from "../src/check-log-read.js";
 import { CHECK_EXIT_UNREPORTED } from "../src/checks.js";

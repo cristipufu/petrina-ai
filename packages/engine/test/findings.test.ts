@@ -97,13 +97,13 @@ describe("disputed findings", () => {
     expect(BriefResult.safeParse({ ...brief, answers: [{ id: "o1", status: "accepted", answer: "Added the empty state." }] }).success).toBe(true);
   });
 
-  it("refuses a change request for a check that is no longer waiting, so the window keeps the note", () => {
+  it("refuses a change request for a check that is no longer waiting, so the window keeps the note", async () => {
     const dir = mkdtempSync(join(tmpdir(), "petrina-changes-"));
     const engine = new Engine(dir);
     try {
       expect(() => engine.requestChanges("inbox-gone", "Make it friendlier")).toThrow("isn't waiting any more");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
       rmSync(dir, { recursive: true, force: true });
     }
   });

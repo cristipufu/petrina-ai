@@ -18,6 +18,7 @@ import { checkAgentTool } from "./setup.js";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "./tools.js";
 import { agentEnv } from "./env.js";
 import { mkdir } from "node:fs/promises";
+import type { EngineClient } from "./engine-client.js";
 
 const home = process.env.PETRINA_HOME || join(homedir(), ".petrina");
 const ui = resolve(import.meta.dir, "../../../apps/desktop/dist");
@@ -58,32 +59,37 @@ async function open(dev: boolean): Promise<void> {
   console.log(`Opened Petrina${useDev ? " (dev UI)" : ""}.`);
 }
 
-const [command, ...rest] = process.argv.slice(2);
-const newKey = rest.includes("--new-key");
-const debugSql = rest.includes("--debug-sql") || process.env.PETRINA_DEBUG_SQL === "1";
-if (command === "serve") await launch({ home, mode: "serve", engine: { debugSql }, port: Number(process.env.PETRINA_PORT || 4317), newKey, ...(existsSync(ui) ? { ui } : {}) });
-else if (command === "app") await launch({ home, mode: "app", engine: { debugSql }, ...(existsSync(ui) ? { ui } : {}) });
-else if (command === "open") await open(rest.includes("--dev"));
-else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
-else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));
-else if (command === "antigravity") {
-  if (rest[0] === "install") {
-    await installAntigravity();
-    console.log("Google's Antigravity connector is installed. Sign in with: bun run petrina antigravity login");
-  } else if (rest[0] === "login") {
-    if (process.env.PETRINA_AGENT) throw new Error("Antigravity sign-in is for the coordinator.");
-    const cwd = join(home, "checks");
-    await mkdir(cwd, { recursive: true, mode: 0o700 });
-    console.log("Opening Google's sign-in. Finish in your browser, then use Check again in Agents.");
-    let gone: Promise<void> | undefined;
-    const result = await checkAgentTool({ adapter: ADAPTERS.antigravity!, profile: ENGINE_PROFILES.find(profile => profile.toolId === "antigravity")!, cwd, env: agentEnv(process.env), which: findProgram, authenticate: "oauth-personal", timeoutMs: 180_000, onGone: job => { gone = job; } });
-    await gone;
-    console.log(result.status === "ready" ? "Antigravity is signed in." : result.detail ?? `Antigravity is ${result.status}.`);
-    if (result.status !== "ready") process.exitCode = 1;
-  } else console.log("petrina antigravity install — install Google's official ACP connector\npetrina antigravity login — open Google sign-in for that connector");
+/** The production parser with a launch boundary that lifecycle tests can supply without native accounts. */
+export async function runCli(args: readonly string[] = process.argv.slice(2), startEngine: typeof launch = launch, client?: EngineClient): Promise<void> {
+  const [command, ...rest] = args;
+  const newKey = rest.includes("--new-key");
+  const debugSql = rest.includes("--debug-sql") || process.env.PETRINA_DEBUG_SQL === "1";
+  if (command === "serve") await startEngine({ home, mode: "serve", engine: { debugSql }, port: Number(process.env.PETRINA_PORT || 4317), newKey, ...(existsSync(ui) ? { ui } : {}) });
+  else if (command === "app") await startEngine({ home, mode: "app", engine: { debugSql }, ...(existsSync(ui) ? { ui } : {}) });
+  else if (command === "open") await open(rest.includes("--dev"));
+  else if (command === "state") console.log(JSON.stringify(await call("/api/state"), null, 2));
+  else if (command === "do") console.log(JSON.stringify(await call("/api/action", { method: "POST", body: rest.join(" ") }), null, 2));
+  else if (command === "antigravity") {
+    if (rest[0] === "install") {
+      await installAntigravity();
+      console.log("Google's Antigravity connector is installed. Sign in with: bun run petrina antigravity login");
+    } else if (rest[0] === "login") {
+      if (process.env.PETRINA_AGENT) throw new Error("Antigravity sign-in is for the coordinator.");
+      const cwd = join(home, "checks");
+      await mkdir(cwd, { recursive: true, mode: 0o700 });
+      console.log("Opening Google's sign-in. Finish in your browser, then use Check again in Agents.");
+      let gone: Promise<void> | undefined;
+      const result = await checkAgentTool({ adapter: ADAPTERS.antigravity!, profile: ENGINE_PROFILES.find(profile => profile.toolId === "antigravity")!, cwd, env: agentEnv(process.env), which: findProgram, authenticate: "oauth-personal", timeoutMs: 180_000, onGone: job => { gone = job; } });
+      await gone;
+      console.log(result.status === "ready" ? "Antigravity is signed in." : result.detail ?? `Antigravity is ${result.status}.`);
+      if (result.status !== "ready") process.exitCode = 1;
+    } else console.log("petrina antigravity install — install Google's official ACP connector\npetrina antigravity login — open Google sign-in for that connector");
+  }
+  else if (command === "mcp") {
+    if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration and docs/coordinator.md for project coordination.");
+    else await runMcp(client);
+  }
+  else process.exitCode = await coordinationCli([...args], client);
 }
-else if (command === "mcp") {
-  if (rest.includes("--help")) console.log("petrina mcp — connect a coding agent over MCP stdio. Discover named tools with tools/list. Uses the existing local connection; connecting never starts an engine. See docs/coordination.md for client configuration and docs/coordinator.md for project coordination.");
-  else await runMcp();
-}
-else process.exitCode = await coordinationCli(process.argv.slice(2));
+
+if (import.meta.main) await runCli();

@@ -5,7 +5,7 @@ import { RUN_LABEL } from "../src/extra-container.js";
 
 const [root, ...raw] = process.argv.slice(2);
 if (!root) throw new Error("A private service folder is required");
-for (const directory of ["containers", "started", "release"]) mkdirSync(join(root, directory), { recursive: true });
+for (const directory of ["containers", "creating", "started", "release"]) mkdirSync(join(root, directory), { recursive: true });
 let args = raw;
 while (args[0] === "--host" || args[0] === "--config") args = args.slice(2);
 const [command] = args;
@@ -21,9 +21,20 @@ else if (command === "image") {
 } else if (command === "run") {
   const name = value("--name"), path = join(root, "containers", name);
   const id = labels.find(label => label.startsWith(RUN_LABEL + "="))!.split("=")[1]!;
-  const record = { args, labels, pid: process.pid, childPid: undefined as number | undefined, id, name, snapshot: value("--mount").match(/src=(.*),dst=/)![1] };
-  writeFileSync(path + ".tmp", JSON.stringify(record)); renameSync(path + ".tmp", path);
+  const snapshot = value("--mount").match(/src=(.*),dst=/)?.[1];
+  if (!snapshot) throw new Error("The private snapshot mount is required");
+  const record = { args, labels, pid: process.pid, childPid: undefined as number | undefined, id, name, snapshot };
   const mode = args.at(-1);
+  // Unpublished service metadata is not a container. Keep it in the client's owned
+  // snapshot so interruption cleanup removes it, even after SIGKILL bypasses finally.
+  // Both folders belong to this fixture on the same filesystem; rename publishes atomically.
+  const temporary = join(record.snapshot, ".git", `fake-container-${name}`);
+  writeFileSync(temporary, JSON.stringify(record));
+  if (mode === "hold-before-create") {
+    writeFileSync(join(root, "creating", id), "ready to publish");
+    await new Promise<void>(resolve => process.once("SIGUSR1", resolve));
+  }
+  renameSync(temporary, path);
   if (mode === "hold-child") {
     const child = Bun.spawn([process.execPath, "-e", "process.once('SIGUSR1', () => process.exit(0)); console.log('child-ready'); setInterval(() => {}, 1000)"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
     const reader = child.stdout.getReader();

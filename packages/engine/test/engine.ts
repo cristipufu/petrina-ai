@@ -1,6 +1,26 @@
 import { Engine as ProductionEngine, type EngineOptions } from "../src/engine.js";
 import { ADAPTERS } from "../src/tools.js";
 import { noMachineRecords } from "./fixtures.js";
+import { join } from "node:path";
+
+/** One boundary policy for in-process engines and the app-mode harness. Explicit stand-ins override it. */
+export function fixtureEngineOptions(dataDir: string, options: EngineOptions = {}): EngineOptions {
+  const missing = (service: string) => [process.execPath, join(import.meta.dir, "unconfigured-service.ts"), service];
+  return {
+    home: join(dataDir, "home"),
+    terminals: () => [],
+    awakeObserver: () => {},
+    // Native Git and Node are prerequisites. All account-bearing services need explicit stand-ins.
+    which: name => ["git", "node"].includes(name) ? Bun.which(name, { PATH: process.env.PATH ?? "" }) : null,
+    gh: missing("GitHub"),
+    containerTool: missing("container"),
+    browser: false,
+    ...options,
+    requireAgentCommand: true,
+    usageCommands: { ...Object.fromEntries(Object.keys(ADAPTERS).map(id => [id, null])), ...options.usageCommands },
+    machineRecords: options.machineRecords ?? noMachineRecords,
+  };
+}
 
 /**
  * Test fixtures never probe the developer's live accounts or this Mac's power log. Usage tests opt in with their
@@ -8,11 +28,7 @@ import { noMachineRecords } from "./fixtures.js";
  */
 export class Engine extends ProductionEngine {
   constructor(dataDir: string, options: EngineOptions = {}) {
-    super(dataDir, {
-      ...options,
-      usageCommands: { ...Object.fromEntries(Object.keys(ADAPTERS).map(id => [id, null])), ...options.usageCommands },
-      machineRecords: options.machineRecords ?? noMachineRecords,
-    });
+    super(dataDir, fixtureEngineOptions(dataDir, options));
   }
 }
 

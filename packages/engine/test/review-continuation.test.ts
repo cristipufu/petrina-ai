@@ -35,8 +35,9 @@ for (const restarts of [false, true]) it(`continues an exhausted review through 
   const replaced: Promise<void>[] = [];
   const restart = async () => {
     engine.setPoolPaused(true);
-    replaced.push(engine.shutdown());
-    await replaced.at(-1);
+    const stopping = engine.shutdown();
+    replaced.push(stopping);
+    await stopping;
     engine = new Engine(join(root, "data"), options);
   };
   const held = () => readdirSync(fakes.dir).filter((name) => name.startsWith("security-held-")).map((name) => name.slice("security-held-".length));

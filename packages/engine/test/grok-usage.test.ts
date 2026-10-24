@@ -120,10 +120,10 @@ describe("Grok account usage", () => {
       const reading = engine.usageCoordinator.readers.get("grok")!.refresh();
       await waitFor(() => fake.asked().filter(r => r.method === "_x.ai/billing").length === 2, "a pending account read");
       const pid = fake.asked().at(-1)!.pid;
-      engine.shutdown();
+      await engine.shutdown();
       await waitFor(() => !alive(pid), "shutdown to stop its account reader", 5000);
       await reading;
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("shows failed account refreshes to the window without changing the last confirmed percentage or its age", async () => {

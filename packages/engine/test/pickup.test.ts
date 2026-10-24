@@ -439,7 +439,7 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       const taskId = engine.addTask({ productId, title: "Add a greeting" });
       await waitFor(() => fakes.marked("builder-working"), "the builder to start working");
       await waitFor(() => heardWorking(engine.getState().tasks.find((entry) => entry.id === taskId)), "the engine to hear the builder at work");
-      engine.shutdown();
+      await engine.shutdown();
 
       if (trouble === "no answer") fakes.scenario({ planner: "short", builder: "work", reopen: "stall" });
       // The new engine checks the saved Builder's login first, then tries reopening it.
@@ -450,7 +450,7 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
         const task = engine.getState().tasks.find((entry) => entry.id === taskId);
         return task?.state === "done" && task;
       }, "the task to finish", 60_000);
-      engine.shutdown();
+      await engine.shutdown();
       expect(done.timeline.filter((entry) => entry.text.startsWith("Started this step again")).map((entry) => entry.text)).toEqual([
         trouble === "conversation gone" ? "Started this step again: Codex could not reopen the conversation" : "Started this step again: Codex did not reopen the conversation within 2 seconds",
       ]);

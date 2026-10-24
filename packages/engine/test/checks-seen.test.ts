@@ -56,7 +56,7 @@ describe("the checks found for each set of CI and build files", () => {
       }, "the first task's delivery check again", 60_000);
       expect(finds(first)).toBe(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

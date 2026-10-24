@@ -1,3 +1,4 @@
+import type { ObservedProcess } from "../src/process-tree.js";
 import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
@@ -9,7 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "./engine.js";
 import * as browserRecovery from "../src/browser.js";
-import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowserTemps, type ObservedProcess } from "../src/browser.js";
+import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowserTemps } from "../src/browser.js";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, parseProcessState, processList, readProcessList } from "../src/process-tree.js";

@@ -37,6 +37,9 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
     if (engine && file !== "packages/engine/test/engine.ts") for (const entry of facts.imports) {
       if (entry.runtime && /(?:^|\/)src\/(?:engine|index)\.[jt]s$/.test(entry.path) && entry.names.some(name => ["Engine", "*", "default"].includes(name))) errors.push(`${file}: import Engine from the isolated test/engine fixture`);
     }
+    if (engine && file !== "packages/engine/test/client.ts") for (const entry of facts.imports) {
+      if (entry.runtime && /(?:^|\/)src\/engine-client\.[jt]s$/.test(entry.path) && entry.names.some(name => ["EngineClient", "*", "default"].includes(name))) errors.push(`${file}: import EngineClient from test/client so lifecycle starts use the isolated fixture CLI`);
+    }
     if (engine && file !== "packages/engine/test/fixtures.ts") for (const entry of facts.imports) {
       if (entry.runtime && /(?:^|\/)src\/checks\.[jt]s$/.test(entry.path) && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
     }

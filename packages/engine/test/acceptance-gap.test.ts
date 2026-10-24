@@ -26,7 +26,8 @@ async function fixture(options: { shared?: boolean; checklist?: readonly string[
   const fakes = new Fakes(join(root, "fake"));
   // With `github`, a local folder stands in for the product's GitHub repository, holding main as the task started.
   const github = options.github ? join(root, "github.git") : undefined;
-  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], terminals: () => [], ...(github ? { remote: github } : {}) };
+  // Saved maintenance profiles also read startup tool availability: every tool here is a stand-in.
+  const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath, terminals: () => [], ...(github ? { remote: github } : {}) };
   const engine = new Engine(join(root, "data"), engineOptions);
   engine.schedule = () => {};
   await engine.waitUntilReady();

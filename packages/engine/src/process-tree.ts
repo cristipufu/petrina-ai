@@ -115,6 +115,46 @@ export type ChildState = "running" | "ended" | "unknown";
 /** What one snapshot lists for a process: `running`, `finished` (defunct, not yet collected), `absent`, or `unknown`. */
 export type ProcessState = "running" | "finished" | "absent" | "unknown";
 
+/** One tracked process, its last observed state and the evidence that associated it with the work. */
+export type ObservedProcess = { pid: number; state: ProcessState; sources: readonly string[] };
+
+/** Every process with its group and state, for confirming a forced stop including defunct members. */
+export const readProcessGroups: ProcessListRead = (timeout) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
+
+/** Only a complete list positively naming every still-present target as defunct confirms it ended. */
+export function presentStates(list: string | undefined, present: readonly number[]): { ended: boolean; processes: ObservedProcess[] } {
+  const complete = list !== undefined && list.split("\n").some((line) => Number(line.trim().split(/\s+/)[0]) === process.pid);
+  const members = (group: number) => list!.split("\n").map((line) => line.trim().split(/\s+/)).filter(([, pgid]) => Number(pgid) === group).map(([pid]) => Number(pid));
+  const processes = present.flatMap((target): ObservedProcess[] => {
+    if (!complete) return [{ pid: Math.abs(target), state: "unknown", sources: [target < 0 ? "group" : "target"] }];
+    if (target > 0) return [{ pid: target, state: parseProcessState(list!, target), sources: ["target"] }];
+    const listed = members(-target);
+    return listed.length ? listed.map((pid) => ({ pid, state: parseProcessState(list!, pid), sources: ["group"] })) : [{ pid: -target, state: "absent", sources: ["group"] }];
+  });
+  return { ended: complete && processes.every(({ state }) => state === "finished"), processes };
+}
+
+/**
+ * Wait within the existing stop allowance. Existence alone cannot distinguish a zombie group from
+ * running work; obtain one bounded group snapshot while waiting. Silence or failed inspection is
+ * never proof that a target still answering to a signal has ended.
+ */
+export async function waitForProcessesToEnd(targets: readonly number[], ms: number, read: ProcessListRead = readProcessGroups): Promise<{ ended: boolean; processes: ObservedProcess[] }> {
+  const alive = (target: number) => {
+    try { process.kill(target, 0); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  };
+  const end = Date.now() + ms, from = Date.now() + ms / 4;
+  let listing: Promise<string | undefined> | undefined;
+  for (; Date.now() < end; await Bun.sleep(50)) {
+    if (!targets.some(alive)) return { ended: true, processes: [] };
+    listing ??= Date.now() >= from ? read(Math.max(50, end - Date.now())).catch(() => undefined) : undefined;
+  }
+  const present = targets.filter(alive);
+  if (!present.length) return { ended: true, processes: [] };
+  return presentStates(await listing, present);
+}
+
 /** One process's state from a process list snapshot. A complete list that lacks it says it is gone. */
 export function parseProcessState(stdout: string, pid: number): ProcessState {
   for (const line of stdout.split("\n")) {

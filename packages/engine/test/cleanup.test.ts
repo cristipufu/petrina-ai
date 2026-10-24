@@ -301,7 +301,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(texts(taskOf(engine.getState(), id))).not.toContain(CLEANUP_WORDS.removed);
     } finally {
       rmSync(hold, { force: true });
-      engine.shutdown();
+      await engine.shutdown();
       await Promise.allSettled([...engine.settling.values()]);
     }
   });
@@ -466,7 +466,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       await Bun.sleep(150);
       expect(taskOf(engine.getState(), id).agent).toBeUndefined();
       await gone(w, saved);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("removes a verified release's copy and keeps its branch, tag and link", async () => {
@@ -481,7 +481,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(task.release?.url).toContain("/releases/tag/");
       expect(await remoteRef(w.remote, `refs/tags/${task.release!.tag}`)).toBe(await git(w.clone, "rev-parse", task.branch!));
       expect(texts(task).findIndex((line) => line.startsWith("Petrina published release"))).toBeLessThan(texts(task).indexOf(CLEANUP_WORDS.removed));
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("still frees space when the disk cannot save the verified delivery until its copy is gone", async () => {
@@ -536,7 +536,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       writeFileSync(join(task.worktree!, "target", "late.bin"), "late output");
       await waitFor(() => !existsSync(task.worktree!), "late output to go");
       expect(texts(taskOf(engine.getState(), id))).toHaveLength(count);
-    } finally { rmSync(hold, { force: true }); engine.shutdown(); }
+    } finally { rmSync(hold, { force: true }); await engine.shutdown(); }
   });
 
   it("keeps open pull requests through checks, restart and cancellation, then records merged and closed separately", async () => {
@@ -552,7 +552,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       }
       engine.cancel(ids[2]!);
       w.setGitHub((github) => (github.offline = true));
-      engine.shutdown();
+      await engine.shutdown();
       engine = w.start({ checkEveryMs: 100 });
       await Bun.sleep(350);
       for (const id of ids) {
@@ -572,7 +572,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(tasks[2]!.statusLine).toBe("Cancelled");
       expect(w.github().calls.every((call) => !call.includes("merge") && !call.includes("close"))).toBe(true);
       expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("holds a copy cancelled while GitHub opens its pull request until GitHub can answer", async () => {
@@ -597,7 +597,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       const calls = () => w.github().calls.filter((call) => call[0] === "pr" && call[1] === "list").length;
       const before = calls();
       await until(engine, () => calls() >= before + 2);
-      engine.shutdown();
+      await engine.shutdown();
       engine = w.start({ checkEveryMs: 100 });
       await until(engine, () => calls() >= before + 3);
       expect(texts(taskOf(engine.getState(), id)).filter((line) => line === warning)).toHaveLength(1);
@@ -609,7 +609,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       w.setGitHub((github) => (github.prs[0]!.state = "CLOSED"));
       await gone(w, await cleaned(engine, id));
       expect(taskOf(engine.getState(), id).state).toBe("cancelled");
-    } finally { rmSync(hold, { force: true }); engine.shutdown(); }
+    } finally { rmSync(hold, { force: true }); await engine.shutdown(); }
   });
 
   it("cleans a cancelled publishing step when GitHub confirms it never opened a pull request", async () => {
@@ -625,7 +625,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(task.state).toBe("cancelled");
       expect(task.pr).toBeUndefined();
       await gone(w, task);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("retries a locked copy once a minute without crowding the timeline, then succeeds", async () => {
@@ -652,7 +652,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       task = await cleaned(engine, id);
       await gone(w, task);
       expect(texts(task).slice(-2)).toEqual([CLEANUP_WORDS.failed(CLEANUP_WORDS.locked), CLEANUP_WORDS.removed]);
-    } finally { if (locked && existsSync(locked)) chmodSync(locked, 0o755); engine.shutdown(); }
+    } finally { if (locked && existsSync(locked)) chmodSync(locked, 0o755); await engine.shutdown(); }
   });
 
   it("catches up older tasks across products at startup while a stalled pull request leaves others free", async () => {
@@ -671,7 +671,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       await until(engine, (s) => !!taskOf(s, cancelled).worktree, () => {});
       engine.pause(cancelled);
       await until(engine, () => !engine.settling.has(cancelled), () => {});
-      engine.shutdown();
+      await engine.shutdown();
       const base = task.branch!;
       // Stand in for older saved tasks, including a second product and all states that must retain a copy.
       w.editSaved((state) => {
@@ -706,7 +706,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
       }
       expect(existsSync(task.worktree!)).toBe(true);
       for (const status of ["running", "paused", "failed", "queued", "needs-you"]) expect(existsSync(join(w.data, "worktrees", "second-product", status))).toBe(true);
-    } finally { rmSync(hold, { force: true }); engine.shutdown(); }
+    } finally { rmSync(hold, { force: true }); await engine.shutdown(); }
   });
 
   it("says nothing about a copy when cancelled before setup, and safely completes an interrupted removal", async () => {
@@ -730,6 +730,6 @@ describe.concurrent("Finished tasks free their working copies", () => {
       expect(await listed(w, path)).toBe(false);
       expect(await removeWorktree(w.clone, path)).toBe(false);
       expect(await git(w.clone, "rev-parse", branch)).toBe(w.initial);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });

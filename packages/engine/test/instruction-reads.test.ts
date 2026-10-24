@@ -156,7 +156,7 @@ describe("reading a product's committed files", () => {
       }
       expect(task.queued[0]?.deliveries).toBeUndefined();
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -191,7 +191,7 @@ describe("reading a product's committed files", () => {
       if (pullRequest) expect(sections.find((section) => section.title === "Approved starting point and delivery")?.body).toContain("Update PR #7 contributor/demo · review-work");
       expect(task.queued[0]?.deliveries).toBeUndefined();
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

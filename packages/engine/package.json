@@ -29,6 +29,7 @@
   "devDependencies": {
     "@babel/parser": "8.0.7",
     "@types/bun": "1.3.4",
+    "saxes": "6.0.0",
     "typescript": "7.0.2"
   }
 }

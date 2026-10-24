@@ -10,7 +10,7 @@ import { checkReviewEvidence } from "../src/review.js";
 import { Coordination } from "../src/coordination.js";
 import { coordinationCli } from "../src/coordination-cli.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";
-import type { EngineClient } from "../src/engine-client.js";
+import type { EngineClient } from "./client.js";
 import { dispatch } from "../src/server.js";
 import * as gitOps from "../src/git.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
@@ -240,7 +240,9 @@ it("reuses an already queued manual bug and a running one held mid-turn, leaving
     const runningId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-running: Keep the publication check", description: "The coordinator's running request", backlog: true });
     engine.queueTask(runningId);
     engine.setPoolPaused(false);
-    await waitFor(() => fakes.received().length === 1 && engine.task(runningId)!.state === "running" && engine.task(runningId)!.agent?.roleId === "planner", "the coordinator's fix to hold its first agent mid-turn");
+    // A recorded prompt precedes the agent's plan notification. Snapshot only after the engine
+    // consumed that notification, so ordinary in-flight activity cannot be mistaken for a follow-up edit.
+    await waitFor(() => fakes.received().length === 1 && engine.task(runningId)!.state === "running" && engine.task(runningId)!.agent?.roleId === "planner" && engine.task(runningId)!.todo === "planner is working", "the coordinator's fix and its recorded plan to hold mid-turn");
     engine.setPoolPaused(true);
     const queuedId = engine.addTask({ productId: world.shop, kind: "bug", title: "bug-queued: Keep planned reviews", description: "The coordinator's queued request", backlog: true });
     engine.queueTask(queuedId);

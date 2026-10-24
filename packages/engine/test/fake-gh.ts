@@ -3,7 +3,8 @@
 // read from a folder standing in for GitHub's copy of the repository. No network; `gh auth status` says
 // it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFixtureJson } from "./fixture-json.js";
 import { commitAt, gitWith } from "./commands.js";
 import { testGitEnv } from "./test-git-env.js";
 
@@ -76,9 +77,7 @@ export function readGitHub(path: string): FakeGitHub {
 }
 
 export function writeGitHub(path: string, state: FakeGitHub): void {
-  const next = `${path}.${process.pid}.next`;
-  writeFileSync(next, JSON.stringify(state, null, 2));
-  renameSync(next, path);
+  writeFixtureJson(path, state, 2);
 }
 
 /** Fake gh processes and the test change the same file. A read followed by a write must be one operation. */

@@ -79,7 +79,7 @@ describe("roles the coordinator edits and adds", () => {
         expect(prompt).toContain("reviewers included, even where a rule above asks for different tools");
         expect(prompt).toContain("Security specialist");
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
@@ -210,12 +210,12 @@ describe("roles the coordinator edits and adds", () => {
         expect(await git(first.task.worktree!, "status", "--porcelain")).toBe("");
         engine.cancel(taskId);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
 
-  it("keeps added reviewers on their planned tool near its usage limit, just like built-in reviewers", () => {
+  it("keeps added reviewers on their planned tool near its usage limit, just like built-in reviewers", async () => {
     const root = tempDir("petrina-reviewer-usage-");
     roots.push(root);
     const engine = new Engine(join(root, "data"), { toolPath: () => "/bin/true" });
@@ -236,7 +236,7 @@ describe("roles the coordinator edits and adds", () => {
       engine.s.pool.limited = [{ toolId: "claude-code", until: Date.now() + 60_000, reason: "Usage used up" }];
       expect(engine.choose("opus-high", undefined, reviewer)).toMatchObject({ kind: "substitute", profile: { toolId: "codex" } });
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -269,7 +269,7 @@ describe("roles the coordinator edits and adds", () => {
       executionFor(task).work.portReview = { from: "a", onto: "b", head: "c", files: ["greeting.txt"] };
       expect(engine.choose("sol-high", task, added, undefined, "1")).toEqual(expect.objectContaining({ profile: expect.objectContaining({ toolId: "grok" }) }));
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -495,7 +495,7 @@ describe("the engine's own rules for roles", () => {
       // Nothing refused changed anything.
       expect(engine.getState().roles.filter((role) => !role.added)).toEqual([...BUILT_IN_ROLES, ...MAINTENANCE_ROLES].map((role) => ({ ...role })));
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 

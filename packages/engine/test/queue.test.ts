@@ -7,7 +7,7 @@ import { makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const dir = tempDir("petrina-keyboard-queue-");
 const engine = new Engine(join(dir, "data"));
-afterAll(() => { engine.shutdown(); removeDir(dir); });
+afterAll(async () => { await engine.shutdown(); removeDir(dir); });
 
 it("places filtered cards beside their neighbours and applies quick keyboard requests to the latest real queue", async () => {
   engine.setPoolPaused(true);

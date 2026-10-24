@@ -121,7 +121,7 @@ describe("a role renamed after the state was saved", () => {
       const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Old work" });
       const saved = JSON.parse(JSON.stringify(engine.getState())) as State;
-      engine.shutdown();
+      await engine.shutdown();
       // Saved by the Petrina from before the rename, with the old id everywhere a role id is kept.
       const by = { roleId: "shipper", profileId: "opus-high" };
       Object.assign(saved.tasks[0]!, {
@@ -164,13 +164,13 @@ describe("a role renamed after the state was saved", () => {
       expect([moved.agent?.roleId, moved.helpers?.[0]?.roleId, moved.repository?.conversation?.roleId]).toEqual(["release-manager", "release-manager", "release-manager"]);
       expect(JSON.stringify(engine.getState())).not.toContain('"shipper"');
       // Saved under the new id: the next load has nothing to move.
-      engine.shutdown();
+      await engine.shutdown();
       const again = new Store(join(data, "petrina.db"));
       expect(JSON.stringify(again.load())).not.toContain('"shipper"');
       again.close();
       engine = new Engine(data);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
       removeDir(root);
     }
   });

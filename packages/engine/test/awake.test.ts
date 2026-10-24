@@ -8,7 +8,7 @@ const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
 describe("the macOS idle sleep assertion", () => {
-  it("holds idle and AC system sleep without a display assertion, is tied to this engine, and stops after work drains", () => {
+  it("holds idle and AC system sleep without a display assertion, is tied to this engine, and stops after work drains", async () => {
     const commands: { command: string; args: readonly string[]; stops: number }[] = [];
     const assertion = new IdleSleepAssertion({
       platform: "darwin",
@@ -29,8 +29,9 @@ describe("the macOS idle sleep assertion", () => {
     expect(commands[0]!.stops).toBe(1);
     assertion.setActive(true);
     expect(commands).toHaveLength(2);
-    assertion.shutdown();
+    const stopped = assertion.shutdown();
     expect(commands[1]!.stops).toBe(1);
+    await stopped;
   });
 
   it("does nothing on other platforms and treats a missing caffeinate as a best-effort failure", () => {

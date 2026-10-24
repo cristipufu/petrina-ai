@@ -7,14 +7,25 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
 import { coordinator, finish, git, gitWith, itemOf, makeWorld, removeDir, REPO, remoteRef, runGit, taskOf, until, type World } from "./support.js";
+import { SetupSteps } from "./setup-steps.js";
+import { completeAll } from "../src/parallel.js";
 
 const worlds: World[] = [];
+const setup = new SetupSteps(), setupLifetime = new AbortController();
+const engines = new Set<ReturnType<World["start"]>>();
+const start = (world: World) => setup.run(() => {
+  const engine = world.start();
+  engines.add(engine);
+  return engine;
+}, setupLifetime.signal);
 const world = async (...args: Parameters<typeof makeWorld>) => {
   const made = await makeWorld(...args);
   worlds.push(made);
   return made;
 };
-afterAll(() => {
+afterAll(async () => {
+  setupLifetime.abort();
+  await completeAll([...engines].map((engine) => engine.shutdown()));
   for (const made of worlds) removeDir(made.dir);
 });
 
@@ -51,7 +62,7 @@ const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g,
 
 /** One task at its delivery check, while another task's builder fills the only agent slot. */
 async function busyDelivery(w: World, delivery: DeliveryMode) {
-  const engine = w.start();
+  const engine = await start(w);
   try {
     engine.setPoolLimit(1);
     const productId = await engine.addProduct(w.clone);
@@ -68,7 +79,7 @@ async function busyDelivery(w: World, delivery: DeliveryMode) {
     expect(taskOf(engine.getState(), busyId).agent?.roleId).toBe("builder");
     return { engine, taskId, busyId, approvalId };
   } catch (error) {
-    engine.shutdown();
+    await engine.shutdown();
     throw error;
   }
 }
@@ -95,7 +106,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
         expect(taskOf(engine.getState(), busyId).agent?.roleId).toBe("builder");
         noReleaseManager(task);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
 
@@ -123,7 +134,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
         expect(slotUses(engine.getState()).map((use) => use.taskId)).toEqual([busyId]);
         noReleaseManager(task);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
@@ -156,7 +167,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(w.github().releases).toHaveLength(1);
       expect(taskOf(engine.getState(), busyId).state).toBe("cancelled");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -183,7 +194,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(w.github().releases).toHaveLength(1);
       expect(slotUses(engine.getState()).map((use) => use.taskId)).toEqual([busyId]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -199,7 +210,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       script.description = description;
       script.envOut = join(w.dir, "builder-env.json");
     });
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       const product = engine.getState().products.find((entry) => entry.id === productId)!;
@@ -250,14 +261,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       if (helpers.code !== 0 && (helpers.code !== 1 || helpers.stdout || helpers.stderr)) throw new Error(`git config --get-all credential.helper failed (${helpers.code}): ${helpers.stderr}`);
       expect(env.helper).toBe(helpers.code === 0 ? helpers.stdout : "(none)");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("writes a pull request's description from the builder's report when the builder gave none, with the design's acceptance checklist", async () => {
     const w = await world("pr-template");
     w.setScript((script) => (script.description = ""));
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "pull-request", false);
@@ -270,7 +281,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(w.github().prs[0]!.body).toContain("### Acceptance\n- A greeting file exists");
       expect(task.timeline.map((entry) => entry.text)).toContain(`Ready to publish: ${(await git(w.clone, "rev-parse", task.branch!)).slice(0, 7)}, with a description from the builder's report`);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -280,7 +291,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await released(w, "v1.4.0", w.initial);
     await landed(w, "Faster search", "Search answers in a blink");
     await landed(w, "Fix the login loop", "Signing in on Safari works again");
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
@@ -323,14 +334,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       // The checks ran again on the version commit before it went out.
       expect(task.checks?.sha).toBe(tested);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("undoes whatever the Release Manager commits: it writes the notes and nothing else", async () => {
     const w = await world("release-manager-commits");
     w.setScript((script) => (script.releaseManagerCommits = true));
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
@@ -343,13 +354,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(await git(w.clone, "ls-tree", "--name-only", tagged)).not.toContain("notes-draft.md");
       expect(await git(w.clone, "log", "--format=%s", tagged)).not.toContain("A draft of the notes");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("commits to main locally with no agent: moves main forward to the checked commit, the main copy's files with it, then pushes main to GitHub", async () => {
     const w = await world("local");
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", true);
@@ -371,13 +382,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina moved main forward to it (${tested.slice(0, 7)}), and checked the main copy`);
       expect(task.timeline.map((entry) => entry.text)).toContain(`Petrina pushed main to GitHub (${tested.slice(0, 7)})`);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("brings in a teammate's newer GitHub commit before advancing and pushing main", async () => {
     const w = await world("local-push");
-    let engine = w.start();
+    let engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", true);
@@ -421,7 +432,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
 
   it("moves main locally while the main copy has another branch checked out, leaving that branch's files alone", async () => {
     const w = await world("local-elsewhere");
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       await git(w.clone, "switch", "-q", "-c", "notes");
@@ -436,13 +447,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(existsSync(join(w.clone, "greeting.txt"))).toBe(false);
       expect(checkedOut(join(w.clone, "notes.txt"))).toBe("mine\n");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("stops before moving main when the main copy has uncommitted changes or main is checked out elsewhere", async () => {
     const w = await world("local-unsafe");
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", false);
@@ -471,7 +482,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(task.state).toBe("done");
       expect(await git(w.clone, "rev-parse", "main")).toBe(await git(w.clone, "rev-parse", task.branch!));
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -480,7 +491,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await released(w, "v1.4.0", w.initial);
     // A check that pins the version: it passes on the work, and fails once Petrina sets the new version.
     w.setScript((script) => (script.checks = [{ name: "Pinned", argv: ["git", "grep", "-q", "--fixed-strings", '"version": "1.4.0"', "--", "package.json"], why: "A check that pins the version, for tests" }]));
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
@@ -507,13 +518,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(task.state).toBe("failed");
       expect(w.github().releases).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("keeps the approved destination when the product default branch changes", async () => {
     const w = await world("destination");
-    const engine = w.start();
+    const engine = await start(w);
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "pull-request", true);
@@ -533,7 +544,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       expect(w.github().prs[0]?.baseRefName).toBe("main");
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

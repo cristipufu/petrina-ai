@@ -3,7 +3,7 @@ import type { UsageReport } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { ANALYTICS_HOLD_MS, ANALYTICS_HOLDS, AnalyticsHolds, analyticsHolds, type AnalyticsHold } from "../src/analytics-read.js";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { writeConnection } from "../src/instance.js";
 import { mcpRequest } from "../src/mcp.js";
 import { serve } from "../src/server.js";

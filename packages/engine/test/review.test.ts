@@ -361,7 +361,7 @@ describe.concurrent("reviewers at once, then a vote", () => {
       expect(task.findings.filter((finding) => finding.text === "Consider a friendlier greeting.")).toHaveLength(2);
       expect(task.hunt).toBeUndefined();
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 

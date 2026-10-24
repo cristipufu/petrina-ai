@@ -140,7 +140,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       await f.delivery();
       expect(f.runs()).toEqual(["passed", "passed"]);
       expect(f.fakes.openings("code reviewer")).toHaveLength(1);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("still presents a finished plan checkpoint while the pool is paused", async () => {
@@ -154,7 +154,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(taskOf(state, f.taskId).holdsSlot).toBe(false);
       expect(f.fakes.received("builder")).toHaveLength(0);
       expect(f.runs()).toEqual([]);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("reuses one passing run through read-only reviewers, acceptance and delivery without dropping an acceptance pass", async () => {
@@ -173,7 +173,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["passed"]);
       expect(f.fakes.openings("tester")).toHaveLength(1);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("spends no acceptance turn on unchanged failing code before asking the coordinator", async () => {
@@ -275,7 +275,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
       // Building context reads evidence; it never runs checks to make the evidence current.
       expect(f.runs()).toEqual(["passed"]);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("returns unchanged work twice without using a review round, keeps the failure after restart, and checks a real fix", async () => {
@@ -419,7 +419,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(f.runs()).toEqual(["passed", "failed", "passed"]);
       expect(task.blockingAfter?.[review.id]).toEqual([1, 0]);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -440,7 +440,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["failed", "passed", "passed"]);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -471,7 +471,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       // The passing run continued at the review the checks had held back; nothing shipped unreviewed.
       expect(f.fakes.openings("code reviewer")).toHaveLength(1);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -493,7 +493,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(task.checks!.results.every((run) => run.ok)).toBe(true);
       expect(task.blockingAfter?.[task.plan!.stages.find((stage) => stage.kind === "review-chain")!.id]).toEqual([0]);
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -512,7 +512,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(shipped.checks!.tree).not.toBe(reviewedTree);
       expect(shipped.checks!.sha).toBe(await git(f.repo, "rev-parse", "main"));
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -541,7 +541,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(f.runs()).toEqual(["passed", "passed", "passed"]);
       expect(await git(f.repo, "log", "-1", "--format=%s")).toBe("Fix: Add a greeting");
     } finally {
-      f.engine.shutdown();
+      await f.engine.shutdown();
     }
   });
 
@@ -600,7 +600,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(refreshed.results.every((run) => run.ok)).toBe(true);
         expect(hook.runs()).toBeGreaterThan(initialRuns + 1);
         expect(f.runs()).toEqual(["passed", "passed"]);
-      } finally { f.engine.shutdown(); }
+      } finally { await f.engine.shutdown(); }
     });
 
     it.skipIf(process.platform === "win32")(`explicit Retry refreshes a saved pass as well as the opaque ${hookName}`, async () => {
@@ -625,7 +625,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(failed.results.at(-1)!.output).toContain("captured hook failure");
         expect(hook.runs()).toBe(initialRuns + 1);
         expect(f.runs()).toEqual(["passed", "passed"]);
-      } finally { f.engine.shutdown(); }
+      } finally { await f.engine.shutdown(); }
     });
 
     it.skipIf(process.platform === "win32")(`notices identical ${hookName} launchers in different folders, before review and delivery`, async () => {
@@ -663,7 +663,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(f.runs()).toEqual(["passed", "passed", "passed"]);
         expect(await git(f.repo, "rev-parse", "HEAD")).not.toBe(await git(task.worktree!, "rev-parse", "HEAD"));
       } finally {
-        f.engine.shutdown();
+        await f.engine.shutdown();
       }
     });
 
@@ -711,7 +711,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
           }
           expect(f.runs()).toEqual(["passed"]);
         } finally {
-          f.engine.shutdown();
+          await f.engine.shutdown();
         }
       });
     }
@@ -741,7 +741,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(f.runs()).toEqual(["failed", "passed"]);
         expect(fixed.checks!.results.every((run) => run.ok)).toBe(true);
       } finally {
-        f.engine.shutdown();
+        await f.engine.shutdown();
       }
     });
   }
@@ -782,7 +782,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(task.portReview).toBeUndefined();
         expect(task.rounds[task.plan!.stages.find((stage) => stage.kind === "review-chain")!.id] ?? 1).toBe(1);
       } finally {
-        f.engine.shutdown();
+        await f.engine.shutdown();
       }
     });
   }

@@ -309,7 +309,9 @@ export class TakeOver {
   /** The tool's own app, as found on this machine, and for Claude Code the name its installed copy gives its ask-before-acting mode. */
   private async takeOverTool(toolId: Id): Promise<LaunchInput["tool"]> {
     const adapter = ADAPTERS[toolId];
-    const path = adapter && TAKE_OVER_TOOLS[toolId] ? (this.k.options.toolPath?.(toolId) ?? Bun.which(adapter.cli)) : undefined;
+    const path = adapter && TAKE_OVER_TOOLS[toolId]
+      ? this.k.options.toolPath?.(toolId) ?? (this.k.options.requireAgentCommand ? undefined : Bun.which(adapter.cli))
+      : undefined;
     if (!adapter || !path) throw new Error(TAKE_OVER_WORDS.missing(toolName(toolId)));
     const id = toolId as LaunchInput["tool"]["id"];
     return { id, name: adapter.name, path, ...(id === "claude-code" ? { mode: await askMode(path) } : {}) };

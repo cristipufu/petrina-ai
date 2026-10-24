@@ -29,6 +29,7 @@ const SYNC_CALLBACKS = new Set(["forEach", "filter", "some", "every", "find", "f
 const SYNC_CALLERS = new Set(["subscribe", "setGitHub", "updateGitHub", "editSaved", "setScript"]);
 const FUNCTIONS = new Set(["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ObjectMethod", "ClassMethod", "ClassPrivateMethod"]);
 const WRAPPERS = new Set(["TSAsExpression", "TSNonNullExpression", "TSSatisfiesExpression", "ParenthesizedExpression"]);
+const CALLS = new Set(["CallExpression", "OptionalCallExpression"]);
 
 /** Parse syntax rather than searching prose, comments or template strings for code. Never executes a module. */
 export function sourceFacts(source: string, filename: string): SourceFacts {
@@ -85,9 +86,13 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
  */
 function unfinishedWork(program: Node, facts: SourceFacts): void {
   const tracked = new Set<string>(), namespaces = new Set<string>();
+  const collectors = new Set<string>();
   // Callees that wait for the promise they are given, by argument position.
   const awaiting = new Map<string, number[]>();
   for (const statement of program.body as Node[]) {
+    if (statement.type === "ImportDeclaration" && statement.importKind !== "type" && /^(?:\.\.\/)+src\/parallel\.[jt]s$/.test(text(statement.source) ?? "")) {
+      for (const specifier of statement.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type" && name(specifier.imported) === "completeAll") collectors.add(name(specifier.local)!);
+    }
     if (statement.type === "ImportDeclaration" && REJECTIONS.test(text(statement.source) ?? "")) {
       for (const specifier of statement.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && ["rejectionOf", "expectRejection"].includes(name(specifier.imported) ?? "")) awaiting.set(name(specifier.local)!, [0]);
     }
@@ -97,7 +102,7 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
       else if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type" && ASYNC_HELPERS.has(name(specifier.imported) ?? text(specifier.imported) ?? "")) tracked.add(name(specifier.local)!);
     }
   }
-  if (!tracked.size && !namespaces.size) return;
+  const shutdownOnly = !tracked.size && !namespaces.size;
   type Call = { call: Node; parents: Node[] };
   const calls: Call[] = [], declared = new Map<Node, string>(), asyncNames = new Set<string>(), aliases: [string, string][] = [];
   // Names are followed only when the file binds them once: a value sharing a function's name stays out of it.
@@ -114,7 +119,7 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
   const once = (called: string) => (bindings.get(called) ?? 0) <= 1;
   const lineOf = (value: Node) => (value.loc as { start: { line: number } }).start.line;
   const walk = (value: Node, parents: Node[]) => {
-    if (value.type === "CallExpression") calls.push({ call: value, parents: [...parents] });
+    if (CALLS.has(value.type)) calls.push({ call: value, parents: [...parents] });
     if (value.type === "VariableDeclarator") bind(value.id);
     if (value.type === "FunctionDeclaration" || value.type === "ClassDeclaration") bind(value.id);
     if (FUNCTIONS.has(value.type)) for (const param of value.params as Node[]) bind(param);
@@ -140,15 +145,16 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
     parents.pop();
   };
   walk(program, []);
-  for (const called of asyncNames) if (once(called)) tracked.add(called);
-  const method = (callee: Node) => callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression" ? name(callee.property) : undefined;
+  for (const called of asyncNames) if (!shutdownOnly && once(called)) tracked.add(called);
+  const method = (callee: Node) => callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression" ? name(callee.property) ?? text(callee.property) : undefined;
   /** Whether a call uses a callback's answer at once, never waiting for a promise from it. */
   const calledAtOnce = (callee: Node) => name(callee) === "expect" || SYNC_CALLERS.has(name(callee) ?? method(callee) ?? "") || SYNC_CALLBACKS.has(method(callee) ?? "");
-  for (const { call } of calls) if (calledAtOnce(call.callee as Node)) {
+  for (const { call } of calls) if (!shutdownOnly && calledAtOnce(call.callee as Node)) {
     for (const argument of call.arguments as Node[]) if ((FUNCTIONS.has(argument.type) && argument.async) || (asyncNames.has(name(argument) ?? "") && once(name(argument)!))) facts.asyncCallbacks.push(lineOf(argument));
   }
   const target = ({ call }: Call): string | undefined => {
     const callee = call.callee as Node;
+    if (method(callee) === "shutdown") return "shutdown";
     if (name(callee) && tracked.has(name(callee)!)) return name(callee);
     if ((callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") && namespaces.has(name(callee.object) ?? "") && ASYNC_HELPERS.has(name(callee.property) ?? "")) return name(callee.property);
     return undefined;
@@ -165,7 +171,12 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
       if (wrapped && !tracked.has(wrapped) && once(wrapped)) { tracked.add(wrapped); grown = true; }
     }
   }
-  const combinator = (value: Node | undefined) => value?.type === "CallExpression" && node(value.callee) && value.callee.type === "MemberExpression" && name(value.callee.object) === "Promise" && COMBINATORS.has(name(value.callee.property) ?? "");
+  const combinator = (value: Node | undefined) => {
+    if (value?.type !== "CallExpression" || !node(value.callee)) return false;
+    const called = name(value.callee);
+    if (called && collectors.has(called) && !bindings.has(called)) return true;
+    return value.callee.type === "MemberExpression" && name(value.callee.object) === "Promise" && COMBINATORS.has(name(value.callee.property) ?? "");
+  };
   /** Climb past what continues the same work: type assertions, branches of a condition, then/catch/finally chains. */
   function climb(work: Node, parents: readonly Node[]): { work: Node; index: number; handled: boolean } {
     let index = parents.length - 1, handled = false;
@@ -258,7 +269,7 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
   // Asynchronous callbacks mapped over an array leave an array of work, which has to be collected.
   for (const { call, parents } of calls) {
     const mapped = method(call.callee as Node);
-    if ((mapped === "map" || mapped === "flatMap") && (call.arguments as Node[]).some((argument) => FUNCTIONS.has(argument.type) && argument.async) && !waited(call, parents, true)) facts.unfinished.push({ line: lineOf(call), name: mapped });
+    if (!shutdownOnly && (mapped === "map" || mapped === "flatMap") && (call.arguments as Node[]).some((argument) => FUNCTIONS.has(argument.type) && argument.async) && !waited(call, parents, true)) facts.unfinished.push({ line: lineOf(call), name: mapped });
   }
   for (const entry of calls) {
     const called = target(entry);

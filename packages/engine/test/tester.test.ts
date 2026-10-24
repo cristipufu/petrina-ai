@@ -163,7 +163,7 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(task.acceptancePassed).toBe(false); expect(task.acceptanceUnverified).toBe(true);
       expect(engine.getState().inbox.find((item) => item.taskId === taskId && item.kind === "delivery")!.title).toContain("could not be verified");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -254,7 +254,7 @@ describe("the tester tries the change once, and the final code once more", () =>
       expect(journeyProblems(task)).toEqual([]);
     } finally {
       unsubscribe();
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

@@ -143,7 +143,7 @@ describe("a command that does not end normally", () => {
     expect(background).toBeGreaterThan(0);
     expect(failure.cleanup).toBe("confirmed");
     expect(failure.message).toContain("Everything found that it started has stopped.");
-    expect(await alive(background)).toBe(false);
+    expect(await childState(background)).toBe("ended");
   });
 
   it.skipIf(!unix)("stops when cancelled while it runs, and stops what it started", async () => {
@@ -153,7 +153,7 @@ describe("a command that does not end normally", () => {
     const failure = await failureOf(command);
     expect(failure.reason).toBe("cancelled");
     expect(failure.cleanup).toBe("confirmed");
-    expect(await alive(Number(failure.stdout.trim()))).toBe(false);
+    expect(await childState(Number(failure.stdout.trim()))).toBe("ended");
   });
 
   it.skipIf(!unix)("does not succeed when it exited but a program it started keeps its output open", async () => {
@@ -354,7 +354,7 @@ describe("a command that does not end normally", () => {
       try {
         expect(background).toBeGreaterThan(0);
         expect(failure.cleanup).toBe("unconfirmed");
-        await waitFor(async () => !(await alive(background)), "the paused group to be stopped", 5_000);
+        await waitFor(async () => (await childState(background)) === "ended", "the paused group to be stopped", 5_000);
       } finally {
         if (background && await alive(background)) process.kill(background, "SIGKILL");
       }
@@ -435,7 +435,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(10);`;
       const failure = await failureOf(command);
       background = Number(failure.stdout.trim());
       expect(failure.cleanup).toBe("confirmed");
-      expect(await alive(background)).toBe(false);
+      expect(await childState(background)).toBe("ended");
       // Paused after the first look; nothing more until a later look shows something new.
       expect(failed).toBeGreaterThan(0);
       expect(counts.length).toBeGreaterThan(failed + 1);
@@ -714,7 +714,7 @@ await Bun.sleep(60_000);`;
         expect(failure.reason).toBe("cancelled");
         expect(failure.cleanup).toBe(leaves ? "unconfirmed" : "confirmed");
         if (leaves) await stopped(background, born + WATCHED_S * 1_000, "the program that left the group to stop");
-        else expect(await alive(background)).toBe(false);
+        else expect(await childState(background)).toBe("ended");
         expect(failure.message).toContain(leaves ? "Some of what it started may still be running." : "Everything found that it started has stopped.");
       } finally {
         stop.abort();

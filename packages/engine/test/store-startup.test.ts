@@ -3,10 +3,45 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Store } from "../src/store.js";
+import { WorkLog } from "../src/worklog.js";
 import { removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
+
+it("rolls back an unfinished schema installation and releases the failed store's database", () => {
+  const root = tempDir("petrina-store-schema-"); roots.push(root);
+  const file = join(root, "petrina.db");
+  const old = new Database(file);
+  // An incompatible existing table makes history initialization fail after other schema work began.
+  old.run("CREATE TABLE task_history (id TEXT PRIMARY KEY)");
+  old.close();
+  expect(() => new Store(file)).toThrow();
+  const inspect = new Database(file);
+  try {
+    expect(inspect.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all()).toEqual([{ name: "task_history" }]);
+    expect(inspect.query("PRAGMA table_info(task_history)").all().map(row => (row as { name: string }).name)).toEqual(["id"]);
+    inspect.run("DROP TABLE task_history");
+  } finally { inspect.close(); }
+  const recovered = new Store(file);
+  try { expect(recovered.database.inTransaction).toBe(false); expect(recovered.history.info().total).toBe(0); }
+  finally { recovered.close(); }
+});
+
+it("installs work-log tables atomically without closing the caller's connection after a schema failure", () => {
+  const root = tempDir("petrina-worklog-schema-"); roots.push(root);
+  const db = new Database(join(root, "petrina.db"));
+  try {
+    db.run("CREATE TABLE work_turns (id TEXT PRIMARY KEY)");
+    expect(() => new WorkLog(db)).toThrow();
+    expect(db.inTransaction).toBe(false);
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all()).toEqual([{ name: "work_turns" }]);
+    db.run("DROP TABLE work_turns");
+    const log = new WorkLog(db);
+    expect(log.since()).toBeGreaterThan(0);
+    log.close();
+  } finally { db.close(); }
+});
 
 for (const releases of [true, false]) it(`database startup ${releases ? "waits for a short competing lock" : "reports a lock that outlasts its allowance and can then recover"}`, async () => {
   const root = tempDir("petrina-store-startup-"); roots.push(root);

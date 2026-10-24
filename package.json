@@ -18,6 +18,7 @@
     "test": "bun packages/engine/test/quality/full-run.ts",
     "test:conventions": "bun packages/engine/test/quality/repository.ts conventions",
     "test:impact": "bun packages/engine/test/quality/repository.ts impact",
-    "test:coverage": "bun packages/engine/test/quality/coverage.ts"
+    "test:coverage": "bun packages/engine/test/quality/coverage.ts",
+    "test:install-browser": "bun packages/engine/node_modules/@playwright/mcp/cli.js install-browser --no-shell chromium"
   }
 }

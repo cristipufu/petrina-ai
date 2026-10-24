@@ -849,7 +849,7 @@ describe("choosing who continues after a model fills up", () => {
     return { engine, task, profileOf };
   }
 
-  it("uses a free tool when the preferred tool has no seat, and keeps a review off the builder's tool", () => {
+  it("uses a free tool when the preferred tool has no seat, and keeps a review off the builder's tool", async () => {
     const { engine, task, profileOf } = choiceEngine();
     const soon = Date.now() + 60_000;
     try {
@@ -890,10 +890,10 @@ describe("choosing who continues after a model fills up", () => {
       expect(profileOf("opus-xhigh", "security-reviewer")?.toolId).not.toBe("claude-code");
       task.modelCapacity = [{ toolId: "codex", modelId: "gpt-6.1-sol", profileId: "sol-xhigh", until: soon }];
       expect(profileOf("opus-xhigh", "security-reviewer")?.toolId).not.toBe("claude-code");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
-  it("continues a replacement's conversation only when it has a seat and usage, and stays off the builder's tool", () => {
+  it("continues a replacement's conversation only when it has a seat and usage, and stays off the builder's tool", async () => {
     const { engine, task, profileOf } = choiceEngine();
     const later = Date.now() + 5 * 60_000;
     const hours = Date.now() + 5 * 60 * 60_000;
@@ -941,10 +941,10 @@ describe("choosing who continues after a model fills up", () => {
       executionFor(task).work.builderSession = { stageId: "build", profileId: "astra-xhigh", toolId: "codex", model: "gpt-6-astra", sessionId: "built" };
       owe("security-reviewer");
       expect(profileOf("sol-xhigh", "security-reviewer")?.toolId).toBe("claude-code");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
-  it("waits for the account, not the full model, when the account is out too", () => {
+  it("waits for the account, not the full model, when the account is out too", async () => {
     const { engine, task } = choiceEngine();
     const later = Date.now() + 5 * 60_000;
     const hours = Date.now() + 5 * 60 * 60_000;
@@ -983,10 +983,10 @@ describe("choosing who continues after a model fills up", () => {
       expect(engine.choose("sol-xhigh", task, "maintenance-bug-finder")).toEqual({ kind: "none", waiting: "Waiting for usage on the saved maintenance profile" });
       engine.s.pool.limited = [];
       expect(capacityWait(engine.choose("sol-xhigh", task, "maintenance-bug-finder"))).toBe(true);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
-  it("holds a replacement's own short retry, and not a different step", () => {
+  it("holds a replacement's own short retry, and not a different step", async () => {
     const { engine, task, profileOf } = choiceEngine();
     const now = Date.now();
     const soon = now + 5_000;
@@ -1038,6 +1038,6 @@ describe("choosing who continues after a model fills up", () => {
       task.capacityRetries = [{ toolId: "codex", modelId: "gpt-6-astra", profileId: "astra-xhigh", roleId: "verifier", member: "vote-sol-high", tried: 1 }];
       expect(profileOf("sol-high", "verifier")?.id).toBe("astra-xhigh");
       expect(profileOf("opus-high", "verifier")?.id).toBe("opus-high");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });

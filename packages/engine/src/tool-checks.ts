@@ -9,7 +9,7 @@ import { CHECK_NAMES, checkOf, type AgentProfile, type CheckId, type Id, type To
 import { agentEnv } from "./env.js";
 import { Kernel, notReady, ToolProblem, type MTask } from "./kernel.js";
 import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, checkNode, isAuthRequired, type CheckResult, type Which } from "./setup.js";
-import { ADAPTERS, findProgram } from "./tools.js";
+import { ADAPTERS, agentCommandFor, findProgram } from "./tools.js";
 
 /** Everything the tools check looks at, in the order it is shown. */
 export const CHECKS: readonly CheckId[] = ["claude-code", "codex", "grok", "antigravity", "gh", "git", "node"];
@@ -126,6 +126,7 @@ export class ToolChecks {
     const which = this.which();
     if (id === "git" || id === "node") return which(id) === null;
     if (id === "gh") return !this.k.options.gh && which("gh") === null;
+    if (this.k.options.requireAgentCommand && !this.k.options.agentCommand) return true;
     return !this.k.options.agentCommand && (which(ADAPTERS[id]!.cli) === null || !(ADAPTERS[id]!.installed?.() ?? true));
   }
 
@@ -145,7 +146,7 @@ export class ToolChecks {
       return gh.length ? checkGh(gh, timeoutMs) : Promise.resolve({ status: "not-installed" });
     }
     const profile = this.k.s.profiles.find((entry) => entry.toolId === id) as AgentProfile;
-    const command = this.k.options.agentCommand?.(profile);
+    const command = agentCommandFor(this.k.options, profile);
     return (async () => {
       // An empty folder of Petrina's own: never a product's, so no product's settings are read.
       const cwd = join(this.k.dataDir, "checks");

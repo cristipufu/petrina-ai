@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'repair/**', 'petrina/validation/**']
   pull_request:
 
 # Read-only token: CI only checks the code, it never writes to the repository.
@@ -47,7 +47,21 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      - run: bun run test
+      # Required engine tests open a real headless Chromium: install the build the locked browser
+      # dependency expects, with its Linux libraries, before the tests and never inside them.
+      - name: Chromium for the browser tests
+        run: bun run test:install-browser ${{ runner.os == 'Linux' && '--with-deps' || '' }}
+      - name: Full configured test suite
+        run: bun run test
+      - name: Test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-evidence-${{ matrix.os }}-${{ github.sha }}
+          path: .test-results/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
   desktop:
     name: Desktop shell (${{ matrix.os }})

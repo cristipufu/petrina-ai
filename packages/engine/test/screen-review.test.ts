@@ -44,8 +44,8 @@ async function fixture(role: "code reviewer" | "verifier", extra: Scenario = {},
       if (task().state === "failed") throw new Error(task().error);
       return engine.getState().inbox.some((item) => item.taskId === id && item.kind === "delivery");
     }, "the delivery check", 90_000),
-    restart: () => { engine.shutdown(); engine = new Engine(data, settings); },
-    close: async () => { engine.shutdown(); await Promise.all(engine.settling.values()); await Promise.all(engine.copyCleanups.values()); },
+    restart: async () => { await engine.shutdown(); engine = new Engine(data, settings); },
+    close: async () => { await engine.shutdown(); await Promise.all(engine.settling.values()); await Promise.all(engine.copyCleanups.values()); },
   };
 }
 
@@ -63,7 +63,7 @@ it.each(["resume", undefined] as const)("keeps an added reviewer's own role and 
     expect(request.conversation.role?.instructions).toBe(role.instructions);
     expect(f.task().hunt?.roles?.["reviewer:1"]?.id).toBe(security);
     f.engine.saveRole(security, { ...draftOf(role), instructions: "Use this wording only in a later step." });
-    f.restart();
+    await f.restart();
     f.engine.allowScreen(f.id);
     await waitFor(() => f.onScreen().length === 1, "the added reviewer to continue on the screen");
     expect(f.task().agent?.roleId).toBe(security);
@@ -100,13 +100,13 @@ for (const role of ["code reviewer", "verifier"] as const) {
         const registeredPeers = peers.map((peer) => realpathSync(peer));
         expect(peers.length).toBeGreaterThan(0);
         const stopped = f.engine;
-        stopped.shutdown();
+        await stopped.shutdown();
         await stopped.settling.get(f.id);
         expect(existsSync(copy)).toBe(true);
         expect(peers.every((peer) => !existsSync(peer))).toBe(true);
         const registered = await git(f.repo, "worktree", "list", "--porcelain");
         for (const peer of registeredPeers) expect(registered).not.toContain(peer);
-        f.restart();
+        await f.restart();
         f.engine.allowScreen(f.id);
         await waitFor(() => f.onScreen().includes(requester.session), "the saved reviewer to resume");
         f.fakes.scenario({ ...f.scenario, controlled: false, screenRoleHold: false });
@@ -198,7 +198,7 @@ for (const role of ["code reviewer", "verifier"] as const) {
         expect(preview).toMatchObject({ files: 2, commits: 1, unsaved: true });
         expect(preview.problem).toBeUndefined();
         expect(existsSync(join(f.task().worktree!, "committed-by-hand.txt"))).toBe(false);
-        f.restart();
+        await f.restart();
         await f.engine.reopenTerminal(f.id, "copy");
         expect(readFileSync(join(dir, launcher), "utf8")).toContain(copy);
         f.release(session);
@@ -432,7 +432,7 @@ it.each([false, true])("keeps a replacement reviewer's position and conversation
     f.engine.s.pool.limited = [];
     f.engine.s.pool.usage = [];
     f.fakes.scenario({ ...f.scenario, limited: [] });
-    f.restart();
+    await f.restart();
     expect(f.task().hunt?.profiles?.["0"]).toBe(replacement);
     f.engine.allowScreen(f.id);
     await waitFor(() => f.onScreen().includes(session), "the same replacement conversation on the screen");
@@ -488,7 +488,7 @@ it("keeps an immediate screen reviewer's unanswered question across a restart", 
     expect(item.title).toBe("Should the window keep its size?");
     expect(f.task().conversation?.asked).toEqual({ itemId: item.id, question: item.title });
     const session = f.task().conversation!.sessionId;
-    f.restart();
+    await f.restart();
     const kept = f.engine.getState().inbox.find((entry) => entry.id === item.id);
     expect(kept?.kind).toBe("question");
     expect(f.task().state).toBe("needs-you");

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { commandHelp, coordinationCli, followEvents } from "../src/coordination-cli.js";
-import type { EngineClient } from "../src/engine-client.js";
+import type { EngineClient } from "./client.js";
 import { OPERATIONS, operation } from "../src/operations.js";
 
 const root = resolve(import.meta.dir, "../../..");

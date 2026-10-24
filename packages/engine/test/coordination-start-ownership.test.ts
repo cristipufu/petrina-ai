@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { readConnection, removeConnection } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { EngineProcess, Fakes, HARNESS, SLOW, engineEnv, removeDir, tempDir, waitFor } from "./support.js";
@@ -18,7 +18,8 @@ for (const mode of ["explicit", "recovery", "offline"] as const) it(`recovers an
     store.begin(mode === "explicit" ? "stop" : "restart", { requestId: "earlier-operation" }, "running");
     store.finish(mode === "explicit" ? "completed" : "failed");
   }
-  const clientModule = JSON.stringify(join(import.meta.dir, "../src/engine-client.ts"));
+  const clientModule = JSON.stringify(join(import.meta.dir, "client.ts"));
+  const fixtureModule = JSON.stringify(join(import.meta.dir, "engine.ts"));
   const engineModule = JSON.stringify(join(import.meta.dir, "../src/engine.ts"));
   const launchModule = JSON.stringify(join(import.meta.dir, "../src/launch.ts"));
   writeFileSync(wrapper, mode === "offline" ? `
@@ -32,11 +33,12 @@ await new EngineClient(${JSON.stringify(home)}, () => {
 import { writeFileSync } from "node:fs";
 import { Engine } from ${engineModule};
 import { launch } from ${launchModule};
+import { fixtureEngineOptions } from ${fixtureModule};
 Engine.prototype.waitUntilReady = async function () {
   writeFileSync(${JSON.stringify(marker)}, "starting");
   await new Promise(() => {});
 };
-await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "explicit" ? "serve" : "app")}, port: 0, loginShell: false, engine: { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [], machineRecords: async () => "" } });
+await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "explicit" ? "serve" : "app")}, port: 0, loginShell: false, engine: fixtureEngineOptions(${JSON.stringify(home)}) });
 `);
   const interrupted = Bun.spawn([process.execPath, wrapper], { env: engineEnv(home), stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   const fakes = new Fakes(join(root, "agents"));

@@ -8,8 +8,8 @@ import * as acp from "@agentclientprotocol/sdk";
 import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
-import { AgentBrowser, cleanupNote, type ObservedProcess } from "./browser.js";
-import { descendantsKnown, parseDescendants, parseProcessState, processList, readProcessList, type ProcessListRead } from "./process-tree.js";
+import { AgentBrowser, cleanupNote } from "./browser.js";
+import { descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "./process-tree.js";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import type { RetryCause, SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages, type AgentMessage } from "./agent-messages.js";
@@ -241,48 +241,6 @@ async function exited(pids: readonly number[], ms: number): Promise<boolean> {
 /** The first words of an agent stop's private note when it cannot confirm that everything stopped: one line in the task's log or a test's output. */
 export const AGENT_CLEANUP_NOTE = "Agent cleanup incomplete:";
 
-/** Every process with its process group and its state. */
-const readGroups: ProcessListRead = (timeout) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
-
-/**
- * The final wait after a forced stop: whether every target (a process, or a group by its negative number) is gone or
- * has ended within `ms`, and what the list showed of any still present. A defunct process has exited and only waits
- * for its parent to collect it, yet to a signal it, and the group it leads, still look present; a busy runtime can be
- * slow to collect its own child, or never report its exit. So the list is read once, from a quarter of the way
- * through and within what is left, and a present target counts as ended only when a complete list shows it, or
- * every member of its group, defunct (`presentStates`).
- */
-async function ended(targets: readonly number[], ms: number, read: ProcessListRead): Promise<{ ended: boolean; processes: ObservedProcess[] }> {
-  const end = Date.now() + ms, from = Date.now() + ms / 4;
-  let listing: Promise<string | undefined> | undefined;
-  for (; Date.now() < end; await Bun.sleep(50)) {
-    if (!targets.some(alive)) return { ended: true, processes: [] };
-    listing ??= Date.now() >= from ? read(Math.max(50, end - Date.now())).catch(() => undefined) : undefined;
-  }
-  const present = targets.filter(alive);
-  if (!present.length) return { ended: true, processes: [] };
-  return presentStates(await listing, present);
-}
-
-/**
- * What a final list shows of targets still present after a forced stop, and whether it shows them all ended. Each
- * still answers to a signal, so only a positive sighting counts: a complete list naming the program defunct, or
- * naming members of its group and every one defunct. A list silent about something still present (no row, or a
- * group with no listed member) disagrees with that answer and proves nothing, like a list that cannot be read.
- */
-export function presentStates(list: string | undefined, present: readonly number[]): { ended: boolean; processes: ObservedProcess[] } {
-  // A complete list always shows this process.
-  const complete = list !== undefined && list.split("\n").some((line) => Number(line.trim().split(/\s+/)[0]) === process.pid);
-  const members = (group: number) => list!.split("\n").map((line) => line.trim().split(/\s+/)).filter(([, pgid]) => Number(pgid) === group).map(([pid]) => Number(pid));
-  const processes = present.flatMap((target): ObservedProcess[] => {
-    if (!complete) return [{ pid: Math.abs(target), state: "unknown", sources: [target < 0 ? "group" : "target"] }];
-    if (target > 0) return [{ pid: target, state: parseProcessState(list!, target), sources: ["target"] }];
-    const listed = members(-target);
-    return listed.length ? listed.map((pid) => ({ pid, state: parseProcessState(list!, pid), sources: ["group"] })) : [{ pid: -target, state: "absent", sources: ["group"] }];
-  });
-  return { ended: complete && processes.every(({ state }) => state === "finished"), processes };
-}
-
 /**
  * Stop the tool and every program it started (a build, a test run, a server), which could otherwise keep
  * writing in the working copy after the tool is gone. Pause known owners before collecting their
@@ -290,7 +248,7 @@ export function presentStates(list: string | undefined, present: readonly number
  * Resolves when they have all exited; forced after a few seconds. When that cannot be confirmed, `note` gets
  * one private line saying why: which process lists could not be read, and what stayed present.
  */
-export async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean, note?: (line: string) => void, read: ProcessListRead = readGroups): Promise<boolean> {
+export async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean, note?: (line: string) => void, read: ProcessListRead = readProcessGroups): Promise<boolean> {
   if (child.pid === undefined) return true;
   if (process.platform === "win32") {
     if (!running(child)) return true;
@@ -357,7 +315,7 @@ export async function stopAll(child: ChildProcess, graceMs: number, collectProgr
     pids = pids.filter(alive);
     send([-child.pid], "SIGKILL");
     send(pids, "SIGKILL");
-    const final = await ended([-child.pid, ...pids], 1_000, read);
+    const final = await waitForProcessesToEnd([-child.pid, ...pids], 1_000, read);
     remaining = final.processes;
     return confirmed(final.ended && complete);
   } finally {

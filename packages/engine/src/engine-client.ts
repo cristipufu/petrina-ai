@@ -38,11 +38,16 @@ function savedScheduling(home: string): "paused" | "running" | undefined {
   }
 }
 export class EngineClient {
+  private readonly start: () => number | void;
   constructor(
     readonly home = defaultHome(),
-    private readonly start: () => number | void = () => {
+    start?: () => number | void,
+    /** Tests supply the fixture CLI while retaining the real launch and ownership behavior. */
+    entrypoint = join(import.meta.dir, "cli.ts"),
+  ) {
+    this.start = start ?? (() => {
       const prior = readConnection(home);
-      const child = Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "serve", "--managed"], {
+      const child = Bun.spawn([process.execPath, entrypoint, "serve", "--managed"], {
         env: { ...process.env, PETRINA_HOME: home, PETRINA_PORT: prior ? new URL(prior.api).port : "0" },
         stdin: "ignore",
         stdout: "ignore",
@@ -52,8 +57,8 @@ export class EngineClient {
       });
       child.unref();
       return child.pid;
-    },
-  ) {}
+    });
+  }
   private async request(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<Result> {
     const connection = readConnection(this.home);
     if (!connection) return { outcome: "disconnected", message: "The engine has no local connection. Use engine start explicitly." };

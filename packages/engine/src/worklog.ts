@@ -265,9 +265,11 @@ export class WorkLog implements WorkLogReader {
   private retryKeys?: string[];
 
   constructor(private readonly db: Database) {
-    for (const statement of SCHEMA) db.run(statement);
-    const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(work_turns)").all().map(row => row.name));
-    for (const column of ["journey_id", "agent_run_id", "agent_seat"]) if (!columns.has(column)) db.run(`ALTER TABLE work_turns ADD COLUMN ${column} TEXT`);
+    db.transaction(() => {
+      for (const statement of SCHEMA) db.run(statement);
+      const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(work_turns)").all().map(row => row.name));
+      for (const column of ["journey_id", "agent_run_id", "agent_seat"]) if (!columns.has(column)) db.run(`ALTER TABLE work_turns ADD COLUMN ${column} TEXT`);
+    }).immediate();
   }
 
   close(): void {

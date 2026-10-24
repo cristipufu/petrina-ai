@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { fingerprint, impactPlan, type CoverageMap } from "./quality/impact.js";
 import { conventions } from "./quality/repository.js";
 import { sourceFacts } from "./quality/source.js";
-import { failedFiles } from "./quality/results.js";
+import { testResults } from "./quality/results.js";
 import { coveredFiles } from "./quality/coverage.js";
 
 const fixture = () => new Map([
@@ -59,6 +59,13 @@ it("parses TypeScript/TSX imports and ignores mentions of forbidden patterns in 
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `await import('../src/engine.js');`]]))).toHaveLength(1);
   expect(conventions(new Map([["packages/engine/test/re-export.ts", `export * from '../src/engine.js';`]]))).toHaveLength(1);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `import { runChecks as run } from '../src/checks.js';`]]))).toHaveLength(1);
+  for (const code of [
+    `import { EngineClient as Client } from '../src/engine-client.js';`,
+    `export * from '../src/engine-client.js';`,
+    `await import('../src/engine-client.js');`,
+  ]) expect(conventions(new Map([["packages/engine/test/a.test.ts", code]]))).toEqual([expect.stringContaining("import EngineClient from test/client")]);
+  expect(conventions(new Map([["packages/engine/test/client.ts", `import { EngineClient } from '../src/engine-client.js';`]]))).toEqual([]);
+  expect(conventions(new Map([["packages/engine/test/a.test.ts", `import type { EngineClient } from '../src/engine-client.js'; import { defaultHome } from '../src/engine-client.js';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `import { commandText } from '../src/checks.js'; import type { CheckProgress } from '../src/checks.js';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/fixtures.ts", `import { runChecks } from '../src/checks.js';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `it.only('example', () => {});`]]))).toHaveLength(1);
@@ -68,6 +75,27 @@ it("parses TypeScript/TSX imports and ignores mentions of forbidden patterns in 
 describe("test programs and the waits on them", () => {
   const found = (source: string, file = "packages/engine/test/a.test.ts") => conventions(new Map([[file, source]])).map((error) => error.slice(file.length + 1));
   const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "./rejections.js";\n`;
+
+  it("keeps engine shutdown owned through cleanup and restart, including optional and computed calls", () => {
+    for (const source of [
+      `engine.shutdown();`, `engine?.shutdown();`, `engine["shutdown"]();`,
+      `afterAll(() => { engine.shutdown(); });`, `engines.forEach(engine => engine.shutdown());`,
+    ]) expect(found(source)).toContainEqual(expect.stringContaining("await shutdown"));
+    for (const source of [
+      `await engine.shutdown();`, `await engine?.shutdown();`, `afterAll(() => engine.shutdown());`,
+      `const stopping = engine.shutdown(); await stopping;`,
+      `await Promise.all(engines.map(engine => engine.shutdown()));`,
+    ]) expect(found(source)).toEqual([]);
+  });
+
+  it("recognizes an awaited completeAll import without accepting unawaited, unrelated or shadowed collectors", () => {
+    const imported = `import { completeAll as settle } from "../src/parallel.js";\n`;
+    expect(found(imported + `await settle(engines.map(engine => engine.shutdown()));`)).toEqual([]);
+    expect(found(imported + `settle(engines.map(engine => engine.shutdown()));`)).toContainEqual(expect.stringContaining("await shutdown"));
+    expect(found(`import { settle } from "./other.js"; await settle(engines.map(engine => engine.shutdown()));`)).toContainEqual(expect.stringContaining("await shutdown"));
+    expect(found(imported + `async function wrong(settle) { await settle(engines.map(engine => engine.shutdown())); }`)).toContainEqual(expect.stringContaining("await shutdown"));
+    expect(found(imported + `const stops = engines.map(engine => engine.shutdown()); await settle(stops);`)).toEqual([]);
+  });
 
   it("rejects synchronous child calls under any name, and leaves file reads, prose and child-program text alone", () => {
     for (const source of [
@@ -176,12 +204,12 @@ function background(repo: string) { void git(repo, "fetch").catch(() => undefine
 
 it("attributes failures to structured runner outcomes, including XML escaping and failed setup", () => {
   const root = resolve("test-project");
-  expect(failedFiles(JSON.stringify({ testResults: [{ name: resolve(root, "packages/core/test/a.test.ts"), status: "failed" }, { name: resolve(root, "packages/core/test/b.test.ts"), status: "passed" }] }), "packages/core", "vitest", root)).toEqual(["packages/core/test/a.test.ts"]);
-  const xml = '<testsuites tests="2"><testsuite file="test/a&amp;b.test.ts" failures="1" errors="0"><testcase /></testsuite><testsuite file="test/pass.test.ts" failures="0"><testcase /></testsuite></testsuites>';
-  expect(failedFiles(xml, "packages/engine", "bun", root)).toEqual(["packages/engine/test/a&b.test.ts"]);
-  expect(() => failedFiles("<testsuites />", "packages/engine", "bun", root)).toThrow("Missing");
-  expect(() => failedFiles("{}", "packages/core", "vitest", root)).toThrow("Missing");
-  expect(failedFiles(xml.replace('</testsuites>', '<testsuite file="test/a&amp;b.test.ts" failures="1"><testcase /></testsuite></testsuites>'), "packages/engine", "bun", root)).toEqual(["packages/engine/test/a&b.test.ts"]);
+  expect(testResults(JSON.stringify({ success: false, numTotalTestSuites: 2, numPassedTestSuites: 1, numFailedTestSuites: 1, numPendingTestSuites: 0, numTotalTests: 1, numPassedTests: 1, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, testResults: [{ name: resolve(root, "packages/core/test/a.test.ts"), status: "failed", assertionResults: [] }, { name: resolve(root, "packages/core/test/b.test.ts"), status: "passed", assertionResults: [{ status: "passed" }] }] }), "packages/core", "vitest", root).failures).toEqual(["packages/core/test/a.test.ts"]);
+  const xml = '<testsuites tests="2" failures="1"><testsuite file="test/a&amp;b.test.ts" tests="1" failures="1" errors="0"><testcase><failure /></testcase></testsuite><testsuite file="test/pass.test.ts" tests="1" failures="0"><testcase /></testsuite></testsuites>';
+  expect(testResults(xml, "packages/engine", "bun", root).failures).toEqual(["packages/engine/test/a&b.test.ts"]);
+  expect(() => testResults('<testsuites tests="0" failures="0" />', "packages/engine", "bun", root)).toThrow("Missing");
+  expect(() => testResults("{}", "packages/core", "vitest", root)).toThrow("Missing");
+  expect(testResults(xml.replace('tests="2" failures="1"', 'tests="3" failures="2"').replace('</testsuites>', '<testsuite file="test/a&amp;b.test.ts" tests="1" failures="1"><testcase><failure /></testcase></testsuite></testsuites>'), "packages/engine", "bun", root).failures).toEqual(["packages/engine/test/a&b.test.ts"]);
 });
 
 it("records only executed LCOV source files, preserving dynamic edges as supplemental observations", () => {

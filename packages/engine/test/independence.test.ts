@@ -100,7 +100,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       expect(f.fakes.openings("verifier").length).toBeGreaterThan(0);
       expect(violations).toEqual([]);
       expect(peak).toBe(limit === 1 ? 1 : 2);
-    } finally { unsub(); f.engine.shutdown(); }
+    } finally { unsub(); await f.engine.shutdown(); }
   });
 
   it("keeps a design review away from the replacement that actually wrote the brief", async () => {
@@ -110,7 +110,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       expect(f.models("architect")).toEqual(["opus", "gpt-6.1-sol"]);
       expect(f.models("design reviewer")).toEqual(["grok-4.7"]);
       expect(f.task().brief?.summary).toBe("A greeting file.");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("hands a design reviewer to another tool when its own usage runs out", async () => {
@@ -119,7 +119,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       await f.advance(f.delivery);
       expect(f.models("architect")).toEqual(["opus"]);
       expect(f.models("design reviewer")).toEqual(["gpt-6.1-sol", "grok-4.7"]);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("retains a reported review after a restart of a saved legacy pair", async () => {
@@ -139,7 +139,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       expect(reviewers.filter((entry) => f.model(entry.session) === "grok-4.7").length).toBeGreaterThanOrEqual(1);
       expect(f.task().hunt).toBeUndefined();
       expect(f.task().brief?.summary).toBe("A greeting file.");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps an actual replacement's verdict in older saved rounds without recorded reviewer positions", async () => {
@@ -161,7 +161,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(verdicts.map((entry) => entry.profileId)).toEqual(["sol-high", "opus-high"]);
       expect(f.fakes.openings("builder")).toHaveLength(1);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("reviews a real conflict port away from its latest builder, even when neither planned reviewer can do that", async () => {
@@ -195,7 +195,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       const completed = f.task().journey!.filter((entry) => entry.roleId === "code-reviewer" && entry.port);
       expect(completed).toHaveLength(1);
       expect(completed[0]).toEqual(expect.objectContaining({ id: step.id, team: ["grok-high"], end: "done", reason: "review passed" }));
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("finishes both reviews on the remaining tool when independence is unavailable", async () => {
@@ -206,7 +206,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(verdicts).toHaveLength(2);
       expect(verdicts.every((entry) => f.engine.s.profiles.find((profile) => profile.id === entry.profileId)?.toolId === "codex")).toBe(true);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("restores the full planned review when an older saved port has no proof of completed feature review", async () => {
@@ -237,7 +237,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       }
       expect(f.task().portReview).toBeUndefined();
       expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   for (const reopen of ["resume", "load"] as const) for (const legacy of [true, false]) {
@@ -279,7 +279,7 @@ describe.concurrent("reviews after a usage handoff", () => {
           expect(after[0]!.text).toContain("Petrina restarted");
         }
         expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
-      } finally { f.engine.shutdown(); }
+      } finally { await f.engine.shutdown(); }
     });
   }
 
@@ -297,7 +297,7 @@ describe.concurrent("reviews after a usage handoff", () => {
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(verdicts.map((entry) => entry.profileId)).toEqual(["sol-high", status === "ready" ? "grok-high" : "sol-high"]);
       expect(f.models("code reviewer").includes("grok-4.7")).toBe(status === "ready");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 });
 
@@ -308,7 +308,7 @@ async function voting(scenario: Scenario = {}, limit = 3, limited = ["claude-cod
     await f.advance(() => f.fakes.received("code reviewer").length >= (limit > 1 ? 2 : 1), (role) => role !== "code reviewer");
     f.engine.s.pool.limited = limited.map((toolId) => ({ toolId, until: Date.now() + 3_600_000, reason: `${toolId}'s usage limit` }));
     return f;
-  } catch (error) { f.engine.shutdown(); throw error; }
+  } catch (error) { await f.engine.shutdown(); throw error; }
 }
 
 const checkedFinding = (f: Awaited<ReturnType<typeof voting>>) => f.task().findings.find((finding) => finding.text === "The greeting is missing on the welcome page.")!;
@@ -492,7 +492,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(finding.verification?.verdict).toBe("real");
       expect(finding.status).toBe("fixed");
       expect(violations).toEqual([]);
-    } finally { unsub(); f.engine.shutdown(); }
+    } finally { unsub(); await f.engine.shutdown(); }
   });
 
   it("uses one truthful fresh vote when only Codex remains", async () => {
@@ -507,7 +507,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(f.fakes.openings("builder")).toHaveLength(1);
       expect(verifierSteps(f)[0]!.outcome).toBe("1 checked by one tool: none to fix now, 1 not a bug");
       expect(f.task().timeline.some((entry) => entry.text === "1 checked by one tool: none to fix now, 1 not a bug")).toBe(true);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps the existing mildest-verdict tie rule on an exhaustive pair", async () => {
@@ -518,7 +518,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(checkedFinding(f).severity).toBe("suggestion");
       expect(f.fakes.openings("verifier")).toHaveLength(2);
       expect(f.fakes.openings("builder")).toHaveLength(1);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   for (const modelOnly of [false, true]) it(`retains a selected seat whose ${modelOnly ? "model" : "tool"} is limited after its peer finishes, without borrowing the peer's vote`, async () => {
@@ -549,7 +549,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(finding.votes?.some((vote) => vote.by === "opus-high")).toBe(!modelOnly);
       if (modelOnly) expect(finding.votes?.find((vote) => vote.toolId === "claude-code")?.by).toBe("sonnet-high");
       expect(finding.verification?.verdict).toBe("real");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("replaces a selected seat limited after its peer finishes with an independent usable tool", async () => {
@@ -562,7 +562,7 @@ describe.concurrent("bounded verifier panels", () => {
       const replacement = f.task().journey!.flatMap((step) => step.agentInputs ?? []).find((input) => input.selectionReason?.includes("takes its required seat"));
       expect(replacement?.profileId).toBe("opus-high");
       expect(finding.verification?.verdict).toBe("real");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("waits for a capped tool instead of duplicating its partner", async () => {
@@ -583,7 +583,7 @@ describe.concurrent("bounded verifier panels", () => {
       await f.advance(f.delivery);
       expect(f.fakes.openings("verifier")).toHaveLength(2);
       expect(new Set(checkedFinding(f).votes?.map((vote) => vote.toolId))).toEqual(new Set(["codex", "grok"]));
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("retains a finished tool's vote across restart while its partner is unfinished", async () => {
@@ -597,7 +597,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(checkedFinding(f).votes?.find((vote) => vote.toolId === "codex")).toEqual(saved);
       expect(checkedFinding(f).votes).toHaveLength(2);
       expect(checkedFinding(f).status).toBe("dismissed");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps the first pair's answers and its third place through a pause and a restart", async () => {
@@ -656,7 +656,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(opening.slice(opening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
       expect(f.task().findings.find((finding) => finding.id === partial.id)?.votes).toEqual(partial.votes);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.votes?.length === 1 && finding.status === "dismissed")).toBe(true);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps a voter's starting role and partial work when its model changes before restart", async () => {
@@ -681,7 +681,7 @@ describe.concurrent("bounded verifier panels", () => {
       const remaining = f.task().findings.find((finding) => finding.id !== partial.id && finding.votes?.length)!;
       expect(plain(remaining.votes)).toEqual([{ by: "sonnet-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
       expect(f.engine.role("verifier")?.purpose).toBe("Use the new voting instructions next round.");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   for (const [initial, corrected, restart] of [
@@ -725,7 +725,7 @@ describe.concurrent("bounded verifier panels", () => {
         expect(f.fakes.openings("builder")).toHaveLength(1);
       }
       await f.advance(f.delivery);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps unknown legacy reasons without counting their nominal profiles as actual tools", async () => {
@@ -742,7 +742,7 @@ describe.concurrent("bounded verifier panels", () => {
       expect(checkedFinding(f).votes?.filter((vote) => vote.toolId)).toHaveLength(2);
       expect(checkedFinding(f).verification?.verdict).toBe("not-a-bug");
       expect(legacy).not.toHaveProperty("toolId");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps partial votes through a usage limit and waits until every finding has a verdict", async () => {
@@ -767,7 +767,7 @@ describe.concurrent("bounded verifier panels", () => {
       const replacementOpening = f.fakes.openings("verifier").at(-1)!;
       expect(replacementOpening.slice(replacementOpening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed" && finding.votes!.every((vote) => vote.ballot?.seat === "sol-high"))).toBe(true);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("keeps an older round's admitted one-per-tool panel and its majority rule until it finishes", async () => {
@@ -809,7 +809,7 @@ describe.concurrent("bounded verifier panels", () => {
       await f.advance(f.delivery);
       expect(f.fakes.openings("verifier")).toHaveLength(1);
       expect(checkedFinding(f).votes?.map((vote) => vote.toolId)).toEqual(["codex"]);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   for (const proven of [true, false]) it(`${proven ? "counts this ballot's saved answers before choosing more work" : "keeps answers of unproven provenance as history"} when no panel was saved`, async () => {
@@ -849,6 +849,6 @@ describe.concurrent("bounded verifier panels", () => {
       expect(f.task().findings.find((finding) => finding.id === findings[0]!.id)?.votes).toContainEqual(first);
       expect(f.task().findings.find((finding) => finding.id === findings[1]!.id)?.votes).toContainEqual(second);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed")).toBe(true);
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 });

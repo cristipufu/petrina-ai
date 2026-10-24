@@ -95,6 +95,8 @@ export interface EngineOptions {
   admissionsClosed?: boolean;
   /** Tests: run a fake agent instead of the tool's adapter. */
   agentCommand?: (profile: AgentProfile) => readonly string[] | undefined;
+  /** Tests: refuse native agent fallback, including an undefined result from the fake-command callback. */
+  requireAgentCommand?: boolean;
   /** Tests: whether eligible conversations get a browser. Real agents always do; fake agents only when this is true. */
   browser?: boolean;
   /** Tests: a fixture's own parent for temporary browser folders, instead of the standard one. Startup recovery uses it too. */
@@ -331,7 +333,9 @@ export abstract class Kernel {
     this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
     restoreProfileCatalog(this.s);
     // Tests stand in the tools' own apps: those count as installed.
-    this.s.tools = detectTools().map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
+    this.s.tools = detectTools(options.requireAgentCommand
+      ? id => Boolean(options.toolPath?.(id) || options.agentCommand)
+      : undefined).map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
     this.s.setup = setupOf(loaded) as MState["setup"];
     if (this.s.setup && !loaded?.setup && this.store.history.info().total > 0) this.s.setup.done = true;
     this.s.planner = this.onUsable(PLANNER_PROFILE);

@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
-import type { Tool } from "@petrina/core";
+import type { AgentProfile, Tool } from "@petrina/core";
 import type { ToolAdapter } from "./tool-adapter.js";
+import type { EngineOptions } from "./kernel.js";
 export type { ToolAdapter } from "./tool-adapter.js";
 import { join } from "node:path";
 import { claudeBackground } from "./claude-background.js";
@@ -136,8 +137,15 @@ export function findProgram(name: string): string | null {
   return Bun.which(name, { PATH: process.env.PATH ?? "" });
 }
 
+/** One command boundary for turns, probes and auxiliary agents; fixture mode never falls back to a native tool. */
+export function agentCommandFor(options: Pick<EngineOptions, "agentCommand" | "requireAgentCommand">, profile: AgentProfile): readonly string[] | undefined {
+  const command = options.agentCommand?.(profile);
+  if (options.requireAgentCommand && !command?.length) throw new Error(`This test must supply a scripted agent command for ${profile.toolId}; native agent fallback is disabled.`);
+  return command;
+}
+
 /** Which tools are usable on this machine: the CLI is installed and the adapter resolves. */
-export function detectTools(): Tool[] {
+export function detectTools(available?: (toolId: string) => boolean): Tool[] {
   return Object.values(ADAPTERS).map((adapter) => {
     let resolved = adapter.command !== undefined;
     if (!resolved) {
@@ -148,7 +156,7 @@ export function detectTools(): Tool[] {
         resolved = false;
       }
     }
-    const installed = resolved && findProgram(adapter.cli) !== null && (adapter.installed?.() ?? true);
+    const installed = available ? available(adapter.id) : resolved && findProgram(adapter.cli) !== null && (adapter.installed?.() ?? true);
     return {
       id: adapter.id,
       name: adapter.name,

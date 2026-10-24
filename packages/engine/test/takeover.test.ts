@@ -56,8 +56,8 @@ exec '${process.execPath}' '${join(import.meta.dir, "fake-cli.ts")}' '${fakes.di
   const finished = () => waitFor(() => (task().state === "done" ? task() : task().state === "failed" ? Promise.reject(new Error(task().error)) : undefined), "the task to finish", 90_000);
   /** Wait until the agent of a role is at work in a conversation that has its instructions. */
   const working = (roleId: string) => waitFor(() => task().agent?.roleId === roleId && task().conversation?.briefed && task().conversation?.roleId === roleId && task(), `the ${roleId} to be at work`);
-  const restart = () => {
-    engine.shutdown();
+  const restart = async () => {
+    await engine.shutdown();
     engine = new Engine(data, options);
     return engine;
   };
@@ -100,7 +100,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
       await waitFor(async () => (await sessionState(takeoverDir(run.data, run.taskId))) === "ended", "the orphaned fake app to close");
       expect(run.fakes.marked("cli-done")).toBe(true);
     } finally {
-      run.engine().shutdown();
+      await run.engine().shutdown();
     }
   });
 
@@ -216,7 +216,7 @@ describe.skipIf(!posix)("take over a builder in the terminal, then hand back", (
     expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello");
     delete process.env.PETRINA_TEST_SECRET;
     delete process.env.GH_TOKEN_FOR_TEST;
-    run.engine().shutdown();
+    await run.engine().shutdown();
   });
 });
 
@@ -257,7 +257,7 @@ describe.skipIf(!posix)("take over a reviewer, which is read-only", () => {
     // What was changed by hand is kept, even though the role is read-only, and ships inside the task's one commit.
     expect(await git(run.product, "show", "main:hand.txt")).toBe("Changed by hand");
     expect(await git(run.product, "log", "--format=%s", "main")).toBe("Add a greeting\ninit");
-    run.engine().shutdown();
+    await run.engine().shutdown();
   });
 });
 
@@ -284,7 +284,7 @@ describe.skipIf(!posix)("hand changes after every review chain", () => {
     expect(milestones.findLastIndex((text) => text.startsWith("Review passed"))).toBeLessThan(milestones.findIndex((text) => text.startsWith("Petrina moved main forward to it")));
     expect(done.rounds[review.id]).toBeUndefined();
     expect(await git(run.product, "show", "main:fix.txt")).toBe("A fix");
-    run.engine().shutdown();
+    await run.engine().shutdown();
   });
 });
 
@@ -309,7 +309,7 @@ describe.skipIf(!posix)("hand changes during design", () => {
     // Two reviewers in the chain, each once.
     expect(done.timeline.filter((entry) => entry.text === "Code reviewer started")).toHaveLength(2);
     expect(await git(run.product, "show", "main:design-note.txt")).toBe("A sketch");
-    run.engine().shutdown();
+    await run.engine().shutdown();
   });
 });
 
@@ -344,7 +344,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     expect(launched.command).toBe(`'${join(takeoverDir(run.data, run.taskId), LAUNCHER)}'`);
     expect(run.launched()).toHaveLength(0);
 
-    let engine = run.restart();
+    let engine = await run.restart();
     let task = run.task();
     expect(task.driving).toBeTruthy();
     expect(task.state).toBe("needs-you");
@@ -369,7 +369,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     expect(run.launched()).toHaveLength(1);
 
     // Restarted again while the app is open: still refused.
-    engine = run.restart();
+    engine = await run.restart();
     await expectRejection(engine.handBack(run.taskId, "", true), TAKE_OVER_WORDS.stillOpen("Codex"));
     rmSync(hold);
     expect(await first.exited).toBe(0);
@@ -378,7 +378,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     expect(await git(run.product, "show", "main:late.txt")).toBe("Late");
     expect(done.timeline.some((entry) => entry.text === "Took the step back on the same conversation")).toBe(true);
     expect(done.steps!.filter((step) => step.roleId === "builder")).toHaveLength(0);
-    engine.shutdown();
+    await engine.shutdown();
   });
 
   it("refuses to hand back while the working copy is off the task's branch", async () => {
@@ -397,7 +397,7 @@ describe.skipIf(!posix)("take over, copy the command, and restart Petrina", () =
     await git(worktree, "checkout", "-q", run.task().branch!);
     await engine.handBack(run.taskId);
     await run.finished();
-    engine.shutdown();
+    await engine.shutdown();
   });
 });
 
@@ -446,7 +446,7 @@ describe.skipIf(!posix)("opening the terminal again", () => {
     await run.finished();
     expect(run.launched()).toHaveLength(2);
     expect(await git(run.product, "show", "main:again.txt")).toBe("Again");
-    engine.shutdown();
+    await engine.shutdown();
   }, 60_000);
 });
 
@@ -471,7 +471,7 @@ describe.skipIf(!posix)("when the agent's work cannot be saved", () => {
     const done = await run.finished();
     expect(done.timeline.some((entry) => entry.text.startsWith("Could not get the working copy ready for you, so the Builder carries on"))).toBe(true);
     expect(await git(run.product, "show", "main:notes.txt")).toBe("A first draft");
-    engine.shutdown();
+    await engine.shutdown();
   });
 });
 
@@ -487,7 +487,7 @@ describe.concurrent("when take over is not available", () => {
     await expectRejection(engine.takeOver(taskId), TAKE_OVER_WORDS.noAgent);
     expect((engine.getState() as State).terminals).toEqual([]);
     expect(() => engine.setTerminal("iterm")).toThrow("That terminal is not on this machine");
-    engine.shutdown();
+    await engine.shutdown();
   });
 });
 

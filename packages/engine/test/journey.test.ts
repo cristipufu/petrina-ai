@@ -131,7 +131,7 @@ describe("the engine records each task's journey", () => {
       engine.s.setup!.checks = [{ id: "claude-code", status: "logged-out" }, { id: "codex", status: "ready" }];
       engine.commit();
       expect(viewOf(engine, id).nodes[0]).toMatchObject({ name: "Planner", state: "next", profileId: "sol-high" });
-      engine.shutdown();
+      await engine.shutdown();
 
       reopened = new Engine(data, { agentCommand: () => [process.execPath, fake] });
       expect(viewOf(reopened, id).nodes[0]).toMatchObject({ profileId: "sol-high" });
@@ -140,8 +140,8 @@ describe("the engine records each task's journey", () => {
       expect(viewOf(reopened, id).nodes[0]).toMatchObject({ profileId: "opus-high" });
       expect(taskOf(reopened, id).journey).toBeUndefined();
     } finally {
-      reopened?.shutdown();
-      engine.shutdown();
+      await reopened?.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -201,7 +201,7 @@ describe("the engine records each task's journey", () => {
     expect(architectInput.updates?.some(update => update.reason === "answer" && update.text.includes("The coordinator answered:"))).toBe(true);
     expect(task.timeline.find((entry) => entry.text.startsWith("You allowed"))?.step).toBe(builder.id);
     expect(journeyProblems(task)).toEqual([]);
-    engine.shutdown();
+    await engine.shutdown();
   });
 
   it("records parallel review, fresh votes and a fix round as distinct steps", async () => {
@@ -227,7 +227,7 @@ describe("the engine records each task's journey", () => {
       expect(view.nodes.at(-1)).toMatchObject({ kind: "petrina", name: "Publish delivery", state: "done" });
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -260,7 +260,7 @@ describe("the engine records each task's journey", () => {
     engine.cancel(id);
     expect(viewOf(engine, id)).toMatchObject({ end: { text: "Cancelled", state: "cancelled" } });
     expect(viewOf(engine, id).nodes.at(-1)).toMatchObject({ name: "Your design check", state: "cancelled", outcome: "Cancelled" });
-    engine.shutdown();
+    await engine.shutdown();
   });
 
   it("a stuck step, a Stuck step for you, and a new box when you try again", async () => {
@@ -279,7 +279,7 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes.map((node) => `${node.name}: ${node.state}`)).toEqual(["Planner: done", "Builder: failed", "Stuck: done", "Builder (again): done", "Check finder: done", "Automated checks: done", "Code reviewer: done", "Publish delivery: done"]);
     expect(view.nodes[2]).toMatchObject({ outcome: "Tried again", reason: "you asked to try again" });
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
-    engine.shutdown();
+    await engine.shutdown();
   });
 
   it("cancelling stops the step under way", async () => {
@@ -292,7 +292,7 @@ describe("the engine records each task's journey", () => {
     expect(view.nodes[0]!.outcome).toBe("Stopped: you cancelled");
     expect(view.rest).toBeUndefined();
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
-    engine.shutdown();
+    await engine.shutdown();
   });
 
   it("starts old tasks' journeys with one step per finished stage", async () => {
@@ -314,13 +314,13 @@ describe("the engine records each task's journey", () => {
       plan: { rationale: "Old.", plannerProfileId: "opus-high", stages: [{ id: `${id}:s0`, kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"] }, { id: `${id}:s1`, kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] }] },
     });
     delete task.journey;
-    engine.shutdown();
+    await engine.shutdown();
     engine = new Engine(data, { agentCommand: () => [process.execPath, fake, fakes.dir] });
     const view = viewOf(engine, id);
     expect(view.nodes.map((node) => `${node.name}: ${node.state}`)).toEqual(["Planner: done", "Researcher: done", "Builder: next"]);
     expect(view.note).toMatch(/Earlier rounds were not recorded/);
     expect(taskOf(engine, id).journey).toHaveLength(2);
-    engine.shutdown();
+    await engine.shutdown();
   });
 
   it("keeps an old task's step under way, and the question it waits on, across a restart", async () => {
@@ -340,7 +340,7 @@ describe("the engine records each task's journey", () => {
     const before = engine.task(id)! as unknown as { journey?: unknown; timeline: { step?: string }[]; session: { step?: string }[] };
     delete before.journey;
     for (const line of [...before.timeline, ...before.session]) delete line.step;
-    engine.shutdown();
+    await engine.shutdown();
 
     engine = open();
     const asked = question()!;
@@ -359,6 +359,6 @@ describe("the engine records each task's journey", () => {
     // toEqual, not toMatchObject: bun's toMatchObject writes its matchers into the object it checks.
     expect(taskOf(engine, id).journey![1]!.asks).toEqual([expect.objectContaining({ id: asked.id, how: "answered", answer: "Formal" })]);
     expect(journeyProblems(taskOf(engine, id))).toEqual([]);
-    engine.shutdown();
+    await engine.shutdown();
   });
 });

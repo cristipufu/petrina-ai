@@ -1,10 +1,8 @@
 // Bun's isolated test workers bypass process exit hooks. Own their temporary files outside the
-// workers, so even a failing run removes fixtures, private Git helpers and fixtures' private browser
-// folders after every worker stops.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { shortTempParent, TEST_BROWSERS, testTempParent } from "./temp-parent.js";
+// workers, so even a failing run removes fixtures, private Git helpers, the run's Git configuration
+// and fixtures' private browser folders after every worker stops.
+import { createTestRun } from "./environment.js";
+export { TEST_GIT_IDENTITY } from "./environment.js";
 
 /**
  * An engine test's time limit when neither the command nor the test sets one. The tests drive real
@@ -20,18 +18,10 @@ export function testCommand(args: readonly string[]): string[] {
 }
 
 if (import.meta.main) {
-  const requested = tmpdir();
-  const parent = testTempParent(requested);
-  if (parent !== requested) mkdirSync(parent, { recursive: true, mode: 0o700 });
-  const folder = mkdtempSync(join(parent, "petrina-tests-"));
-  let browsers: string | undefined;
+  const owned = createTestRun();
   try {
-    const home = join(folder, "home");
-    mkdirSync(home);
-    // Browser sockets need a shorter path than the run folder may have.
-    browsers = mkdtempSync(join(shortTempParent(process.platform, folder), "pb-"));
     const child = Bun.spawn(testCommand(process.argv.slice(2)), {
-      env: { ...process.env, TMPDIR: folder, TMP: folder, TEMP: folder, PETRINA_HOME: home, [TEST_BROWSERS]: browsers },
+      env: owned.env,
       stdin: "inherit", stdout: "inherit", stderr: "inherit",
     });
     let interrupted: number | undefined;
@@ -49,7 +39,6 @@ if (import.meta.main) {
       if (interrupted) process.exitCode = interrupted;
     }
   } finally {
-    rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    if (browsers) rmSync(browsers, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    owned.close();
   }
 }

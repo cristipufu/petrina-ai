@@ -76,7 +76,7 @@ async function ship(scenario: Scenario, hooks: { setup?: Hook<[repo: string]>; b
     }, "the work to ship", 90_000);
     return { task, fakes, repo, before, deliveryChecks };
   } finally {
-    engine.shutdown();
+    await engine.shutdown();
   }
 }
 

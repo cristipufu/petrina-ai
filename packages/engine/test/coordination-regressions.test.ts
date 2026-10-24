@@ -5,7 +5,7 @@ import type { AgentRun } from "../src/acp-run.js";
 import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { coordinationCli, exitCode } from "../src/coordination-cli.js";
 import { mcpRequest } from "../src/mcp.js";
 import { serve } from "../src/server.js";

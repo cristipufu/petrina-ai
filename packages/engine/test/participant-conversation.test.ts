@@ -10,11 +10,20 @@ import { Coordination } from "../src/coordination.js";
 import * as gitOps from "../src/git.js";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 import { FixtureTrace } from "./fixture-trace.js";
+import { SetupSteps } from "./setup-steps.js";
+import { completeAll } from "../src/parallel.js";
 
 const roots: string[] = [];
 const traces = new Map<string, FixtureTrace>();
 const observations: { mockRestore(): void }[] = [];
-afterAll(() => { observations.forEach((observation) => observation.mockRestore()); roots.forEach(removeDir); });
+const setup = new SetupSteps(), setupLifetime = new AbortController();
+const engines = new Set<Engine>();
+afterAll(async () => {
+  setupLifetime.abort();
+  await completeAll([...engines].map((engine) => engine.shutdown()));
+  observations.forEach((observation) => observation.mockRestore());
+  roots.forEach(removeDir);
+});
 
 function observeGit(root: string, trace: FixtureTrace): void {
   traces.set(root, trace);
@@ -58,14 +67,19 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ reopen: "resume", addedReviewer: "pass" });
   const launches: { at: number; profileId: string; toolId: string }[] = [];
-  trace?.mark("Creating the fixture engine");
-  const engine = new Engine(join(root, "data"), {
-    agentCommand: (profile) => {
-      launches.push({ at: Date.now(), profileId: profile.id, toolId: profile.toolId });
-      return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`, "--trace-startup"];
-    },
-    toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },
-  });
+  trace?.mark("Waiting to create the fixture engine");
+  const engine = await setup.run(() => {
+    trace?.mark("Creating the fixture engine");
+    const made = new Engine(join(root, "data"), {
+      agentCommand: (profile) => {
+        launches.push({ at: Date.now(), profileId: profile.id, toolId: profile.toolId });
+        return [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`, "--trace-startup"];
+      },
+      toolPath: () => "/bin/true", usageCommands: { codex: null, grok: null, antigravity: null },
+    });
+    engines.add(made);
+    return made;
+  }, setupLifetime.signal);
   const ownedWork = () => ({
     stopped: engine.stopped,
     drivers: [...engine.drivers.keys()], settling: [...engine.settling.keys()],

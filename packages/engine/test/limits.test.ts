@@ -29,7 +29,7 @@ async function fixture(limit: number, toolCap: number) {
     released.add(session);
   };
   const close = async () => {
-    engine.shutdown();
+    await engine.shutdown();
     await Bun.sleep(100);
     removeDir(root);
   };

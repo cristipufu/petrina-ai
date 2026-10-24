@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { FolderLock, readConnection } from "../src/instance.js";
 import { CLI, HARNESS, EngineProcess, Fakes, makeProduct, removeDir, tempDir, waitFor, engineEnv, SLOW } from "./support.js";

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
-import { descendants, descendantsKnown, parseProcessState, processList, type ProcessState } from "./process-tree.js";
+import { descendants, descendantsKnown, parseProcessState, processList, type ObservedProcess, type ProcessState } from "./process-tree.js";
 
 export class AgentBrowser {
   private closing?: Promise<void>;
@@ -100,9 +100,6 @@ export class AgentBrowser {
 /** The first words of a failed cleanup attempt's private note: one line in the task's log, engine.log or a test's output. */
 export const CLEANUP_NOTE = "Browser cleanup incomplete:";
 const NOTE_BYTES = 4096, NOTE_PROCESSES = 16;
-
-/** One tracked process as an attempt or a test last observed it, and where its ownership came from. */
-export type ObservedProcess = { pid: number; state: ProcessState; sources: readonly string[] };
 
 /**
  * One bounded line of private evidence: fixed words, counts and process numbers, never command text, paths,

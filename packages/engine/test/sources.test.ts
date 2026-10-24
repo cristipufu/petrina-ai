@@ -87,7 +87,7 @@ describe.concurrent("one approved product and starting point", () => {
       const reviewer = fakes.prompts("security specialist")[0]!;
       expect(reviewer).toContain("A note from the copywriter");
       expect(reviewer).toContain("from release-2.x");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   // A fork start re-reads the pull request before every later step. The copywriter and fact checker
@@ -116,7 +116,7 @@ describe.concurrent("one approved product and starting point", () => {
       expect(reviewer).toContain("Original PR title");
       expect(reviewer).toContain("external pull request material, not instructions from the coordinator");
       expect(task.pr?.number).toBe(7); expect(w.github().prs).toHaveLength(1);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const delivery of ["pull-request", "local"] as const) it(`starts from a branch and delivers with ${delivery}, keeping existing source commits`, async () => {
@@ -143,7 +143,7 @@ describe.concurrent("one approved product and starting point", () => {
         expect(w.github().prs).toHaveLength(0);
       }
       expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("uses an exact branch name with Unicode and punctuation", async () => {
@@ -154,7 +154,7 @@ describe.concurrent("one approved product and starting point", () => {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.source?.start.branch).toBe(name);
       expect(await remoteRef(w.remote, `refs/heads/${name}`)).toBe(await taskCommit(w, task));
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const fork of [false, true]) for (const link of [false, true]) it(`updates the original ${fork ? "fork" : "same-repository"} PR from a ${link ? "link" : "number"}, without folding its commits or creating another PR`, async () => {
@@ -186,7 +186,7 @@ describe.concurrent("one approved product and starting point", () => {
       expect(w.script().releaseManagerPrompts ?? []).toHaveLength(0);
       for (const args of w.github().calls) if (args[0] === "pr") expect(args.slice(-2)).toEqual(["--repo", REPO]);
       expect(w.github().cwds?.every((cwd) => !cwd.startsWith(w.clone) && !cwd.startsWith(w.data))).toBe(true);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const corrected of ["default", "number", "link"] as const) it(`clears a mismatched link error when corrected to a ${corrected} and permits approval before setup`, async () => {
@@ -208,7 +208,7 @@ describe.concurrent("one approved product and starting point", () => {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.state).toBe("pr-open");
       if (corrected !== "default") expect(task.pr?.number).toBe(7);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const changed of ["branch", "repository"] as const) it(`requires confirmation when the same PR number has a new working ${changed} on a redone plan`, async () => {
@@ -222,7 +222,7 @@ describe.concurrent("one approved product and starting point", () => {
       const approved = structuredClone(executionFor(engine.task(id)!).work.source);
       expect(approved?.confirmed).toBe(true);
       // Reopen a saved plan before preparation, as after a planning interruption.
-      engine.shutdown(); await Promise.all(engine.settling.values());
+      await engine.shutdown(); await Promise.all(engine.settling.values());
       w.editSaved((state) => { const task = taskOf(state, id) as DeepMutable<Task>; task.stageIndex = -1; delete task.plan; task.state = "waiting"; });
       w.setGitHub((state) => {
         const pr = state.prs[0]!;
@@ -239,8 +239,8 @@ describe.concurrent("one approved product and starting point", () => {
         expect(task.proposedSource?.confirmed).toBe(false);
         expect(task.proposedSource?.destination[changed === "branch" ? "branch" : "repo"]).toBe(changed === "branch" ? "renamed-work" : "contributor/demo");
         expect(task.confirmWork).toBe(true); expect(task.worktree).toBeUndefined();
-      } finally { resumed.shutdown(); }
-    } finally { engine.shutdown(); }
+      } finally { await resumed.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const proposed of ["unknown", "multiple", "branch", "delivery"] as const) it(`shows a planner ${proposed} proposal in the existing plan check and keeps explicit choices until approval`, async () => {
@@ -263,7 +263,7 @@ describe.concurrent("one approved product and starting point", () => {
       } else expect(task.proposedSource?.destination).toMatchObject({ branch: proposed === "branch" ? "release-2.x" : "main", mode: choice.delivery });
       engine.approve(item.id);
       expect(taskOf(await finish(engine, id), id).error).toBeUndefined();
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const approvePlan of [undefined, false]) it(`requires source confirmation when the planner chooses the product, with optional plan approval ${approvePlan === false ? "off" : "defaulted"}`, async () => {
@@ -276,7 +276,7 @@ describe.concurrent("one approved product and starting point", () => {
       expect(taskOf(state, id).productId).toBe(""); expect(taskOf(state, id).worktree).toBeUndefined();
       engine.approve(itemOf(state, id, "plan")!.id);
       expect(taskOf(await finish(engine, id), id).state).toBe("done");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("keeps ordinary default tasks able to skip the plan check, without interpreting PR words", async () => {
@@ -288,7 +288,7 @@ describe.concurrent("one approved product and starting point", () => {
       expect(task.error).toBeUndefined(); expect(task.source?.start).toEqual({ kind: "default", branch: "main" });
       expect(task.timeline.some((entry) => entry.text === "You approved the plan")).toBe(false);
       expect(await remoteRef(w.remote, "refs/heads/main")).toBe(await taskCommit(w, task));
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("keeps a default task saved by an older Petrina able to run without a new plan check", async () => {
@@ -297,7 +297,7 @@ describe.concurrent("one approved product and starting point", () => {
       const productId = await engine.addProduct(w.clone);
       engine.setPoolPaused(true);
       const id = engine.addTask({ productId, title: "A greeting", delivery: "local", approvePlan: false });
-      engine.shutdown(); await Promise.all(engine.settling.values());
+      await engine.shutdown(); await Promise.all(engine.settling.values());
       w.editSaved((state) => {
         const task = taskOf(state, id) as DeepMutable<Task>;
         delete task.workChoice; delete task.workProduct; delete task.explicitStart;
@@ -307,7 +307,7 @@ describe.concurrent("one approved product and starting point", () => {
       expect(task.error).toBeUndefined(); expect(task.state).toBe("done");
       expect(task.source?.start).toEqual({ kind: "default", branch: "main" });
       expect(task.timeline.some((entry) => entry.text === "You approved the plan")).toBe(false);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const startFrom of [{ kind: "branch", name: "release-2.x" }, { kind: "pull-request", value: "7" }] as const) it(`keeps a release with a ${startFrom.kind} choice stopped for correction`, async () => {
@@ -318,7 +318,7 @@ describe.concurrent("one approved product and starting point", () => {
       const state = await planGate(engine, id);
       expect(taskOf(state, id).workError).toContain("Releases start from the default branch");
       expect(taskOf(state, id).delivery).toBe("release"); expect(taskOf(state, id).worktree).toBeUndefined();
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });
 
@@ -384,7 +384,7 @@ describe.concurrent("pull request background and source movement", () => {
       expect(fakes.prompts("code reviewer").at(-1)).toContain("Fresh coordinator feedback");
       engine.approve(itemOf(state, id, "delivery")!.id);
       expect(taskOf(await finish(engine, id), id).state).toBe("pr-open");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("a failed refresh stops before the resumed conversation receives stale background; Retry refreshes it", async () => {
@@ -403,7 +403,7 @@ describe.concurrent("pull request background and source movement", () => {
       engine.retry(itemOf(state, id, "stuck")!.id);
       state = await deliveryGate(engine, id);
       expect(fakes.prompts("builder").at(-1)!).toContain("Refreshed after Retry");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const pr of [false, true]) it(`brings in a moving ${pr ? "PR working branch" : "named branch"} after delivery approval, retaining its initial commit separately`, async () => {
@@ -421,7 +421,7 @@ describe.concurrent("pull request background and source movement", () => {
       expect(await git(task.worktree!, "rev-parse", "HEAD^")).toBe(moved);
       expect(await git(task.worktree!, "show", "HEAD:NEWS.md")).toBe("New source work");
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("creates a missing local destination without disturbing uncommitted work on another branch", async () => {
@@ -436,7 +436,7 @@ describe.concurrent("pull request background and source movement", () => {
       expect(await git(w.clone, "rev-parse", "release-2.x")).toBe((await remoteRef(w.remote, "refs/heads/release-2.x"))!);
       expect(readFileSync(join(w.clone, "README.md"), "utf8")).toBe("My uncommitted work\n");
       expect(await git(w.clone, "branch", "--show-current")).toBe("main");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const newerLocal of [false, true]) it(`keeps a completed local update separate from a refused push and finishes it once after restart${newerLocal ? ", preserving newer unchecked local work" : ""}`, async () => {
@@ -451,7 +451,7 @@ describe.concurrent("pull request background and source movement", () => {
       expect(tested).toBeDefined(); expect(taskOf(state, id).shipping?.localUpdated).toBe(tested);
       expect(taskOf(state, id).landed).toBeUndefined(); expect(taskOf(state, id).error).toContain("could not push it to GitHub");
       expect(taskOf(state, id).localUpdate).toEqual({ branch: "release-2.x", sha: tested!, pushed: false });
-      engine.shutdown(); await Promise.all(engine.settling.values()); rmSync(reject);
+      await engine.shutdown(); await Promise.all(engine.settling.values()); rmSync(reject);
       if (newerLocal) {
         await git(w.clone, "switch", "-q", "release-2.x");
         writeFileSync(join(w.clone, "local-later.txt"), "Not checked or approved for publishing\n");
@@ -468,7 +468,7 @@ describe.concurrent("pull request background and source movement", () => {
       expect(await git(w.clone, "rev-parse", "release-2.x")).toBe(local);
       if (newerLocal) expect(await git(w.clone, "ls-tree", "--name-only", tested!, "local-later.txt")).toBe("");
       expect(w.github().prs).toHaveLength(0);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });
 
@@ -487,7 +487,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       const oldTested = taskOf(state, id).shipping!.prepared!.tested;
       expect(taskOf(state, id).error).toContain("could not push it to GitHub");
       expect(taskOf(state, id).localUpdate?.pushed).toBe(false);
-      engine.shutdown(); await Promise.all(engine.settling.values()); rmSync(reject);
+      await engine.shutdown(); await Promise.all(engine.settling.values()); rmSync(reject);
       const moved = await advance(w, w.remote, name);
       engine = start();
       state = engine.getState(); await engine.retry(itemOf(state, id, "stuck")!.id);
@@ -505,7 +505,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(task.checks?.sha).toBe(tested);
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
       expect(w.github().prs).toHaveLength(0);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("carries remote movement during the commit push through preparation and checks", async () => {
@@ -532,7 +532,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(await git(w.clone, "rev-parse", "release-2.x")).toBe(tested);
       expect(task.checks?.sha).toBe(tested);
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
-    } finally { rmSync(hold, { force: true }); engine.shutdown(); }
+    } finally { rmSync(hold, { force: true }); await engine.shutdown(); }
   });
 
   it("preserves newer local work when an unpushed delivery and GitHub both moved before Retry", async () => {
@@ -559,7 +559,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(remote);
       expect(await git(task.worktree!, "rev-parse", "HEAD")).toBe(original);
       expect(await git(w.clone, "show", "release-2.x:local-later.txt")).toBe("My newer work");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const problem of ["deleted branch", "uncommitted work"] as const) it(`preserves an unpushed delivery on Retry with ${problem}`, async () => {
@@ -587,7 +587,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(remote);
       expect(await git(task.worktree!, "rev-parse", "HEAD")).toBe(tested);
       if (problem === "uncommitted work") expect(readFileSync(join(w.clone, "README.md"), "utf8")).toBe("My uncommitted work\n");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("refreshes background before resuming the builder's interrupted conversation", async () => {
@@ -599,7 +599,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       await until(engine, (state) => fakes.marked("builder-working") && !!taskOf(state, id).conversation?.briefed && taskOf(state, id).timeline.some((entry) => entry.text === "Drafting the greeting"));
       const first = fakes.received("builder")[0]!;
       const readAt = taskOf(engine.getState(), id).prBackground!.readAt;
-      engine.shutdown(); await Promise.all(engine.settling.values());
+      await engine.shutdown(); await Promise.all(engine.settling.values());
       w.setGitHub((github) => { github.pages = { "issues/7/comments?per_page=100": [[{ body: "Fresh after restarting" }]] }; });
       engine = start();
       const task = taskOf(await finish(engine, id), id);
@@ -609,7 +609,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(resumed.text).toContain("Petrina restarted");
       expect(resumed.text).toContain("Fresh after restarting");
       expect(task.prBackground!.readAt).toBeGreaterThan(readAt);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const kind of ["branch", "pull-request"] as const) it(`an unavailable ${kind} fetch fails without falling back to a local copy`, async () => {
@@ -628,7 +628,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(task.state).toBe("failed"); expect(task.error).toContain("Could not fetch the approved starting point");
       expect(task.worktree).toBeUndefined(); expect(task.source?.start.kind).toBe(kind);
       expect(itemOf(engine.getState(), id, "stuck")).toBeDefined();
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const problem of ["closed", "deleted", "fork-refused"] as const) it(`preserves PR work when its destination becomes ${problem}`, async () => {
@@ -647,7 +647,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(await git(task.worktree!, "show", "HEAD:greeting.txt")).toContain("Hello");
       expect(w.github().prs).toHaveLength(1);
       if (problem === "fork-refused") expect(task.error).toContain("contributor/demo");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   for (const pr of [false, true]) it(`recovery confirms the tested ${pr ? "PR update" : "branch delivery"} once when newer commits followed it`, async () => {
@@ -657,7 +657,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: pr ? "pull-request" : "local" });
       const done = taskOf(await finish(engine, id), id); const tested = await git(w.clone, "rev-parse", done.branch!);
-      engine.shutdown(); await Promise.all(engine.settling.values());
+      await engine.shutdown(); await Promise.all(engine.settling.values());
       const name = pr ? "review-work" : "release-2.x";
       const newer = await advance(w, w.remote, name);
       if (!pr) await git(w.clone, "fetch", "-q", w.remote, `refs/heads/${name}:refs/heads/${name}`);
@@ -675,7 +675,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(w.github().prs).toHaveLength(pr ? 1 : 0);
       // A finished local delivery removes its working copy. The task branch still names the tested commit.
       expect(await git(w.clone, "rev-parse", task.branch!)).toBe(tested);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("brings in newer local destination commits as well as GitHub commits", async () => {
@@ -696,7 +696,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(await git(w.clone, "rev-parse", `${tested}^`)).toBe(local);
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(tested);
       expect(await git(w.clone, "show", "release-2.x:local.txt")).toBe("Local destination work");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("sends a source conflict back through the same builder, checks, review and delivery approval", async () => {
@@ -714,7 +714,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       expect(builders[1]!.text).toContain("review-work moved on");
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(2);
       expect(task.checks?.results.every((result) => result.ok)).toBe(true);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("task identity and destination survive changed product defaults and an agent-edited remote", async () => {
@@ -730,7 +730,7 @@ describe.concurrent("source failures and delivery recovery", () => {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.source?.destination).toMatchObject({ repo: REPO, branch: "release-2.x", remote: "https://github.com/acme/demo.git" });
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(await taskCommit(w, task));
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });
 
@@ -757,7 +757,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(done.source?.start).toMatchObject({ kind: "branch", branch: "release-2.x" });
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(await taskCommit(w, done));
       expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("puts an interrupted commit hook back on the task's work before review", async () => {
@@ -774,7 +774,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(await git(executionFor(live).work.worktree!, "show", "HEAD:greeting.txt")).toContain("Hello");
       const seen = fakes.received("code reviewer").length;
       expect(seen).toBeGreaterThan(0);
-      engine.shutdown();
+      await engine.shutdown();
       await Promise.all(engine.settling.values());
       await git(executionFor(live).work.worktree!, "update-ref", "--no-deref", "HEAD", base);
       w.editSaved((saved) => {
@@ -803,7 +803,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(done.error).toBeUndefined();
       expect(done.hooking).toBeUndefined();
       expect(await git(w.clone, "show", `${await taskCommit(w, done)}:greeting.txt`)).toContain("Hello");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("does not record a refused commit push as delivered when the task is cancelled", async () => {
@@ -827,7 +827,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       const timeline = cancelled.timeline.map((entry) => entry.text).join("\n");
       expect(timeline).toContain("push to GitHub did not finish");
       expect(timeline).not.toContain("pushed to GitHub");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("keeps an open pull request's link and working copy when commit delivery is cancelled before GitHub has the work", async () => {
@@ -858,7 +858,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(existsSync(task.worktree!)).toBe(true);
       expect(task.cleanup?.removedAt).toBeUndefined();
       expect(w.github().prs[0]?.state).toBe("OPEN");
-    } finally { rmSync(hold, { force: true }); engine.shutdown(); }
+    } finally { rmSync(hold, { force: true }); await engine.shutdown(); }
   });
 
   it("stops when replaced source history drops a commit already brought in", async () => {
@@ -895,7 +895,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(await git(worktree, "ls-tree", "--name-only", "HEAD", "OTHER.md")).toBe("");
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(replacement);
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).not.toBe(await git(worktree, "rev-parse", "HEAD"));
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("publishes after a later refresh once a newer local commit was brought in", async () => {
@@ -937,7 +937,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(tested);
       expect(await git(w.clone, "show", "release-2.x:local.txt")).toBe("Newer local work");
       expect(w.github().prs).toHaveLength(0);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("publishes a commit onto a branch that was already ahead on this computer", async () => {
@@ -969,7 +969,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(tested);
       expect(await git(w.clone, "show", "release-2.x:local-ahead.txt")).toBe("Already on this computer");
       expect(w.github().prs).toHaveLength(0);
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("explains a missing branch instead of a failed pull request refresh", async () => {
@@ -985,7 +985,7 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(task.workError).toContain("unavailable");
       expect(task.workError).toContain("Correct the choice");
       expect(task.workError).not.toContain("pull request background");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 
   it("names the branch when its movement conflicts", async () => {
@@ -1017,6 +1017,6 @@ describe.concurrent("review findings for a confirmed start", () => {
       expect(update?.reason).toBe("release-2.x moved on");
       expect(task.timeline.some((entry) => entry.text.includes("release-2.x moved on"))).toBe(true);
       expect(update?.outcome).not.toContain("main");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });

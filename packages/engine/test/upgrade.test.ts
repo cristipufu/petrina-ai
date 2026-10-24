@@ -34,7 +34,7 @@ async function interruptedBeforeUpdate(
   first.setProductDelivery(productId, mode, true);
   const taskId = first.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
   const task = taskOf(await until(first, (state) => itemOf(state, taskId, "delivery") !== undefined, coordinator(["plan", "design"])), taskId);
-  first.shutdown();
+  await first.shutdown();
   const head = await git(task.worktree!, "rev-parse", "HEAD");
   await options.oldAgent?.(task, head);
   w.editSaved((state) => {
@@ -100,7 +100,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       untouched(w, state, taskId, calls);
 
       // A restart changes nothing, and adds no question: one note per time Petrina asked.
-      engine.shutdown();
+      await engine.shutdown();
       const again = w.start();
       try {
         await Bun.sleep(300);
@@ -120,10 +120,10 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
         expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v0.1.0"]);
         expect(await remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
       } finally {
-        again.shutdown();
+        await again.shutdown();
       }
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -150,7 +150,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(w.github().prs).toHaveLength(1);
       expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -174,7 +174,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(bumped);
       expect(await remoteRef(w.remote, "refs/heads/main")).toBe(bumped);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -194,7 +194,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(engine.getState().inbox.filter((item) => item.taskId === taskId)).toEqual([]);
       expect(await git(w.clone, "rev-parse", "main")).toBe(w.initial);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
     const again = w.start();
     try {
@@ -205,7 +205,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(again.getState().inbox.filter((item) => item.taskId === taskId)).toEqual([]);
       expect(w.github().calls.length).toBe(calls);
     } finally {
-      again.shutdown();
+      await again.shutdown();
     }
   });
 
@@ -220,7 +220,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       expect(task.shipping).toEqual({ moves: 0, failures: 0, carriedOver: true });
       expect(cancelled.github().calls.length).toBe(before.calls);
     } finally {
-      before.engine.shutdown();
+      await before.engine.shutdown();
     }
 
     const paused = await world("upgrade-paused");
@@ -233,7 +233,7 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       const state = await until(engine, (current) => asks(current, taskId));
       untouched(paused, state, taskId, calls);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

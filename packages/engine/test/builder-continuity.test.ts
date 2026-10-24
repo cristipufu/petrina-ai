@@ -92,7 +92,7 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
       expect(f.task().findings.filter((finding) => finding.severity === "blocking").every((finding) => finding.answer?.fixed)).toBe(true);
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(new Set(verdicts.filter((entry) => entry.round === 2).map((entry) => f.engine.profile(entry.profileId!)?.toolId))).toEqual(new Set(["codex", "grok"]));
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   it("reopens the saved Codex conversation for a real main conflict and keeps the port review on Grok", async () => {
@@ -114,7 +114,7 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
       expect(f.fakes.received("builder").at(-1)).toEqual(expect.objectContaining({ session: original.sessionId, text: expect.stringContaining("Petrina is back with more work on this task") }));
       await f.advance(f.delivery);
       expect(f.task().timeline.find((entry) => entry.text.startsWith("Brought up to date with main"))?.profileId).toBe("sol-high");
-    } finally { f.engine.shutdown(); }
+    } finally { await f.engine.shutdown(); }
   });
 
   for (const check of ["ready", "logged-out", "timeout"] as const) it(`recovers an active legacy Grok Builder when its startup check is ${check}`, async () => {
@@ -171,12 +171,12 @@ describe.concurrent("the Builder's saved fallback conversation", () => {
         expect(f.task().timeline.some((entry) => entry.text === "Picked up where it left off")).toBe(true);
         expect(f.task().timeline.some((entry) => entry.text.includes("different tool or model"))).toBe(false);
       }
-    } finally { rmSync(hold, { force: true }); f.engine.shutdown(); }
+    } finally { rmSync(hold, { force: true }); await f.engine.shutdown(); }
   });
 });
 
 describe("Builder continuity boundaries", () => {
-  it("keeps usage, readiness, models, seats, pauses, plan changes and step-back rules", () => {
+  it("keeps usage, readiness, models, seats, pauses, plan changes and step-back rules", async () => {
     const root = tempDir("petrina-builder-boundaries-");
     roots.push(root);
     const engine = new Engine(root, { agentCommand: () => ["unused"], toolPath: () => "/bin/true" });
@@ -286,6 +286,6 @@ describe("Builder continuity boundaries", () => {
       reset();
       expect(choose("opus-high", "release-manager")?.kind).toBe("substitute");
       expect(choose("opus-high", "release-manager")).toEqual(expect.objectContaining({ profile: expect.objectContaining({ toolId: "grok" }) }));
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });

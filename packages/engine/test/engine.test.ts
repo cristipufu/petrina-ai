@@ -130,7 +130,7 @@ describe("answers to a request missing from the inbox", () => {
       });
       expect(final.tasks.find((t) => t.id === taskId)!.timeline.some((entry) => entry.text === "You answered: allow")).toBe(true);
       expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
-    } finally { engine.shutdown(); }
+    } finally { await engine.shutdown(); }
   });
 });
 

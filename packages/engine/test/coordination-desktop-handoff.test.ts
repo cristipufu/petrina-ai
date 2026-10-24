@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { FolderLock, processAlive, readConnection } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { EngineProcess, HARNESS, Fakes, engineEnv, firstLine, removeDir, tempDir, waitFor, SLOW } from "./support.js";

@@ -4,7 +4,9 @@ import type { ProfileChoices } from "@petrina/core";
 import { AgentRun } from "./acp-run.js";
 import { agentEnv } from "./env.js";
 import type { Kernel } from "./kernel.js";
-import { ADAPTERS } from "./tools.js";
+import { ADAPTERS, agentCommandFor } from "./tools.js";
+
+type ProfileHost = Pick<Kernel, "dataDir" | "options" | "stopped"> & { s: Pick<Kernel["s"], "profiles"> };
 
 /** On-demand configuration discovery: no prompt, browser, or polling. One probe per tool at a time. */
 export class ProfileChoiceReader {
@@ -13,7 +15,7 @@ export class ProfileChoiceReader {
   private tools = new Map<string, Promise<unknown>>();
   private lingering = new Map<string, Promise<void>>();
   private stopping = new AbortController();
-  constructor(private readonly k: Kernel) {}
+  constructor(private readonly k: ProfileHost) {}
   async stop(): Promise<void> { this.stopping.abort(); await Promise.allSettled([...this.pending.values()]); await Promise.allSettled([...this.lingering.values()]); }
   read(toolId: string, modelId?: string, refresh = false): Promise<ProfileChoices> {
     if (this.stopping.signal.aborted || this.k.stopped) return Promise.reject(new Error("The engine is stopping."));
@@ -56,7 +58,7 @@ export class ProfileChoiceReader {
           this.lingering.set(toolId, gone);
           void gone.then(() => { if (this.lingering.get(toolId) === gone) this.lingering.delete(toolId); }, () => undefined);
         },
-        command: this.k.options.agentCommand?.(profile), signal: AbortSignal.any([this.stopping.signal, controller.signal]), startTimeoutMs: this.k.options.startTimeoutMs,
+        command: agentCommandFor(this.k.options, profile), signal: AbortSignal.any([this.stopping.signal, controller.signal]), startTimeoutMs: this.k.options.startTimeoutMs,
         callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" } });
       return await run.profileChoices(modelId);
     } catch (error) {

@@ -52,10 +52,10 @@ describe("product settings in the engine", () => {
       expect(engine.getState().products[0]!.name).toBe("Petrina HQ");
       expect((await act("removeProduct", id)).error).toBe("2 tasks must finish or be cancelled before this product can be removed.");
       server.stop(true);
-      engine.shutdown();
+      await engine.shutdown();
       engine = new Engine(data);
       expect(engine.getState().products[0]!.name).toBe("Petrina HQ");
-    } finally { server.stop(true); engine.shutdown(); removeDir(root); }
+    } finally { server.stop(true); await engine.shutdown(); removeDir(root); }
   });
 
   it("refuses every unfinished state, then removes all finished and cancelled history and inbox entries durably", async () => {
@@ -67,7 +67,7 @@ describe("product settings in the engine", () => {
     const id = await engine.addProduct(repo);
     const first = engine.addTask({ productId: id, title: "Finished" });
     const seed = JSON.parse(JSON.stringify(engine.getState())) as State;
-    engine.shutdown();
+    await engine.shutdown();
     const write = (state: State) => {
       const store = new Store(join(data, "petrina.db"));
       store.save(state);
@@ -78,7 +78,7 @@ describe("product settings in the engine", () => {
         write({ ...seed, tasks: [{ ...seed.tasks[0]!, state }] });
         engine = new Engine(data);
         expect(() => engine.removeProduct(id)).toThrow("1 task must finish or be cancelled");
-        engine.shutdown();
+        await engine.shutdown();
       }
       write({ ...seed, tasks: [
         { ...seed.tasks[0]!, state: "done", column: "done" },
@@ -89,11 +89,11 @@ describe("product settings in the engine", () => {
       expect(engine.getState().products).toEqual([]);
       expect(engine.getState().tasks).toEqual([]);
       expect(engine.getState().inbox).toEqual([]);
-      engine.shutdown();
+      await engine.shutdown();
       engine = new Engine(data);
       expect(engine.getState().tasks).toEqual([]);
       expect(engine.getState().products).toEqual([]);
-    } finally { engine.shutdown(); removeDir(root); }
+    } finally { await engine.shutdown(); removeDir(root); }
   });
 
   it("gives the next agent the saved display name while keeping the working copy and branch", async () => {
@@ -119,6 +119,6 @@ describe("product settings in the engine", () => {
       expect(task().worktree).toBeDefined();
       expect(task().branch).toBeDefined();
       expect(task()).toMatchObject({ delivery: "local", approveDelivery: true });
-    } finally { engine.shutdown(); await Bun.sleep(100); removeDir(root); }
+    } finally { await engine.shutdown(); await Bun.sleep(100); removeDir(root); }
   });
 });

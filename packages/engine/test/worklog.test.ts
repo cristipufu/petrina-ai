@@ -15,14 +15,21 @@ import { dispatch } from "../src/server.js";
 import { Store } from "../src/store.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
 import { WaitClock, WorkLog } from "../src/worklog.js";
-import { git, removeDir, SLOW, testBrowserRoot } from "./fixtures.js";
+import type { CodexScript } from "./fake-codex.js";
+import { git, removeDir, SLOW, testBrowserRoot, waitFor } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
 const fakeCodex = join(import.meta.dir, "fake-codex.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-worklog-"));
 const data = join(temp, "data");
-// Each profile's agent behaves like its own tool: Claude Code or Codex.
-const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], usageCommands: { codex: [process.execPath, fakeCodex] } };
+// The stand-in Codex app-server's answer, and its log of every request it gets.
+const codexDir = join(temp, "codex");
+mkdirSync(codexDir);
+writeFileSync(join(codexDir, "codex.json"), JSON.stringify({ primary: { usedPercent: 16, windowDurationMins: 10_080, resetsAt: Math.round(Date.now() / 1000) + 5 * 86_400 } } satisfies CodexScript));
+// Each profile's agent behaves like its own tool: Claude Code or Codex. The stand-ins count as the tools'
+// installed apps whatever this machine has, so every engine here, restarts included, reads Codex's usage
+// from the stand-in app-server and never from a real Codex or account.
+const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, fake, `--tool=${profile.toolId}`], toolPath: () => fake, usageCommands: { codex: [process.execPath, fakeCodex, codexDir] } };
 
 // Conversations started here keep their browsers, in this file's own browser folder.
 const browsers = testBrowserRoot();
@@ -86,6 +93,25 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
     respond(engine, state);
     await Bun.sleep(50);
   }
+}
+
+/**
+ * Wait for the engine's Codex usage read from the stand-in app-server. A failure names the step that did not
+ * happen: the stand-in counting as installed, the reader starting, the engine asking it, the request
+ * reaching the stand-in, or an answer coming back.
+ */
+async function codexUsageRead(engine: Engine): Promise<void> {
+  expect(engine.getState().tools.find((tool) => tool.id === "codex")?.status, "the stand-in Codex counts as installed").toBe("ready");
+  const reader = engine.usageCoordinator.readers.get("codex");
+  expect(reader, "the engine started its Codex usage reader").toBeDefined();
+  expect(reader!.snapshot(), "the engine asked its Codex usage reader").toBeDefined();
+  const read = await waitFor(() => {
+    const current = reader!.snapshot();
+    return current?.state !== "reading" && current;
+  }, "the Codex usage read to finish");
+  const asked = existsSync(join(codexDir, "codex.jsonl")) ? readFileSync(join(codexDir, "codex.jsonl"), "utf8").trim().split("\n").map((line) => (JSON.parse(line) as { method: string }).method) : [];
+  expect(asked, "the stand-in Codex app-server received the usage request").toContain("account/rateLimits/read");
+  expect(read.state, "the stand-in Codex app-server's answer was read").toBe("reported");
 }
 
 /** Read the work log straight from the database, the way the engine keeps it. */
@@ -229,7 +255,7 @@ describe("The work log of a real engine", () => {
     expect(dump).not.toContain("left-pad");
     expect(dump).not.toContain("Formal");
     // Codex limits come from the installed Codex (here a stand-in), read after a Codex turn.
-    await until(engine, (state) => (state.pool.usage ?? []).some((limit) => limit.toolId === "codex"), () => undefined, 10_000);
+    await codexUsageRead(engine);
     const limits = engine.getState().pool.usage!;
     expect(limits.find((limit) => limit.toolId === "claude-code")).toMatchObject({ kind: "five_hour", utilization: 0.81, status: "allowed" });
     expect(limits.find((limit) => limit.toolId === "codex")).toMatchObject({ windowMinutes: 10_080, utilization: 0.16 });
@@ -257,7 +283,8 @@ describe("The work log of a real engine", () => {
 
   it("keeps the log across a restart, and marks a turn cut off by a stop as lost", async () => {
     const before = engine.usage({ view: "task", taskId });
-    replaced.push(engine.shutdown());
+    const firstStop = engine.shutdown();
+    replaced.push(firstStop);
     engine = new Engine(data, options);
     expect(engine.usage({ view: "task", taskId })).toEqual(before);
 
@@ -265,7 +292,8 @@ describe("The work log of a real engine", () => {
     await until(engine, () => readLog((log) => log.turns({ taskId: hanging }).some((turn) => turn.end === undefined)), () => undefined, 20_000);
     // Nothing starts again after the restart, so the lost turn is the only one.
     engine.setPoolPaused(true);
-    replaced.push(engine.shutdown());
+    const interruptedStop = engine.shutdown();
+    replaced.push(interruptedStop);
     engine = new Engine(data, options);
     const lost = readLog((log) => log.turns({ taskId: hanging }));
     expect(lost).toHaveLength(1);
@@ -275,6 +303,7 @@ describe("The work log of a real engine", () => {
     expect(view.time.atLeast && view.tokens.atLeast).toBe(true);
     expect(view.atLeast).toContain("cut off when Petrina stopped");
     engine.cancel(hanging);
+    await Promise.all([firstStop, interruptedStop]);
   });
 
   it("keeps a switch the tool confirmed during a turn, even when the agent stops before replying", async () => {

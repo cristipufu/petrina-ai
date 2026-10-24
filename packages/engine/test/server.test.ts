@@ -13,9 +13,9 @@ const http = `http://127.0.0.1:${server.port}`;
 const ws = `ws://127.0.0.1:${server.port}/ws`;
 const OWN = "tauri://localhost";
 
-afterAll(() => {
+afterAll(async () => {
   server.stop(true);
-  engine.shutdown();
+  await engine.shutdown();
   removeDir(dir);
 });
 

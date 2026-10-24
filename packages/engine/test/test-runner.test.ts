@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { removeDir, runCommand, tempDir, testGitEnv, waitFor } from "./fixtures.js";
+import { TEST_GIT_IDENTITY } from "./run.js";
 import { testTempParent } from "./temp-parent.js";
 
 const fixture = tempDir("petrina-test-runner-");
@@ -93,7 +94,7 @@ it("leaves files for its parent to reclaim", async () => {
   expect(realpathSync(dirname(saved.folder))).toBe(realpathSync(parent));
   expect(dirname(saved.ordinary)).toBe(saved.folder);
   expect(saved.env).toEqual([saved.folder, saved.folder, saved.folder]);
-  if (process.platform === "darwin") expect(saved.browser).toBe(join(homedir(), ".petrina", "b"));
+  if (process.platform === "darwin") expect(saved.browser).toBe(join(saved.folder, "home", ".petrina", "b"));
   // A fixture's private browser folder sits in the run's own short folder, which the run removes.
   expect(dirname(saved.browsers)).toBe(saved.owned);
   if (process.platform === "darwin") expect(Buffer.byteLength(join(saved.browsers, "petrina-browser-abcdef", "SingletonSocket"))).toBeLessThan(104);
@@ -104,6 +105,45 @@ it("leaves files for its parent to reclaim", async () => {
   expect(existsSync(saved.left)).toBe(false);
   expect(existsSync(saved.ordinary)).toBe(false);
   expect(readFileSync(keep, "utf8")).toBe("keep");
+});
+
+it("gives engine commits the run's own Git identity, yields to a repository's own and leaves the caller's Git settings alone", async () => {
+  const parent = join(fixture, "git-identity"); mkdirSync(parent);
+  // A machine with no saved identity, where Git may not guess one either (as on Linux CI).
+  const callers = join(parent, "caller.gitconfig"), settings = "[user]\n\tuseConfigOnly = true\n";
+  writeFileSync(callers, settings);
+  const record = join(fixture, "git-identity.json");
+  const test = join(fixture, "git-identity.test.ts");
+  writeFileSync(test, `import { it } from "bun:test";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { commitAll } from ${JSON.stringify(join(import.meta.dir, "../src/git.ts"))};
+import { git } from ${JSON.stringify(join(import.meta.dir, "fixtures.ts"))};
+it("commits as the engine does in fresh repositories", async () => {
+  const repo = async (name: string) => {
+    const path = join(tmpdir(), name);
+    mkdirSync(path); await git(path, "init", "-q", "-b", "main"); writeFileSync(join(path, "file.txt"), name);
+    return path;
+  };
+  const fresh = await repo("fresh"), own = await repo("own");
+  await git(own, "config", "user.name", "Someone else"); await git(own, "config", "user.email", "other@example.com");
+  await commitAll(fresh, "Engine commit"); await commitAll(own, "Engine commit");
+  const who = (path: string) => git(path, "log", "-1", "--format=%an <%ae>|%cn <%ce>");
+  const record = ${JSON.stringify(record)};
+  writeFileSync(record + ".tmp", JSON.stringify({ folder: tmpdir(), config: process.env.GIT_CONFIG_GLOBAL, fresh: await who(fresh), own: await who(own) }));
+  renameSync(record + ".tmp", record);
+});`);
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: { ...testGitEnv(), GIT_CONFIG_GLOBAL: callers, TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect(code, `${stdout}\n${stderr}`).toBe(0);
+  const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; config: string; fresh: string; own: string };
+  const runner = `${TEST_GIT_IDENTITY.name} <${TEST_GIT_IDENTITY.email}>`;
+  expect(saved.fresh).toBe(`${runner}|${runner}`);
+  expect(saved.own).toBe("Someone else <other@example.com>|Someone else <other@example.com>");
+  expect(dirname(saved.config)).toBe(saved.folder);
+  expect(existsSync(saved.config)).toBe(false);
+  expect(readFileSync(callers, "utf8")).toBe(settings);
 });
 
 it("isolates simultaneous runner instances and never removes another run's live files", async () => {
@@ -124,7 +164,7 @@ it("owns only this run's repositories, database and captures", async () => {
   db.exec("CREATE TABLE own (value TEXT)"); db.query("INSERT INTO own VALUES (?)").run(label);
   // The test reads the record as soon as its name appears, so publish it complete.
   const record = join(${JSON.stringify(parent)}, label + ".json");
-  writeFileSync(record + ".tmp", JSON.stringify({ folder, home, repo, browser }));
+  writeFileSync(record + ".tmp", JSON.stringify({ folder, home, repo, browser, gitConfig: process.env.GIT_CONFIG_GLOBAL }));
   renameSync(record + ".tmp", record);
   try {
     while (!existsSync(join(${JSON.stringify(parent)}, label + ".release"))) await Bun.sleep(20);
@@ -145,9 +185,9 @@ it("owns only this run's repositories, database and captures", async () => {
     const recorded = await Promise.all(runs.map(async ({ label }, index) => {
       const file = join(parent, label + ".json");
       await Promise.race([waitFor(() => existsSync(file), "both independent runners to record their owned folders"), results[index]!.then(result => { throw new Error(`Runner ended before the barrier: ${result.diagnostic}`); })]);
-      return JSON.parse(readFileSync(file, "utf8")) as Record<"folder" | "home" | "repo" | "browser", string>;
+      return JSON.parse(readFileSync(file, "utf8")) as Record<"folder" | "home" | "repo" | "browser" | "gitConfig", string>;
     }));
-    for (const key of ["folder", "home", "repo", "browser"] as const) expect(recorded[0]![key]).not.toBe(recorded[1]![key]);
+    for (const key of ["folder", "home", "repo", "browser", "gitConfig"] as const) expect(recorded[0]![key]).not.toBe(recorded[1]![key]);
     writeFileSync(join(parent, "first.release"), "");
     const first = await results[0]!; expect(first.code, first.diagnostic).toBe(0);
     for (const path of Object.values(recorded[0]!)) expect(existsSync(path)).toBe(false);

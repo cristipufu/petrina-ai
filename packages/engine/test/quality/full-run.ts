@@ -3,9 +3,10 @@
 // recorded as not run. Selection is measured, never used to skip tests.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { conventions, inputs, observe, recordedCoverage, ROOT } from "./repository.js";
-import { fingerprint, impactPlan, WORKSPACES } from "./impact.js";
-import { failedFiles } from "./results.js";
+import { conventions, inputs, observe, readGit, recordedCoverage, ROOT } from "./repository.js";
+import { fingerprint, impactPlan, isTest, WORKSPACES } from "./impact.js";
+import { requireFiles, testResults, type TestResults } from "./results.js";
+import { createTestRun } from "../environment.js";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -24,7 +25,7 @@ Focused runs do not replace the required full check. See docs/testing.md for oth
 const PRELIMINARY: readonly string[] = ["packages/core", "apps/desktop"];
 const ORDER = [...PRELIMINARY, ...WORKSPACES.filter(workspace => !PRELIMINARY.includes(workspace))];
 const suite = (workspace: string) => workspace.split("/").at(-1)!;
-type Ran = { workspace: string; code: number; ms: number; failures?: string[]; missedFailures?: string[]; error?: string };
+type Ran = { workspace: string; code: number; ms: number; failures?: string[]; missedFailures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string };
 type Result = Ran | { workspace: string; notRun: string };
 const passed = (result: Result) => "code" in result && result.code === 0 && !result.error && !result.failures?.length;
 
@@ -41,6 +42,14 @@ catch (error) {
   plan.reasons.push(error instanceof Error ? error.message : String(error));
 }
 writeFileSync(join(folder, "impact.json"), JSON.stringify(plan, null, 2));
+const manifest = await inputs(ROOT);
+if (fingerprint(manifest) !== plan.fingerprint) throw new Error("Test inputs changed while preparing the run; no suites started");
+const expectedFiles = [...manifest.keys()].filter(isTest).sort();
+writeFileSync(join(folder, "files.json"), JSON.stringify(expectedFiles, null, 2));
+const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim();
+const [head, tree] = revision.split("\n");
+const source = { head, tree, fingerprint: plan.fingerprint, clean: !(await readGit(ROOT, ["status", "--porcelain=v1", "--untracked-files=normal"])).trim() };
+const environment = { platform: process.platform, arch: process.arch, bun: Bun.version };
 console.log(`Affected-test observation: ${plan.selected.length}/${plan.total} candidates; it never changes which tests run. Order: ${PRELIMINARY.map(suite).join(" and ")}, then ${ORDER.slice(PRELIMINARY.length).map(suite).join(" and ")} only if they pass. Reports: ${relative(ROOT, folder)}`);
 const results: Result[] = [];
 let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -49,6 +58,7 @@ let finished = false;
 const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; child?.kill(signal); };
 const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM", 143);
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
+const owned = createTestRun();
 try {
   for (const workspace of ORDER) {
     if (interrupted) break;
@@ -58,16 +68,23 @@ try {
     }
     const engine = workspace === "packages/engine";
     const output = join(folder, `${suite(workspace)}.${engine ? "xml" : "json"}`);
-    const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`] : ["--reporter=json", `--outputFile=${output}`];
+    // Per-file wall times expose serial files and idle-worker tails; cumulative case times
+    // in JUnit overcount concurrent cases. This records measurements, never selects tests.
+    const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`, `--timings=${join(folder, "engine-timings.json")}`, "--update-timings"] : ["--reporter=json", `--outputFile=${output}`];
     const start = performance.now();
-    child = Bun.spawn([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+    child = Bun.spawn([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, env: owned.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     const code = await child.exited;
     const result: Ran = { workspace, code, ms: Math.round(performance.now() - start) };
     try {
-      result.failures = failedFiles(readFileSync(output, "utf8"), workspace, engine ? "bun" : "vitest", ROOT);
+      const parsed = testResults(readFileSync(output, "utf8"), workspace, engine ? "bun" : "vitest", ROOT);
+      const { files, failures, ...counts } = parsed;
+      result.failures = failures;
+      result.counts = counts;
       result.missedFailures = result.failures.filter(file => !plan.selected.includes(file));
+      requireFiles(parsed, expectedFiles.filter(file => file.startsWith(`${workspace}/`)));
+      result.reportComplete = true;
       if (code !== 0 && !result.failures.length) result.error = "Run failed without an attributable test file; selection accuracy is unknown";
-    } catch (error) { result.error = `Selection accuracy unavailable: ${error instanceof Error ? error.message : String(error)}`; }
+    } catch (error) { result.error = `Incomplete test evidence: ${error instanceof Error ? error.message : String(error)}`; }
     if (result.error) console.error(`${workspace}: ${result.error}`);
     else if (code === 0 && result.failures?.length) console.error(`${workspace}: structured results report failed files despite a zero exit code: ${result.failures.join(", ")}`);
     results.push(result);
@@ -75,19 +92,21 @@ try {
   }
   finished = true;
 } finally {
-  process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-  // Work never started is recorded as not run, never as a pass or an observation without misses.
-  for (const workspace of ORDER) if (!results.some(result => result.workspace === workspace)) results.push({ workspace, notRun: interrupted ? "the run was interrupted first" : "the runner stopped first" });
-  const complete = !interrupted && results.every(result => "code" in result);
-  const stable = fingerprint(await inputs(ROOT)) === plan.fingerprint;
-  writeFileSync(join(folder, "results.json"), JSON.stringify({ mode: "observation", scope: complete ? "complete" : "partial", stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), results }, null, 2));
-  if (finished && !interrupted) {
-    const unrun = results.filter(result => !("code" in result)).map(result => suite(result.workspace));
-    console.log(unrun.length ? `Test summary: ${unrun.join(" and ")} did not run, so this run cannot pass and its affected-test observation covers only the suites that ran.` : "Test summary:");
-    for (const result of results) console.log(`  ${suite(result.workspace)}: ${outcome(result)}`);
-  }
-  if (!stable) console.error("Test inputs changed during the run. Results cannot authorize delivery.");
-  process.exitCode = interrupted ?? (stable && complete && results.every(passed) ? 0 : 1);
+  try {
+    process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
+    // Work never started is recorded as not run, never as a pass or an observation without misses.
+    for (const workspace of ORDER) if (!results.some(result => result.workspace === workspace)) results.push({ workspace, notRun: interrupted ? "the run was interrupted first" : "the runner stopped first" });
+    const complete = !interrupted && results.every(result => "code" in result && result.reportComplete);
+    const stable = fingerprint(await inputs(ROOT)) === plan.fingerprint && (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() === revision;
+    writeFileSync(join(folder, "results.json"), JSON.stringify({ mode: "observation", scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), results }, null, 2));
+    if (finished && !interrupted) {
+      const unrun = results.filter(result => !("code" in result)).map(result => suite(result.workspace));
+      console.log(unrun.length ? `Test summary: ${unrun.join(" and ")} did not run, so this run cannot pass and its affected-test observation covers only the suites that ran.` : "Test summary:");
+      for (const result of results) console.log(`  ${suite(result.workspace)}: ${outcome(result)}`);
+    }
+    if (!stable) console.error("Test inputs changed during the run, or the checkout revision moved. Results cannot authorize delivery.");
+    process.exitCode = interrupted ?? (stable && complete && results.every(passed) ? 0 : 1);
+  } finally { owned.close(); }
 }
 
 /** One plain line per suite. It never starts like a runner's failure marker, so real failing tests stay the diagnostic. */

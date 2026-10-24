@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckRun, ProductCheck } from "@petrina/core";
-import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit, waitForProcessesToEnd } from "./process-tree.js";
 import { livePowerRecords, machineInterruption, type MachineRecords } from "./check-interruption.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
@@ -374,13 +374,10 @@ async function stopAll(pid: number | undefined, windows: boolean, processList?: 
   }
   // A signal being accepted does not mean the worker has exited. Keep the copy reserved until
   // the group and the captured detached workers are gone, or report that cleanup is incomplete.
-  // A defunct leader keeps its number until the runtime collects it: it is not a running process.
-  const alive = () => targets.filter((target) => !leaderEnded || target !== pid).some((target) => {
-    try { process.kill(target, 0); return true; }
-    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
-  });
-  for (const end = Date.now() + 1_000; alive() && Date.now() < end;) await Bun.sleep(20);
-  return workers !== undefined && !alive();
+  // A defunct leader and its group retain their numbers. Confirm every remaining member from
+  // a complete state snapshot; accepting the signal or ignoring the leader alone proves too little.
+  const stopped = await waitForProcessesToEnd(targets.filter((target) => !leaderEnded || target !== pid), 1_000);
+  return workers !== undefined && stopped.ended;
 }
 
 /** Whether two sets of checks run the same commands (names and reasons aside). */

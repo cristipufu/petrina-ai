@@ -28,6 +28,8 @@ describe("one engine per Petrina folder", () => {
     // Scripts reach it as before.
     const state = await fetch(`${connection.api}/api/state`, { headers: { authorization: `Bearer ${connection.token}` } });
     expect(state.ok).toBe(true);
+    // The parser and app lifecycle are real; no account reader or installed coding tool belongs to this fixture.
+    expect((await engine.windowState()).tools.every(tool => tool.status === "not-installed")).toBe(true);
 
     const took = await engine.quit();
     expect(took).toBeLessThan(10_000);

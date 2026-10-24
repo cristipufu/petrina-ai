@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { InboxKind } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination, requestRevision } from "../src/coordination.js";
-import { EngineClient } from "../src/engine-client.js";
+import { EngineClient } from "./client.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";

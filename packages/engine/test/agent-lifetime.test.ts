@@ -3,13 +3,13 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import * as processes from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_CLEANUP_NOTE, AgentRun, presentStates, stopAll } from "../src/acp-run.js";
-import { AgentBrowser, type ObservedProcess } from "../src/browser.js";
+import { AGENT_CLEANUP_NOTE, AgentRun, stopAll } from "../src/acp-run.js";
+import { AgentBrowser } from "../src/browser.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { childState, parseChildState, processList, readProcessList } from "../src/process-tree.js";
-import { finishedHelper, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
+import { childState, parseChildState, presentStates, processList, readProcessList, type ObservedProcess } from "../src/process-tree.js";
+import { defunctProcess as uncollected, finishedHelper, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
 
 const root = tempDir("petrina-agent-lifetime-");
 afterAll(() => removeDir(root));
@@ -403,50 +403,6 @@ for (const failure of ["unavailable", "timeout", "unpaused"] as const) it.skipIf
     expectPausesReclaimed(signals);
   } finally { await run?.stop(); signals.mockRestore(); scan.mockRestore(); }
 });
-
-/**
- * An agent that has exited but whose exit its parent never collects, leading its own group: what a lost exit report
- * leaves. To a signal it, and its group, still look present.
- */
-let uncollectedId = 0;
-async function uncollected(beforeRead?: (holderPid: number) => void): Promise<{ pid: number; holderPid: number; self: string; release(): Promise<void> }> {
-  const record = join(root, `uncollected-${++uncollectedId}`);
-  const holder = Bun.spawn(["sh", "-c", 'set -m; sleep 120 & target=$!; printf "%s\\n" "$target" > "$1.tmp"; mv "$1.tmp" "$1"; exec sleep 120', "petrina-uncollected", record], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  let pid: number | undefined;
-  const release = async () => {
-    try {
-      // Publication survives an interrupted setup, even before the caller reads the number.
-      pid ??= await waitFor(() => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined, "the owned child's cleanup record", 5_000);
-      try { process.kill(pid, "SIGKILL"); } catch { /* Already gone. */ }
-    } finally { holder.kill("SIGKILL"); await holder.exited; }
-    await waitFor(() => !alive(pid!) && !alive(-pid!), "the owned child and group to disappear after the holder exits", 5_000);
-    rmSync(record, { force: true });
-  };
-  try {
-    beforeRead?.(holder.pid);
-    pid = await waitFor(() => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined, "the owned child's complete process record", 5_000);
-    const target = pid;
-    // Do not depend on a short sleep beating the shell's exec: release the child only after
-    // its parent is a sleep that cannot collect it, and its own process group is established.
-    await waitFor(async () => {
-      const listed = await processList(["-A", "-o", "pid=,ppid=,pgid=,stat=,comm="], 4_000 * SLOW);
-      const rows = listed?.split("\n").map(line => line.trim().split(/\s+/));
-      const parent = rows?.find(([id]) => Number(id) === holder.pid);
-      const child = rows?.find(([id]) => Number(id) === target);
-      return parent && /(?:^|\/)sleep$/.test(parent[4] ?? "") && child && Number(child[1]) === holder.pid && Number(child[2]) === target;
-    }, "the owned holder to exec before its child exits", 10_000);
-    process.kill(target, "SIGKILL");
-    const self = await waitFor(async () => {
-      const listed = await groups(4_000 * SLOW);
-      const present = listed?.split("\n").some(line => {
-        const [id, group, state] = line.trim().split(/\s+/);
-        return Number(id) === target && Number(group) === target && state?.startsWith("Z") && alive(target);
-      });
-      return present ? listed!.split("\n").find(line => Number(line.trim().split(/\s+/)[0]) === process.pid) : undefined;
-    }, "the real owned process and its group to remain defunct", 10_000);
-    return { pid: target, holderPid: holder.pid, self, release };
-  } catch (error) { await release(); throw error; }
-}
 
 const groups = (timeout: number) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
 

@@ -758,7 +758,7 @@ describe("a Release Manager that asks for the screen", () => {
       expect(asked).toBe(false);
     } finally {
       unsubscribe();
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

@@ -7,7 +7,7 @@ import { FALLBACK_TIMEOUT, testCommand } from "./run.js";
 // Each probe is a real Bun run of private tests that only sleep. Bun reports the limit that stopped each
 // test; the probe's own bound stops the whole command if Bun never finishes, which is not a test timeout.
 const ENGINE = resolve(import.meta.dir, ".."), ROOT = resolve(ENGINE, "../..");
-const WORKERS = "PETRINA_DEADLINE_PROBE_WORKERS";
+const WORKERS = "PETRINA_TEST_DEADLINE_PROBE_WORKERS";
 const WAIT = 500, COMMAND = 100, SHORTER = 50, LONGER = 30_000, PAST_DEFAULT = 5_500;
 const BOUND = 30_000 * SLOW;
 const HELPERS = { none: undefined, fixtures: join(import.meta.dir, "fixtures.ts"), support: join(import.meta.dir, "support.ts") };

@@ -150,7 +150,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(task.timeline.find((entry) => entry.text.startsWith("Plan ready:"))!.profileId).toBe(finished.profileId);
       expect(task.plan!.stages.flatMap((stage) => stage.profileIds).every((id) => run.engine.profile(id)!.toolId !== "claude-code")).toBe(true);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -165,7 +165,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         if (role === "planner") expect(task.plan!.plannerProfileId).toBe(finished.profileId);
         if (role === "researcher") expect(task.handedBack!.find((entry) => entry.roleId === roleId)!.profileId).toBe(finished.profileId);
       } finally {
-        run.engine.shutdown();
+        await run.engine.shutdown();
       }
     });
   }
@@ -188,7 +188,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(task.findings.flatMap((finding) => finding.votes ?? []).some((vote) => vote.by === actual.profileId)).toBe(true);
       expect(task.findings.flatMap((finding) => finding.votes ?? []).some((vote) => run.engine.profile(vote.by)?.modelId === "opus")).toBe(false);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -219,7 +219,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(finding.status).toBe("fixed");
       }
       expect(lines(task)).toContain("Sent back to the builder: 2 important");
-    } finally { run.engine.shutdown(); }
+    } finally { await run.engine.shutdown(); }
   });
 
   it("keeps the security review off the builder's replacement tool while another tool is available", async () => {
@@ -231,7 +231,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(review).toBeDefined();
       expect(run.engine.profile(review!.profileId!)!.toolId).toBe("grok");
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -252,7 +252,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(details.failuresByReason).toContainEqual({ label: "usage limit reached", count: 1 });
       expect(details.retries).toBe(1);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -305,7 +305,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(task.session.find((line) => line.text.startsWith("Builder on Codex · sol took over"))?.step).toBe(steps[1]!.id);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -322,7 +322,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         { toolId: "claude-code", model: "opus", source: "refusal", reason: "Claude Code's weekly Opus limit" },
       ]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -406,7 +406,7 @@ describe.concurrent("an agent that runs out of usage", () => {
         expect(details.redone).toBe(2);
       } finally { clock.mockRestore(); }
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -429,7 +429,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(task.session.filter((line) => line.roleId === "code-reviewer").every((line) => line.step === review.id && review.team!.includes(line.profileId!))).toBe(true);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -445,7 +445,7 @@ describe.concurrent("an agent that runs out of usage", () => {
       expect(task.session.filter((line) => line.roleId === "code-reviewer").every((line) => line.step === review.id && review.team!.includes(line.profileId!))).toBe(true);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 });
@@ -478,7 +478,7 @@ describe.concurrent("usage reports", () => {
       expect(usage).toHaveLength(1);
       expect(usage[0]).toMatchObject({ toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.4 });
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -497,7 +497,7 @@ describe.concurrent("usage reports", () => {
       expect(run.engine.getState().pool.limited ?? []).toEqual([]);
       expect(task.journey!.filter((step) => step.roleId === "builder")).toEqual([expect.objectContaining({ profileId: "sol-high" })]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -511,7 +511,7 @@ describe.concurrent("usage reports", () => {
       expect(state.pool.usage![0]).toMatchObject({ toolId: "claude-code", kind: "seven_day", status: "rejected", overage: true, resetsAt: resetsAt * 1000 });
       expect(usageLines(state, Date.now()).find((line) => line.toolId === "claude-code")!.text).toContain("weekly used up, on extra usage");
     } finally {
-      spent.engine.shutdown();
+      await spent.engine.shutdown();
     }
     const out = await start({ planner: "claude-build", builder: "plain", usage: [{ model: "opus", status: "rejected", type: "seven_day", resetsAt }] });
     try {
@@ -520,7 +520,7 @@ describe.concurrent("usage reports", () => {
       expect(out.engine.getState().pool.limited).toMatchObject([{ toolId: "claude-code", until: resetsAt * 1000 }]);
       expect(out.engine.getState().pool.limited![0]!.reason).toContain("weekly");
     } finally {
-      out.engine.shutdown();
+      await out.engine.shutdown();
     }
   });
 
@@ -546,7 +546,7 @@ describe.concurrent("usage reports", () => {
       expect(task.session.filter((line) => line.roleId === "builder").every((line) => line.step === steps[0]!.id && line.profileId === "grok-high")).toBe(true);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -574,7 +574,7 @@ describe.concurrent("usage reports", () => {
       expect(task.session.filter((line) => line.roleId === "code-reviewer").every((line) => line.step === review.id && review.team!.includes(line.profileId!))).toBe(true);
       expect(journeyProblems(task)).toEqual([]);
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 });
@@ -591,7 +591,7 @@ describe("analytics keeps who actually did the work", () => {
       const original = run.engine.tracking.log.moments({ taskId: run.taskId, kinds: ["ask"] }).find((moment) => moment.ask === "question")!;
       run.engine.pause(run.taskId);
       if (restart) {
-        run.engine.shutdown();
+        await run.engine.shutdown();
         restarted = new Engine(join(run.root, "data"), { usageCommands: { codex: null } });
       }
       const engine = restarted ?? run.engine;
@@ -617,8 +617,8 @@ describe("analytics keeps who actually did the work", () => {
       engine.answer(question.id, "Follow the system", { ...context, clientId: "late-answer-repeated" });
       expect(asks()).toEqual([completed]);
     } finally {
-      run.engine.shutdown();
-      restarted?.shutdown();
+      await run.engine.shutdown();
+      await restarted?.shutdown();
     }
   });
 
@@ -641,12 +641,12 @@ describe("analytics keeps who actually did the work", () => {
       expect(words).toContain("Agents stopped to ask you 1 time; 1 unanswered");
       expect(words).not.toContain("under a minute");
       expect(JSON.stringify(asks())).not.toContain(question.title);
-      run.engine.shutdown();
+      await run.engine.shutdown();
       restarted = new Engine(join(run.root, "data"), { usageCommands: { codex: null } });
       expect(restarted.usage({ view: "analytics", period: "today" }).squad.asks).toBe(words);
     } finally {
-      run.engine.shutdown();
-      restarted?.shutdown();
+      await run.engine.shutdown();
+      await restarted?.shutdown();
     }
   });
 
@@ -682,7 +682,7 @@ describe("analytics keeps who actually did the work", () => {
     } finally {
       unsubscribe();
       run.engine.cancel(run.taskId);
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 
@@ -699,7 +699,7 @@ describe("analytics keeps who actually did the work", () => {
       const reviewer = run.engine.usage({ view: "analytics", period: "today" }).squad.details.reviewers[0]!;
       expect(reviewer).toMatchObject({ rounds: 2, sentBack: 1, blocking: 1 });
     } finally {
-      run.engine.shutdown();
+      await run.engine.shutdown();
     }
   });
 });

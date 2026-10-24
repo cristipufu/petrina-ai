@@ -2,7 +2,6 @@ import { expectRejection } from "./rejections.js";
 import { expect, it, spyOn } from "bun:test";
 import { ProfileChoiceReader } from "../src/profile-choices.js";
 import { AgentRun } from "../src/acp-run.js";
-import type { Kernel } from "../src/kernel.js";
 import { demoProfileChoices } from "@petrina/core";
 import { removeDir, tempDir } from "./fixtures.js";
 
@@ -16,7 +15,7 @@ it("waits for a failed startup's process cleanup before opening another configur
     options.onGone?.(Promise.resolve());
     return { profileChoices: async () => demoProfileChoices("codex"), stop: async () => true } as unknown as AgentRun;
   });
-  const reader = new ProfileChoiceReader({ dataDir: root, s: { profiles: [] }, options: {}, stopped: false } as unknown as Kernel);
+  const reader = new ProfileChoiceReader({ dataDir: root, s: { profiles: [] }, options: {}, stopped: false });
   try {
     await expectRejection(reader.read("codex"), "Could not open");
     const next = reader.read("codex");

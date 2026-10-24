@@ -4,7 +4,7 @@ import { Engine } from "./engine.js";
 import { removeDir, tempDir } from "./fixtures.js";
 import { Coordination, requestRevision } from "../src/coordination.js";
 import { coordinationCli } from "../src/coordination-cli.js";
-import type { EngineClient } from "../src/engine-client.js";
+import type { EngineClient } from "./client.js";
 import { mcpRequest } from "../src/mcp.js";
 
 const roots: string[] = [], engines: Engine[] = [];

@@ -5,7 +5,7 @@
 // unless the test supplies its own parent for their browser folders, which recovery uses too.
 import { join } from "node:path";
 import { launch } from "../src/launch.js";
-import { noMachineRecords } from "./fixtures.js";
+import { fixtureEngineOptions } from "./engine.js";
 
 const [home, dir, remote] = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 const browserTempRoot = process.argv.find((arg) => arg.startsWith("--browser-root="))?.slice("--browser-root=".length);
@@ -14,14 +14,10 @@ await launch({
   mode: "app",
   newKey: process.argv.includes("--new-key"),
   loginShell: false,
-  engine: {
+  engine: fixtureEngineOptions(home!, {
     agentCommand: (profile) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`, `--record-tool=${profile.toolId}`, ...(process.argv.includes("--stubborn") ? ["--stubborn"] : [])],
     gh: [process.execPath, join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), remote ?? join(dir!, "github.git")],
     ...(remote ? { remote } : {}),
     ...(browserTempRoot ? { browser: true, browserTempRoot } : {}),
-    // Tests never open a real terminal window.
-    terminals: () => [],
-    // Synthetic check failures never read this Mac's power log.
-    machineRecords: noMachineRecords,
-  },
+  }),
 });

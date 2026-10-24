@@ -128,7 +128,7 @@ describe("Tool status", () => {
       const conversations = readdirSync(join(fakes.dir, "conversations")).map((file) => JSON.parse(readFileSync(join(fakes.dir, "conversations", file), "utf8")) as { cwd: string });
       for (const conversation of conversations) expect(conversation.cwd).toBe(join(data, "checks"));
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -174,7 +174,7 @@ describe("Tool status", () => {
       expect(status(engine, "claude-code")).toBe("unknown");
       expect(checkOf(engine.getState().setup?.checks, "claude-code").detail).toBeTruthy();
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
     const bare = new Engine(fresh("data"), { which: () => null });
     try {
@@ -183,7 +183,7 @@ describe("Tool status", () => {
       // The Library reads the agent tools from here too.
       expect(bare.getState().tools.find((tool) => tool.id === "codex")?.status).toBe("not-installed");
     } finally {
-      bare.shutdown();
+      await bare.shutdown();
     }
   });
 
@@ -348,7 +348,9 @@ describe("Tool status", () => {
     // A GitHub CLI that only fails: no real one ever answers Couldn't check here.
     symlinkSync(Bun.which("false")!, join(bin, "gh"));
     const path = process.env.PATH;
-    const engine = new Engine(fresh("data"));
+    // This boundary case deliberately discovers the fake programs planted on PATH, rather than
+    // the fixture's ordinary scripted-service defaults. No real account tool is present on it.
+    const engine = new Engine(fresh("data"), { which: findProgram, gh: undefined });
     try {
       // App mode merges the login shell's PATH in after Petrina started.
       process.env.PATH = bin;
@@ -366,7 +368,7 @@ describe("Tool status", () => {
       expect(status(engine, "codex")).toBe("not-installed");
     } finally {
       process.env.PATH = path;
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -390,7 +392,7 @@ describe("Tool status", () => {
       expect(status(engine, "git")).toBe("ready");
       expect(status(engine, "node")).toBe("not-installed");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -515,7 +517,7 @@ describe("The clone finder", () => {
       engine.s.products[0]!.path = `${repo}${sep}.`;
       expect((await engine.findClones()).map((entry) => entry.repo)).toEqual(["acme/blog"]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });
@@ -560,14 +562,14 @@ describe("Adding a product", () => {
       expect(engine.getState().products.find((entry) => entry.id === localId)?.delivery).toBe("local");
       expect(engine.getState().products).toHaveLength(2);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
     const noGit = new Engine(fresh("data"), { home, which: (name) => (name === "git" ? null : Bun.which(name)) });
     try {
       await expectRejection(noGit.addProduct(repo), /Git isn't installed: run .+ then try again/);
       expect(sentences(await refusal(noGit.addProduct(repo)))).toBe(1);
     } finally {
-      noGit.shutdown();
+      await noGit.shutdown();
     }
   });
 
@@ -600,7 +602,7 @@ describe("Adding a product", () => {
       const localId = await engine.addProduct(elsewhere);
       expect(engine.getState().products.find((entry) => entry.id === localId)?.delivery).toBe("local");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -632,7 +634,7 @@ describe("Setup and the first task", () => {
       engine.setSetupStep("welcome");
       expect(engine.getState().setup?.step).toBe("product");
       const productId = await engine.addProduct(repo);
-      engine.shutdown();
+      await engine.shutdown();
       // Closed partway: it reopens where it got to.
       engine = new Engine(data, { agentCommand: agents({}) });
       expect(engine.getState().setup).toMatchObject({ done: false, step: "product" });
@@ -648,12 +650,12 @@ describe("Setup and the first task", () => {
       engine.addTask({ productId, title: "Another", clientId: "other-1" });
       expect(engine.getState().tasks).toHaveLength(2);
       engine.dismissTip();
-      engine.shutdown();
+      await engine.shutdown();
       engine = new Engine(data, { agentCommand: agents({}) });
       expect(engine.getState().setup).toMatchObject({ done: true, firstTaskId: id, tipDismissed: true });
       expect(engine.getState().tasks).toHaveLength(2);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -663,35 +665,35 @@ describe("Setup and the first task", () => {
     const store = new Store(join(existing, "petrina.db"));
     const blank = new Engine(fresh("data"));
     const before = structuredClone(blank.getState());
-    blank.shutdown();
+    await blank.shutdown();
     store.save({ ...before, setup: undefined, products: [{ id: "shop", name: "Shop", repo: "acme/shop", tone: "blue" }] } as unknown as State);
     store.close();
     const updated = new Engine(existing);
     expect(updated.getState().setup?.done).toBe(true);
-    updated.shutdown();
+    await updated.shutdown();
 
     const data = fresh("data");
     let engine = new Engine(data);
     expect(engine.getState().setup?.done).toBe(false);
     engine.skipSetup();
-    engine.shutdown();
+    await engine.shutdown();
     engine = new Engine(data);
     expect(engine.getState().setup?.done).toBe(true);
-    engine.shutdown();
+    await engine.shutdown();
   });
 
-  it("opens only its own guides", () => {
+  it("opens only its own guides", async () => {
     const engine = new Engine(fresh("data"));
     try {
       expect(() => engine.openGuide("https://example.com/")).toThrow("only opens the guides");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });
 
 describe("The squad uses tools that are ready", () => {
-  it("keeps usage replacements on tools allowed by the login checks, including an unconfirmed tool when none is Ready", () => {
+  it("keeps usage replacements on tools allowed by the login checks, including an unconfirmed tool when none is Ready", async () => {
     const engine = new Engine(fresh("usage-data"));
     const until = Date.now() + 60_000;
     try {
@@ -712,7 +714,7 @@ describe("The squad uses tools that are ready", () => {
       engine.s.pool.limited = [{ toolId: "claude-code", until, reason: "Usage limit" }];
       expect(engine.choose("opus-high")).toMatchObject({ kind: "substitute", profile: { toolId: "codex" } });
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -755,7 +757,7 @@ describe("The squad uses tools that are ready", () => {
           }
         }
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
@@ -774,7 +776,7 @@ describe("The squad uses tools that are ready", () => {
         ["release-manager", ["opus-high"]],
       ]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -797,7 +799,7 @@ describe("The squad uses tools that are ready", () => {
       expect(choice?.kind).toBe("substitute");
       expect(choice?.kind === "substitute" && choice.profile.toolId).toBe("grok");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -811,7 +813,7 @@ describe("The squad uses tools that are ready", () => {
       expect(engine.usableTools()).toEqual(["claude-code", "codex"]);
       expect(fakes.prompts()).toEqual([]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -824,7 +826,7 @@ describe("The squad uses tools that are ready", () => {
       expect(task.state).toBe("done");
       expect([...toolsUsed(engine, task)]).toEqual(["grok"]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -848,7 +850,7 @@ describe("The squad uses tools that are ready", () => {
       // Never on the tool that is not logged in.
       expect(toolsUsed(engine, task).has("claude-code")).toBe(false);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -868,7 +870,7 @@ describe("The squad uses tools that are ready", () => {
       expect(taskOf(state, taskId)).toMatchObject({ state: "failed", statusLine: "Stuck: Codex wouldn't start" });
       expect(taskOf(state, taskId).timeline.filter((entry) => entry.text === "Planner started" && entry.profileId === "sol-high")).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -894,7 +896,7 @@ describe("The squad uses tools that are ready", () => {
       expect(engine.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
       expect(taskOf(engine.getState(), taskId).timeline.at(-1)?.text).toBe("Checked Claude Code again: it is still not logged in");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

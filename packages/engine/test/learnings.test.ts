@@ -110,7 +110,7 @@ describe("lessons agents pass on", () => {
       await learnings.offer(executionFor(task));
       expect(engine.getState().inbox.filter((item) => item.kind === "learnings")).toEqual([]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -159,7 +159,7 @@ describe("lessons agents pass on", () => {
       expect(await git(repo, "log", "-1", "--format=%s", "main")).toBe("Add a farewell");
       expect(offers).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });
@@ -209,7 +209,7 @@ describe("a lesson AGENTS.md gained in the meantime", () => {
       expect(offers).toHaveLength(1);
       expect(offers[0]!.body).toBe("- Run the tests with bun test: they take a second.");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

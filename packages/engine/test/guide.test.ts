@@ -100,7 +100,7 @@ describe.concurrent("a review guide that learns from misses", () => {
       expect(await git(task.worktree!, "show", "--format=", "--name-only", "HEAD")).toContain("REVIEW.md");
       expect(await git(task.worktree!, "rev-list", "--count", `${task.baseSha}..HEAD`)).toBe("1");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -111,7 +111,7 @@ describe.concurrent("a review guide that learns from misses", () => {
       expect(lines(task)).toContain("You left the review guide as it is");
       expect(engine.getState().products.find((entry) => entry.id === productId)!.reviewGuide).toBeUndefined();
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -136,7 +136,7 @@ describe.concurrent("a review guide that learns from misses", () => {
         expect(engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toEqual(failures);
       } finally { clock.mockRestore(); }
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -146,7 +146,7 @@ describe.concurrent("a review guide that learns from misses", () => {
       expect(offers).toEqual([]);
       expect(lines(task)).toContain("Nothing for the review guide: The note asks for a new colour: a change of mind, not a miss.");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });
@@ -159,7 +159,7 @@ describe.concurrent("a delivery sent back with blocking findings open", () => {
       expect(offers).toEqual([]);
       expect(lines(task)).not.toContain("Guide keeper started");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

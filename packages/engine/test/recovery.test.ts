@@ -51,7 +51,7 @@ async function stuckThenEdit(w: World, mode: "pull-request" | "release", failing
   const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
   const task = taskOf(await finish(engine, taskId), taskId);
   expect(task.state).toBe("failed");
-  engine.shutdown();
+  await engine.shutdown();
   let editing: unknown;
   w.editSaved((state) => { editing = edit(state.tasks.find((entry) => entry.id === taskId)!.shipping as ShippingRecord); });
   await editing;
@@ -65,7 +65,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     const w = await world("restart-open");
     const first = await startHeld(w, "pull-request", "pr create");
     expect(taskOf(first.engine.getState(), first.taskId).shipping?.step).toBe("open");
-    first.engine.shutdown();
+    const stopping = first.engine.shutdown();
     const engine = w.start();
     try {
       const task = taskOf(await finish(engine, first.taskId), first.taskId);
@@ -78,7 +78,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
       rmSync(first.hold, { force: true });
-      engine.shutdown();
+      await Promise.all([stopping, engine.shutdown()]);
     }
   });
 
@@ -92,14 +92,14 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(w.github().prs).toHaveLength(1);
       expect(task.timeline.filter((entry) => entry.text.startsWith("Ready to publish"))).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
   it("records the release GitHub published just before Petrina stopped, with the same version", async () => {
     const w = await world("restart-release");
     const first = await startHeld(w, "release", "release create");
-    first.engine.shutdown();
+    const stopping = first.engine.shutdown();
     const engine = w.start();
     try {
       const task = taskOf(await finish(engine, first.taskId), first.taskId);
@@ -109,7 +109,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.timeline.map((entry) => entry.text)).toContain("Found after a restart that it had already gone out: release v0.1.0");
     } finally {
       rmSync(first.hold, { force: true });
-      engine.shutdown();
+      await Promise.all([stopping, engine.shutdown()]);
     }
   });
 
@@ -127,7 +127,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.timeline.some((entry) => entry.text.startsWith("Checked: main and the tag v0.1.0 are already on GitHub"))).toBe(true);
       expect(w.script().releaseManagerPrompts).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -156,7 +156,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         // Only the first, failed attempt ever reached GitHub's release creation.
         expect(w.github().calls.filter((call) => `${call[0]} ${call[1]}` === "release create")).toHaveLength(1);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
@@ -169,6 +169,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v1.0.0", body: "" }));
       let engine: Engine;
       let taskId: string;
+      let stopping: Promise<void> | undefined;
       const hold = join(w.dir, "hold-release-manager");
       if (where === "preparing") {
         // The Release Manager hangs, and Petrina stops while it does.
@@ -180,7 +181,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         taskId = first.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
         await until(first, () => existsSync(`${hold}.reached`));
         expect(taskOf(first.getState(), taskId).shipping?.tag).toBe("v1.0.1");
-        first.shutdown();
+        stopping = first.shutdown();
         w.setScript((script) => delete script.hold);
         engine = w.start();
       } else {
@@ -198,7 +199,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         expect(task.timeline.some((entry) => entry.text.includes("v1.0.0") && entry.text.includes("already gone out"))).toBe(false);
       } finally {
         rmSync(hold, { force: true });
-        engine.shutdown();
+        await Promise.all([stopping, engine.shutdown()]);
       }
     });
   }
@@ -212,7 +213,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     let task = taskOf(await finish(engine, taskId), taskId);
     expect(task.state).toBe("done");
     const tested = await git(w.clone, "rev-parse", "main");
-    engine.shutdown();
+    await engine.shutdown();
     // As if Petrina stopped right after git moved main, before it saved that.
     w.editSaved((state) => {
       const saved = state.tasks.find((entry) => entry.id === taskId) as unknown as Record<string, unknown>;
@@ -230,7 +231,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.landed?.sha).toBe(tested.slice(0, 7));
       expect(task.timeline.map((entry) => entry.text)).toContain(`Found after a restart that it had already gone out: main has the work (${tested.slice(0, 7)})`);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -248,7 +249,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.state).toBe("pr-open");
       expect(w.github().prs).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -264,7 +265,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.pr).toMatchObject({ number: 1, url: "https://github.com/acme/demo/pull/1" });
       expect(task.timeline.map((entry) => entry.text)).toContain("Pull request #1 went out while you cancelled it: https://github.com/acme/demo/pull/1");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -282,7 +283,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.shipping).toBeUndefined();
       expect(w.github().prs).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -299,7 +300,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     let task = taskOf(first.engine.getState(), first.taskId);
     expect(task.pr).toBeUndefined();
     expect(task.shipping?.step).toBe("open");
-    first.engine.shutdown();
+    await first.engine.shutdown();
     const engine = w.start();
     try {
       task = taskOf(await until(engine, (current) => !!taskOf(current, first.taskId).pr), first.taskId);
@@ -308,7 +309,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(task.timeline.map((entry) => entry.text)).toContain("Pull request #1 went out while you cancelled it: https://github.com/acme/demo/pull/1");
       expect(w.github().calls.filter((call) => call[1] === "create")).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -340,7 +341,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
           expect(task.timeline.some((entry) => entry.text.startsWith("main and the tag v0.1.0 went out to GitHub at") && entry.text.endsWith("while you cancelled it, with no release for that tag"))).toBe(true);
         }
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
@@ -386,7 +387,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(await remoteRef(w.remote, `refs/heads/${cancelled.branch}`)).toBeUndefined();
       expect(w.github().prs.map((pr) => pr.headRefName)).toEqual([taskOf(state, a).branch!]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -406,7 +407,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("pr-open");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -432,7 +433,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         expect(w.github().calls.filter((call) => `${call[0]} ${call[1]}` === create)).toHaveLength(2);
         expect(mode === "pull-request" ? w.github().prs.length : w.github().releases.length).toBe(1);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
@@ -442,9 +443,10 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     const first = await startHeld(w, "pull-request", "pr create");
     const saved = structuredClone(taskOf(first.engine.getState(), first.taskId).shipping) as ShippingRecord;
     const branch = taskOf(first.engine.getState(), first.taskId).branch!;
-    first.engine.shutdown();
+    const stopping = first.engine.shutdown();
     rmSync(first.hold);
     await until(first.engine, () => w.github().prs.length === 1);
+    await stopping;
     // The branch is deleted on GitHub after the pull request closes; GitHub keeps its last commit.
     await gitWith({}, "--git-dir", w.remote, "update-ref", "-d", `refs/heads/${branch}`);
     for (const state of ["MERGED", "CLOSED"] as const) {
@@ -466,7 +468,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         expect(task.statusLine).toBe(state === "MERGED" ? "Merged #1 on GitHub" : "Closed #1 without merging");
         expect(w.github().prs).toHaveLength(1);
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     }
   });
@@ -487,7 +489,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBeUndefined();
       expect(w.github().prs).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -509,7 +511,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(await remoteRef(w.remote, `refs/heads/${branch}`)).toBe(other);
       expect(w.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 
@@ -530,7 +532,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       expect(await remoteRef(w.remote, `refs/heads/${task.branch}`)).toBe(other);
       expect(w.github().prs).toEqual([]);
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 });

@@ -46,7 +46,7 @@ async function deliver(w: World, mode: "release" | "local" | "pull-request", cou
     }
     return tasks;
   } finally {
-    engine.shutdown();
+    await engine.shutdown();
   }
 }
 
@@ -295,7 +295,7 @@ describe.concurrent("Release versions on real deliveries", () => {
       expect(await git(w.clone, "log", "-1", "--format=%s", "main^")).toBe("A teammate's change");
       expect(await git(w.clone, "rev-list", "--merges", "--count", "main")).toBe("0");
     } finally {
-      engine.shutdown();
+      await engine.shutdown();
     }
   });
 

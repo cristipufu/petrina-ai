@@ -28,18 +28,25 @@ export class Store {
     this.db = new Database(path, { create: true });
     // Offline status reads can recover the WAL before a replacement opens it. Give that
     // short recovery the same bounded allowance as lifecycle receipts, before touching it.
-    this.db.run("PRAGMA busy_timeout = 3000");
-    if (options.debugSql) {
-      try { logSqlExecutions(this.db, new SqlExecutionLog(dirname(path))); }
-      catch (error) { this.db.close(); throw error; }
+    try {
+      this.db.run("PRAGMA busy_timeout = 3000");
+      if (options.debugSql) logSqlExecutions(this.db, new SqlExecutionLog(dirname(path)));
+      // Journal selection precedes the transaction; SQLite cannot change it inside one.
+      this.db.run("PRAGMA journal_mode = WAL");
+      const initialized = this.db.transaction(() => {
+        this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+        this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
+        const history = new TaskHistory(this.db);
+        this.db.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
+        this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
+        return { history, activeIds: this.readActiveIds() };
+      }).immediate();
+      this.history = initialized.history;
+      this.activeIds = initialized.activeIds;
+    } catch (error) {
+      this.db.close();
+      throw error;
     }
-    this.db.run("PRAGMA journal_mode = WAL");
-    this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-    this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
-    this.activeIds = this.readActiveIds();
-    this.history = new TaskHistory(this.db);
-    this.db.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
-    this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
   }
 
   /** Explicit compatibility/debug read, including archived conversations. Production uses loadActive. */

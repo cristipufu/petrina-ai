@@ -524,14 +524,14 @@ describe("Petrina runs the checks itself during a task", () => {
         expect(task.timeline.filter((entry) => entry.text.startsWith("Found how to check")).length).toBe(1);
         const savedLog = task.checks!.results[0]!.logPath!;
         const contents = readFileSync(savedLog, "utf8");
-        engine.shutdown();
+        await engine.shutdown();
         const store = new Store(join(dir, "data", "petrina.db"));
         try {
           expect(store.load()!.tasks.find((entry) => entry.id === taskId)!.repository!.checks!.results[0]!.logPath).toBe(savedLog);
           expect(readFileSync(savedLog, "utf8")).toBe(contents);
         } finally { store.close(); }
       } finally {
-        engine.shutdown();
+        await engine.shutdown();
       }
     });
   }
