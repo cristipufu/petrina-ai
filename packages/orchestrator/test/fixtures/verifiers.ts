@@ -5,8 +5,9 @@ export function verifierFixture() {
   const task: RuntimeTask = createTaskState({ productId: "product", title: "Review the greeting", backlog: true },
     [{ id: "product", name: "Product", repo: "local/product", tone: "blue" }], { id: "task", timelineId: "created", now: 100, priority: 0 });
   task.repository = { productId: "product", delivery: "local" };
-  const stage = { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["a-high", "b-high"] } satisfies Stage;
-  task.plan = { rationale: "Focused ballot", plannerProfileId: "a-high", stages: [stage] }; task.stageIndex = 0;
+  const stage = { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["a-high", "b-high"], maxRounds: 2 } satisfies Stage;
+  const build = { id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["a-high"] } satisfies Stage;
+  task.plan = { rationale: "Focused ballot", plannerProfileId: "a-high", stages: [build, stage] }; task.stageIndex = 1;
   task.hunt = { stageId: stage.id, round: 1, reported: {}, input: { file: "input.json", digest: "snapshot", heads: { product: "head" } } };
   const profiles = new Map(["a", "b", "c", "d"].map(toolId => [`${toolId}-high`, { id: `${toolId}-high`, toolId }]));
   const candidates = [...profiles.keys()];

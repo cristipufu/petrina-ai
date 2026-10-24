@@ -1300,10 +1300,51 @@
     },
     {
       "file": "packages/engine/test/independence.test.ts",
-      "declarations": 36,
-      "assertionSites": 243,
+      "declarations": 32,
+      "assertionSites": 224,
       "baselineDigest": "d3611aaa1f826e0091ca18084c207f39aaba06a5afe1b26405012949a1cd4f4c",
-      "status": "pending"
+      "status": "pending",
+      "baselineDeclarations": 36,
+      "baselineAssertionSites": 243,
+      "baselineRuntimeCases": 49,
+      "retainedRuntimeCases": 44,
+      "migratedCases": [
+        {
+          "original": "keeps the existing mildest-verdict tie rule on an exhaustive pair",
+          "file": "packages/orchestrator/test/orchestration/reviews/settlement.test.ts",
+          "case": "keeps the mildest-verdict tie rule on an exhaustive pair ($first, $second)",
+          "variants": 2,
+          "assertions": "Actual ballot selection, recordAnswers and settlement retain nit/suggestion, exactly two requested places and no later phase. The real reviewRoundEnd changes from send-back to passed on a valid build-before-review plan. The retained native fresh-pair and two-tool-settlement journeys prove actual dispatch and no additional Builder."
+        },
+        {
+          "original": "keeps task-59268-65829 Important after Claude and Grok call it a nit, with Antigravity or Codex as the third tool",
+          "file": "packages/orchestrator/test/orchestration/reviews/settlement.test.ts",
+          "case": "keeps a real third answer Important after two nits (third: $third)",
+          "variants": 2,
+          "assertions": "Actual controller requests the same independent pair, then a different tool or the original reporter when that is the only unasked tool. Both actual answer sequences retain their verdicts, place identity, Important severity and Builder-return decision. Native third-phase journeys retain real session counts, journey steps, scoped prompts and dispatch."
+        },
+        {
+          "original": "asks no third tool when an initial answer is already real",
+          "file": "packages/orchestrator/test/orchestration/reviews/settlement.test.ts",
+          "case": "asks no third tool and returns to the builder when initial tool %s says real",
+          "variants": 2,
+          "assertions": "Checks either initial tool reporting real, exactly two places and no requested third work, settled step snapshot, named real verifier and disputed reason, and the actual reviewRoundEnd return. Native fresh-pair and targeted-third controls retain session/step cardinality."
+        },
+        {
+          "original": "keeps unknown legacy reasons without counting their nominal profiles as actual tools",
+          "file": "packages/orchestrator/test/orchestration/reviews/settlement.test.ts",
+          "case": "keeps unknown legacy reasons without counting a nominal profile as an actual tool",
+          "variants": 1,
+          "assertions": "Actual controller sees the legacy nominal voted profile without evidence, admits both proven actual tools, preserves the older reason without adding toolId, and settles only their current verdicts. Native proven/unproven restart and majority controls remain."
+        }
+      ],
+      "review": "Partial semantic audit: five decision-only runtime variants now use the actual extracted ballot controller and core round-routing rule, with seven smaller variants including reversed order. All 32 retained declarations and their assertion bodies are unchanged (verifier-policy-case-reconciliation.json). The remaining 44 native cases still need complete ownership, fixture and resource audit; this mixed original file remains pending.",
+      "validation": {
+        "artifact": "verifier-policy-case-reconciliation.json",
+        "native": "verifier-policy-native.xml",
+        "controller": "verifier-policy-orchestrator.json",
+        "measurement": "verifier-policy-before-2026-10-24T20-00-37-894Z/summary.json: five executed cases, 442 direct launches (365 Git, 39 Bun, 38 process inspections), no observer errors and stable inputs. New controller cases have no native effects under the transitive layer guard; framework startup is not zero. This is not a whole-suite speed claim."
+      }
     },
     {
       "file": "packages/engine/test/instance.test.ts",

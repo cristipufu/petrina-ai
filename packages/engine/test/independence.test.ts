@@ -320,9 +320,6 @@ const checkedFinding = (f: Awaited<ReturnType<typeof voting>>) => f.task().findi
 /** What each tool answered, without the ballot details every new answer records. */
 const plain = (votes?: readonly Vote[]) => votes?.map(({ ballot: _ballot, ...vote }) => vote);
 const verifierSteps = (f: Awaited<ReturnType<typeof voting>>) => f.task().journey!.filter((step) => step.roleId === "verifier");
-/** task-59268's dissent: Codex reported it; Claude and Grok called it a nit, Codex and Antigravity real. */
-const HISTORICAL = "task-59268-65829";
-const historical = { [HISTORICAL]: { opus: "nit", "grok-4.7": "nit", "gpt-6.1-sol": "real", "gemini-4-argon": "real" } } as const;
 const inject = (f: Awaited<ReturnType<typeof voting>>, id: string, raisedBy: string, text = "The second greeting is missing.") =>
   f.engine.s.tasks.find((entry) => entry.id === f.task().id)!.findings.push({ id, text, severity: "blocking", raisedBy, confirmedBy: [], status: "open", evidence: "Opened the second page" });
 
@@ -404,36 +401,6 @@ describe.concurrent("bounded verifier panels", () => {
     } finally { await f.engine.shutdown(); }
   });
 
-  for (const antigravity of [true, false]) it(`keeps ${HISTORICAL} Important after Claude and Grok call it a nit, with ${antigravity ? "Antigravity" : "Codex"} as the third tool`, async () => {
-    const f = await voting({ reviewer: undefined, verifierByFinding: historical }, 4, [], antigravity);
-    try {
-      inject(f, HISTORICAL, "sol-high");
-      await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
-      const finding = f.task().findings.find((entry) => entry.id === HISTORICAL)!;
-      const steps = verifierSteps(f);
-      expect(steps.map((step) => step.seats)).toEqual([["verifier:opus-high", "verifier:grok-high"], [antigravity ? "verifier:third:argon-high" : "verifier:third:sol-high"]]);
-      expect(new Set(plain(finding.votes)!.map((vote) => `${vote.toolId}:${vote.verdict}`))).toEqual(new Set(["claude-code:nit", "grok:nit", antigravity ? "antigravity:real" : "codex:real"]));
-      expect(finding.verification?.verdict).toBe("real");
-      expect(finding.severity).toBe("blocking");
-      expect(f.fakes.openings("verifier")).toHaveLength(3);
-      expect(f.task().fixing).toBe(true);
-    } finally { await f.engine.shutdown(); }
-  });
-
-  it("asks no third tool when an initial answer is already real", async () => {
-    const f = await voting({ reviewer: undefined, verifierByFinding: { [HISTORICAL]: { opus: "nit", "grok-4.7": "real" } } }, 4, [], true);
-    try {
-      inject(f, HISTORICAL, "sol-high");
-      await f.advance(() => f.delivery() || f.fakes.openings("builder").length === 2, (role) => role !== "builder");
-      const finding = f.task().findings.find((entry) => entry.id === HISTORICAL)!;
-      expect(f.fakes.openings("verifier")).toHaveLength(2);
-      expect(verifierSteps(f)).toHaveLength(1);
-      expect(verifierSteps(f)[0]!.outcome).toBe("1 checked: 1 must be fixed in this change (1 disputed)");
-      expect(finding.verification).toMatchObject({ verdict: "real", by: "grok-high" });
-      expect(finding.verification!.reason).toContain("answered only a nit");
-    } finally { await f.engine.shutdown(); }
-  });
-
   it("targets a mixed batch's third answer at the unsettled finding only", async () => {
     const f = await voting({ verifierByFinding: { second: { "gpt-6.1-sol": "nit", "grok-4.7": "nit", opus: "not-a-bug" } } }, 3, []);
     try {
@@ -512,17 +479,6 @@ describe.concurrent("bounded verifier panels", () => {
       expect(f.fakes.openings("builder")).toHaveLength(1);
       expect(verifierSteps(f)[0]!.outcome).toBe("1 checked by one tool: none to fix now, 1 not a bug");
       expect(f.task().timeline.some((entry) => entry.text === "1 checked by one tool: none to fix now, 1 not a bug")).toBe(true);
-    } finally { await f.engine.shutdown(); }
-  });
-
-  it("keeps the existing mildest-verdict tie rule on an exhaustive pair", async () => {
-    const f = await voting({ verifierByModel: { "gpt-6.1-sol": "pre-existing", "grok-4.7": "nit" } });
-    try {
-      await f.advance(f.delivery);
-      expect(checkedFinding(f).verification?.verdict).toBe("nit");
-      expect(checkedFinding(f).severity).toBe("suggestion");
-      expect(f.fakes.openings("verifier")).toHaveLength(2);
-      expect(f.fakes.openings("builder")).toHaveLength(1);
     } finally { await f.engine.shutdown(); }
   });
 
@@ -730,23 +686,6 @@ describe.concurrent("bounded verifier panels", () => {
         expect(f.fakes.openings("builder")).toHaveLength(1);
       }
       await f.advance(f.delivery);
-    } finally { await f.engine.shutdown(); }
-  });
-
-  it("keeps unknown legacy reasons without counting their nominal profiles as actual tools", async () => {
-    const f = await voting({ verifier: "not-a-bug" });
-    try {
-      await f.advance(() => checkedFinding(f) !== undefined, (role) => role !== "verifier");
-      const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
-      const finding = task.findings.find((finding) => finding.id === checkedFinding(f).id)!;
-      const legacy = { by: "opus-high", verdict: "real" as const, reason: "An older recorded reason with no proven actual identity." };
-      finding.votes = [legacy];
-      task.hunt!.voted = { "opus-high": true };
-      await f.advance(f.delivery);
-      expect(checkedFinding(f).votes).toContainEqual(legacy);
-      expect(checkedFinding(f).votes?.filter((vote) => vote.toolId)).toHaveLength(2);
-      expect(checkedFinding(f).verification?.verdict).toBe("not-a-bug");
-      expect(legacy).not.toHaveProperty("toolId");
     } finally { await f.engine.shutdown(); }
   });
 
