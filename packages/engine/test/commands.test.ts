@@ -9,6 +9,7 @@ import { CLEANUP_MS, CommandFailure, commitAt, git, gitWith, runCommand, runGit,
 import { currentSlow, defunctProcess, makeProduct, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
 import { MOST_SLOW } from "./slow.js";
 import { rejectionOf } from "./rejections.js";
+import { createProcessLease } from "./fixtures/process-lease.js";
 
 const root = tempDir("petrina-commands-");
 afterAll(() => removeDir(root));
@@ -531,16 +532,18 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(10);`;
       const dir = join(root, `started-while-looking-${starter}-${record}`);
       mkdirSync(dir);
       const ready = join(dir, "ready"), release = join(dir, "release"), launched = join(dir, "launched");
-      const launcher = `const worker = Bun.spawn(["sleep", "300"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      const owner = await createProcessLease();
+      const workerProgram = owner.program(`await Bun.sleep(${WATCHED_S * 1_000});`);
+      const launcher = owner.program(`const worker = Bun.spawn([process.execPath, "-e", ${JSON.stringify(workerProgram)}], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 worker.unref();
 const { renameSync, writeFileSync } = require("node:fs");
-writeFileSync(${JSON.stringify(`${launched}.tmp`)}, worker.pid + " " + process.pid); renameSync(${JSON.stringify(`${launched}.tmp`)}, ${JSON.stringify(launched)});`;
-      const starts = `const { existsSync, writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(`${launched}.tmp`)}, worker.pid + " " + process.pid); renameSync(${JSON.stringify(`${launched}.tmp`)}, ${JSON.stringify(launched)});`);
+      const starts = owner.program(`const { existsSync, writeFileSync } = require("node:fs");
 writeFileSync(${JSON.stringify(ready)}, "");
 while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(10);
 await Bun.spawn([process.execPath, "-e", ${JSON.stringify(launcher)}], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
-await Bun.sleep(60_000);`;
-      const script = starter === "command" ? starts : `Bun.spawn([process.execPath, "-e", ${JSON.stringify(starts)}], { stdin: "ignore", stdout: "ignore", stderr: "inherit" }); await Bun.sleep(60_000);`;
+await Bun.sleep(60_000);`);
+      const script = starter === "command" ? starts : owner.program(`Bun.spawn([process.execPath, "-e", ${JSON.stringify(starts)}], { stdin: "ignore", stdout: "ignore", stderr: "inherit" }); await Bun.sleep(60_000);`);
       const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
       let looks = 0, worker = 0;
       const stop = new AbortController();
@@ -560,6 +563,8 @@ await Bun.sleep(60_000);`;
           return list;
         },
       });
+      // Observe failure even if readiness throws before this case reaches failureOf(command).
+      const completed = command.catch(() => undefined);
       try {
         await waitFor(() => existsSync(ready), "the starter to wait for its release");
         stop.abort();
@@ -575,7 +580,9 @@ await Bun.sleep(60_000);`;
           expect(failure.message).toContain("Some of what it started may still be running.");
         }
       } finally {
-        if (worker && await alive(worker)) process.kill(worker, "SIGKILL");
+        stop.abort();
+        await owner.close();
+        await completed;
       }
     });
   }
