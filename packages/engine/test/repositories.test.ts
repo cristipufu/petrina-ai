@@ -1186,7 +1186,7 @@ describe.concurrent("shared-task repair regressions", () => {
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      fakes.scenario({ planner: "tester-with-design", builder: "plain", tester: "always-fail", affectedProducts: [first, second], fixes: "change", reopen: "resume" });
+      fakes.scenario({ planner: "tester-first", builder: "plain", tester: "always-fail", affectedProducts: [first, second], fixes: "change", reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Acceptance needs a decision" });
       const ready = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       expect(taskOf(ready, id).error).toBeUndefined();
@@ -1195,6 +1195,8 @@ describe.concurrent("shared-task repair regressions", () => {
       // The planned review still runs before the decision, and the held failure starts no review fix round.
       expect(fakes.received("code reviewer")).toHaveLength(2);
       expect(fakes.received("builder")).toHaveLength(6);
+      expect(fakes.received("architect")).toHaveLength(0);
+      expect(fakes.received("design reviewer")).toHaveLength(0);
       await engine.shutdown(); engine = start();
       expect(engine.task(id)!.repositories!.map((work) => work.acceptanceReturns)).toEqual([2, 2]);
       expect(fakes.received("builder")).toHaveLength(6);
