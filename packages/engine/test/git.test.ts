@@ -15,8 +15,65 @@ const temp = mkdtempSync(join(tmpdir(), "petrina-git-"));
 /** A file as checked out, in one line-ending style: git on Windows writes CRLF. */
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
+async function currentVersion(repo: string): Promise<{ head: string; tree: string }> {
+  const { head, tree } = await operations.commitVersion(repo);
+  if (!head || !tree) throw new Error("The Git fixture has no committed version");
+  return { head, tree };
+}
+
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
+
+  for (const format of ["sha1", "sha256"] as const) it(`folds ${format} task commits from one observation, preserving edits and returning the exact version`, async () => {
+    const repo = join(temp, `fold-${format}`); mkdirSync(repo);
+    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
+    writeFileSync(join(repo, "README.md"), "Initial\n"); await commitAll(repo, "Initial");
+    const baseVersion = await currentVersion(repo), base = baseVersion.head;
+    expect(await operations.squash(repo, base, "No empty task commit")).toEqual(baseVersion);
+    expect(await operations.head(repo)).toBe(base);
+    writeFileSync(join(repo, "README.md"), "Changed\n"); await commitAll(repo, "Task title\n\nTask body");
+    const before = await currentVersion(repo);
+    let calls = 0;
+    const spawn = Bun.spawn;
+    const started = spyOn(Bun, "spawn").mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+      if (args[0][0] === "git") calls++;
+      return Reflect.apply(spawn, Bun, args);
+    }) as typeof Bun.spawn);
+    try {
+      expect(await operations.squash(repo, base, "Task title\n\nTask body")).toEqual(before);
+      expect(calls).toBe(1);
+    } finally { started.mockRestore(); }
+    // A message-only change still makes exactly one commit and retains its tree.
+    const renamed = await operations.squash(repo, base, "New title\n\nA complete body ✓\n");
+    expect(renamed.head).not.toBe(before.head);
+    expect(renamed.tree).toBe(before.tree);
+    expect(await git(repo, "show", "-s", "--format=%P", "HEAD")).toBe(base);
+    expect(await git(repo, "show", "-s", "--format=%B", "HEAD")).toBe("New title\n\nA complete body ✓");
+    writeFileSync(join(repo, "second.txt"), "Second commit\n"); await commitAll(repo, "Repair");
+    const { tree } = await currentVersion(repo);
+    // Folding committed history must preserve both staged and unstaged work and untracked files.
+    writeFileSync(join(repo, "README.md"), "Staged work\n"); await git(repo, "add", "README.md");
+    writeFileSync(join(repo, "second.txt"), "Unstaged work\n");
+    writeFileSync(join(repo, "untracked.txt"), "Keep this\n");
+    const status = await git(repo, "status", "--porcelain");
+    const folded = await operations.squash(repo, base, "Final task message");
+    expect(folded).toEqual({ head: await operations.head(repo), tree });
+    expect(await git(repo, "show", "-s", "--format=%P", "HEAD")).toBe(base);
+    expect(await git(repo, "rev-list", "--count", `${base}..HEAD`)).toBe("1");
+    expect(await git(repo, "status", "--porcelain")).toBe(status);
+    expect(checkedOut(join(repo, "README.md"))).toBe("Staged work\n");
+    expect(checkedOut(join(repo, "second.txt"))).toBe("Unstaged work\n");
+    expect(checkedOut(join(repo, "untracked.txt"))).toBe("Keep this\n");
+    writeFileSync(join(repo, ".git", "HEAD.lock"), "Another operation owns the ref\n");
+    try { await expectRejection(operations.squash(repo, base, "A blocked message change")); }
+    finally { rmSync(join(repo, ".git", "HEAD.lock")); }
+    expect(await operations.head(repo)).toBe(folded.head);
+    expect(await git(repo, "status", "--porcelain")).toBe(status);
+    await expectRejection(operations.squash(repo, "not-a-commit", "Cannot fold"));
+    await expectRejection(operations.squash(repo, "f".repeat(base.length), "Cannot fold"));
+    expect(await operations.head(repo)).toBe(folded.head);
+    expect(await git(repo, "status", "--porcelain")).toBe(status);
+  });
 
   for (const format of ["sha1", "sha256"] as const) it(`compares and restores ${format} versions without treating an invalid version as unchanged`, async () => {
     const repo = join(temp, `maintenance-${format}`); mkdirSync(repo);

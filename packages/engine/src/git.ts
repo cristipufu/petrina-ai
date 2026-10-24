@@ -560,20 +560,21 @@ export async function contentTree(path: string): Promise<string | undefined> {
 }
 
 /**
- * The branch's work as one commit on top of where it forked from `base`, with the same code and `message`.
- * Returns how many commits it folded: 0 when it already was one commit with that message, or had none.
+ * The branch's work as one commit on top of its resolved fork, with the same code and `message`.
+ * The caller resolves the fork first. Return the exact resulting commit/tree without another observation.
  */
-export async function squash(path: string, base: string, message: string, resolvedFork?: string): Promise<number> {
-  const fork = resolvedFork ?? await mergeBase(path, "HEAD", base);
-  if (!fork) return 0;
-  const count = Number((await run(["git", "rev-list", "--count", `${fork}..HEAD`], path)).stdout);
-  if (!(count > 0)) return 0;
-  if (count === 1 && (await run(["git", "log", "-1", "--format=%B", "HEAD"], path)).stdout === message.trim()) return 0;
+export async function squash(path: string, fork: string, message: string): Promise<{ head: string; tree: string }> {
+  if (!FULL_SHA.test(fork)) throw new Error("Not a complete fork commit");
+  // Read recorded parents rather than the optional commit graph. A direct single parent proves
+  // there is already exactly one task commit, without walking/counting the whole branch.
+  const [head, tree, parents, ...body] = (await must(["git", "-c", "core.commitGraph=false", "show", "--no-patch", "--format=%H%n%T%n%P%n%B", "HEAD"], path)).split("\n");
+  if (!head || !tree || !FULL_SHA.test(head) || !FULL_SHA.test(tree)) throw new Error("The task's current commit could not be read");
+  if (head === fork || (parents === fork && body.join("\n").trim() === message.trim())) return { head, tree };
   // The commit is made first and the branch moves to it last, so a failure leaves the branch as it was.
-  const sha = await must(["git", "commit-tree", "HEAD^{tree}", "-p", fork, "-F", "-"], path, message);
-  if (!SHA.test(sha)) return 0;
+  const sha = await must(["git", "commit-tree", tree, "-p", fork, "-F", "-"], path, message);
+  if (!FULL_SHA.test(sha)) throw new Error("The folded task commit could not be created");
   await must(["git", "reset", "--soft", "--quiet", sha], path);
-  return count;
+  return { head: sha, tree };
 }
 
 /**

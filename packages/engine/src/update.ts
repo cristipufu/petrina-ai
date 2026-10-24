@@ -39,8 +39,8 @@ export class Updates {
     if (!base) return;
     const fork = settled.fork ?? await git.mergeBase(repository.worktree, "HEAD", base);
     if (!fork) return;
-    await git.squash(repository.worktree, base, this.message(scope), fork);
-    await this.k.rememberVersion(scope);
+    const version = await git.squash(repository.worktree, fork, this.message(scope));
+    await this.k.rememberVersion(scope, version);
     return fork;
   }
 

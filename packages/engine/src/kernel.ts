@@ -1063,9 +1063,10 @@ export abstract class Kernel {
     }
   }
 
-  async rememberVersion(scope: RepositoryContext): Promise<void> {
+  /** Reuse only a version this operation just observed or created, never an earlier saved freshness flag. */
+  async rememberVersion(scope: RepositoryContext, observed?: { head: string; tree: string }): Promise<void> {
     if (!scope.work.worktree) return;
-    const version = await git.commitVersion(scope.work.worktree);
+    const version = observed ?? await git.commitVersion(scope.work.worktree);
     if (version.head && version.tree) scope.work.savedVersion = { commit: version.head, tree: version.tree };
   }
 
