@@ -2,10 +2,10 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { checksFingerprint, commandText } from "../src/checks.js";
+import { Engine } from "../../engine.js";
+import { checksFingerprint, commandText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
-import { git, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "./fixtures.js";
+import { git, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "../../fixtures.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];

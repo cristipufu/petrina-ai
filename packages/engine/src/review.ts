@@ -23,7 +23,7 @@ import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
 import { completeAll } from "./parallel.js";
-import { checkProofRequests, recordReviewProofs } from "./proof-requests.js";
+import { checkProofRequests, recordReviewProofs } from "@petrina/orchestrator";
 import type { ReadinessNeed } from "./readiness.js";
 
 /** What admission decided for a parallel seat: the words on its start, why a saved conversation was not kept, and its readiness recheck. */

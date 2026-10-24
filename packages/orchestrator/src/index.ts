@@ -18,3 +18,5 @@ export type { PendingVerification, VerifierAnswerSource, VerifierVerdict, Verifi
 export { VerifierBallots } from "./verifier-ballots.js";
 export type { ReviewReport, ReviewReportHost } from "./ports/review-reports.js";
 export { ReviewReports } from "./review-reports.js";
+export type { ReviewProofHost, ReviewProofProposal } from "./ports/review-proof.js";
+export { checkProofRequests, recordReviewProofs } from "./review-proof.js";

@@ -70,7 +70,7 @@ Shared transitions receive state and an explicit time. Callers retain persistenc
 |---|---|
 | `apps/desktop` | React UI and a thin Tauri host for engine ownership, windows and notifications |
 | `packages/core` | Domain types, pure rules, analytics definitions and the scripted demo |
-| `packages/orchestrator` | Portable workflow controllers and execution handles, consuming narrow effect contracts; currently repository context, repairs, source selection, acceptance/delivery-return routing, agent-session contracts, shared readiness checks and verifier ballots |
+| `packages/orchestrator` | Portable workflow controllers and execution handles, consuming narrow effect contracts |
 | `packages/engine` | Bun process coordinating agents, repositories, checks, storage and local API |
 | `packages/platform` | Shared native process capabilities, bounded process observations and file operations, with portable decision helpers |
 | `packages/storage` | SQLite snapshots, indexed history, work log, receipts and SQL diagnostics; consumes core data contracts |

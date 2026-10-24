@@ -291,7 +291,8 @@
       ],
       "validation": {
         "artifact": "core-acceptance-reconciliation.json",
-        "qualification": "core-acceptance-split.json: 25 passes. All workspace types and layer/assertion conventions pass; full combined qualification remains due."
+        "qualification": "core-acceptance-split.json: 25 passes. All workspace types and layer/assertion conventions pass; full combined qualification remains due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -844,11 +845,17 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/check-admission.test.ts",
+      "file": "packages/engine/test/journeys/checks/admission.test.ts",
       "declarations": 9,
       "assertionSites": 121,
       "baselineDigest": "e28cb3b841410d6a09782d70528b5eae203a988af3966d1c44045c6464f3e9f1",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-admission.test.ts",
+      "review": "All thirteen generated cases and every original assertion retained. This focused integration owner exercises real Git main updates/conflicts, version-bound check execution, queue handoff/yield, saved Tester/discovery handling, hook/definition changes and delivery evidence. No planner, Builder or reviewer processes are used. Setup registers each engine/root before awaits, and check-start waits observe their review operation.",
+      "validation": {
+        "artifact": "check-admission-layer-audit.json",
+        "qualification": "check-admission-owned.xml: 13 passes, 161 runtime assertions, 10.85s. The original path passed in the complete 0bccde91 run; the moved owner still needs combined qualification."
+      }
     },
     {
       "file": "packages/engine/test/check-decisions.test.ts",
@@ -990,7 +997,8 @@
       ],
       "validation": {
         "artifact": "platform-reconciliation.json",
-        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -1294,7 +1302,8 @@
       ],
       "validation": {
         "artifact": "platform-reconciliation.json",
-        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -1333,7 +1342,7 @@
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
         "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
-        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -1352,7 +1361,7 @@
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
         "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
-        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -1659,7 +1668,8 @@
       ],
       "validation": {
         "artifact": "platform-reconciliation.json",
-        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -1677,7 +1687,8 @@
       ],
       "validation": {
         "artifact": "platform-reconciliation.json",
-        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -2331,7 +2342,7 @@
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
         "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
-        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -2365,7 +2376,8 @@
       "from": "packages/engine/test/store-startup.test.ts",
       "validation": {
         "artifact": "platform-reconciliation.json",
-        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due."
+        "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -2488,7 +2500,7 @@
         "artifact": "storage-support-reconciliation.json",
         "originalCaseAndAssertionInventoryRetained": true,
         "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due.",
-        "completeRun": "859543e582dd7c2c56a7c41bcc7e6a4237007428: .test-results/2026-10-24T21-49-30-855Z-7c732f82/results.json; all six manifests complete and stable, 4663 passed / 11 explicit skips / zero failures at normal parallelism, 467490ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
       }
     },
     {
@@ -2620,7 +2632,34 @@
       "review": "Real private-file progress controls retain file-only deadlines and distinguish observed progress, completed work, rejected work and undefined rejection reasons. Uses the canonical fixture wait; no Engine, Git or native account.",
       "validation": {
         "artifact": "platform-progress-waits.xml",
-        "qualification": "Six passes; the two deadline/runner controls and 132 affected engine cases also pass. Full qualification remains due."
+        "qualification": "Six passes; the two deadline/runner controls and 132 affected engine cases also pass. Full qualification remains due.",
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
+      }
+    },
+    {
+      "file": "packages/orchestrator/test/orchestration/reviews/proof-requests.test.ts",
+      "status": "reviewed",
+      "fromCase": {
+        "file": "packages/engine/test/proof-requests.test.ts",
+        "title": "validates structured requests, deduplicates replay by seat position and reuses only readable exact Tester evidence"
+      },
+      "review": "Portable proof-request validation/replay/evidence bookkeeping behind task-aware role lookup and identity allocation. The migrated case retains eight decision assertions and seven invalid-evidence variants plus empty/malformed/shared/request-identity/task-owned-role/delivery-order controls. No Engine, Git, SQLite or agent runs.",
+      "validation": {
+        "artifact": "review-proof-reconciliation.json",
+        "qualification": "Both production function bodies are identical apart from declarations/imports. The original ten assertion sites are retained as eight controller and two schema assertions. All 189 orchestrator tests, five focused native schema/replay/acceptance controls, types and conventions pass. Whole original proof-requests.test.ts audit and complete new batch qualification remain due."
+      }
+    },
+    {
+      "file": "packages/engine/test/contracts/agents/proof-schema.test.ts",
+      "status": "reviewed",
+      "fromCase": {
+        "file": "packages/engine/test/proof-requests.test.ts",
+        "title": "validates structured requests, deduplicates replay by seat position and reuses only readable exact Tester evidence"
+      },
+      "review": "The migrated case retains its two actual ReviewResult schema rejection assertions at the agent-result boundary; ordinary data/controller tests do not depend on the engine schema.",
+      "validation": {
+        "artifact": "review-proof-reconciliation.json",
+        "qualification": "Both production function bodies are identical apart from declarations/imports. The original ten assertion sites are retained as eight controller and two schema assertions. All 189 orchestrator tests, five focused native schema/replay/acceptance controls, types and conventions pass. Whole original proof-requests.test.ts audit and complete new batch qualification remain due."
       }
     }
   ],

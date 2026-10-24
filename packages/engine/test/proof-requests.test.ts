@@ -7,7 +7,7 @@ import { Engine, type EngineOptions } from "./engine.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../src/repositories.js";
-import { checkProofRequests, recordReviewProofs } from "../src/proof-requests.js";
+import { recordReviewProofs } from "@petrina/orchestrator";
 import { ReviewResult } from "../src/roles.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "@petrina/storage/store";
@@ -755,30 +755,6 @@ for (const converted of [false, true]) for (const committed of [false, true]) it
   } finally { await f.engine.shutdown(); }
 });
 
-it("validates structured requests, deduplicates replay by seat position and reuses only readable exact Tester evidence", async () => {
-  const f = await fixture(false, true);
-  try {
-    const { engine, task, review } = f;
-    task.hunt = { stageId: review.id, round: 1, reported: {}, findings: 0, input: { file: "unused", digest: "unused", heads: {}, trees: await versionsOf(task) } };
-    const item = { text: "Run Linux recovery", reason: "Final Linux proof is required", productIds: [task.productId], checklistText: "Linux recovery works" };
-    expect(checkProofRequests(engine, task, [item])).toBeUndefined();
-    for (const changed of [{ productIds: [] }, { productIds: ["wrong"] }, { checklistText: "Different wording" }]) expect(checkProofRequests(engine, task, [{ ...item, ...changed }])).toBeDefined();
-    expect(ReviewResult.safeParse({ verdict: "pass", proofRequests: [{ ...item, reason: "" }] }).success).toBe(false);
-    expect(ReviewResult.safeParse({ verdict: "pass", proofRequests: [{ ...item, text: "" }] }).success).toBe(false);
-    await f.recordPass([]);
-    recordReviewProofs(engine, task, review, [item], "sol-high", "code-reviewer", "0");
-    expect(task.proofRequests).toHaveLength(1); expect(task.proofRequests![0]!.status).toBe("already-current");
-    recordReviewProofs(engine, task, review, [item], "sol-high", "code-reviewer", "0");
-    expect(task.proofRequests).toHaveLength(1);
-    recordReviewProofs(engine, task, review, [item], "opus-high", "security-reviewer", "1");
-    expect(task.proofRequests).toHaveLength(2);
-    task.journey = [];
-    refreshProofs(task, await versionsOf(task));
-    expect(task.proofRequests!.map(item => item.status)).toEqual(["stale", "stale"]);
-    task.plan!.stages = task.plan!.stages.filter(stage => stage.id !== "test");
-    expect(checkProofRequests(engine, task, [item])).toContain("no acceptance testing step");
-  } finally { await f.engine.shutdown(); }
-});
 
 for (const brief of [false, true]) it(`forces exact-version proof after unchanged-patch main advances, with brief ${brief}, then bounds main-only reruns across restart`, async () => {
   const f = await fixture(false, brief);

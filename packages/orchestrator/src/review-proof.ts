@@ -1,10 +1,9 @@
-import { addDeliveryCheck } from "@petrina/orchestrator";
 import { proofOwner, proofStatus, sameVersions, type DeepMutable, type ProofRequest, type Task } from "@petrina/core";
-import type { z } from "zod";
-import type { Kernel, MTask, MStage } from "./kernel.js";
-import type { ReviewResult } from "./roles.js";
+import { addDeliveryCheck } from "./delivery-gate.js";
+import type { RuntimeTask } from "./model.js";
+import type { ReviewProofHost, ReviewProofProposal } from "./ports/review-proof.js";
 
-export function checkProofRequests(k: Pick<Kernel, "s" | "role">, task: MTask, requests: z.infer<typeof ReviewResult>["proofRequests"]): string | undefined {
+export function checkProofRequests(k: Pick<ReviewProofHost, "role">, task: RuntimeTask, requests: readonly ReviewProofProposal[]): string | undefined {
   if (!requests.length) return;
   const owner = proofOwner(task as Task, task.plan!.stages.flatMap(stage => { const role = k.role(stage.roleId, task); return role ? [role] : []; }));
   if (!owner) return "This plan has no acceptance testing step. Do not return proofRequests; keep required verification with the coordinator.";
@@ -17,7 +16,7 @@ export function checkProofRequests(k: Pick<Kernel, "s" | "role">, task: MTask, r
 }
 
 /** Called with the accepted seat result; identity is its position in this execution, never similar wording. */
-export function recordReviewProofs(k: Pick<Kernel, "id" | "role">, task: MTask, stage: MStage, requests: z.infer<typeof ReviewResult>["proofRequests"], by: string, roleId: string, seat: string): void {
+export function recordReviewProofs(k: ReviewProofHost, task: RuntimeTask, stage: { readonly id: string }, requests: readonly ReviewProofProposal[], by: string, roleId: string, seat: string): void {
   const owner = task.plan?.stages.find(entry => entry.kind === "do" && k.role(entry.roleId, task)?.result === "checks");
   if (!owner || !requests.length) return;
   if (!addDeliveryCheck(k, task)) throw new Error("Required proof needs a delivery preparation step.");
