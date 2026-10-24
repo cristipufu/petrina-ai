@@ -1,7 +1,8 @@
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
-import * as fileIO from "node:fs/promises";
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { FileFaults } from "./file-faults.js";
+import type { FileOperations } from "../src/file-operations.js";
 import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -67,6 +68,8 @@ interface World {
   shop: string;
   notes: string;
   prompts: string[];
+  faults: FileFaults;
+  files: FileOperations;
   answer: (prompt: string) => MatchAnswer | Promise<MatchAnswer>;
 }
 
@@ -76,7 +79,9 @@ async function open(answer: World["answer"] = groupByBug, withNotes = false): Pr
   const fakes = new Fakes(join(root, "agents"));
   const prompts: string[] = [];
   const data = join(root, "data");
+  const faults = new FileFaults(), files = faults.files;
   const options = {
+    files,
     agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] as const,
     matchFollowUps: async (prompt: string) => {
       prompts.push(prompt);
@@ -90,13 +95,14 @@ async function open(answer: World["answer"] = groupByBug, withNotes = false): Pr
   await Promise.all([...engine.backgroundWork]);
   const shop = await engine.addProduct(await makeProduct(root), "Shop");
   const notes = withNotes ? await engine.addProduct(await makeProduct(join(root, "other")), "Notes") : "";
-  const world: World = { engine, data, root, shop, notes, prompts, answer };
+  const world: World = { engine, data, root, shop, notes, prompts, answer, faults, files };
   return world;
 }
 
 async function reopen(world: World, match = true): Promise<void> {
   await world.engine.shutdown();
   world.engine = new Engine(world.data, {
+    files: world.files,
     agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), join(world.root, "agents")],
     ...(match ? { matchFollowUps: async (prompt: string) => { world.prompts.push(prompt); return world.answer(prompt); } } : {}),
   });
@@ -357,7 +363,7 @@ it("finishes a credited report's picture copy on a manual fix whose products cha
     const fix = engine.task(fixId)!;
     const source = taskOf(engine, world.shop, "A pictured sighting", [older("old", "bug-moved: A later sighting")]);
     plant(engine, source.id, source.findings[0]!.text);
-    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
     try { await finish(engine, source); } finally { copy.mockRestore(); }
     expect(fix.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
     fix.selectedProducts = [{ productId: world.notes, startFrom: { kind: "default" }, delivery: "pull-request" }];
@@ -381,12 +387,12 @@ it("keeps an unfinished source's picture while its report's link is copied, even
     plant(engine, running.id, running.findings[0]!.text);
     const original = join(engine.dataDir, "captures", running.id, "pic.png");
     const done = taskOf(engine, world.shop, "Finished", [older("late", "bug-held: The same bug, finished")]);
-    const originalCopy = fileIO.copyFile;
+    const originalCopy = world.files.copyFile;
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     let copying!: () => void;
     const started = new Promise<void>(resolve => { copying = resolve; });
-    const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
+    const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
     try {
       const finishing = finish(engine, done);
       await started;
@@ -418,12 +424,12 @@ it("keeps a saved link and its picture when the manual fix finishes or is cancel
       plant(engine, source.id, source.findings[0]!.text);
       const key = followUpKey(source.id, "old");
       const original = join(engine.dataDir, "captures", source.id, "pic.png");
-      const originalCopy = fileIO.copyFile;
+      const originalCopy = world.files.copyFile;
       let release!: () => void;
       const held = new Promise<void>(resolve => { release = resolve; });
       let copying!: () => void;
       const started = new Promise<void>(resolve => { copying = resolve; });
-      const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => {
+      const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => {
         copying();
         await held;
         if (!copied) throw new Error("Copy refused");
@@ -480,7 +486,7 @@ it("retries a queued manual fix's picture across source retirement and restart, 
     const source = taskOf(engine, world.shop, "A pictured sighting", [older("old", "bug-retry: A later sighting")]);
     plant(engine, source.id, source.findings[0]!.text);
     const original = join(engine.dataDir, "captures", source.id, "pic.png");
-    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
     try {
       await finish(engine, source);
       expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
@@ -815,12 +821,12 @@ it("copies manual-link pictures before tracking, keeps concurrent messages, and 
     const target = engine.task(targetId)!;
     target.state = "running";
     engine.s.followUpPending = [{ keys: [followUpKey(source.id, "old")], retry: true }];
-    const originalCopy = fileIO.copyFile;
+    const originalCopy = world.files.copyFile;
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     let copying!: () => void;
     const started = new Promise<void>(resolve => { copying = resolve; });
-    const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
+    const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => { copying(); await held; return originalCopy(...args); });
     const c = new Coordination(engine);
     const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "pictured-link" };
     try {
@@ -939,7 +945,7 @@ async function failedAssignment(world: World, reason: "unavailable" | "no-choice
   engine.s.followUpPending = reason === "unavailable" ? [{ keys: [key], retry: true }] : [];
   plant(engine, source.id, source.findings[0]!.text);
   engine.save();
-  const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+  const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
   try { await engine["followUps"].catchUp(); }
   catch (error) { release(); throw error; }
   finally { copy.mockRestore(); }
@@ -960,8 +966,8 @@ async function combinedAssignments(world: World, partial = false) {
     sources[0]!.journey![0]!.agentResults![0]!.images!.push({ id: "second", caption: "Another view" });
     writeFileSync(join(world.data, "captures", sources[0]!.id, "second.png"), "png");
   }
-  const original = fileIO.copyFile;
-  const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => {
+  const original = world.files.copyFile;
+  const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => {
     if (String(args[0]).endsWith("pic.png")) throw new Error("Copy refused");
     return original(...args);
   });
@@ -1017,8 +1023,8 @@ it("retains combined reports' originals while copying fails and permits manual r
     world.engine.task(otherId)!.state = "running";
     release();
     world.engine.save();
-    const original = fileIO.copyFile;
-    const copy = spyOn(fileIO, "copyFile").mockImplementation(async (...args) => {
+    const original = world.files.copyFile;
+    const copy = spyOn(world.files, "copyFile").mockImplementation(async (...args) => {
       if (String(args[0]).endsWith("pic.png")) throw new Error("Copy still refused");
       return original(...args);
     });
@@ -1129,7 +1135,7 @@ for (const reason of ["unavailable", "no-choice"] as const) it(`keeps the ${reas
     release();
     world.engine.save();
     expect(world.engine.s.tasks.some(task => task.id === source.id)).toBe(false);
-    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy still refused"));
+    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy still refused"));
     try {
       await world.engine["cleanup"].removeCaptures(source.id);
       expect(existsSync(join(world.data, "captures", source.id, "pic.png"))).toBe(true);
@@ -1256,7 +1262,7 @@ it("leaves a manual report untracked after copying or saving fails and safely re
     const targetId = engine.addTask({ productId: world.shop, kind: "bug", title: "Manual target", backlog: true });
     const c = new Coordination(engine);
     const args = { taskId: source.id, findingId: "old", targetTaskId: targetId, requestId: "copy-failed" };
-    const copy = spyOn(fileIO, "copyFile").mockRejectedValue(new Error("Copy refused"));
+    const copy = spyOn(world.files, "copyFile").mockRejectedValue(new Error("Copy refused"));
     try {
       const result = await c.call("task.track-finding", args);
       expect(result.outcome).toBe("invalid");
@@ -1343,11 +1349,11 @@ it("retries a partial picture copy without attaching successful images again", a
   plant(engine, source.id, source.findings[0]!.text);
   source.journey![0]!.agentResults![0]!.images!.push({ id: "second", caption: "The other view" });
   writeFileSync(join(engine.dataDir, "captures", source.id, "second.png"), "png");
-  const original = fileIO.copyFile;
+  const original = world.files.copyFile;
   let fail = true;
-  const copy = spyOn(fileIO, "copyFile").mockImplementation(async (from, to, mode) => {
+  const copy = spyOn(world.files, "copyFile").mockImplementation(async (from, to) => {
     if (String(from).endsWith("second.png") && fail) throw new Error("Copy unavailable");
-    return original(from, to, mode);
+    return original(from, to);
   });
   try {
     await finish(engine, source);
@@ -1666,7 +1672,7 @@ it("keeps a refused picture on the original task until a later pass copies it", 
     const text = "bug-copy: The footer opens a retired page.";
     const source = taskOf(engine, world.shop, "Copied later", [older("copy", text)]);
     plant(engine, source.id, text);
-    chmodSync(join(engine.dataDir, "captures", source.id, "pic.png"), 0);
+    const allowCopy = world.faults.blockCopy(join(engine.dataDir, "captures", source.id, "pic.png"));
     await finish(engine, source);
     const card = cardFor(engine, "copy")[0]!;
     expect(source.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
@@ -1674,7 +1680,7 @@ it("keeps a refused picture on the original task until a later pass copies it", 
     expect(existsSync(join(engine.dataDir, "captures", source.id, "pic.png"))).toBe(true);
     await engine["cleanup"].removeCaptures(source.id);
     expect(existsSync(join(engine.dataDir, "captures", source.id, "pic.png"))).toBe(true);
-    chmodSync(join(engine.dataDir, "captures", source.id, "pic.png"), 0o644);
+    allowCopy();
     await engine["followUps"].catchUp();
     const image = card.session.flatMap((line) => line.images ?? [])[0]!;
     expect(image.from).toEqual({ taskId: source.id, imageId: "pic" });
@@ -1802,7 +1808,7 @@ it("keeps a picture that could not be copied until a later try, including after 
     const clear = taskOf(engine, world.shop, "Clear picture", [older("clear", clearText)]);
     plant(engine, blocked.id, blockedText);
     plant(engine, clear.id, clearText);
-    chmodSync(join(engine.dataDir, "captures", blocked.id, "pic.png"), 0);
+    const allowCopy = world.faults.blockCopy(join(engine.dataDir, "captures", blocked.id, "pic.png"));
     await finish(engine, blocked);
     await finish(engine, clear);
     expect(blocked.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
@@ -1816,7 +1822,7 @@ it("keeps a picture that could not be copied until a later try, including after 
     const clearCard = cardFor(world.engine, "clear")[0]!;
     const clearImage = clearCard.session.flatMap((line) => line.images ?? [])[0]!;
     expect(existsSync(join(world.engine.dataDir, "captures", clearCard.id, `${clearImage.id}.png`))).toBe(true);
-    chmodSync(join(world.engine.dataDir, "captures", blocked.id, "pic.png"), 0o644);
+    allowCopy();
     await world.engine["followUps"].catchUp();
     const heldCard = cardFor(world.engine, "held")[0]!;
     const image = heldCard.session.flatMap((line) => line.images ?? [])[0]!;

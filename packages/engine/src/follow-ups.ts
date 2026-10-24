@@ -2,7 +2,8 @@
 // Reviewers have already recorded their own judgments. This only links those saved reports.
 
 import { existsSync, unlinkSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import type { FileOperations } from "./file-operations.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
@@ -595,7 +596,7 @@ export class FollowUps {
       kept.add(key);
       return true;
     });
-    const saved = await completeAll(pending.map(image => keepPicture(this.k.dataDir, card.id, image)));
+    const saved = await completeAll(pending.map(image => keepPicture(this.k.dataDir, card.id, image, this.k.files)));
     const failed = saved.some(image => image === "failed");
     const images = saved.filter((image): image is ReportImage => !!image && image !== "failed");
     if (images.length) card.session = [...card.session, { id: this.k.id(card.id), at: Date.now(), from: "system", text: "Kept from the original report", images }];
@@ -649,14 +650,14 @@ function samePending(current: readonly { keys: readonly string[]; cardId?: strin
   });
 }
 
-async function keepPicture(dataDir: string, taskId: Id, image: FollowUpCredit["images"][number]): Promise<ReportImage | "failed" | undefined> {
+async function keepPicture(dataDir: string, taskId: Id, image: FollowUpCredit["images"][number], files: FileOperations): Promise<ReportImage | "failed" | undefined> {
   const from = join(dataDir, "captures", image.sourceTaskId, `${image.sourceImageId}.png`);
   if (!await Bun.file(from).exists()) return undefined;
   try {
     const id = randomUUID();
     const dir = join(dataDir, "captures", taskId);
     await mkdir(dir, { recursive: true });
-    await copyFile(from, join(dir, `${id}.png`));
+    await files.copyFile(from, join(dir, `${id}.png`));
     return { id, caption: image.caption, from: { taskId: image.sourceTaskId, imageId: image.sourceImageId } };
   } catch {
     // The original is still there. The next pass copies it; the finding stays untracked until then.

@@ -35,6 +35,7 @@ Inside the engine, `Engine` (`engine.ts`) is a thin front with the coordinator's
 | `take-over.ts`, `terminal.ts` | Take over in the terminal |
 | `git.ts`, `github.ts` | Local Git plumbing and worktree cleanup; repository-pinned GitHub CLI operations through the same command runner |
 | `process-host.ts`, `process-tree.ts` | Native process-group capability, owned spawn options and bounded Windows tree termination; process observations and shared bounded inspection. Callers retain ownership decisions and cleanup policy |
+| `file-operations.ts` | Portable picture-copy and owned-tree removal effects; callers validate paths and own retention/retry decisions. Hosts and fixtures can supply a private implementation without changing shared filesystem functions |
 | `state-projection.ts` | Lean live snapshots, indexed history access, bounded archive cache and task revision/persistence bookkeeping |
 | `store.ts`, `sql-log.ts` | SQLite state/history persistence and optional execution diagnostics; see [SQL logging](state-and-usage.md#optional-sql-execution-log) |
 | `tracking.ts`, `worklog.ts`, account readers | The work log: an entry per agent turn and per notable moment, the permanent product list, each tool's limits, and the numbers each view asks for |

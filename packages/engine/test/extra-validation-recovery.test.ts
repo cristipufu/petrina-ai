@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -177,7 +177,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     const current = f.engine.s.extraValidations![0]!;
     current.state = "preparing";
     mkdirSync(current.snapshot, { recursive: true }); writeFileSync(join(current.snapshot, "partial"), "incomplete copy");
-    if (heldCopy) chmodSync(current.snapshot, 0);
+    const allowRemoval = heldCopy ? f.faults.blockRemoval(current.snapshot) : () => {};
     try {
       f.engine.commitNow(); await f.engine.shutdown();
       const replacement = new Engine(f.data, f.settings); engines.push(replacement);
@@ -187,14 +187,14 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       if (heldCopy) {
         expect(replacement.checkQueue.waiting).toBe(1);
         expect(existsSync(join(f.service, "started", following.id))).toBe(false);
-        chmodSync(current.snapshot, 0o755);
+        allowRemoval();
         await replacement.extraValidations.retryCleanup();
       }
       await waitFor(() => replacement.extraValidations.get(following.requestId)?.outcome === "completed", "both never-started requests to finish once");
       expect(readdirSync(join(f.service, "started")).sort()).toEqual([record.id, following.id].sort());
       const calls = readFileSync(join(f.service, "calls"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]).filter(args => args[0] === "run");
       expect(calls.map(args => args[args.indexOf("--name") + 1])).toEqual([record.containerName, following.containerName]);
-    } finally { if (existsSync(current.snapshot)) chmodSync(current.snapshot, 0o755); }
+    } finally { allowRemoval(); }
   });
 
   it("preserves an already completed outcome through held cleanup and restart, and drains only running work", async () => {
@@ -290,7 +290,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     const f = await fixture();
     const record = await f.submit("copy-cleanup");
     f.engine.setPoolPaused(false); await f.started(record);
-    chmodSync(record.snapshot, 0);
+    const allowRemoval = f.faults.blockRemoval(record.snapshot);
     try {
       f.release(record);
       await waitFor(() => f.engine.s.extraValidations?.[0]?.state === "held", "inaccessible copy to hold cleanup");
@@ -301,10 +301,10 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
       expect(replacement.s.extraValidations![0]!.state).toBe("held");
       expect(replacement.extraValidations.blocker).toContain("copy");
       expect(replacement.checkQueue.running).toBe(1);
-      chmodSync(record.snapshot, 0o755);
+      allowRemoval();
       await replacement.extraValidations.retryCleanup();
       expect((replacement.extraValidations.get(record.requestId)!.validation as ExtraValidation).result).toBe("passed");
       expect(replacement.checkQueue.running).toBe(0);
-    } finally { if (existsSync(record.snapshot)) chmodSync(record.snapshot, 0o755); }
+    } finally { allowRemoval(); }
   });
 });

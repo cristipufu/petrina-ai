@@ -1,4 +1,5 @@
 import { CheckQueue } from "./check-queue.js";
+import { localFiles, type FileOperations } from "./file-operations.js";
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator, type Selection } from "./usage-coordinator.js";
@@ -89,6 +90,8 @@ function newerWords(session: MTask["session"], index: number, line: MTask["sessi
 export const MAX_TIMELINE = 400;
 
 export interface EngineOptions {
+  /** Private storage effects for a host or fixture; never loaded from product settings or saved state. */
+  files?: FileOperations;
   /** Record every shared SQLite driver execution, without bindings or results, for local analysis. */
   debugSql?: boolean;
   /** The launcher opens scheduling only once the local connection is ready. */
@@ -303,11 +306,13 @@ export abstract class Kernel {
   protected readonly startupReady: Promise<void>;
   protected startupComplete = false;
   protected startupSchedulePending = false;
+  readonly files: FileOperations;
 
   constructor(
     readonly dataDir: string,
     readonly options: EngineOptions = {},
   ) {
+    this.files = options.files ?? localFiles;
     this.startupReady = recoverBrowserTemps(join(dataDir, "browser-temp"), options.browserTempRoot).then(() => {
       this.startupComplete = true;
       if (this.startupSchedulePending && !this.stopped) this.schedule();

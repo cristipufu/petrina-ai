@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { ExtraValidation } from "@petrina/core";
@@ -190,7 +190,7 @@ export class ExtraContainer {
       removalPending ? `Removal of container ${record.containerName} is still unconfirmed after its stop/removal request. Check that container in the local container service; Petrina will retry confirmation.`
         : `Petrina could not confirm container ${record.containerName} stopped. Make the local container service available, or stop that container; Petrina will retry confirmation.`].filter(Boolean).join(" ");
     if (!clientClean || !containerClean) return false;
-    try { await rm(record.snapshot, { recursive: true, force: true }); return true; }
+    try { await this.k.files.removeTree(record.snapshot); return true; }
     catch {
       record.cleanupDetail = "The workload stopped, but Petrina could not remove its saved copy. Make the extra-validation copy folder accessible so Petrina can remove it.";
       return false;

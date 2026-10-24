@@ -16,7 +16,7 @@ import { executionFor, scopesFor } from "./repository-context.js";
 
 import { opendirSync, realpathSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { stat, mkdir, copyFile, rm } from "node:fs/promises";
+import { stat, mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { combinedBacklogInput } from "@petrina/core";
 import { recoverMessages, routeMessages } from "./messages.js";
@@ -680,7 +680,7 @@ export class Engine extends Kernel implements Commands {
       await mkdir(temp);
       const images = await completeAll(sources.flatMap(source => source.session.flatMap(line => (line.images ?? []).filter(image => /^[a-f0-9-]{36}$/.test(image.id)).map(async image => {
         const id = randomUUID();
-        await copyFile(join(captures, source.id, `${image.id}.png`), join(temp, `${id}.png`));
+        await this.files.copyFile(join(captures, source.id, `${image.id}.png`), join(temp, `${id}.png`));
         return { id, caption: `${source.title}: ${image.caption}`, ...(image.from ? { from: { ...image.from } } : {}) };
       }))));
       // Other commands may have edited or queued a request while the pictures were copied.

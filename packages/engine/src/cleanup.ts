@@ -7,7 +7,7 @@ import { executionFor, scopesFor } from "./repository-context.js";
 // after a restart, when Petrina also catches up on tasks that finished before.
 
 import { existsSync } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { CLEANUP_WORDS, copyNoLongerNeeded, finishedTask, involvesProduct, type Id, type Task } from "@petrina/core";
 import * as git from "./git.js";
@@ -169,7 +169,7 @@ export class Cleanup {
     if (this.k.stopped || this.k.followsUpHeld(taskId) || !/^[a-zA-Z0-9_-]+$/.test(taskId)) return;
     const task = this.k.s.tasks.find((entry) => entry.id === taskId);
     if (task && !finishedTask(task as Task)) return;
-    const removed = await rm(join(this.k.dataDir, "contexts", taskId), { recursive: true, force: true }).then(() => true, () => false);
+    const removed = await this.k.files.removeTree(join(this.k.dataDir, "contexts", taskId)).then(() => true, () => false);
     if (removed && task?.reviewSessions) {
       delete task.reviewSessions;
       this.k.commit(task);
@@ -188,7 +188,7 @@ export class Cleanup {
       catch { return; }
     }
     // A failed removal is tried again by the ordinary cleanup sweep.
-    await rm(join(this.k.dataDir, "captures", taskId), { recursive: true, force: true }).catch(() => {});
+    await this.k.files.removeTree(join(this.k.dataDir, "captures", taskId)).catch(() => {});
   }
 
   /**
