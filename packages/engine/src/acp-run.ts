@@ -4,6 +4,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { processHost } from "./process-host.js";
+import { ReopenFailed } from "./agent-session.js";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
@@ -180,7 +181,6 @@ const START_TIMEOUT_MS = 2 * 60_000;
 const FORCE_AFTER_MS = 2_000;
 
 /** The tool could not reopen the conversation. The message says why, in plain words. */
-export class ReopenFailed extends Error {}
 
 const duration = (ms: number): string => (ms === 60_000 ? "a minute" : `${Math.max(1, Math.round(ms / 1000))} seconds`);
 

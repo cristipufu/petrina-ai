@@ -1,6 +1,6 @@
 import type { Role } from "@petrina/core";
-import { ReopenFailed, type TurnResult } from "../src/acp-run.js";
-import type { AgentSession, AgentSessionOptions, StartAgentSession } from "../src/agent-session.js";
+import type { TurnResult } from "../src/acp-run.js";
+import { ReopenFailed, type AgentSession, type AgentSessionOptions, type StartAgentSession } from "../src/agent-session.js";
 
 export interface ScriptedPrompt {
   readonly sessionId: string;
@@ -27,8 +27,8 @@ export class ScriptedAgents {
 
   constructor(private readonly respond: (prompt: ScriptedPrompt, signal: AbortSignal) => string | Promise<string>) {}
 
-  received(result: Role["result"]): readonly ScriptedPrompt[] {
-    return this.prompts.filter(prompt => prompt.result === result).map(prompt => ({ ...prompt }));
+  received(result?: Role["result"]): readonly ScriptedPrompt[] {
+    return this.prompts.filter(prompt => result === undefined || prompt.result === result).map(prompt => ({ ...prompt }));
   }
 
   readonly start: StartAgentSession = async (options, role) => {

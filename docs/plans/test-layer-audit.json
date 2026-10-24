@@ -1297,7 +1297,15 @@
       "declarations": 4,
       "assertionSites": 30,
       "baselineDigest": "ba55df1be08331deb0f5b24fc37337313445c69bdeee78e8de2142860428a11f",
-      "status": "pending"
+      "status": "pending",
+      "review": "Partial: all five cases retain identical assertions/callback ASTs after mapping typed scripted-session selectors. The cross-stage cap journey still exercises actual Engine/Git/SQLite, nine tasks, two tools, design convergence and 27 reviewers; provider transport now uses ScriptedAgents with abortable releases. Immediate admission still needs a smaller owning controller and the file remains pending its layer split.",
+      "validation": {
+        "caseBodiesPreserved": 5,
+        "nativeAgentProcesses": "none in the observed diagnostic; the sole Bun launch belongs to the test runner",
+        "run": "slot-scripted-reviewed.xml (82 neighboring cases, 2305 assertions, 13.46s)",
+        "assertionReconciliation": "slot-assertion-reconciliation.json",
+        "resourceObservation": "scripted-slots-2026-10-24T16-53-31-401Z/summary.json"
+      }
     },
     {
       "file": "packages/engine/test/live-messages.test.ts",

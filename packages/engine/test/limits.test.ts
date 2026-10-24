@@ -1,39 +1,29 @@
 import { describe, expect, it } from "bun:test";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pipelineOf, queueOf, slotUses, type State } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
-const fake = join(import.meta.dir, "fake-agent.ts");
+import { slotAgents } from "./fixtures/slot-agents.js";
 
 async function fixture(limit: number, toolCap: number) {
   const root = tempDir("petrina-limits-");
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ planner: "limits", builder: "plain", controlled: true });
+  const { agents, release } = slotAgents();
   const repo = await makeProduct(root);
   // Parallel worktree creation need not write upstream tracking settings to the shared config.
   await git(repo, "config", "branch.autoSetupMerge", "false");
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, fake, fakes.dir] });
+  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "unconfigured-service.ts"), "slot fixture"], startAgentSession: agents.start });
   engine.setPoolPaused(true);
   engine.setPoolLimit(limit);
   engine.setToolCap("claude-code", toolCap);
   engine.setToolCap("codex", 2);
   const productId = await engine.addProduct(repo);
   const ids = Array.from({ length: 9 }, (_, index) => engine.addTask({ productId, title: `Change ${index}`, approveDelivery: true }));
-  const released = new Set<string>();
-  const release = (session: string) => {
-    // The marker releases every turn in this conversation; later polls need not rewrite it.
-    if (released.has(session)) return;
-    writeFileSync(join(fakes.dir, `release-${session}`), "go");
-    released.add(session);
-  };
   const close = async () => {
     await engine.shutdown();
-    await Bun.sleep(100);
     removeDir(root);
   };
-  return { engine, fakes, ids, release, close, root, productId };
+  return { engine, agents, ids, release, close, root, productId };
 }
 
 function counts(state: State) {
@@ -77,7 +67,7 @@ describe("slots are recorded and checked for every agent", () => {
       f.engine.setPoolPaused(false);
       await waitFor(() => {
         check();
-        for (const prompt of f.fakes.received()) f.release(prompt.session);
+        for (const prompt of f.agents.received()) f.release(prompt.sessionId);
         const state = f.engine.getState();
         expect(state.tasks.filter((task) => task.state === "failed").map((task) => task.error)).toEqual([]);
         for (const item of state.inbox) {
@@ -88,9 +78,9 @@ describe("slots are recorded and checked for every agent", () => {
       }, "every task to pass through mixed tools and reach delivery", 60_000);
       expect(changes).toBeGreaterThan(100);
       expect(failures).toEqual([]);
-      expect(f.fakes.received("researcher")).toHaveLength(9);
-      expect(f.fakes.received("design reviewer").length).toBeGreaterThan(9);
-      expect(f.fakes.received("code reviewer")).toHaveLength(27);
+      expect(f.agents.received("notes")).toHaveLength(9);
+      expect(f.agents.received("objections").length).toBeGreaterThan(9);
+      expect(f.agents.received("findings")).toHaveLength(27);
     } catch (error) {
       const state = f.engine.getState();
       const tasks = state.tasks.map(({ id, state, statusLine, error }) => ({ id, state, statusLine, error }));
@@ -111,7 +101,7 @@ describe("slots are recorded and checked for every agent", () => {
       });
       try {
         f.engine.setPoolPaused(false);
-        await waitFor(() => f.fakes.received("planner").length === 7, "seven working planners");
+        await waitFor(() => f.agents.received("plan").length === 7, "seven working planners");
         // Start checking the new limit only now; all seven have actually received their instructions.
         reachedFive = false;
         violations.length = 0;
@@ -120,12 +110,12 @@ describe("slots are recorded and checked for every agent", () => {
         expect(counts(f.engine.getState()).claude).toBe(7);
         expect(f.engine.getState().tasks.filter((task) => task.holdsSlot).every((task) => task.agent?.roleId === "planner")).toBe(true);
 
-        const planners = f.fakes.received("planner");
+        const planners = f.agents.received("plan");
         for (let index = 0; index < 2; index += 1) {
-          f.release(planners[index]!.session);
+          f.release(planners[index]!.sessionId);
           await waitFor(() => f.engine.getState().tasks.filter((task) => task.state === "waiting").length === index + 1, "finished planner to wait for its next agent");
           expect(counts(f.engine.getState()).claude).toBe(6 - index);
-          expect(f.fakes.received("researcher")).toHaveLength(0);
+          expect(f.agents.received("notes")).toHaveLength(0);
         }
         const waiting = f.engine.getState().tasks.find((task) => task.state === "waiting")!;
         expect(waiting.worktree).toBeDefined();
@@ -134,9 +124,9 @@ describe("slots are recorded and checked for every agent", () => {
         expect(waiting.agent).toBeUndefined();
         expect(queueOf(f.engine.getState().tasks)).toHaveLength(2);
 
-        f.release(planners[2]!.session);
-        await waitFor(() => f.fakes.received("researcher").length > 0, "work in progress to continue ahead of the queue");
-        expect(f.fakes.received("planner")).toHaveLength(7);
+        f.release(planners[2]!.sessionId);
+        await waitFor(() => f.agents.received("notes").length > 0, "work in progress to continue ahead of the queue");
+        expect(f.agents.received("plan")).toHaveLength(7);
         expect(counts(f.engine.getState()).claude).toBe(5);
         expect(violations).toEqual([]);
       } finally { unsub(); await f.close(); }
@@ -147,16 +137,16 @@ describe("slots are recorded and checked for every agent", () => {
     const f = await fixture(8, 1);
     try {
       f.engine.setPoolPaused(false);
-      await waitFor(() => f.fakes.received("planner").length === 1, "a working planner");
+      await waitFor(() => f.agents.received("plan").length === 1, "a working planner");
       f.engine.setPoolPaused(true);
       expect(counts(f.engine.getState()).total).toBe(1);
-      f.release(f.fakes.received("planner")[0]!.session);
+      f.release(f.agents.received("plan")[0]!.sessionId);
       await waitFor(() => f.engine.getState().tasks.some((task) => task.state === "waiting"), "the next agent to wait for the paused pool");
       expect(counts(f.engine.getState()).total).toBe(0);
       expect(f.engine.getState().tasks.find((task) => task.state === "waiting")!.statusLine).toBe("Waiting for the pool to resume");
       f.engine.setPoolPaused(false);
-      await waitFor(() => f.fakes.received("researcher").length === 1, "the task to carry on with its working copy");
-      expect(f.fakes.received("planner")).toHaveLength(1);
+      await waitFor(() => f.agents.received("notes").length === 1, "the task to carry on with its working copy");
+      expect(f.agents.received("plan")).toHaveLength(1);
     } finally { await f.close(); }
   });
 });

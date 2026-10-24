@@ -9,7 +9,8 @@ import type { Sources } from "./sources.js";
 
 import { sameModel, addAsk, beginAgentStep, endAgentStep, JOURNEY_WORDS as W, limitOf, openStep, owedAcceptanceTest, SCREEN_WORDS, screenReason, slotWait, stepMayChange, type ActiveAgent, type AgentProfile, type Id, type InboxKind, type Pool, type Product, type Role, type StepNote, type TurnReason, type CheckId, type ConversationNote, type BuilderContext, pauseClock, plainTodo, resumeClock, retryingWords, startClock } from "@petrina/core";
 import type { z } from "zod";
-import { AgentRun, ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult } from "./acp-run.js";
+import { AgentRun, type NativeRetryReport, type PermissionInfo, type TurnResult } from "./acp-run.js";
+import { ReopenFailed } from "./agent-session.js";
 import type { AgentSession, AgentSessionOptions } from "./agent-session.js";
 import * as git from "./git.js";
 import { agentEnv } from "./env.js";

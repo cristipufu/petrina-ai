@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES } from "@petrina/core";
 import type { AgentSessionOptions } from "../src/agent-session.js";
-import { ReopenFailed } from "../src/acp-run.js";
+import { ReopenFailed } from "../src/agent-session.js";
 import { parseResult } from "../src/prompts.js";
 import { BuildResult } from "../src/roles.js";
 import { ScriptedAgents, scriptedResult } from "./scripted-agents.js";
