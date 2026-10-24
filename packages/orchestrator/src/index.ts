@@ -8,3 +8,5 @@ export { SourceSelections } from "./source-selection.js";
 export type { AcceptanceRoutingHost, AcceptanceRoutingInput } from "./ports/acceptance.js";
 export { routeAcceptance } from "./acceptance-routing.js";
 export { addDeliveryCheck } from "./delivery-gate.js";
+export type { DeliveryReturnInput, DeliveryReturnRoute } from "./ports/delivery.js";
+export { clearDeliveryPreparation, prepareDeliveryReturn } from "./delivery-return.js";

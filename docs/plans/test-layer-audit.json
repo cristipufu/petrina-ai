@@ -2355,6 +2355,15 @@
       "fromCase": "packages/engine/test/security.test.ts: unsafe settings after setup",
       "review": "Real Engine/Git/private SQLite and scripted ACP/GitHub services retain failure state, specific warning/error, no published branch, no planted program and no GitHub operation. Native setting permutations are separate adapter contracts. No Unix-only hook-program fixture or Windows skip is inherited by this representative journey.",
       "validation": "security-reviewed-neighborhood.xml; final resource observation reruns this case after simplification; original assertion AST retained"
+    },
+    {
+      "file": "packages/orchestrator/test/orchestration/delivery/returns.test.ts",
+      "declarations": 7,
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "delivery",
+      "review": "Twelve actual-controller cases with production-created single/shared tasks and the existing typed repair host: proof invalidation, independent budgets, asymmetric renewal bounded at two, affected owner/owed stage routing, unrepairable and already-published owners, lead ordering, genuine misses and bound preparation reset. No Engine, Git, SQLite, subprocess or account. The first pass reproduced two old published-owner allowance resets; guarded single-owner reset fixes both while unpublished shared owners still renew.",
+      "validation": "delivery-return-first.json: 10 pass / 2 regression failures; delivery-return-reviewed.json: all 102 package cases pass; delivery-return-extraction.json proves the routing body after explicit substitutions and the exact shared preparation reset; delivery-return-neighborhood.xml: 257 native engine cases / 3,023 assertions / five files / 104.94s. Workspace types and conventions pass."
     }
   ],
   "rust": [

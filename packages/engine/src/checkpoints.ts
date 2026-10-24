@@ -1,15 +1,14 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
-import { acceptanceGap, afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
+import { acceptanceGap, afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { executionFor, scopesFor } from "@petrina/orchestrator";
-import { beginRepair } from "@petrina/orchestrator";
-import { destination, type Shipping } from "./shipping.js";
+import { executionFor, scopesFor, prepareDeliveryReturn } from "@petrina/orchestrator";
+import { destination } from "./shipping.js";
 import type { Sources } from "./sources.js";
 
 type CheckpointHost = Pick<Kernel, "s" | "task" | "takeItem" | "tracking" | "log" | "say" | "id" | "remember" | "checkStage" | "clearStep" | "stepNote" | "toWaiting" | "commit" | "commitNow" | "schedule" | "productOf" | "gate" | "role">;
 
 export class Checkpoints {
-  constructor(private readonly k: CheckpointHost, private readonly sources: Pick<Sources, "confirm">, private readonly shipping: Pick<Shipping, "clearDelivery">) {}
+  constructor(private readonly k: CheckpointHost, private readonly sources: Pick<Sources, "confirm">) {}
 
   approve(itemId: Id): void {
     const kind = this.k.s.inbox.find((entry) => entry.id === itemId)?.kind;
@@ -101,45 +100,9 @@ export class Checkpoints {
     if (!call) this.k.stepNote(task, "changes", note, { id });
     const fromCheck = task.stageIndex;
     afterChangesAsked(task, item.kind, note, Date.now(), this.k.s.roles);
-    if (item.kind === "delivery") {
-      delete task.proofRefreshes;
-      delete task.proofRefreshBlocked;
-      delete task.approvedProofDecision;
-      delete task.checkedProofDecision;
-      delete task.approvedAcceptanceGap;
-      delete task.acceptanceRun;
-      delete task.proofRetestReason;
-      // A new coordinator request authorizes another bounded attempt at acceptance fixes.
-      delete scope!.work.acceptanceReturns;
-      delete task.acceptanceBlocked;
-      delete task.acceptanceUnverified;
-      // The Guide keeper looks for what reviewers missed, only when they had passed it: if Important findings
-      // were open (the rounds ran out), the reviewers had caught it, and nothing was missed.
-      if (!task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) task.miss = { note, at: Date.now() };
-      this.shipping.clearDelivery(scope!);
-      if (task.repositories) {
-
-        for (const work of task.repositories) if (!repositoryPublished(work)) delete work.acceptanceReturns;
-        const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking");
-        if (open.length) {
-          const review = task.plan!.stages.findIndex((stage, index) => index > task.stageIndex && stage.kind === "review-chain");
-          // A check problem raised before the review (at acceptance testing) returns there, then walks on through review.
-          const back = review >= 0 && fromCheck > task.stageIndex && fromCheck < review ? fromCheck : review;
-          if (!beginRepair(this.k, task, "review", back)) {
-            task.stageIndex = fromCheck;
-            this.k.gate(task, "delivery", undefined, undefined, decided);
-            return;
-          }
-        } else {
-          const products = task.repositories.filter((work) => !repositoryPublished(work)).map((work) => work.productId);
-          const lead = task.leadProductId;
-          if (lead && products.includes(lead)) products.splice(0, 0, ...products.splice(products.indexOf(lead), 1));
-          if (!products.length) { task.stageIndex = fromCheck; this.k.gate(task, "delivery", undefined, undefined, decided); return; }
-          task.repair = { products, index: 0, returnStage: task.stageIndex + 1, kind: "review" };
-          task.activeProductId = products[0]!;
-          task.fixing = true;
-        }
-      }
+    if (item.kind === "delivery" && prepareDeliveryReturn(this.k, scope!, { note, fromCheck, now: Date.now() }) === "decision") {
+      this.k.gate(task, "delivery", undefined, undefined, decided);
+      return;
     }
     this.k.toWaiting(task);
     this.k.commitNow();

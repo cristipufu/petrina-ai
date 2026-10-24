@@ -3,7 +3,7 @@ import { DeliveryTurns } from "./delivery-turns.js";
 import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-verifier.js";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
-import { addDeliveryCheck, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
+import { addDeliveryCheck, clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
 import { proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
 import { companionText, landingState, repositoryDelivered, runtimeWaitHolds, syncRuntimeWait } from "@petrina/core";
@@ -428,7 +428,7 @@ export class Shipping {
       delete task.approvedProofDecision;
       delete task.approvedAcceptanceGap;
       this.clearApproval(scope);
-      this.clearDelivery(scope);
+      clearDeliveryPreparation(scope);
       task.stageIndex = check;
       task.sub = 0;
       petrinaMoment(task, "delivery", { outcome: W.askAgain, reason: W.changedSinceApproval, tone: "back" }, Date.now());
@@ -729,12 +729,6 @@ export class Shipping {
     delete repository.approvedSha;
     delete repository.approvedPatch;
     delete repository.approvedFor;
-  }
-
-  /** Nothing actionable left: the next delivery starts from a fresh preparation. Failures still count. */
-  clearDelivery(scope: RepositoryContext): void {
-    const { work: repository } = scope;
-    if (repository.shipping) repository.shipping = { moves: 0, failures: repository.shipping.failures };
   }
 
   // ── Publishing ─────────────────────────────────────────────────────────

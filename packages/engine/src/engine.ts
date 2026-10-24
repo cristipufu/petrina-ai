@@ -149,7 +149,7 @@ export class Engine extends Kernel implements Commands {
     this.planning = new Planning(this, this.turns, this.sources);
     this.work = new Work(this, this.turns, this.context, this.guide, this.updates, this.learnings, this.checks);
     this.takeover = new TakeOver(this);
-    this.checkpoints = new Checkpoints(this, this.sources, this.shipping);
+    this.checkpoints = new Checkpoints(this, this.sources);
     this.driver = new Driver(this, this.planning, this.work, this.design, this.reviews, this.checks, this.guide, this.updates, this.learnings, this.shipping, this.connections, this.sources);
     this.cleanup = new Cleanup(this);
     this.followUps = new FollowUps(this);
