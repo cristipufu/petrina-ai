@@ -1287,7 +1287,7 @@
         "everyCaseRetained": true,
         "everyAssertionUnchanged": true,
         "executedCasesReconciled": 10,
-        "qualification": "All 1,083 core and 176 orchestrator cases pass. review-reports-native-reviewed.xml records 283 native cases / 3,728 assertions / thirteen files passing in 56.18s, including the relocated controls and the new metadata-reader control. Workspace types and conventions pass. Complete batch qualification follows."
+        "qualification": "The complete clean b03b03a8 run passes 4,653 cases plus eleven explicit skips on Mac, with complete manifests and stable inputs. All ten original cases/assertions reconcile across owners, with the metadata-reader control additional. Native Linux/Windows qualification and remaining ownership audits remain pending."
       }
     },
     {
@@ -1785,7 +1785,8 @@
         "production": "review-reports-reconciliation.json",
         "before": "review-reports-native-before-migration.xml: 203 native cases / 2,921 assertions / six files pass in 45.67s before migration",
         "measurement": "review-owners-before-2026-10-24T20-25-27-272Z: twelve cases, about 0.937s summed case wall time, one observed Bun launch, stable source and no observer errors. These were already a small state-only fixture; no material full-suite speedup is claimed.",
-        "after": "review-reports-native-reviewed.xml: 283 passed / 3,728 assertions / thirteen files / 56.18s; saved-owner restart/repair/archive and all eight shared-fix restart variants remain. All core/orchestrator cases, workspace types and conventions pass."
+        "after": "review-reports-native-reviewed.xml: 283 passed / 3,728 assertions / thirteen files / 56.18s; saved-owner restart/repair/archive and all eight shared-fix restart variants remain. All core/orchestrator cases, workspace types and conventions pass.",
+        "full": "Complete clean b03b03a8 passes all 4,653 cases plus eleven explicit skips; every retained native repository case executes. This remains a partial semantic audit, not completed package/platform qualification."
       }
     },
     {

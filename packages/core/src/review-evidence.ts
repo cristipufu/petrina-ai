@@ -78,4 +78,3 @@ export function reopenFinding(finding: DeepMutable<Finding>, at: number, evidenc
   finding.reopenedAt = at;
   if (evidence !== undefined) finding.evidence = evidence.trim();
 }
-
