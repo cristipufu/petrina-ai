@@ -51,7 +51,7 @@ async function mount(state: State = createDemoState(1_000_000_000), options: Con
   await act(async () => root.render(<App />));
 }
 beforeEach(async () => { localStorage.clear(); live.link = 'live'; setSingleKeys(true); await mount(); });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.clearAllTimers(); await widen(1024); });
+afterEach(async () => { try { await act(async () => root.unmount()); } finally { host.remove(); vi.restoreAllMocks(); vi.clearAllTimers(); await widen(1024); } });
 // The inbox docks beside the board from 1200px; happy-dom's window starts narrower, so it opens over the board.
 async function widen(width: number) { await act(async () => (window as unknown as { happyDOM: { setViewport(size: { width: number }): void } }).happyDOM.setViewport({ width })); }
 // Dispatches a key and says whether something on the page took it from the browser.
@@ -172,7 +172,7 @@ describe('the app keyboard', () => {
     const selector = area === 'board' ? '.card.selected' : '.inbox-item.selected';
     const before = el(selector);
     await act(async () => before.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 2 })));
-    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView');
     scroll.mockClear();
     await key('j');
     expect(el(selector)).not.toBe(before);
@@ -182,7 +182,7 @@ describe('the app keyboard', () => {
   it('clears an unfinished pointer press when the window loses focus', async () => {
     await key('j');
     const next = el('.card.selected').nextElementSibling as HTMLElement;
-    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView');
     await act(async () => window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
     await act(async () => window.dispatchEvent(new Event('blur')));
     scroll.mockClear();

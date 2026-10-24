@@ -54,6 +54,8 @@ Prefer existing pure functions and ports. When a controller cannot be exercised 
 
 Fixtures live in their owning test-support modules, separate from cases. Share immutable recipes and helpers; give every case its own writable state and effect ownership. Keep clocks and release barriers explicit. A real timer belongs in a boundary test when timing or termination is the behavior being proved.
 
+DOM setup uses plain stubs for unsupported behavior that a case does not inspect. A case that asserts calls owns a scoped spy and restores it during teardown, including on failure. Shared recording mocks retain their arguments and DOM receivers after unmount and must not accumulate across cases.
+
 ## Audit and migrate each case
 
 1. Read the assertion and its failure control. Identify what regression it would catch; a name or a comment is insufficient.

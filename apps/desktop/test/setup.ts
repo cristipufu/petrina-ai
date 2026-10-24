@@ -1,10 +1,10 @@
-import { beforeEach, vi } from 'vitest';
+import { beforeEach } from 'vitest';
 import { Storage } from 'happy-dom';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 // Node 25 also exposes a placeholder localStorage; use the browser environment's storage.
 Object.defineProperty(globalThis, 'localStorage', { value: new Storage(), configurable: true });
-vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
-vi.spyOn(HTMLElement.prototype, 'scrollTo').mockImplementation(() => {});
+// Recording mocks retain their DOM receivers. Tests that inspect scrolling own a scoped spy.
+Object.assign(HTMLElement.prototype, { scrollIntoView() {}, scrollTo() {} });
 
 // Each app render begins at its requested address; navigation must not leak between tests.
 beforeEach(() => history.replaceState(null, "", "/"));

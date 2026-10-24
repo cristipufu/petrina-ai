@@ -36,7 +36,7 @@ async function mount(state: State = createDemoState(NOW)) {
   await act(async () => root.render(<App />));
 }
 beforeEach(async () => { localStorage.clear(); await width(1440); await mount(); });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
+afterEach(async () => { try { await act(async () => root.unmount()); } finally { host.remove(); vi.restoreAllMocks(); } });
 
 describe('agents may use the screen', () => {
   it('shows a task waiting for the screen in Waiting, with the reason and Allow now on the card', async () => {
@@ -52,7 +52,7 @@ describe('agents may use the screen', () => {
   });
 
   it('takes Allow now on the first click: pressing a card does not scroll it away from under the pointer', async () => {
-    const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+    const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView');
     const button = card().querySelector<HTMLButtonElement>('.card-ask button')!;
     scroll.mockClear();
     await act(async () => {
