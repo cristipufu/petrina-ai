@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Pool, State, UsageReport } from "../src/model.js";
-import { balanced, extraSlot, FEWER_START, pickStarts, slotWait, slotUses } from "../src/scheduler.js";
+import type { Pool, State, UsageReport } from "../../../src/model.js";
+import { balanced, extraSlot, FEWER_START, pickStarts, slotWait, slotUses } from "../../../src/scheduler.js";
 
 const pool = (limit: number, toolCaps: Record<string, number> = {}, paused = false): Pool => ({ limit, toolCaps, paused });
 const now = new Date(2026, 9, 16, 12, 0, 0).getTime();

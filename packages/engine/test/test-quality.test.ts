@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { fingerprint, impactPlan, type CoverageMap } from "./quality/impact.js";
-import { conventions } from "./quality/repository.js";
+import { conventions } from "./quality/conventions.js";
 import { sourceFacts } from "./quality/source.js";
 import { testResults } from "./quality/results.js";
 import { coveredFiles } from "./quality/coverage.js";

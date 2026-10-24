@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { AgentProfile, Pool, State, UsageReport } from "../src/model.js";
-import { balanced, extraSlot, pickStarts, slotUses, slotWait } from "../src/scheduler.js";
-import { chooseProfile, chooseWithRoom, headroom, limitOf, nearLimit, toolCapNow } from "../src/usage.js";
+import type { AgentProfile, Pool, State, UsageReport } from "../../../src/model.js";
+import { balanced, extraSlot, pickStarts, slotUses, slotWait } from "../../../src/scheduler.js";
+import { chooseProfile, chooseWithRoom, headroom, limitOf, nearLimit, toolCapNow } from "../../../src/usage.js";
 
 const now = 1_800_000_000_000, hour = 3_600_000;
 const alpha: AgentProfile = { id: "alpha", toolId: "provider", model: "Alpha", modelId: "alpha-v1", effort: "high" };

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { completeAll } from "../src/parallel.js";
+import { completeAll } from "../../../src/parallel.js";
 
 it("lets a slow repository operation finish before an independent failure reaches recovery", async () => {
   const release = Promise.withResolvers<void>(), failure = new Error("The first repository failed");

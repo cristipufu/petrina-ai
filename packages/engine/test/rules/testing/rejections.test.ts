@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { expectRejection, rejectionOf } from "./rejections.js";
+import { expectRejection, rejectionOf } from "../../rejections.js";
 
 it("yields before a pending rejection so other I/O cannot run inside the assertion's calling frame", async () => {
   const pending = Promise.withResolvers<never>();

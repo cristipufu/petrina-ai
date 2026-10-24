@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import { UsageReader } from "../src/usage-reader.js";
-import type { UsageInfo } from "../src/usage.js";
+import { UsageReader } from "../../../src/usage-reader.js";
+import type { UsageInfo } from "../../../src/usage.js";
 
 it("keeps the last account report when refreshing fails, and exposes recovery separately", async () => {
   const reports: UsageInfo[][] = [], states: string[] = [];

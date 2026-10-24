@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { State, Task } from "../src/model.js";
-import { TAKE_OVER_WORDS, takeOverBlock } from "../src/takeover.js";
+import type { State, Task } from "../../../src/model.js";
+import { TAKE_OVER_WORDS, takeOverBlock } from "../../../src/takeover.js";
 
 const state: Pick<State, "profiles" | "tools"> = {
   profiles: [

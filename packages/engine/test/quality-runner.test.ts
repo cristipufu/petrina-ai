@@ -1,6 +1,6 @@
 import { fixtureFiles } from "./fixture-files.js";
 import { afterAll, expect, it } from "bun:test";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join } from "node:path";
 import { namedCheckFailures } from "../src/related-check-evidence.js";
@@ -39,6 +39,8 @@ const NOT_STARTED = "core and desktop did not both pass", INTERRUPTED = "the run
 function entryFixture(): string {
   const root = tempDir("petrina-quality-runner-"); roots.push(root);
   const quality = join(root, "packages", "engine", "test", "quality");
+  mkdirSync(join(root, "docs", "plans"), { recursive: true });
+  writeFileSync(join(root, "docs", "plans", "test-layer-audit.json"), JSON.stringify({ version: 1, files: [] }));
   mkdirSync(quality, { recursive: true });
   cpSync(join(import.meta.dir, "quality"), quality, { recursive: true });
   for (const file of SUPPORT) {
@@ -73,11 +75,11 @@ const output = process.argv.find(arg => arg.startsWith("--outputFile=") || arg.s
 const skipped = stand.report === "skipped";
 const status = failed ? "failed" : skipped ? "skipped" : stand.report === "running" ? "pending" : "passed";
 let report = workspace === "engine"
-  ? '<testsuites tests="' + (stand.report === "counts" ? 2 : 1) + '" failures="' + Number(failed) + '" skipped="' + Number(skipped) + '"><testsuite file="test/example.test.ts" tests="1" failures="' + Number(failed) + '" skipped="' + Number(skipped) + '"><testcase>' + (failed ? '<failure message="controlled failure" />' : skipped ? '<skipped />' : '') + '</testcase></testsuite></testsuites>'
-  : JSON.stringify({ success: !failed, numTotalTestSuites: 1, numPassedTestSuites: Number(!failed), numFailedTestSuites: Number(failed), numPendingTestSuites: 0, numTotalTests: stand.report === "counts" ? 2 : 1, numPassedTests: Number(status === "passed"), numFailedTests: Number(failed), numPendingTests: Number(skipped || status === "pending"), numTodoTests: 0, testResults: [{ name: resolve("test/example.test.ts"), status: failed ? "failed" : "passed", assertionResults: [{ status }] }] });
+  ? '<testsuites tests="' + (stand.report === "counts" ? 2 : 1) + '" failures="' + Number(failed) + '" skipped="' + Number(skipped) + '"><testsuite file="test/contracts/testing/example.test.ts" tests="1" failures="' + Number(failed) + '" skipped="' + Number(skipped) + '"><testcase>' + (failed ? '<failure message="controlled failure" />' : skipped ? '<skipped />' : '') + '</testcase></testsuite></testsuites>'
+  : JSON.stringify({ success: !failed, numTotalTestSuites: 1, numPassedTestSuites: Number(!failed), numFailedTestSuites: Number(failed), numPendingTestSuites: 0, numTotalTests: stand.report === "counts" ? 2 : 1, numPassedTests: Number(status === "passed"), numFailedTests: Number(failed), numPendingTests: Number(skipped || status === "pending"), numTodoTests: 0, testResults: [{ name: resolve("test/contracts/testing/example.test.ts"), status: failed ? "failed" : "passed", assertionResults: [{ status }] }] });
 if (stand.report === "truncated") report = report.slice(0, -5);
 if (stand.report !== "missing") writeFileSync(output, report);
-if (stand.change) writeFileSync("test/example.test.ts", "// changed after starting");
+if (stand.change) writeFileSync("test/contracts/testing/example.test.ts", "// changed after starting");
 if (stand.moveHead) {
   const child = Bun.spawn(["git", "commit", "--allow-empty", "-q", "-m", "Concurrent revision"], { stdout: "ignore", stderr: "inherit" });
   if (await child.exited !== 0) throw new Error("The controlled revision could not advance");
@@ -91,9 +93,9 @@ if (stand.hold) {
 } else process.exit(stand.code ?? 0);`);
   for (const workspace of ["packages/core", "packages/engine", "apps/desktop"]) {
     const folder = join(root, workspace);
-    mkdirSync(join(folder, "test"), { recursive: true });
-    writeFileSync(join(folder, "test", "example.test.ts"), "// A controlled runner result, not another full suite.\n");
-    if (scenario[workspace.split("/")[1] as Suite]?.report === "omitted") writeFileSync(join(folder, "test", "omitted.test.ts"), "// The stand-in deliberately omits this required file.\n");
+    mkdirSync(join(folder, "test", "contracts", "testing"), { recursive: true });
+    writeFileSync(join(folder, "test", "contracts", "testing", "example.test.ts"), "// A controlled runner result, not another full suite.\n");
+    if (scenario[workspace.split("/")[1] as Suite]?.report === "omitted") writeFileSync(join(folder, "test", "contracts", "testing", "omitted.test.ts"), "// The stand-in deliberately omits this required file.\n");
     writeFileSync(join(folder, "package.json"), JSON.stringify({ name: workspace, scripts: { test: `${JSON.stringify(process.execPath)} ${JSON.stringify(runner)} ${workspace.split("/")[1]}` } }));
   }
   await git(root, "init", "-q", "-b", "main"); await git(root, "add", ".");
@@ -167,6 +169,22 @@ it("rejects a selector in a ready repository without launching even a stand-in s
   expect(existsSync(join(root, ".test-results"))).toBe(false);
 });
 
+for (const invalid of ["missing inventory", "new flat test", "native effect in rules"] as const) it(`rejects ${invalid} before starting a suite or producing delivery evidence`, async () => {
+  const root = await fixture({});
+  if (invalid === "missing inventory") unlinkSync(join(root, "docs", "plans", "test-layer-audit.json"));
+  else if (invalid === "new flat test") writeFileSync(join(root, "packages", "core", "test", "unclassified.test.ts"), "// New tests need an owner");
+  else {
+    const folder = join(root, "packages", "core", "test", "rules", "reviews");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "status.test.ts"), "import { readFile } from 'node:fs/promises';");
+  }
+  const result = await runCommand([process.execPath, "run", "test"], { cwd: root, env: environment(), timeoutMs: 10_000 });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain(invalid === "missing inventory" ? "missing complete" : invalid === "new flat test" ? "place tests in test/<layer>/<area>" : "real I/O belongs in contracts or journeys");
+  expect(existsSync(join(root, "runs.log"))).toBe(false);
+  expect(existsSync(join(root, ".test-results"))).toBe(false);
+});
+
 it("resolves the copied runner's packages from the engine's own install, never another one", async () => {
   const root = await fixture({});
   const modules = join(root, "packages", "engine", "node_modules"), copy = join(root, "packages", "engine", "test", "quality");
@@ -203,12 +221,12 @@ it("runs core and desktop before engine and passes only when every workspace pas
 });
 
 for (const [name, scenario, outcomes, lines] of [
-  ["core fails", { core: { code: 1, report: "fail" } }, [1, 0], ["  core: failed after Ns; failing files: packages/core/test/example.test.ts", "  desktop: passed in Ns"]],
-  ["desktop fails", { desktop: { code: 1, report: "fail" } }, [0, 1], ["  core: passed in Ns", "  desktop: failed after Ns; failing files: apps/desktop/test/example.test.ts"]],
-  ["both quick suites fail", { core: { code: 1, report: "fail" }, desktop: { code: 1, report: "fail" } }, [1, 1], ["  core: failed after Ns; failing files: packages/core/test/example.test.ts", "  desktop: failed after Ns; failing files: apps/desktop/test/example.test.ts"]],
+  ["core fails", { core: { code: 1, report: "fail" } }, [1, 0], ["  core: failed after Ns; failing files: packages/core/test/contracts/testing/example.test.ts", "  desktop: passed in Ns"]],
+  ["desktop fails", { desktop: { code: 1, report: "fail" } }, [0, 1], ["  core: passed in Ns", "  desktop: failed after Ns; failing files: apps/desktop/test/contracts/testing/example.test.ts"]],
+  ["both quick suites fail", { core: { code: 1, report: "fail" }, desktop: { code: 1, report: "fail" } }, [1, 1], ["  core: failed after Ns; failing files: packages/core/test/contracts/testing/example.test.ts", "  desktop: failed after Ns; failing files: apps/desktop/test/contracts/testing/example.test.ts"]],
   ["core's report is missing", { core: { report: "missing" } }, [0, 0], ["  core: incomplete after Ns: its structured results were unavailable", "  desktop: passed in Ns"]],
   ["core fails without a report", { core: { code: 1, report: "missing" } }, [1, 0], ["  core: failed after Ns; no failing test file could be attributed", "  desktop: passed in Ns"]],
-  ["desktop's report contradicts its exit", { desktop: { report: "fail" } }, [0, 0], ["  core: passed in Ns", "  desktop: incomplete after Ns: it exited successfully but its structured results report failures; failing files: apps/desktop/test/example.test.ts"]],
+  ["desktop's report contradicts its exit", { desktop: { report: "fail" } }, [0, 0], ["  core: passed in Ns", "  desktop: incomplete after Ns: it exited successfully but its structured results report failures; failing files: apps/desktop/test/contracts/testing/example.test.ts"]],
 ] as const) it(`never starts engine when ${name}, and records it as not run`, async () => {
   const { ran, report, outcomes: recordedOutcomes, summary } = await run(scenario, 1);
   expect(ran).toBe("core\ndesktop\n");
@@ -222,15 +240,15 @@ for (const [name, scenario, outcomes, lines] of [
 });
 
 for (const [name, scenario, engine] of [
-  ["engine fails", { engine: { code: 1, report: "fail" } }, "  engine: failed after Ns; failing files: packages/engine/test/example.test.ts"],
+  ["engine fails", { engine: { code: 1, report: "fail" } }, "  engine: failed after Ns; failing files: packages/engine/test/contracts/testing/example.test.ts"],
   ["engine's report is missing", { engine: { report: "missing" } }, "  engine: incomplete after Ns: its structured results were unavailable"],
-  ["engine's report contradicts its exit", { engine: { report: "fail" } }, "  engine: incomplete after Ns: it exited successfully but its structured results report failures; failing files: packages/engine/test/example.test.ts"],
+  ["engine's report contradicts its exit", { engine: { report: "fail" } }, "  engine: incomplete after Ns: it exited successfully but its structured results report failures; failing files: packages/engine/test/contracts/testing/example.test.ts"],
 ] as const) it(`runs every workspace and fails honestly when ${name}`, async () => {
   const { ran, report, summary } = await run(scenario, 1);
   expect(ran).toBe("core\ndesktop\nengine\n");
   expect(report.scope).toBe(name === "engine's report is missing" ? "partial" : "complete");
   expect(summary).toEqual(["Test summary:", "  core: passed in Ns", "  desktop: passed in Ns", engine]);
-  if (name === "engine fails") expect(report.results[2].missedFailures).toEqual(["packages/engine/test/example.test.ts"]);
+  if (name === "engine fails") expect(report.results[2].missedFailures).toEqual(["packages/engine/test/contracts/testing/example.test.ts"]);
 });
 
 for (const workspace of ["core", "desktop", "engine"] as const) for (const report of ["truncated", "omitted", "counts", "skipped"] as const) it(`rejects ${workspace}'s ${report} report even after a zero exit code`, async () => {
@@ -272,11 +290,11 @@ it("keeps core's real failure as the diagnostic when noisy desktop output follow
   const { stdout, report, summary } = await run({ core: { code: 1, report: "fail", print: failure }, desktop: { print: "✓ a passing desktop case\n".repeat(2000) } }, 1);
   expect(stdout.indexOf(failure)).toBeGreaterThanOrEqual(0);
   expect(stdout.indexOf(failure)).toBeLessThan(stdout.indexOf("✓ a passing desktop case"));
-  expect(report.results[0].failures).toEqual(["packages/core/test/example.test.ts"]);
+  expect(report.results[0].failures).toEqual(["packages/core/test/contracts/testing/example.test.ts"]);
   // The closing summary names the failing file but adds no failure marker or test name of its own.
   expect(namedCheckFailures(stdout)).toEqual([{ name: "greeting > shows the registered name" }]);
   expect(namedCheckFailures(summary.join("\n"))).toEqual([]);
-  expect(summary[1]).toBe("  core: failed after Ns; failing files: packages/core/test/example.test.ts");
+  expect(summary[1]).toBe("  core: failed after Ns; failing files: packages/core/test/contracts/testing/example.test.ts");
 });
 
 // Windows has no gentle stop signal one process can send another.

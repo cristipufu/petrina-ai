@@ -16,6 +16,8 @@ export interface SourceFacts {
   unfinished: { line: number; name: string }[];
   /** Asynchronous callbacks given to APIs that call them without waiting: assertions, array tests, engine announcements, locked stand-in updates. */
   asyncCallbacks: number[];
+  /** Direct resource access, including Bun's global APIs, for lower-layer dependency checks. */
+  effectAccess: { line: number; name: string }[];
 }
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
@@ -33,7 +35,7 @@ const CALLS = new Set(["CallExpression", "OptionalCallExpression"]);
 
 /** Parse syntax rather than searching prose, comments or template strings for code. Never executes a module. */
 export function sourceFacts(source: string, filename: string): SourceFacts {
-  const facts: SourceFacts = { imports: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [] };
+  const facts: SourceFacts = { imports: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [] };
   const ast = parse(source, { sourceType: "unambiguous", sourceFilename: filename, plugins: filename.endsWith("x") ? ["typescript", "jsx"] : ["typescript"], attachComment: false });
   const testNames = new Set(["it", "test", "describe"]);
   for (const statement of ast.program.body) if (statement.type === "ImportDeclaration" && ["bun:test", "vitest"].includes(statement.source.value)) {
@@ -43,6 +45,12 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     ?? (value.type === "MemberExpression" ? rootName(value.object) : value.type === "CallExpression" ? rootName(value.callee) : undefined);
   const line = (value: Node) => (value.loc as { start: { line: number } }).start.line;
   const property = (value: Node) => value.computed ? text(value.property) : name(value.property);
+  const accessPath = (value: unknown): (string | undefined)[] => !node(value) ? [] : value.type === "Identifier" ? [name(value)]
+    : value.type === "MemberExpression" || value.type === "OptionalMemberExpression" ? [...accessPath(value.object), property(value)] : [];
+  const globalPath = (value: unknown) => {
+    const parts = accessPath(value);
+    return parts[0] === "globalThis" ? parts.slice(1) : parts;
+  };
   function visit(value: unknown): void {
     if (!node(value)) return;
     if (value.type === "ImportDeclaration" && /^(?:(?:node:)?child_process|bun)$/.test(text(value.source) ?? "")) {
@@ -50,10 +58,15 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     }
     if ((value.type === "MemberExpression" || value.type === "OptionalMemberExpression") && BLOCKING.has(property(value) ?? "")) facts.blockingCalls.push(line(value));
     if (value.type === "ObjectPattern") for (const entry of value.properties as Node[]) if (entry.type === "ObjectProperty" && BLOCKING.has(name(entry.key) ?? text(entry.key) ?? "")) facts.blockingCalls.push(line(entry));
+    if (value.type === "VariableDeclarator") {
+      const init = globalPath(value.init);
+      if (init.length === 1 && ["Bun", "process"].includes(init[0] ?? "") || name(value.init) === "globalThis") facts.effectAccess.push({ line: line(value), name: `${init[0] ?? "globalThis"} alias` });
+    }
     if (["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(value.type)) {
       const path = text(value.source);
-      const names = value.type === "ExportAllDeclaration" ? ["*"] : Array.isArray(value.specifiers) ? value.specifiers.flatMap(specifier => node(specifier) ? [name(specifier.imported) ?? (specifier.type === "ExportSpecifier" ? name(specifier.local) : undefined) ?? (specifier.type === "ImportNamespaceSpecifier" ? "*" : "default")] : []) : [];
-      if (path) facts.imports.push({ path, names, runtime: value.importKind !== "type" && value.exportKind !== "type" });
+      const specifiers = Array.isArray(value.specifiers) ? value.specifiers.filter(specifier => node(specifier) && specifier.importKind !== "type" && specifier.exportKind !== "type") : [];
+      const names = value.type === "ExportAllDeclaration" ? ["*"] : specifiers.flatMap(specifier => node(specifier) ? [name(specifier.imported) ?? (specifier.type === "ExportSpecifier" ? name(specifier.local) : undefined) ?? (specifier.type === "ImportNamespaceSpecifier" ? "*" : "default")] : []);
+      if (path) facts.imports.push({ path, names, runtime: value.importKind !== "type" && value.exportKind !== "type" && (!Array.isArray(value.specifiers) || !value.specifiers.length || !!specifiers.length) });
     }
     if (value.type === "ImportExpression" || (value.type === "CallExpression" && (name(value.callee) === "require" || (node(value.callee) && value.callee.type === "Import")))) {
       const path = text(value.type === "ImportExpression" ? value.source : (value.arguments as unknown[])?.[0]);
@@ -62,9 +75,14 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     }
     if (value.type === "MemberExpression" || value.type === "OptionalMemberExpression") {
       const member = property(value);
+      const [owner, operation] = globalPath(value);
+      if (owner === "Bun" && (operation === undefined || ["spawn", "spawnSync", "file", "write", "serve", "listen", "connect", "which"].includes(operation))
+        || owner === "process" && (operation === undefined || ["env", "cwd", "chdir", "kill", "exit", "abort"].includes(operation))
+        || ["fetch", "WebSocket", "Worker", "EventSource", "XMLHttpRequest"].includes(owner ?? "")) facts.effectAccess.push({ line: line(value), name: operation ? `${owner}.${operation}` : owner! });
       if (member === "rejects" || member === "resolves") facts.promiseMatchers.push(line(value));
       if (member === "only" && testNames.has(rootName(value.object) ?? "")) facts.exclusiveTests.push(line(value));
     }
+    if (["CallExpression", "NewExpression"].includes(value.type) && ["fetch", "WebSocket", "Worker", "EventSource", "XMLHttpRequest"].includes(name(value.callee) ?? "")) facts.effectAccess.push({ line: line(value), name: name(value.callee)! });
     for (const child of Object.values(value)) {
       if (Array.isArray(child)) child.forEach(visit);
       else if (node(child)) visit(child);

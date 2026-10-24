@@ -2,11 +2,9 @@ import { createHash } from "node:crypto";
 import { builtinModules } from "node:module";
 import { sourceFacts } from "./source.js";
 import { sourceCandidates } from "./source-paths.js";
+import { isSource, isTest, WORKSPACES, workspaceOf } from "./test-paths.js";
+export { isSource, isTest, WORKSPACES, workspaceOf } from "./test-paths.js";
 
-export const WORKSPACES = ["packages/core", "packages/engine", "apps/desktop"] as const;
-export const isTest = (file: string): boolean => /(?:^|\/)(?:[^/]+[._])?(?:test|spec)\.[cm]?[jt]sx?$/.test(file);
-export const isSource = (file: string): boolean => /\.[cm]?[jt]sx?$/.test(file);
-export const workspaceOf = (file: string): string | undefined => WORKSPACES.find(workspace => file.startsWith(`${workspace}/`));
 const builtins = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
 export interface CoverageMap { version: 1; fingerprint: string; tests: Record<string, string[]> }
 export interface ImpactPlan {

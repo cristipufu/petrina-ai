@@ -1,0 +1,74 @@
+# Test ownership and layers
+
+This is the target structure for the test-foundation revamp. Migration is in progress; a test is not qualified merely because it has moved folders. The [implementation tracker](../plans/test-foundation.md) records completed audits and remaining work. [Testing Petrina](../testing.md) owns commands, provisioning and platform instructions.
+
+## Choose the behavior before the fixture
+
+For each case, name the production behavior, observable result and smallest owner that can prove it. Arrange only the prerequisites that behavior needs. A test of a rule does not need a running workflow; a test of Git must exercise real Git. Mocking the subject itself proves nothing.
+
+Use this hierarchy within each workspace: `test/<layer>/<area>/name.test.ts` (or `.tsx`). Use a further subsystem directory when it separates distinct responsibilities, not to mirror every production file. A feature may have tests in several layers because each layer proves a different contract.
+
+| Layer | Responsibility | Permitted machinery | Examples of areas |
+| --- | --- | --- | --- |
+| `rules` | Decisions, calculations, validation, transformations and result parsing | Data, pure functions and explicit inputs; no filesystem, database, network, subprocess or running Engine | scheduling, reviews, acceptance, repositories, usage, history, testing |
+| `orchestration` | Ordering, transitions, reservations, retries, handoffs and cancellation decisions | The real controller under test, typed scripted effects, controlled clocks and release events; no real external processes or persistent storage | scheduling, review rounds, conversations, checks, delivery, runtime, simulator |
+| `presentation` | Rendering, interaction, accessibility and UI state | Components and a private DOM with a controlled application client; no real engine, providers or native desktop | tasks, journey, history, routines, forms, analytics, navigation |
+| `contracts` | An adapter's agreement with an actual boundary | Exactly the real boundary under test, private owned resources and controlled peers | git, storage, agents/ACP, processes, browser, filesystem, desktop host, local API, testing/runner |
+| `journeys` | Important interactions between the layers | The real engine with private Git/SQLite, scripted providers and local service peers; native agent transport only when the interaction requires it | task lifecycle, review convergence, shared delivery, recovery |
+
+Rust host tests belong to the same conceptual contract areas even though their modules follow Cargo's layout. Actual installed-provider compatibility checks are explicit opt-ins, separate from the required account-independent suite.
+
+## Boundaries run in one direction
+
+Rules take values and return decisions. Controllers call rules and request effects through narrow contracts. Adapters implement effects. The application composes them. Presentation uses an application client. Tests follow these same boundaries.
+
+### Production package boundaries
+
+The coordinator approved extracting production responsibilities as part of this revamp. Packages enforce dependency ownership; each package still has its own test layers. The target graph is:
+
+```text
+application host (existing engine entrypoints, CLI/MCP/server and desktop)
+  -> orchestrator -> core
+  -> agent runtime -> core and consumed contracts
+  -> repositories -> core and consumed contracts
+  -> storage -> core and consumed contracts
+```
+
+The host constructs native adapters and supplies them to controllers. The orchestrator never imports concrete adapters. An adapter may depend on the pure contract it implements, including a contract owned by the consuming package; the controller must not import the adapter back. Shared contracts get a separate package only when several owners actually need them. There are no extra services or network boundaries.
+
+| Responsibility | Interface boundary | Native implementation owns |
+| --- | --- | --- |
+| Agent execution | Open/continue a participant session; send input; public progress and confirmed results; cancellation and confirmed cleanup | Provider configuration, ACP, process and browser ownership |
+| Repository work | Inspect a named workspace/version, prepare/fold a change, manage owned copies, publish an approved destination | Git commands, safe environment/credentials, paths and native worktrees |
+| Product checks | Execute declared commands against a pinned workspace; return complete outcomes and provenance | Owned check processes, output, deadlines and environment preflight |
+| Persistence | Load/checkpoint canonical state, record evidence and retrieve focused history; atomic changes remain atomic | SQLite connections, transactions, schema, indexes and durable files |
+| Time and notifications | Explicit current time, cancellable deadlines, recorded events and change notification | Host clock/timers and delivery of notifications |
+
+Define each port from its consumer's actual operations, not a generic `execute(command)` escape hatch or a copy of Kernel. Do not pass Node child handles, a SQLite connection, ACP SDK objects or an entire Engine into an ordinary controller. Keep task/repository handles bound across awaits. Return actual version and evidence identities; unavailable observation, missing data, failed execution and confirmed absence remain distinct.
+
+Async effects must define cancellation and ownership: stopping a request does not claim its native work ended, a failed operation does not silently become a successful empty response, and incomplete cleanup remains observable. Scripted implementations use the same interface and fail on unexpected work; they never fall back to the host's installed tools or accounts.
+
+The first extraction is repository execution context and repair routing. They currently share a module/import surface with Git despite needing only task data, role lookup and an explicit checkpoint. Define that narrow contract, move the real controller into `@petrina/orchestrator`, test decisions without Engine/Git/SQLite, and retain separate durable-restart and complete-journey coverage. Later extractions use the audited callers and measured costs. Do not move all native modules first and leave the orchestrator coupled through a renamed Kernel.
+
+Prefer existing pure functions and ports. When a controller cannot be exercised without starting unrelated machinery, inspect its dependencies and extract the smallest honest interface. Do not duplicate production rules in fixtures, use a broad fake Engine, cast an incomplete object to the full controller type, or replace the function being asserted. Scripted effects must also model relevant rejection, cancellation and completion behavior.
+
+Fixtures live in their owning test-support modules, separate from cases. Share immutable recipes and helpers; give every case its own writable state and effect ownership. Keep clocks and release barriers explicit. A real timer belongs in a boundary test when timing or termination is the behavior being proved.
+
+## Audit and migrate each case
+
+1. Read the assertion and its failure control. Identify what regression it would catch; a name or a comment is insufficient.
+2. Assign its layer and subsystem. Split files and cases that contain independent responsibilities. Keep an interaction together when separating it would remove the behavior under test.
+3. Remove unrelated setup and replace irrelevant effects through the production contract. Preserve success, failure, recovery and nearby input variants. Replace an assertion only when its new form proves the same or a stronger outcome; record that decision in the audit.
+4. Ensure a meaningful boundary or journey control still covers the integration that smaller tests no longer execute. Preserve real Git, SQLite, process and transport coverage where their behavior matters.
+5. Run the migrated cases and their neighboring contract controls. Reconcile the original and new case/variant inventory, inspect assertions and measure resource cost. A faster result is not evidence of equivalent coverage.
+6. Review the change and fix findings before marking that area audited. Repeat the complete normal-parallel suite after coherent batches; retain original failure evidence.
+
+The migration inventory includes every test file and its declared cases, parameterized variants, setup/teardown, assertions and native resources. Generated inventory is discovery, not a completed semantic audit. A file with mixed layers stays pending until its cases have been separated and checked. Do not automatically label all existing Engine tests as journeys.
+
+## Enforce the structure
+
+The convention check must reject new flat tests, forbidden runtime dependencies in lower layers, and imports that bypass canonical fixtures. Follow transitive local imports and package aliases: hiding a process launcher behind a helper does not make a rule test isolated. Type-only imports do not execute a boundary.
+
+Use semantic stage/effect assertions and resource budgets where they detect unintended work: rule tests launch no programs; controller tests call only the effects relevant to their scenario; boundary tests bound their owned programs. Wall-time targets are diagnostic because contention varies. Required workers, assertions and real timing contracts stay intact; retries, skips and reduced parallelism cannot manufacture a pass.
+
+The full required suite continues to discover every test in every layer. Layer commands are focused feedback, not delivery evidence. Moving or splitting a file must update runtime fixture paths, runner manifests, dependency selection and platform coverage; no layer may disappear from the complete check.

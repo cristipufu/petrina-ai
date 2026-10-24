@@ -1,0 +1,2146 @@
+{
+  "version": 1,
+  "baseline": "797354daa5a5555078c827c6a8da5b45d7ddd19f",
+  "scope": "Every tracked TypeScript test file; Rust host contract tests are tracked separately below. Generated counts are discovery, not semantic review.",
+  "files": [
+    {
+      "file": "apps/desktop/test/actions-and-slots.test.tsx",
+      "declarations": 3,
+      "assertionSites": 21,
+      "baselineDigest": "c069ddc815984f04a65f7f09df7308d7fde0310eeb253799aa5567070030095e",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/analytics.test.tsx",
+      "declarations": 10,
+      "assertionSites": 64,
+      "baselineDigest": "3a60cfb0598bfd56f3274f755a62696c8ed32bce1a13942ebe8fe127e4dc58e6",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/backlog-ui.test.tsx",
+      "declarations": 9,
+      "assertionSites": 62,
+      "baselineDigest": "d643f92530c5810ec80d46253de4d3a22e47995cef281af6c3295ebfa3ceb80e",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/connection.test.tsx",
+      "declarations": 2,
+      "assertionSites": 7,
+      "baselineDigest": "af2e21810d3e0dd6cad7cf71cda99c0fb14e426cf3048def93e569de17b18dc4",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/dependencies.test.tsx",
+      "declarations": 15,
+      "assertionSites": 79,
+      "baselineDigest": "84cb0f7b9106d510db23b635bebe57dd4f944496ea7683a2c1616059d684df28",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/drafts.test.tsx",
+      "declarations": 1,
+      "assertionSites": 7,
+      "baselineDigest": "f92b52af8d69a0a87b2cba78a69d6ed5de24cd4d098302982954524d17a2bcdd",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/editors.test.tsx",
+      "declarations": 3,
+      "assertionSites": 11,
+      "baselineDigest": "1861e7a7aa69685452a2b4e1273cc8ce1bb4125233a2220d238dccaadf7ed6d4",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/engine-client.test.tsx",
+      "declarations": 11,
+      "assertionSites": 55,
+      "baselineDigest": "d7bf454f8e7fc8d7ef32b1d638ff93a415529b42eca29b103fb758af9fbb8700",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/first-run.test.tsx",
+      "declarations": 8,
+      "assertionSites": 43,
+      "baselineDigest": "93639fafcf21639ec3e5d951fcf416bf7684ac14c59b6e8156968a6fe7c94ca5",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/header.test.tsx",
+      "declarations": 2,
+      "assertionSites": 25,
+      "baselineDigest": "c464974686af8eb2f595700d533e96d0ff93168499535d722a620bcf6c2db20a",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/history.test.tsx",
+      "declarations": 14,
+      "assertionSites": 108,
+      "baselineDigest": "e57495074fd30aaf8f629b14047b6fff878fc758bfab552f7fbf5b1673b9b7b2",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/journey.test.tsx",
+      "declarations": 50,
+      "assertionSites": 318,
+      "baselineDigest": "ea2d984d8510852aa5b6f4ac8a3de30b08ecdde221332cfe26dadbb6f185914c",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/keyboard.test.tsx",
+      "declarations": 41,
+      "assertionSites": 222,
+      "baselineDigest": "95332cbe57703a4e9d843f44d6dcd11deae0b08a15837c5699ee4e6f176820d6",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/limit-history.test.tsx",
+      "declarations": 11,
+      "assertionSites": 73,
+      "baselineDigest": "92aa70d2e643953e8586a4facbc01a323d119c874433bf1b0a339fad302695dd",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/message-delivery.test.tsx",
+      "declarations": 5,
+      "assertionSites": 18,
+      "baselineDigest": "caf46ee74763ba7a57e2e09188e5aa23c745a70b3c161c610bd2827646eeacf2",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/message-images.test.tsx",
+      "declarations": 11,
+      "assertionSites": 55,
+      "baselineDigest": "94a15f36440ddac0afb85315c2fe88bfb5d3d0bdcf0edede4b5aa7f05ef9dd58",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/notice-count.test.tsx",
+      "declarations": 1,
+      "assertionSites": 4,
+      "baselineDigest": "96f15ccb68647a041b0e80acf3df97728bb6b02b3d343eb1a44ae203d561a18d",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/notify.test.ts",
+      "declarations": 32,
+      "assertionSites": 95,
+      "baselineDigest": "19bb5629efaf5583d890912e77706238234f017fcca85d8a6c6bebcab66d74a4",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/plan.test.tsx",
+      "declarations": 3,
+      "assertionSites": 20,
+      "baselineDigest": "aca0043f4122262eb6fc98fd942d326aea18afdd8591bc94d760a6ce28af78ab",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/product-settings.test.tsx",
+      "declarations": 3,
+      "assertionSites": 16,
+      "baselineDigest": "4bf11df8ae71ffc3c223769aaefc7cab04ab81664fa13af898a602450bb95289",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/profiles.test.tsx",
+      "declarations": 5,
+      "assertionSites": 21,
+      "baselineDigest": "1d2dd97b9bdd45acd28ad71c7f7f181e4bb1e4ab34073c485c93cf4ae2f6cb97",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/repositories.test.tsx",
+      "declarations": 14,
+      "assertionSites": 56,
+      "baselineDigest": "bfa37184b09904ca5f12794037a5d11da918fa52583605fc4422d42a9a551dfb",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/review.test.tsx",
+      "declarations": 22,
+      "assertionSites": 95,
+      "baselineDigest": "2bb225b464b6507104ca26ea43589ceeed42e99d51201728b4985125ed9aec5c",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/reviewRound.test.ts",
+      "declarations": 9,
+      "assertionSites": 47,
+      "baselineDigest": "2ad3cbba05f41b5c77dc8cee49bb45cb8b15f24868e97e02c47a19950e79468d",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/roles.test.tsx",
+      "declarations": 8,
+      "assertionSites": 57,
+      "baselineDigest": "19eb0f9f68a646a4973d2e750911560d6551e032c0fb9420ba62e392c822665d",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/routes.test.tsx",
+      "declarations": 19,
+      "assertionSites": 88,
+      "baselineDigest": "0baa8b930b80c7a4fb4475b9f4b53a9c928b3d510cbb89b368ee8dac2ac8ce64",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/routines.test.tsx",
+      "declarations": 5,
+      "assertionSites": 35,
+      "baselineDigest": "6069163d88940fe91d7e9749403d94540913d69124caecd14189f1123a99a394",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/runtime-wait.test.tsx",
+      "declarations": 5,
+      "assertionSites": 27,
+      "baselineDigest": "febeadf79d022d26b011761dc96df1002413729505f4adae27e6d47c7d7f8432",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/screen.test.tsx",
+      "declarations": 7,
+      "assertionSites": 49,
+      "baselineDigest": "456b8fc23b42d81cb58444c8d2fb12d2d9c198b2e1ad6b8833a582f2a8a20504",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/session-images.test.tsx",
+      "declarations": 8,
+      "assertionSites": 35,
+      "baselineDigest": "be4d53602c9dfaaf3ee238561996470e86e7bd1f73e263516741d32a20c90493",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/session-products.test.tsx",
+      "declarations": 2,
+      "assertionSites": 11,
+      "baselineDigest": "0b727ad4449c8f2ef7cf73546a3afe34161db355ebf72e4c296bc070ef227053",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/step-usage.test.tsx",
+      "declarations": 9,
+      "assertionSites": 33,
+      "baselineDigest": "a126ffd417623435db0dc62163019eab7a1f98c8a08d3e0c41b24ac0deccb58e",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/summary.test.tsx",
+      "declarations": 12,
+      "assertionSites": 42,
+      "baselineDigest": "736c1ed562a3448114371ac3e4e29229987a180d36f26a59286b1de453dea374",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/takeover.test.tsx",
+      "declarations": 1,
+      "assertionSites": 3,
+      "baselineDigest": "1d7f275bd1d7a355237dde6d1d7fe89bf5a3da72f84514a8726953100d27e0f6",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/task-details.test.tsx",
+      "declarations": 5,
+      "assertionSites": 29,
+      "baselineDigest": "be17b020307ca97a8b8d8625db0b19c1ac879c9d799eb19e41d7904e92904363",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/theme.test.ts",
+      "declarations": 6,
+      "assertionSites": 49,
+      "baselineDigest": "de57ebbc7390cf3d3716cecdf27d1957eb8d420c617cdb29640314f7053b8714",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/tools.test.tsx",
+      "declarations": 2,
+      "assertionSites": 10,
+      "baselineDigest": "521fed1374158bebcfb1c360c8c41e842d91e7b2c7b5a1485c949d5e906c64c0",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/usage-refresh.test.tsx",
+      "declarations": 2,
+      "assertionSites": 9,
+      "baselineDigest": "cfbe6f06c92b87591562f01f8938c38ec29fd179f2a9410b7e1cccd775f18033",
+      "status": "pending"
+    },
+    {
+      "file": "apps/desktop/test/usage.test.tsx",
+      "declarations": 16,
+      "assertionSites": 56,
+      "baselineDigest": "96ae644757aba3fbc0678f235bb56d109f363b2d3bb21144b37385c421f47a15",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/acceptance.test.ts",
+      "declarations": 16,
+      "assertionSites": 69,
+      "baselineDigest": "d8ebdf2c894fb065b449dc7d14f73d21c59ab72ea9a4d623eda21d7444adb236",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/analytics.test.ts",
+      "declarations": 41,
+      "assertionSites": 233,
+      "baselineDigest": "ae26593b2b5efedb7cfcfa9bd480562c10a968c76aac45b263f8f5d64ea76255",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/backlog.test.ts",
+      "declarations": 2,
+      "assertionSites": 25,
+      "baselineDigest": "21350633eadffe4db2c1a952e4666036103bdc0de98be499deafff1954f2ebf0",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/board.test.ts",
+      "declarations": 12,
+      "assertionSites": 28,
+      "baselineDigest": "f58ef96e27291776a875166ddbb962dfa1dc418dfa0bfd7e623187af9db30731",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/charts.test.ts",
+      "declarations": 9,
+      "assertionSites": 68,
+      "baselineDigest": "77e78b70b58666ab878a993428c8dac7fb316cd4b98f95b783b68187eed70aaa",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/check-evidence.test.ts",
+      "declarations": 16,
+      "assertionSites": 67,
+      "baselineDigest": "7a60f243b5f90e0896f0b07d434ecb04a119982d883438daad6be49bc642a891",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/dependency-creation.test.ts",
+      "declarations": 5,
+      "assertionSites": 32,
+      "baselineDigest": "6a14bc2b42f24802de2fc15537df7f23fc2f7ffd6040e26567546eebb6e93049",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/flow.test.ts",
+      "declarations": 11,
+      "assertionSites": 60,
+      "baselineDigest": "25a783398df5bdbf2fd9d4e7377b213504fe4ff2fe15ffb52e2b0f5bd29f47cc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/follow-ups.test.ts",
+      "declarations": 24,
+      "assertionSites": 175,
+      "baselineDigest": "14580abf9893a43477c5ee976f5e3ee70df0da21e7bb1fbe12869ccce73bfd51",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/history.test.ts",
+      "declarations": 3,
+      "assertionSites": 11,
+      "baselineDigest": "da98b4384ec87a2ede34ffd772ea8bf483749c11cd65f8b8e38f43bf1bb64c2b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/journey.test.ts",
+      "declarations": 55,
+      "assertionSites": 271,
+      "baselineDigest": "ef26f071083794620986bd2525c4826d4654ebbd464dd289f3bafbe9b492a253",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/limit-history-view.test.ts",
+      "declarations": 10,
+      "assertionSites": 59,
+      "baselineDigest": "c8e7e640a4bbdeb928bec051172f503f3c89c21e8cdf8df7f29e3cf587f47f26",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/rules/conversations/message-delivery.test.ts",
+      "declarations": 4,
+      "assertionSites": 18,
+      "baselineDigest": "c2732e0da8181730dd592cf0c024a4cec2cdbf65472fba96581c94e503d0f585",
+      "status": "reviewed",
+      "from": "packages/core/test/message-delivery.test.ts",
+      "layer": "rules",
+      "area": "conversations",
+      "review": "Four declarations: accepted/heard/uncertain/waiting/skipped distinctions and removal eligibility. Pure message records; all assertions retained.",
+      "validation": {
+        "casesIdenticalToBaseline": 4,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "18464e2d6b109ee9c3ab22d45c0fa05b1751fc2c1a2d81706c5fc3410e82e855"
+      }
+    },
+    {
+      "file": "packages/core/test/navigation.test.ts",
+      "declarations": 10,
+      "assertionSites": 41,
+      "baselineDigest": "2e2369070d8db9d76bfdd1014997b5f6e2babf03d852cded272410e1493c17b9",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/node-usage.test.ts",
+      "declarations": 16,
+      "assertionSites": 58,
+      "baselineDigest": "f97a079782fc1ac61c7bebb2b048f4036c77b048bf37c436d9c24d0a60caafa4",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/products.test.ts",
+      "declarations": 4,
+      "assertionSites": 16,
+      "baselineDigest": "c4c29717cce2f5df8c96067689a653d1e6ea1668135697be63d862acce9374d6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/profiles.test.ts",
+      "declarations": 9,
+      "assertionSites": 30,
+      "baselineDigest": "2bb843449e3bd24565cc6165a1a8ff3bfa8d0e4ec13c01e68d77ce827e385898",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/proof-requests.test.ts",
+      "declarations": 4,
+      "assertionSites": 21,
+      "baselineDigest": "ce221a7dcb3a2b6f06b3d7bd3ca0fb364d0a6f44ca652bf0e84cc87a3fc1d8bb",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/rules/agents/readiness.test.ts",
+      "declarations": 7,
+      "assertionSites": 25,
+      "baselineDigest": "ac9f2fd6bba0b0f20f1e4bf079e35f21b0e1bf52b62f7db686586a58ceee4824",
+      "status": "reviewed",
+      "from": "packages/core/test/readiness.test.ts",
+      "layer": "rules",
+      "area": "agents",
+      "review": "Seven declarations: uncertain versus definitive readiness, probe reuse, deadlines and recorded outcomes. Explicit clock inputs; all assertions retained.",
+      "validation": {
+        "casesIdenticalToBaseline": 7,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "072d7f990cdcdea3263264734b7c574b2019426c5af2ed0c38add62bef0fe483"
+      }
+    },
+    {
+      "file": "packages/core/test/repositories.test.ts",
+      "declarations": 11,
+      "assertionSites": 51,
+      "baselineDigest": "9c778b160fc870cbe5173481225cc11576551e2ebc67bedd0f3c7330f97bd8d9",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/reviews.test.ts",
+      "declarations": 7,
+      "assertionSites": 34,
+      "baselineDigest": "2213d0f026fa27b18cd6725030119f03b87f8cb5050b39092db7bccfe094d660",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/roles.test.ts",
+      "declarations": 15,
+      "assertionSites": 53,
+      "baselineDigest": "68f7052b07fbf6f3a8ba75608eb0cfaa53570783d6ed3b38cd37336e15c9191e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/routines.test.ts",
+      "declarations": 13,
+      "assertionSites": 53,
+      "baselineDigest": "36e8327b8e0d1a22b3e61384710dc392de31f8091137d06aefe19fed282efc09",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/runtime-wait-events.test.ts",
+      "declarations": 4,
+      "assertionSites": 15,
+      "baselineDigest": "9ad39ed14d81ff68fa9186dfab83156166d337a68e5610ee6002b729d6a66ca2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/runtime-wait.test.ts",
+      "declarations": 21,
+      "assertionSites": 159,
+      "baselineDigest": "cb36eef70b0da787c1d83a61d200a4137bf4d9a5f145233fb6ae81d2a6138bdf",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/rules/scheduling/admission.test.ts",
+      "declarations": 9,
+      "assertionSites": 26,
+      "baselineDigest": "202bca0f7224aed5eedce255f25eb1e71c05a65967f8a9ac0328dd2a58a1eade",
+      "status": "reviewed",
+      "from": "packages/core/test/scheduler.test.ts",
+      "layer": "rules",
+      "area": "scheduling",
+      "review": "Nine declarations: pool/tool reservations, lowering caps, quota throttling, balanced order and background ownership. All assertions retained; data-only scheduling rules.",
+      "validation": {
+        "casesIdenticalToBaseline": 9,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "6fca13cc7f1ee97bf54cee7a2feb98517d7c664672b0bf20bfd07c3142e605ef"
+      }
+    },
+    {
+      "file": "packages/core/test/rules/scheduling/quota-scopes.test.ts",
+      "declarations": 5,
+      "assertionSites": 27,
+      "baselineDigest": "e98234d9609faba9d3919be39431c733c9a01a9f4c22bb0d06cdc1a7e945f28f",
+      "status": "reviewed",
+      "from": "packages/core/test/scoped-usage.test.ts",
+      "layer": "rules",
+      "area": "scheduling",
+      "review": "Five declarations: quota family limits, shared caps, helpers and stand-in room. All assertions retained with explicit time and data.",
+      "validation": {
+        "casesIdenticalToBaseline": 5,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "b4525b60a86a71e170381dd428213bad12c70c13f2f2cfb56193727d85c0c0e8"
+      }
+    },
+    {
+      "file": "packages/core/test/screen.test.ts",
+      "declarations": 12,
+      "assertionSites": 78,
+      "baselineDigest": "5954f267fb29148ad25338479f39f5a04255505b8132e1327f3b70cb859329bd",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/setup.test.ts",
+      "declarations": 20,
+      "assertionSites": 85,
+      "baselineDigest": "f792ae86e9be2e7d6aa089a4d67d310da83ef220f568e3ec2fa56ba6991c40ae",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/sim.test.ts",
+      "declarations": 62,
+      "assertionSites": 355,
+      "baselineDigest": "6500ba230074484480d0f407413340a2c38d8cf85b594b9b290d5a2ca877daee",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/summary.test.ts",
+      "declarations": 37,
+      "assertionSites": 184,
+      "baselineDigest": "afa4229a60e53fdabb430f0dcf23d81ee16b4bcf876714aee6de661ec6885ccb",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/rules/conversations/takeover.test.ts",
+      "declarations": 2,
+      "assertionSites": 13,
+      "baselineDigest": "1a90c24ec6425b9cc5c8fea153bab7e4916ef9741de05b59aff3435e375aae50",
+      "status": "reviewed",
+      "from": "packages/core/test/takeover.test.ts",
+      "layer": "rules",
+      "area": "conversations",
+      "review": "Two declarations: eligibility and refusal reasons across states/providers. Tests decision output only; native terminal launch remains in engine contract cases.",
+      "validation": {
+        "casesIdenticalToBaseline": 2,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "4d3b4ab68c389f0c8f47558bb08ede8afb590c36db311d079e13abb25e73c775"
+      }
+    },
+    {
+      "file": "packages/core/test/task-transitions.test.ts",
+      "declarations": 8,
+      "assertionSites": 61,
+      "baselineDigest": "25822723f5be3b5c1ea41157bb94ccaa81bb59a25e881971853ceebc98d490a7",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/ui-contracts.test.ts",
+      "declarations": 3,
+      "assertionSites": 13,
+      "baselineDigest": "18198c219004062326cfda845b70b3b7c29d72902c76d3335da92a650fc22fa2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/usage.test.ts",
+      "declarations": 38,
+      "assertionSites": 184,
+      "baselineDigest": "a640d462e02940bccecfc99e3575df4e46c288e55d883c9f3b392fa90463911d",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/verifier-panel.test.ts",
+      "declarations": 18,
+      "assertionSites": 76,
+      "baselineDigest": "38684c09e5544068c93562d7c102bd03d80f56f7986150f56c1d807a810f9266",
+      "status": "pending"
+    },
+    {
+      "file": "packages/core/test/workflow-events.test.ts",
+      "declarations": 40,
+      "assertionSites": 219,
+      "baselineDigest": "36c057cd10e0111d079f7905e2a85360b9ecfc9c86ca524ec07c1c666718b4c9",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/acceptance-gap.test.ts",
+      "declarations": 13,
+      "assertionSites": 171,
+      "baselineDigest": "6c2aed7c44945a5699c42a1c55e3a7ec1a6bc4e7d3b4f37859aa2e529a12ea7b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/acceptance-repair-reviews.test.ts",
+      "declarations": 9,
+      "assertionSites": 142,
+      "baselineDigest": "b81e1ac2cd1b1812c222a8da36a5baeb8cb9b95ff79475eeb936d8b993fe3370",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/accepted-points.test.ts",
+      "declarations": 2,
+      "assertionSites": 20,
+      "baselineDigest": "50ec3d336e2ebd9a9dd61d9fc26eebb0ac7bcec76aa4ec7afdced264ba670729",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/activity.test.ts",
+      "declarations": 10,
+      "assertionSites": 45,
+      "baselineDigest": "457bc6e9a306abf3c34cee6a75e613c6b1b66523bdc1b5b30ba21ec8e0e2c12b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/adapter-contract.test.ts",
+      "declarations": 1,
+      "assertionSites": 12,
+      "baselineDigest": "408d0a976c1fe741bff9e299082809f85af92ed09d1d7f61e775c8e232d0f069",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/after.test.ts",
+      "declarations": 3,
+      "assertionSites": 18,
+      "baselineDigest": "1c00f4134a39d4ba2034fa9a107580bcd62530362a46b502a1cfcf3ba2730962",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/agent-lifetime.test.ts",
+      "declarations": 12,
+      "assertionSites": 73,
+      "baselineDigest": "0e1285e6f66f0351cbaa32cca5ab626faf4e9a403d2dfda06f813cdedf668b7d",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/agent-messages.test.ts",
+      "declarations": 3,
+      "assertionSites": 11,
+      "baselineDigest": "7740541f0163decf4effa851b2eb6f4dd32c78f4540c47a8a641042cb23d2886",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/analytics-read.test.ts",
+      "declarations": 11,
+      "assertionSites": 54,
+      "baselineDigest": "6b4dbc72cce02502338657f80e9f82343705366d977d353b0fe66a3378d79d5e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/antigravity.test.ts",
+      "declarations": 13,
+      "assertionSites": 55,
+      "baselineDigest": "13316a69af7cbe17673f7699b414f8c57c9758dccf3a372f95e13bad91652b37",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/awake.test.ts",
+      "declarations": 3,
+      "assertionSites": 16,
+      "baselineDigest": "f3f6fd4dd9f0c9b0bcbf62f61ea3e28bd49d0cc2ee6a0f18823e392755415c48",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/backlog.test.ts",
+      "declarations": 2,
+      "assertionSites": 22,
+      "baselineDigest": "92dbdffdfa6cab27434820641d710ef68dbe4e4c6034ec8441846f4db5610009",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/browser-folders.test.ts",
+      "declarations": 5,
+      "assertionSites": 49,
+      "baselineDigest": "6ebe713bd1a6dd1143d4a9cc7a1ec21da63c0a1ff3811fd09b1a522e94982e94",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/browser.test.ts",
+      "declarations": 29,
+      "assertionSites": 198,
+      "baselineDigest": "1e636e0c5c11996523a6768711970af77a8eeeefa31a9cecb44c863c3e799297",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/builder-context.test.ts",
+      "declarations": 13,
+      "assertionSites": 103,
+      "baselineDigest": "89e54ba4f7c4feb771af3088cde90d5030c1e37d1832628bdc84732fcb521384",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/builder-continuity.test.ts",
+      "declarations": 4,
+      "assertionSites": 55,
+      "baselineDigest": "20c9e829cd7caec74ce84ea8ffe9743584960b05037faaa2e22d9b30b1bfec0b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/builder-return.test.ts",
+      "declarations": 1,
+      "assertionSites": 11,
+      "baselineDigest": "055fdc2d3fe55864f82f6cd297347b0d31cb7ab1d88efaa4a86cd36b57ccc7d6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/capacity-rejoin.test.ts",
+      "declarations": 11,
+      "assertionSites": 146,
+      "baselineDigest": "a4dd320bdb170e97841a3da7ff468c1e9e643b886466e30faf9568a85e56061c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/captures.test.ts",
+      "declarations": 9,
+      "assertionSites": 31,
+      "baselineDigest": "a8cd8fff875dd94cd921678025d609327c742c1cf3dad1da9a776d24983833d3",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-admission.test.ts",
+      "declarations": 9,
+      "assertionSites": 121,
+      "baselineDigest": "e28cb3b841410d6a09782d70528b5eae203a988af3966d1c44045c6464f3e9f1",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-decisions.test.ts",
+      "declarations": 2,
+      "assertionSites": 30,
+      "baselineDigest": "3f72374a4d202920ddfad52db1c7367cf380f0715fbd5561ef5ee2e2dbee1fc2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-discovery-admission.test.ts",
+      "declarations": 2,
+      "assertionSites": 21,
+      "baselineDigest": "2fc04c44a2f239bfaa4a65ee98119ed574a468cdfb3d7e57b0c458bde1580f80",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-env.test.ts",
+      "declarations": 2,
+      "assertionSites": 4,
+      "baselineDigest": "a346bdd243fb8b26b7b578b6b74128ba199085b7937cc704597d2e91cad609d3",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-failures.test.ts",
+      "declarations": 27,
+      "assertionSites": 338,
+      "baselineDigest": "f3d287ee4f1e15ad0acf38b3cfd62e555c9f33ac0aa0de5b07aa316883dec5ea",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-inputs.test.ts",
+      "declarations": 3,
+      "assertionSites": 13,
+      "baselineDigest": "cc84300ac24ab00206c301833d4d88cd76d7b2ae5e9992988eac86b8e39e2883",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-interruption.test.ts",
+      "declarations": 8,
+      "assertionSites": 28,
+      "baselineDigest": "6e8a5216486a94c796dbdc481a1f5724be5fb383b6583a4f63e9c54c69147e18",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-outcomes.test.ts",
+      "declarations": 2,
+      "assertionSites": 37,
+      "baselineDigest": "3337383b9d4e0ba0b1b994c8ec02ee5b892b416c6e1aaf0d0b62c42f73b318b6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-queue.test.ts",
+      "declarations": 3,
+      "assertionSites": 24,
+      "baselineDigest": "d990bfc5275a7ee1c2ab2e39295655ad664c151b79abb72f39c7041ab417ba0c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/check-turns.test.ts",
+      "declarations": 7,
+      "assertionSites": 42,
+      "baselineDigest": "eea9064cbdee7a3bcf0865b0b54fbee3800a5ea89babcf1c1c605414fa486aa0",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/checkpoint-read.test.ts",
+      "declarations": 27,
+      "assertionSites": 184,
+      "baselineDigest": "bb46655d5689708b95bd1ce958e670982a811481cb9093bef83eead8163b7300",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/checks-seen.test.ts",
+      "declarations": 1,
+      "assertionSites": 2,
+      "baselineDigest": "07a850ec7a4163034cc8bb301955616dc960156a82d1429027c051cff5ebc3aa",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/checks.test.ts",
+      "declarations": 25,
+      "assertionSites": 169,
+      "baselineDigest": "0daaa67092ba2e7aad364f9e1a8c0938f3a3c6c21190f773fe5623ed32404a9e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/claude-allowances.test.ts",
+      "declarations": 15,
+      "assertionSites": 99,
+      "baselineDigest": "ca69994572ad102c92cfc89bad3b778fbdff845310f61959e4a96d3a00bf44c0",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/claude-refusal.test.ts",
+      "declarations": 4,
+      "assertionSites": 23,
+      "baselineDigest": "0e419c067625d01be18d3aa1a1eae81cb931f6d6454b84f20d60215476d14520",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/claude-usage.test.ts",
+      "declarations": 6,
+      "assertionSites": 19,
+      "baselineDigest": "01e52acf726c96b15f947cbf352115ec171cf4d7e62642d3365b211f9fb0b344",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/cleanup.test.ts",
+      "declarations": 19,
+      "assertionSites": 144,
+      "baselineDigest": "e5ddd63fa90221c35b8f3f82232a13144b80d316cf419ad638e5c4a1eb7e72eb",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/codex-background.test.ts",
+      "declarations": 1,
+      "assertionSites": 8,
+      "baselineDigest": "ed2d7fd82649c2d1fcde115f795ca2ecdc3b2eb8830e37564c1448721f726b68",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/codex-usage.test.ts",
+      "declarations": 5,
+      "assertionSites": 22,
+      "baselineDigest": "eeb5ec6666326f0cbdc083bc9949f2c730eb1ad26e6d6bb106fdcae51b20c429",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/commands.test.ts",
+      "declarations": 34,
+      "assertionSites": 125,
+      "baselineDigest": "191ed24490bf58ba23e8b5153e47e46bf7ae228d9ef8c67ad6f6f65a721b6901",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/connector-browser.test.ts",
+      "declarations": 5,
+      "assertionSites": 37,
+      "baselineDigest": "c74c64f20596dd62da6a7f1f4312a2c2266e252148de5e34343609ac299e0707",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-check-progress.test.ts",
+      "declarations": 8,
+      "assertionSites": 90,
+      "baselineDigest": "29d5095cbd108a6d6b227ec084400e10401820183c715e6a2d6b0ab1f1871457",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-cli.test.ts",
+      "declarations": 8,
+      "assertionSites": 44,
+      "baselineDigest": "db23478d0d641b5f632f6a04f54d979c60cd4fad23500e329f5d72d82fb72fae",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-desktop-handoff.test.ts",
+      "declarations": 1,
+      "assertionSites": 17,
+      "baselineDigest": "ef01aa072bbd34d6d727b8b5da58f8d89a8b8ae367f35c7ae6f8bc6910422ad0",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-lifecycle.test.ts",
+      "declarations": 6,
+      "assertionSites": 63,
+      "baselineDigest": "8c7dac3280858738df05144fe42628eda3c4cc8a45762bbbbbb752008b45e0d2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-outcomes.test.ts",
+      "declarations": 11,
+      "assertionSites": 143,
+      "baselineDigest": "aeb7643ced7fb57f48d552577ba222d002884ad66ef6c2b4bf0849eb58251465",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-recovery.test.ts",
+      "declarations": 7,
+      "assertionSites": 57,
+      "baselineDigest": "e6920d050f3d00c6da2123208d3ae5e0c4bdb6ef7b97747f0894b22b18295d04",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-regressions.test.ts",
+      "declarations": 11,
+      "assertionSites": 82,
+      "baselineDigest": "f9d38243313a3057e5d400dfa865ff532b5693fd768ecf93ffcba9a1bbb0f1a0",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination-start-ownership.test.ts",
+      "declarations": 2,
+      "assertionSites": 18,
+      "baselineDigest": "2afe26e22798a21a331042bef85bf63a6239072e52d6df68c4b992053ecb2769",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordination.test.ts",
+      "declarations": 23,
+      "assertionSites": 250,
+      "baselineDigest": "149f60afb98f73fcf60d7b29ec0842856c1d090e8c8b0bf1b5c160de84db1ca7",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-messages.test.ts",
+      "declarations": 19,
+      "assertionSites": 111,
+      "baselineDigest": "1f2d6fee1198dc47ea8e46e9bdf847f4a13d75e3186abd15285fa759684d9f97",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-note-context.test.ts",
+      "declarations": 18,
+      "assertionSites": 134,
+      "baselineDigest": "9de4ff8512e89851547a441e8dd25b9aa5146fb577e38497de0f8c0e9a78fa20",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-note-continuation.test.ts",
+      "declarations": 7,
+      "assertionSites": 112,
+      "baselineDigest": "063d175facfa20779358828c91755851a539cbc76e63aa3d5be17bcdebd21091",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-note-earlier-attempt.test.ts",
+      "declarations": 3,
+      "assertionSites": 10,
+      "baselineDigest": "5315f0f2b47b980e76b8e8632cc605ff78670da6071e57d4a56b55cb85b47bca",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-note-earlier-managed.test.ts",
+      "declarations": 1,
+      "assertionSites": 19,
+      "baselineDigest": "e22f26b4de0fbd3f39f85baf65e7550372fa19eadd701af4c9c5d77717285fd5",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-note-empty.test.ts",
+      "declarations": 4,
+      "assertionSites": 22,
+      "baselineDigest": "8327f9955f5d280d05c7ad3045061acbb82f89865d9186d6080fb2822d4adc3c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/coordinator-note-fallback.test.ts",
+      "declarations": 3,
+      "assertionSites": 44,
+      "baselineDigest": "68629969cdcc490c6c6302ec40779cc2fe2530621418e2d036d6390bc17bbc3c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/delivery-reliability.test.ts",
+      "declarations": 1,
+      "assertionSites": 14,
+      "baselineDigest": "e56373381a3cbaf0210a9544093ff947884776cfe838d3067451e0986bb2922e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/delivery-turn-recovery.test.ts",
+      "declarations": 13,
+      "assertionSites": 125,
+      "baselineDigest": "2309191ca4eed03c31badd50f6fa8ce36c4794164565d619534bf0e8b098a4f2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/delivery-turns.test.ts",
+      "declarations": 3,
+      "assertionSites": 21,
+      "baselineDigest": "dd7915355c637a1259869ce145a64ab98531175f564d84d0010ba41f035a04ad",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/delivery.test.ts",
+      "declarations": 14,
+      "assertionSites": 157,
+      "baselineDigest": "ec47e24c41d300679eaa5568baf8d35bf831d3818b066040ef37a21332d9e257",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/dependency-creation.test.ts",
+      "declarations": 5,
+      "assertionSites": 47,
+      "baselineDigest": "ed8b8791b76fcfa2aeabfba7f20374f5670b0a524af0578afeeb07fd04a81c70",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/design-notes.test.ts",
+      "declarations": 4,
+      "assertionSites": 38,
+      "baselineDigest": "73b27a7324f4ce4b45553c8981dc4adb9a376750f6ca40c86f753dcde9f94de6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/design-resume.test.ts",
+      "declarations": 11,
+      "assertionSites": 70,
+      "baselineDigest": "4d8aee823544cb089ccd4a2008be38af1b5eaca2a8087a0a355e9e5000178f3c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/drain.test.ts",
+      "declarations": 2,
+      "assertionSites": 10,
+      "baselineDigest": "4bf0c2e27b252947d7c27e891cc58327005fc44b451245875f34a3bbea6c5ef1",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/edit-roles.test.ts",
+      "declarations": 9,
+      "assertionSites": 111,
+      "baselineDigest": "be4a5ac98e98939953b1f410b05d15a37f7191ee3b4848c823b8e339ddaa1eda",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/engine-fixture.test.ts",
+      "declarations": 8,
+      "assertionSites": 34,
+      "baselineDigest": "aebc9ea3d7c56668ddbc894400d27fde5b9c1ad0d07597ea62858aaf226edb29",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/engine-process.test.ts",
+      "declarations": 7,
+      "assertionSites": 21,
+      "baselineDigest": "1c2a7a37dc036872241ed11d9f875957487012c7c70b6d9707074ef3f3e700e7",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/engine.test.ts",
+      "declarations": 9,
+      "assertionSites": 129,
+      "baselineDigest": "e21ab2bcf0d7e896643a6a30e359f3a0ebc5e2f2e94cc53b258bfcf0b4644e14",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/env.test.ts",
+      "declarations": 11,
+      "assertionSites": 37,
+      "baselineDigest": "29dce5134d1dd646afc01b0689317e23cc17d86a7f6768f32d7f05bdfbc6df7f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/environment.test.ts",
+      "declarations": 2,
+      "assertionSites": 16,
+      "baselineDigest": "595d41c3118c610be174149eb7b7015135633ac08aef3ef32abdd58896f76378",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-container-real.test.ts",
+      "declarations": 3,
+      "assertionSites": 21,
+      "baselineDigest": "47f297a6b36043662b7196e907b852e6d717a94fc3efcc915e62b5027c064c44",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-pauses.test.ts",
+      "declarations": 7,
+      "assertionSites": 86,
+      "baselineDigest": "8dc6001e86bea214497a61c7570e74afdd76f1a3beff2ba2bfeaee35227dffc3",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-persistence.test.ts",
+      "declarations": 10,
+      "assertionSites": 176,
+      "baselineDigest": "50944d121c7e816a3ce99d626714185c572bf65395db31f61d2c4c5d8a6a070b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-prerequisites.test.ts",
+      "declarations": 8,
+      "assertionSites": 108,
+      "baselineDigest": "54178e1364ca92a8bf8e1c0fd28204592ca827e77ea0d606ffcd469f231ce325",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-processes.test.ts",
+      "declarations": 8,
+      "assertionSites": 49,
+      "baselineDigest": "a8cd6c10cac1401fce1d9faa3da9c5d7907b79a13534fac9b6b81315b667b3d1",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-records.test.ts",
+      "declarations": 7,
+      "assertionSites": 85,
+      "baselineDigest": "171c7562714353886a085b060df8e2b3772b7d694cc102cb94301e6776f740ef",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-recovery.test.ts",
+      "declarations": 9,
+      "assertionSites": 87,
+      "baselineDigest": "062d97e92b2f6ad33403f21c24212b448316a0e8c67882ead16d28018715b40f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validation-restoration.test.ts",
+      "declarations": 9,
+      "assertionSites": 90,
+      "baselineDigest": "1eb33b43a5264e8270fc9846f51b3be945124077347b1b9585ae581d2dbf4a07",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/extra-validations.test.ts",
+      "declarations": 4,
+      "assertionSites": 23,
+      "baselineDigest": "628d1808b2092c10a0c476d93cce1ebf9615924d5759185c66b8bffbe201b717",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/fake-gh.test.ts",
+      "declarations": 2,
+      "assertionSites": 13,
+      "baselineDigest": "7ea4d067a69f49dc20e197b00283e77f15a8342d685fd8ae53ccc51869e5def4",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/file-operations.test.ts",
+      "declarations": 3,
+      "assertionSites": 12,
+      "baselineDigest": "15f09c296ddd239676b80548df84ec60a6a807021273f8de772a2fa083e0672a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/findings.test.ts",
+      "declarations": 10,
+      "assertionSites": 39,
+      "baselineDigest": "0fe9bb58ee4f9b4193d22c57321b1e1f97463c23d2538020a1206b8ff1aa59e8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/fixture-files.test.ts",
+      "declarations": 2,
+      "assertionSites": 12,
+      "baselineDigest": "cd6863b335e6fdf63c0478540ad70452bcf046723e8144f276075347fccc7073",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/fixture-json.test.ts",
+      "declarations": 3,
+      "assertionSites": 11,
+      "baselineDigest": "4435ff3b7660bef43a90817e96d50c64faf959bda0f334888e3bbc3d6c94c026",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/fixture-repositories.test.ts",
+      "declarations": 6,
+      "assertionSites": 46,
+      "baselineDigest": "3df7213336645a7eab63d5306a8e0089f7ac64810ee9caa6374fe5e50025bd5e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/fixture-trace.test.ts",
+      "declarations": 6,
+      "assertionSites": 35,
+      "baselineDigest": "b9ea363cb19e663b7eb22d04539f2d76e577abca95ed4a759d0d83cbf5d05443",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/follow-ups.test.ts",
+      "declarations": 45,
+      "assertionSites": 504,
+      "baselineDigest": "32250769ec995e6b1c22ea8e9690e0743b75527f7a93a4e5c744ef1a303039e2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/git.test.ts",
+      "declarations": 32,
+      "assertionSites": 203,
+      "baselineDigest": "9d12f77d9168e84a4a64503c6c41fe77a00a87d7ac602f1188b808bc687bfb78",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/grok-usage.test.ts",
+      "declarations": 9,
+      "assertionSites": 33,
+      "baselineDigest": "f47a8885cb277953595a00502cfddea549aa09b679b73ed51f395aa84d8c2aad",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/guide.test.ts",
+      "declarations": 7,
+      "assertionSites": 30,
+      "baselineDigest": "f6c986231d1f158bade24db71aa7c1fde90a3f49f3320b8d3a5887f94aab6b1a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/history-usage.test.ts",
+      "declarations": 3,
+      "assertionSites": 35,
+      "baselineDigest": "38f4c218959d21a23717f9b809db429c551de319d5e2efa0796c6a4dec0f3d9f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/history.test.ts",
+      "declarations": 21,
+      "assertionSites": 209,
+      "baselineDigest": "451b496306473b6b455d4fa527bfb37a64d041409f9f7b948ff41f4975262ae6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/image-preview.test.ts",
+      "declarations": 7,
+      "assertionSites": 14,
+      "baselineDigest": "0065792621bb1a89da3254a34482407627376c891999a181cb3a46642511985b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/inbox-waits.test.ts",
+      "declarations": 5,
+      "assertionSites": 43,
+      "baselineDigest": "7774efcbf7421e947107364a3f2609a266fd1b24efa8ea9ec1e61d3ed34aa93c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/independence.test.ts",
+      "declarations": 36,
+      "assertionSites": 243,
+      "baselineDigest": "d3611aaa1f826e0091ca18084c207f39aaba06a5afe1b26405012949a1cd4f4c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/instance.test.ts",
+      "declarations": 8,
+      "assertionSites": 44,
+      "baselineDigest": "29c878fc2807afa13bb315c9b029ffb566283bd9572864cf01df16223b23afcc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/instruction-reads.test.ts",
+      "declarations": 7,
+      "assertionSites": 27,
+      "baselineDigest": "8733f2bcab0489abd01828c4f19bc199dd8cc821dc274a5ebd29dc1146d8810b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/journey.test.ts",
+      "declarations": 11,
+      "assertionSites": 95,
+      "baselineDigest": "e679c76ad97d7e7b500c644d58225203a8bed75d87b69f2f878914684c9fc214",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/learnings-update.test.ts",
+      "declarations": 23,
+      "assertionSites": 63,
+      "baselineDigest": "3479d5fb117e1b0093b5007a767722b5686ca7a07f7771f636bac78ddbbf90c5",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/learnings.test.ts",
+      "declarations": 9,
+      "assertionSites": 35,
+      "baselineDigest": "c4eca6c8e1e4173d8954fd981f68d85edf7b165a285ab3977b60e7dda0ed3b05",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/limit-readings.test.ts",
+      "declarations": 2,
+      "assertionSites": 10,
+      "baselineDigest": "53e083e26038c8298d01f365bf94d86a513a971981048031222bcb3f39f96f1a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/limits.test.ts",
+      "declarations": 4,
+      "assertionSites": 30,
+      "baselineDigest": "ba55df1be08331deb0f5b24fc37337313445c69bdeee78e8de2142860428a11f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/live-messages.test.ts",
+      "declarations": 1,
+      "assertionSites": 6,
+      "baselineDigest": "e7fa7fb751802bc363d46c5284986a4038eca247801c3fe36a767ac8e696f3e4",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/live-task-storage.test.ts",
+      "declarations": 3,
+      "assertionSites": 21,
+      "baselineDigest": "905b90485e1fbcf49bc7f23c61978e3213b68ad5879d9ed41905ff360433e7e8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/local-delivery-admission.test.ts",
+      "declarations": 10,
+      "assertionSites": 90,
+      "baselineDigest": "e9b25e4139990bf7a6f9bf74dea6a5de8346442513350e45dc1e117c89b1065e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/machine-records.test.ts",
+      "declarations": 3,
+      "assertionSites": 26,
+      "baselineDigest": "3d6e8218841ec73dbf8a676a27e79f4b4df2961d5a6d0584cee4b384d28a88cf",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/maintenance.test.ts",
+      "declarations": 24,
+      "assertionSites": 202,
+      "baselineDigest": "a5c5b6d8dc261c83c9550333f62dfc69ea5e25a0f056a8ba2f844de6ee6be08f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/managed-launch.test.ts",
+      "declarations": 6,
+      "assertionSites": 25,
+      "baselineDigest": "a533b01e34a115e2ede1a1d1eb0aced052a90302fd6e5160d70b60e67737e74f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/model-capacity.test.ts",
+      "declarations": 28,
+      "assertionSites": 250,
+      "baselineDigest": "d00c354aed54208d6af616a92008cd07c35721a48a3384a1e4a38c7aeca65956",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/native-retry.test.ts",
+      "declarations": 4,
+      "assertionSites": 49,
+      "baselineDigest": "cbe85f89e6759b7d22fcfa1c55c2a93f2907da4fb937a0152ebd3c3f8f4dce1a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/node-usage.test.ts",
+      "declarations": 1,
+      "assertionSites": 4,
+      "baselineDigest": "49b7a1c8fef154cfaef6ea0cf75de6a7e62180c88919c7dcdec7fcce4ccc69e8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/notes-handoff.test.ts",
+      "declarations": 1,
+      "assertionSites": 26,
+      "baselineDigest": "dd99954464f6c680ed4136cd19e3a9af459a61c55e92f05f2ede411eaff5765c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/orchestration/runtime/parallel.test.ts",
+      "declarations": 1,
+      "assertionSites": 3,
+      "baselineDigest": "b300d011c9e875ea7e610ad6cebe48fc58d65671d7795d87fe834aa58e1fa502",
+      "status": "reviewed",
+      "from": "packages/engine/test/parallel.test.ts",
+      "layer": "orchestration",
+      "area": "runtime",
+      "review": "One declaration: all independent operations settle before failure reaches recovery. Real Promise ordering and controlled release, no OS or Engine.",
+      "validation": {
+        "casesIdenticalToBaseline": 1,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "34142f2c7eb403a5bb908640a70a3c5eeb211ccc50064ee7be76054776191178"
+      }
+    },
+    {
+      "file": "packages/engine/test/participant-conversation.test.ts",
+      "declarations": 11,
+      "assertionSites": 101,
+      "baselineDigest": "2d3b8141938e29060c99c09531db8ff1d140e6eb026af1fd1d3207e2249b8320",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/phase-notes.test.ts",
+      "declarations": 1,
+      "assertionSites": 7,
+      "baselineDigest": "71224994399a282a2c174d311b34b43b70e76df7cd5e2bc9bd3c829da15e9f41",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/pickup.test.ts",
+      "declarations": 13,
+      "assertionSites": 103,
+      "baselineDigest": "b063a4289ac66eea90a3c21b1e765d4195676c4ccc739192e7b10635857ed8db",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/plan.test.ts",
+      "declarations": 15,
+      "assertionSites": 48,
+      "baselineDigest": "456b6f20dbc35829120467691550fe69dfd659890c97a344cde12ddd9706521c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/process-host.test.ts",
+      "declarations": 6,
+      "assertionSites": 21,
+      "baselineDigest": "a869afff59e93692fc842031d332af81afdbab580d12d8993a3dff5b1c4569c2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/process-tree.test.ts",
+      "declarations": 20,
+      "assertionSites": 61,
+      "baselineDigest": "8fae2a724a77e508d8a485772779468569f06810f67cd4aee8d26220b7ae7dcc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/products.test.ts",
+      "declarations": 3,
+      "assertionSites": 30,
+      "baselineDigest": "0004023fb88fe731248a074964737459367b4b1b470cd358263d9290a7796a61",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/profile-choices.test.ts",
+      "declarations": 3,
+      "assertionSites": 15,
+      "baselineDigest": "ccb41f5e1ec050e38e86a2d65d257c91a6c5e7ae8874fa2868f70d36156df954",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/profile-cleanup.test.ts",
+      "declarations": 1,
+      "assertionSites": 3,
+      "baselineDigest": "e954b033eb68cddb8345a75d0f4b849840e2d1a347ce076a5b6f991ce458af2e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/profiles.test.ts",
+      "declarations": 1,
+      "assertionSites": 5,
+      "baselineDigest": "71a2cabe74ed4bf6607e42370faf91d8442f3dc475579d05398b9fe3215ff8dd",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/prompt-records.test.ts",
+      "declarations": 6,
+      "assertionSites": 43,
+      "baselineDigest": "381c4fb0bc380385b4126ab205376510e7dff36ba88fd4f8a032033c6ad4dd3a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/prompts.test.ts",
+      "declarations": 32,
+      "assertionSites": 186,
+      "baselineDigest": "54113389044407668d343486630015a0d05d3816bf5d7f6329cb9ea3cc392afc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/proof-requests.test.ts",
+      "declarations": 45,
+      "assertionSites": 514,
+      "baselineDigest": "60958e66e674cad152d1aa84b8c29a2615bc6ecf8a1213c940364816a70c8a58",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/provider-interruptions.test.ts",
+      "declarations": 13,
+      "assertionSites": 84,
+      "baselineDigest": "bee219f8e32134a1cf1aec7ff199c513ab29d3d957854b60f7c5902a78d91af6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/quality-runner.test.ts",
+      "declarations": 13,
+      "assertionSites": 75,
+      "baselineDigest": "a18a2650ad0b3d26fa27b24491da46f5ce0319c857d8aa7b898e42f38e5a98f8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/queue.test.ts",
+      "declarations": 1,
+      "assertionSites": 6,
+      "baselineDigest": "b0bbe8646de0ff963da9aa5a6d9ea060f1f34b2dec74556e9361202ef9742e83",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/queued-continuation.test.ts",
+      "declarations": 8,
+      "assertionSites": 112,
+      "baselineDigest": "59156d2ec9b3a8542f21bd52dcb3f9987bc32c2d364dc36212bb28e0f51fffd7",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/quit.test.ts",
+      "declarations": 4,
+      "assertionSites": 26,
+      "baselineDigest": "9d268768574e1800a3909aa62ca2543507b554f9f22ef0eeae1c0349b1bc97b3",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/readiness-recheck.test.ts",
+      "declarations": 21,
+      "assertionSites": 203,
+      "baselineDigest": "4d09838f9d2129362bb58cd663df56372ff4af3f6bb99157a1c63488dadfe2dc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/recovery.test.ts",
+      "declarations": 19,
+      "assertionSites": 99,
+      "baselineDigest": "45aaca5c603ecf4ee8bdfea164ddd6478998b1704f8b64ced70d0dd726007924",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/rules/testing/rejections.test.ts",
+      "declarations": 2,
+      "assertionSites": 5,
+      "baselineDigest": "8bf34f2bc70fa4ac6ef4d6d24fce7a8d2824ee8997bcffc75182b634b6b9633f",
+      "status": "reviewed",
+      "from": "packages/engine/test/rejections.test.ts",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Two declarations: asynchronous assertion ordering and exact rejection identity/matchers. Real promises, no process or file effects.",
+      "validation": {
+        "casesIdenticalToBaseline": 2,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "90fffc0cd485eff8c99695640666492f1aa4954e69ec9734e6dc91c773f93f98"
+      }
+    },
+    {
+      "file": "packages/engine/test/related-check-evidence.test.ts",
+      "declarations": 13,
+      "assertionSites": 106,
+      "baselineDigest": "f6e124298ebf7082bb8a9b1cb75d5ba0f979e0a670e12cc60df1766b89587fef",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/repair-conversation.test.ts",
+      "declarations": 1,
+      "assertionSites": 16,
+      "baselineDigest": "55c83e251df8cc987ba8b12ef4c2277c2a6fe70137d456d088d21d679958b2ec",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/repo-orientation.test.ts",
+      "declarations": 1,
+      "assertionSites": 5,
+      "baselineDigest": "f7bb154f24b2346d8a29a7f2a647f73a569be57dbf45b06d1ab4f281e9e3e906",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/report-images.test.ts",
+      "declarations": 3,
+      "assertionSites": 55,
+      "baselineDigest": "121cc28121d14d3be3523d5950dc49ca956a421abf546afa2af32f3b99467216",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/repositories.test.ts",
+      "declarations": 43,
+      "assertionSites": 496,
+      "baselineDigest": "20c4ca083312c76da157f5b4c0c3eeb6d37a5acd5d4b670b8a411c2db84cc7df",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/repository-context.test.ts",
+      "declarations": 39,
+      "assertionSites": 294,
+      "baselineDigest": "6f08e0329b6c80ae00cf1ca088730635c04d9e0ab90f334469face72c5a7facf",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/repository-paths.test.ts",
+      "declarations": 2,
+      "assertionSites": 6,
+      "baselineDigest": "b8815abce4046c5288a319104684822a27cffca296fa781b25206b4960bc26ad",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/repository-reads.test.ts",
+      "declarations": 6,
+      "assertionSites": 48,
+      "baselineDigest": "b8fb8784a7b12ad9da8597db90451c3f6fa569195fd0552c2d5783ca941a1cd8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/restart.test.ts",
+      "declarations": 5,
+      "assertionSites": 26,
+      "baselineDigest": "ae61ed3bf52b61bbcc49734600c96b171740d8bf40a7e636fe1d9032bc8d7db2",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-context.test.ts",
+      "declarations": 36,
+      "assertionSites": 292,
+      "baselineDigest": "89063651269938edd01a9a5b2878516d9739d8d2942bf7dcd01fc5a7577bbb03",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-continuation-rounds.test.ts",
+      "declarations": 7,
+      "assertionSites": 60,
+      "baselineDigest": "9538a2ab71f3f734b1828f94d383bdd73b921afe6972ab7fb410ea3faf4a3154",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-continuation.test.ts",
+      "declarations": 1,
+      "assertionSites": 32,
+      "baselineDigest": "a3ec208ab953450a552a94f57b02f35a1dfebb492eed852815654bbc18405549",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-decision.test.ts",
+      "declarations": 5,
+      "assertionSites": 81,
+      "baselineDigest": "2ea8cc31cb0314d0cc8080529e0fea0c6ec9ab4cbe1a30bbbacbe573b97694ee",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-evidence.test.ts",
+      "declarations": 14,
+      "assertionSites": 112,
+      "baselineDigest": "d71b18b0b7a713a07c8a5885b3016061f8199e6e8be286412efac7ac17ff9456",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-history.test.ts",
+      "declarations": 15,
+      "assertionSites": 117,
+      "baselineDigest": "f3393246efa22ca8ef4d4411e67d48ce29032a5147a413b00d98101f9ee8d5c9",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-messages.test.ts",
+      "declarations": 1,
+      "assertionSites": 6,
+      "baselineDigest": "40d36593312a83244072bf749dbbc05c44cca37391f3cbbeff8c4d76942669fc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-settlement.test.ts",
+      "declarations": 3,
+      "assertionSites": 19,
+      "baselineDigest": "9c605b9e2a5c1ad1633897989043df6fe2b3fb686efbcffccc10c6de52ab67fc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review-todo.test.ts",
+      "declarations": 8,
+      "assertionSites": 85,
+      "baselineDigest": "108c1b865892fbcfdefd7eaf24a14ad9542dc3e2887a144ffdfc84cf98097c4c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/review.test.ts",
+      "declarations": 15,
+      "assertionSites": 135,
+      "baselineDigest": "5b463f43a3a46a5a27a84351b2a65c2b0c61e1bac4c3341610e58ed7e4e86dd6",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/risk.test.ts",
+      "declarations": 3,
+      "assertionSites": 15,
+      "baselineDigest": "fb2d8c466d084cb160eebe9940bc5a6372815b373b21ad09f1f0a86c690755cc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/roles.test.ts",
+      "declarations": 7,
+      "assertionSites": 27,
+      "baselineDigest": "8f2b339f98a3930ca259e6ec297e58947671c5139a54dd12b16000f93b0785ca",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-edge-cases.test.ts",
+      "declarations": 13,
+      "assertionSites": 71,
+      "baselineDigest": "5167fb31efa84ce37c1801ba74ab66ca983fc114be01330c7f036c6df43c36d1",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-boundaries.test.ts",
+      "declarations": 11,
+      "assertionSites": 80,
+      "baselineDigest": "c90a35d74cd54a65f5db8bb02ce0dbc5f52538964f34ddfc9d1f4c5e82d919aa",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-coordination.test.ts",
+      "declarations": 10,
+      "assertionSites": 68,
+      "baselineDigest": "0d0ba23703564119226141cb0dae5b6b61a9f502aa9f690e00349d448f1f6ca3",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-initial-copy.test.ts",
+      "declarations": 3,
+      "assertionSites": 14,
+      "baselineDigest": "cafe9b5cadd242d459877108d72e92bb02462b96f905c394bc4bc39d5cbb459e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-parallel-preparation.test.ts",
+      "declarations": 3,
+      "assertionSites": 58,
+      "baselineDigest": "19417e8d5e9731ff5ccb682fb4b7ee253354f3450849aef1d6a605a391904c55",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-partial-recovery.test.ts",
+      "declarations": 6,
+      "assertionSites": 105,
+      "baselineDigest": "17786d4f926d202179b6a440fc81a5d0ecedb71c8f307b758ac3066da9d3cfbb",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-prepared-delivery.test.ts",
+      "declarations": 12,
+      "assertionSites": 70,
+      "baselineDigest": "0762521cf486657f647c8c783053def461a7ab39f88140d82c457bfebabc94f1",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-readiness.test.ts",
+      "declarations": 2,
+      "assertionSites": 30,
+      "baselineDigest": "99baa08ca304cee5508ef48a14b819ff6581004d562ac12824ec937ec07d072f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-refresh.test.ts",
+      "declarations": 5,
+      "assertionSites": 39,
+      "baselineDigest": "d40c16ca7f20da493c7b4fed6e7355eced605244a042d3ebe5c36050a4d4791b",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-release-recovery.test.ts",
+      "declarations": 2,
+      "assertionSites": 34,
+      "baselineDigest": "bb8438b402e201d7e7b8a9c7da2fd887fe4afde795aa71edf0281f1d70d35a25",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-repair.test.ts",
+      "declarations": 5,
+      "assertionSites": 74,
+      "baselineDigest": "f98dc47352305e375fd82722c4040ec3532cede135211588f3e9a98ae29f0d65",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-screen-cleanup.test.ts",
+      "declarations": 2,
+      "assertionSites": 15,
+      "baselineDigest": "c5b67420199142e56cd13a7441817322419e513a0b24bc70384caac6e7ce560d",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-screen-permission.test.ts",
+      "declarations": 3,
+      "assertionSites": 31,
+      "baselineDigest": "d9ef0835bd63daa4779ac722564e490a104eed0face1f4d668be163eaeaf4ada",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-screen.test.ts",
+      "declarations": 5,
+      "assertionSites": 29,
+      "baselineDigest": "6eeb47efa8c508df8c550015674c2896ffa99f7f2345021d31a371bf6988cbca",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait-shared.test.ts",
+      "declarations": 6,
+      "assertionSites": 62,
+      "baselineDigest": "444c8991eea4f861862717c4a629d5494ee3942159915e7c72629cadeecfa109",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/runtime-wait.test.ts",
+      "declarations": 8,
+      "assertionSites": 66,
+      "baselineDigest": "706673a8279b6e9a00b178802288b9dc4288a0a4950b6db9cf98721dc8829797",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/sandbox.test.ts",
+      "declarations": 14,
+      "assertionSites": 72,
+      "baselineDigest": "11ea512e056dc80627ff7bdd97829ef41a366fdb29a1ff872e255b901dce9100",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/screen-review.test.ts",
+      "declarations": 14,
+      "assertionSites": 111,
+      "baselineDigest": "94167bb4859ebebf5e6db3838a370373fa742db3db109128e975df52bb4759e4",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/screen.test.ts",
+      "declarations": 23,
+      "assertionSites": 201,
+      "baselineDigest": "995bedd03a1f8cf357b2baa67bddd8ac650bc160b48352d2bd683909c5e50bca",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/scripted-agents.test.ts",
+      "declarations": 5,
+      "assertionSites": 26,
+      "baselineDigest": "9cfa78a5aa85de4f8223cbae64db859df95daf2e8b008fe1ccfa5347786ce27d",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/security.test.ts",
+      "declarations": 7,
+      "assertionSites": 44,
+      "baselineDigest": "07ed018078153f3260dc208d77a00ef44f2c82f2816bcf5309b5a52029895689",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/server.test.ts",
+      "declarations": 8,
+      "assertionSites": 26,
+      "baselineDigest": "94dac37186e0b13130feb0b714154da06a84ab68928cd9dea069b9d6114eae3a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/session-cap.test.ts",
+      "declarations": 2,
+      "assertionSites": 11,
+      "baselineDigest": "c1a1032820cea0bc50a74d67bb44ae775cd1c49808ae20ab4726023b95989535",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/setup-commands.test.ts",
+      "declarations": 7,
+      "assertionSites": 54,
+      "baselineDigest": "1d7dbd5d5d1fb84f327e4311a055c806d7b499133381a3ec28fde5dd6c608dc7",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/setup-steps.test.ts",
+      "declarations": 4,
+      "assertionSites": 19,
+      "baselineDigest": "9a6e78bfbb7b6faeeaaf74f3413060f478faadeeb894f136fdf21c0db7cd811e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/setup.test.ts",
+      "declarations": 30,
+      "assertionSites": 181,
+      "baselineDigest": "733381cffcf6c0f3c345c5ef56abd53797a182aff3c89a2cd2ea75e9da0fe2bf",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/shared-image-history.test.ts",
+      "declarations": 1,
+      "assertionSites": 12,
+      "baselineDigest": "205fd6e32aa16d772aa4e29185edeca05365c4ee15e749d3d32f9d41fb2d4fe5",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/shipping.test.ts",
+      "declarations": 12,
+      "assertionSites": 94,
+      "baselineDigest": "578e31fe3b4bc26cd1f97d241af61990dde9d0b70ca465b43cca8e798539894f",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/side-step.test.ts",
+      "declarations": 2,
+      "assertionSites": 17,
+      "baselineDigest": "f7db3efed030790b806ea67f65a6233a0c00c2d145bb7b54c39e5b53c32e24ef",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/source-additions.test.ts",
+      "declarations": 5,
+      "assertionSites": 34,
+      "baselineDigest": "0314552afdf99910193a578caaaba0bb18d89a69caa305e72c0a623f4bf52301",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/source-pointers.test.ts",
+      "declarations": 6,
+      "assertionSites": 61,
+      "baselineDigest": "e06ca75327914ddf77f9d42094316ef1e5648f067ad727d7f9258fa0459953ce",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/source-validation.test.ts",
+      "declarations": 4,
+      "assertionSites": 16,
+      "baselineDigest": "b8c0f97ebafc34cfd4de10d328dfe5340ef6115593e4f87bd8855608c7d64070",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/sources.test.ts",
+      "declarations": 38,
+      "assertionSites": 293,
+      "baselineDigest": "fcba224cbaa4b6450bbf831e73ae329708ea83be295fa72fa4912647590bd7fc",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/sql-log.test.ts",
+      "declarations": 7,
+      "assertionSites": 50,
+      "baselineDigest": "26390e37092b5a6d55569cfb41a24c0d9162d294a10236080005ae04bef9b7fe",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/start.test.ts",
+      "declarations": 1,
+      "assertionSites": 2,
+      "baselineDigest": "d43766a45a22f41d045416d0340ad4ff996b5283ca6eccd42a07d0d90b2a56c0",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/state-stream.test.ts",
+      "declarations": 5,
+      "assertionSites": 19,
+      "baselineDigest": "a4a35652e0c8e7c309dcd4a2b240aa62f335f749ab3cc6a5eb0c92ffa2788fd8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/step-assignment.test.ts",
+      "declarations": 9,
+      "assertionSites": 79,
+      "baselineDigest": "f1f9e704494e93d59791d82666fcbfc0667a18027a20609a72ac874b0026f727",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/store-startup.test.ts",
+      "declarations": 3,
+      "assertionSites": 17,
+      "baselineDigest": "0e9f84b1f3816e29124d858e68722e4e265a5b963ea93e5409c1609f5abd1395",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/takeover.test.ts",
+      "declarations": 11,
+      "assertionSites": 129,
+      "baselineDigest": "8db976ec8b6a2461087b086f1cb0797a0910d483d0d06b60c483cb05b2230452",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/task-parity.test.ts",
+      "declarations": 2,
+      "assertionSites": 8,
+      "baselineDigest": "f73c03865b98c9c471b4ea4609699ebe99847a7f201bd9b8914568b715f31786",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/terminal.test.ts",
+      "declarations": 20,
+      "assertionSites": 79,
+      "baselineDigest": "21d9b9f7e4b1450e7415b54fd2d0d81904859f3eac6bcbfb0a4e5ffe9fef3a0e",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/test-deadlines.test.ts",
+      "declarations": 2,
+      "assertionSites": 8,
+      "baselineDigest": "409d3217a0080300c279238aaf7b5d0cd8e5a13fcb3fd64e93fe3d30d6d46cba",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/test-git-env.test.ts",
+      "declarations": 1,
+      "assertionSites": 1,
+      "baselineDigest": "0408176865aa440b22bfb365f3379b267b34f340f1e0b502c55a0c825a5b3f1c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/test-quality.test.ts",
+      "declarations": 15,
+      "assertionSites": 75,
+      "baselineDigest": "67003945d60aa0b30492a621d213703c141d6c234f7543908e9d874569537c5c",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/rules/testing/results.test.ts",
+      "declarations": 6,
+      "assertionSites": 10,
+      "baselineDigest": "2bec63e158f9995097b8bd7bec8e49e4c723545b5a010f0affc260ce47193e9b",
+      "status": "reviewed",
+      "from": "packages/engine/test/test-results.test.ts",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Six declarations plus table variants: complete/invalid/truncated/contradictory reports and file coverage. Actual report parser with in-memory text; native runner controls remain separate.",
+      "validation": {
+        "casesIdenticalToBaseline": 27,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "d383387fa0e363121881cc15e96c99f17f2ac8928531d888b6cd602159f11f15"
+      }
+    },
+    {
+      "file": "packages/engine/test/test-runner.test.ts",
+      "declarations": 7,
+      "assertionSites": 51,
+      "baselineDigest": "e75bcb7a6060807be80f534ee9863606ead6025cca79073e7da1b98ead9be0ab",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/tester.test.ts",
+      "declarations": 5,
+      "assertionSites": 71,
+      "baselineDigest": "dd164ea508ebc4c043ec6e1c1f6a4a0a653f28de66127f87821931bfdbd47e68",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/todo.test.ts",
+      "declarations": 6,
+      "assertionSites": 50,
+      "baselineDigest": "d34dc00a667fa218f036157cf8a3a999134441375b3d7b005cf3233594fcb85a",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/tool-invocations.test.ts",
+      "declarations": 5,
+      "assertionSites": 38,
+      "baselineDigest": "237d079520b2a527d2d8be3832362ae9404b06876e4cab669f24e2bc24c00275",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/tool-updates.test.ts",
+      "declarations": 1,
+      "assertionSites": 15,
+      "baselineDigest": "171e28fc184a88daab27280fa692f0e89e03faaf1c90c7b49832d2de5fe11a01",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/update.test.ts",
+      "declarations": 15,
+      "assertionSites": 102,
+      "baselineDigest": "efe36f80d2c299a7818ef97ba07a0ea42d783b3fb6fc60a6afdc99c0bbec0ba8",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/upgrade.test.ts",
+      "declarations": 5,
+      "assertionSites": 37,
+      "baselineDigest": "b62f3efd0ff0ed17b6190dec0098d1ff0ed2d5cae318b394d11c236559bd0f87",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/usage-history.test.ts",
+      "declarations": 3,
+      "assertionSites": 21,
+      "baselineDigest": "26b4a2aa02305f0b95157c90367798621ed15ad25adf3230c3eefd127abf1624",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/orchestration/usage/reader.test.ts",
+      "declarations": 3,
+      "assertionSites": 12,
+      "baselineDigest": "51224f929e44118472f17bf10674f8cddcdad57b85397b5eb5f11ebcb11fa572",
+      "status": "reviewed",
+      "from": "packages/engine/test/usage-reader.test.ts",
+      "layer": "orchestration",
+      "area": "usage",
+      "review": "Three declarations: refresh reuse, failure/recovery, pending sharing, stopping and empty responses. Typed read/record effects, no native provider or process.",
+      "validation": {
+        "casesIdenticalToBaseline": 3,
+        "assertionAstUnchanged": true,
+        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
+        "reviewedDigest": "8154a029f437bd5ffdaabfe0e44dcb196004e63a7de6b4c79a829a4932fb384c"
+      }
+    },
+    {
+      "file": "packages/engine/test/usage.test.ts",
+      "declarations": 35,
+      "assertionSites": 252,
+      "baselineDigest": "fbce4638a22999e2d4828863761ef4a1cb8f06761e3b2603d40f7514d0abfee5",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/verification-context.test.ts",
+      "declarations": 1,
+      "assertionSites": 9,
+      "baselineDigest": "0202931f24d4cde1ab9c8c7bd6854efe1470438e85727da09993058f00910a91",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/versions.test.ts",
+      "declarations": 20,
+      "assertionSites": 115,
+      "baselineDigest": "ca130e5d586272178a27af25ad986ca5e951ecc7df7caab62c6099d90325e7ac",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/workflow-events.test.ts",
+      "declarations": 23,
+      "assertionSites": 253,
+      "baselineDigest": "b12a766e5e001fde1ed0230b634b928b6784fc8460d5dfc9661861ed765eef02",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/worklog.test.ts",
+      "declarations": 17,
+      "assertionSites": 95,
+      "baselineDigest": "ef16a522dc4f608d7af4c88413a2cc2382b38b095f7e51123b0cfcdc2c50e3d5",
+      "status": "pending"
+    },
+    {
+      "file": "packages/engine/test/rules/testing/layers.test.ts",
+      "declarations": 5,
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Tests actual policy with in-memory module graphs: inventory identities, transitive imports/aliases/cycles, type-only and mixed imports, globals/unknown external effects, all five layer variants. Native root-runner cases separately establish enforcement before execution. Review reproduced and fixed omitted-file and globalThis/destructuring bypasses.",
+      "validation": "layers-final-engine.xml: five policy cases included in 109 passing engine controls; 628 total assertions"
+    }
+  ],
+  "rust": [
+    {
+      "file": "apps/desktop/src-tauri/src/lib.rs",
+      "status": "pending",
+      "area": "contracts/desktop-host",
+      "testFunctions": 18
+    }
+  ],
+  "baselineFiles": 290,
+  "baselineDeclarations": 2947
+}

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import { messageDeliveryText, messageRemovable, messageRemovalText } from "../src/message-delivery.js";
-import type { QueuedMessage } from "../src/model.js";
+import { messageDeliveryText, messageRemovable, messageRemovalText } from "../../../src/message-delivery.js";
+import type { QueuedMessage } from "../../../src/model.js";
 
 it("keeps acceptance distinct from hearing, including another reviewer still waiting", () => {
   const message: QueuedMessage = { id: "m", at: 1, text: "Keep the guest view", recipients: { first: true, second: false, third: false }, deliveries: { first: { state: "applied" }, second: { state: "accepted", toolId: "grok" }, third: { state: "waiting" } } };

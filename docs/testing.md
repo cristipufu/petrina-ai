@@ -2,6 +2,8 @@
 
 Development guidance for coding agents. Product contracts live in [design.md](design.md) and [ux.md](ux.md); contribution rules live in [AGENTS.md](../AGENTS.md#checks-and-test-cost).
 
+The [test-layer design](testing/layers.md) defines behavior ownership, subsystem directories and the migration audit. New tests belong under `test/<layer>/<area>/`; existing mixed files are being reviewed and split. A moved file is not proof that its fixture or assertions have been audited.
+
 ## Required checks
 
 Use the Bun version pinned in CI, Git and Node.js. From the repository root, install the locked dependencies and the browser they require before running checks:
@@ -116,7 +118,7 @@ This graph is not complete runtime coverage: subprocess entrypoints, file reads,
 Optional engine-file coverage can supplement the graph:
 
 ```sh
-bun run test:coverage packages/engine/test/rejections.test.ts
+bun run test:coverage packages/engine/test/rules/testing/rejections.test.ts
 ```
 
 This runs one exact test file through the isolated parallel engine runner and records executed-file LCOV edges after a pass on unchanged inputs. Collect files serially; each report belongs to its source, Bun version, platform and explicit browser-integration setting. Coverage only adds candidates. Missing coverage is labelled absent; stale coverage triggers a full selection. Coverage from spawned processes is not inferred, and a file-level map does not prove that every branch or scenario was exercised. Core and desktop retain Vitest's normal focused commands; no coverage package or selection mode is injected into them.

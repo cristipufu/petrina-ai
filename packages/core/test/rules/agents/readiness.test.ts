@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { READINESS_FRESH_MS, readinessGate, readinessOutcome, uncertain, type ReadinessWait } from "../src/readiness.js";
-import type { ToolCheck } from "../src/setup.js";
+import { READINESS_FRESH_MS, readinessGate, readinessOutcome, uncertain, type ReadinessWait } from "../../../src/readiness.js";
+import type { ToolCheck } from "../../../src/setup.js";
 
 const now = 1_800_000_000_000;
 const limit = 33_000;
