@@ -37,8 +37,8 @@ async function setup(name: string) {
   return { shop, api, start, fakes, remotes, sourceRemotes };
 }
 
-/** Real review records and restart storage, without unrelated Git, planning or agent execution. */
-async function reviewRecords() {
+/** Real shared-task records and restart storage, without unrelated Git, planning or agent execution. */
+async function sharedRecords() {
   const root = tempDir("petrina-review-records-"); recordRoots.push(root);
   const start = () => new Engine(root);
   const engine = start(); engine.setPoolPaused(true);
@@ -46,7 +46,7 @@ async function reviewRecords() {
     await engine.waitUntilReady();
     const first = "first", second = "second";
     engine.s.products.push(...[first, second].map(id => ({ id, name: id, repo: `acme/${id}`, tone: "blue" as const })));
-    const task = engine.task(engine.addTask({ productId: first, title: "Keep the shared review records", backlog: true }))!;
+    const task = engine.task(engine.addTask({ productId: first, title: "Keep the shared task records", backlog: true }))!;
     task.repositories = [first, second].map(productId => ({ productId, delivery: "pull-request", completedStages: [] }));
     const stage = { id: "review", kind: "review-chain" as const, title: "Review both products", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
     task.plan = { rationale: "Only review recording is under test", plannerProfileId: "sonnet-medium", stages: [stage] };
@@ -104,7 +104,7 @@ describe.concurrent("one task across products", () => {
     ["invalid mixed reports", [["first", "foreign"], ["second", "foreign"]], [[], []]],
   ] as const) for (const reverse of [false, true]) it(`keeps explicit finding owners across ${name}${reverse ? " in reverse order" : ""}`, async () => {
     // The restart/repair case below retains full repository and agent integration.
-    const { engine, first, second, task, stage } = await reviewRecords();
+    const { engine, first, second, task, stage } = await sharedRecords();
     try {
       const ids = { first, second, foreign: "unregistered-product" };
       const ordered = reverse ? [...reports].reverse() : reports;
@@ -832,13 +832,10 @@ describe.concurrent("one task across products", () => {
   });
 
   it("charges only affected products once per repair pass and preserves independent allowances at restart", async () => {
-    const { shop, api, start } = await setup("budgets");
-    let engine = start();
+    const fixture = await sharedRecords(), { start, first, second, task } = fixture;
+    let engine = fixture.engine;
     try {
-      engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const id = engine.addTask({ productId: first, title: "Check ownership" });
-      const task = engine.task(id)!;
+      const id = task.id;
       task.state = "paused";
       task.plan = { rationale: "Separate owners with shared verification", plannerProfileId: "sonnet-medium", stages: [
         { id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
@@ -871,13 +868,10 @@ describe.concurrent("one task across products", () => {
   });
 
   for (const kind of ["checks", "acceptance"] as const) for (const shared of [false, true]) it(`uses remaining ${kind} tries despite an exhausted owner of ${shared ? "a shared failure" : "a separate failure"}, including restart`, async () => {
-    const { shop, api, start } = await setup(`independent-${kind}-${shared}`);
-    let engine = start();
+    const fixture = await sharedRecords(), { start, first, second } = fixture;
+    let engine = fixture.engine, task = fixture.task;
     try {
-      engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const id = engine.addTask({ productId: first, title: "Repair the product with tries left", backlog: true });
-      let task = engine.task(id)!;
+      const id = task.id;
       task.plan = { rationale: "Independent repairs", plannerProfileId: "sonnet-medium", stages: [
         { id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-xhigh"] },
         { id: "test", kind: "do", title: "Try it", roleId: "tester", profileIds: ["opus-high"] },
@@ -1281,7 +1275,7 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   for (const order of ["pass-first", "confirmation-first", "dispute-first", "confirmation-before-dispute", "repeated-finding-after-dispute", "repeated-finding-before-dispute", "dispute-without-confirmation", "both-pass"] as const) it(`combines shared fix reviews regardless of completion order, including restart: ${order}`, async () => {
-    const fixture = await reviewRecords(), { first, second, start, stage } = fixture;
+    const fixture = await sharedRecords(), { first, second, start, stage } = fixture;
     let engine = fixture.engine, task = fixture.task;
     const id = task.id;
     try {
@@ -1324,7 +1318,7 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   it("settles single-product objections with the whole group and preserves checks and unresolved ownership", async () => {
-    const { engine, first, second, task, stage } = await reviewRecords();
+    const { engine, first, second, task, stage } = await sharedRecords();
     try {
       task.hunt = { stageId: stage.id, round: 1, reported: {}, findings: 5 };
       task.findings = [
