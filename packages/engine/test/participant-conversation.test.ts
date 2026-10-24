@@ -90,7 +90,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
       sessionId: run.sessionId, prompting: run.prompting, settings: run.settings,
       pid: nativeAgentProcess(run).pid, exitCode: nativeAgentProcess(run).exitCode, signalCode: nativeAgentProcess(run).signalCode,
     })),
-    toolChecks: [...engine["tools"]["checking"].keys()], lingeringTools: [...engine["tools"]["lingering"].keys()],
+    toolChecks: engine["tools"].pending().checking, lingeringTools: engine["tools"].pending().stopping,
     profileReads: [...engine["profileReader"]["pending"].keys()], lingeringProfiles: [...engine["profileReader"]["lingering"].keys()],
     yieldedStops: engine["turns"]["yieldedStops"].length,
   });

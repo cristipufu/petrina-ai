@@ -12,3 +12,5 @@ export type { DeliveryReturnInput, DeliveryReturnRoute } from "./ports/delivery.
 export { clearDeliveryPreparation, prepareDeliveryReturn } from "./delivery-return.js";
 export { ReopenFailed } from "./ports/agents.js";
 export type { AgentSession, AgentSessionOptions, AgentSessionCallbacks, StartAgentSession, AgentInputReceipt, AgentMessage, PermissionInfo, ToolActivityEvent, RetryCause, NativeRetryReport, SessionSettings, TurnNotes, TurnResult } from "./ports/agents.js";
+export type { ToolProbe, ToolProbeRequest, ToolProbeResult, ToolCheckHost, ToolCheckClock } from "./ports/tool-checks.js";
+export { ToolCheckCoordinator, TOOL_CHECK_LINGER_MS } from "./tool-checks.js";

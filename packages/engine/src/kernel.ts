@@ -16,7 +16,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
 import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
-import type { AgentSession, StartAgentSession } from "@petrina/orchestrator";
+import type { AgentSession, StartAgentSession, ToolProbe } from "@petrina/orchestrator";
 import * as git from "./git.js";
 import type { DeveloperToolsResult, Which } from "./setup.js";
 import type { MachineRecords } from "./check-interruption.js";
@@ -94,6 +94,8 @@ export interface EngineOptions {
   files?: FileOperations;
   /** Tests: scripted workflow sessions. Native ACP/process tests keep the real AgentRun. */
   startAgentSession?: StartAgentSession;
+  /** Process-local installation/login observations; native probe contracts keep the real adapter. */
+  toolProbe?: ToolProbe;
   /** Record every shared SQLite driver execution, without bindings or results, for local analysis. */
   debugSql?: boolean;
   /** The launcher opens scheduling only once the local connection is ready. */

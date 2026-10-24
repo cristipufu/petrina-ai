@@ -245,8 +245,8 @@ describe.concurrent("a saved reviewer's uncertain tool", () => {
       await f.engine.shutdown();
       await waiting;
       expect(alive(pid)).toBe(false);
-      expect(f.engine["tools"]["checking"].size).toBe(0);
-      expect(f.engine["tools"]["lingering"].size).toBe(0);
+      expect(f.engine["tools"].pending().checking).toHaveLength(0);
+      expect(f.engine["tools"].pending().stopping).toHaveLength(0);
       restarted = engineIn(f.root);
       const task = restarted.engine.task(f.task.id)!;
       const wait = task.reviewSessions![f.stage.id]!["0"]!.readinessWait!;

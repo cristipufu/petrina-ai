@@ -11,7 +11,7 @@ import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, typ
 import { type ClaudeSandbox, SandboxUnavailable, sandboxFailure } from "./sandbox.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser, cleanupNote } from "./browser.js";
-import { descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "./process-tree.js";
+import { CLEANUP_INCOMPLETE, descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "./process-tree.js";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import type { SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages } from "./agent-messages.js";
@@ -388,7 +388,12 @@ export class AgentRun implements AgentSession {
     const processGone = new Promise<void>((done) => {
       child.once("exit", () => done());
       child.once("error", () => done());
-    }).then(async () => { await stopping; });
+    }).then(async () => {
+      // Exit alone does not prove browser/descendant cleanup. Finish it even after an unexpected exit,
+      // and never tell probe owners that an incomplete stop released their native ownership.
+      if (!await stop()) throw new Error(CLEANUP_INCOMPLETE);
+    });
+    processGone.catch(() => undefined);
     const abort = () => void stop();
     signal.addEventListener("abort", abort, { once: true });
     // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.

@@ -10,16 +10,11 @@ import { existsSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, posix, sep, win32 } from "node:path";
-import type { AgentProfile, CheckStatus, Clone, Platform } from "@petrina/core";
+import type { AgentProfile, Clone, Platform } from "@petrina/core";
+import type { ToolProbeResult } from "@petrina/orchestrator";
 import { AgentRun } from "./acp-run.js";
 import { githubRepo, run, type Gh, type RunResult, type StartFailure } from "./git.js";
 import { adapterEntry, type ToolAdapter } from "./tools.js";
-
-export interface CheckResult {
-  status: CheckStatus;
-  account?: string;
-  detail?: string;
-}
 
 /** Where a program is on the PATH, or null. Tests stand in their own. */
 export type Which = (name: string) => string | null;
@@ -39,7 +34,7 @@ const START_REASONS: Record<Exclude<StartFailure["kind"], "missing-executable">,
 };
 
 /** A failed launch says nothing about installation unless the executable itself is missing. */
-function startCheckResult(result: RunResult): CheckResult | undefined {
+function startCheckResult(result: RunResult): ToolProbeResult | undefined {
   const failure = result.startFailure;
   if (!failure) return undefined;
   if (failure.kind === "missing-executable") return { status: "not-installed" };
@@ -76,7 +71,7 @@ export async function checkAgentTool(options: {
   signal?: AbortSignal;
   /** Explicit coordinator sign-in only; ordinary checks never open the browser. */
   authenticate?: string;
-}): Promise<CheckResult> {
+}): Promise<ToolProbeResult> {
   const { adapter } = options;
   if (!options.command) {
     try {
@@ -139,7 +134,7 @@ export async function checkAgentTool(options: {
 }
 
 /** Is the GitHub CLI installed and logged in to github.com, and as whom? */
-export async function checkGh(gh: Gh, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
+export async function checkGh(gh: Gh, timeoutMs = CHECK_TIMEOUT_MS): Promise<ToolProbeResult> {
   const result = await run([...gh, "auth", "status", "--hostname", "github.com"], tmpdir(), undefined, { credentials: true, timeoutMs });
   const said = `${result.stdout}\n${result.stderr}`;
   const failedStart = startCheckResult(result);
@@ -155,7 +150,7 @@ export async function checkGh(gh: Gh, timeoutMs = CHECK_TIMEOUT_MS): Promise<Che
  * Is Git there? On a Mac without Apple's developer tools, /usr/bin/git is a stand-in that opens
  * their installer when it runs, so that case is told apart without running it.
  */
-export async function checkGit(which: Which, platform: Platform, options: { timeoutMs?: number; developerTools?: () => Promise<DeveloperToolsResult> } = {}): Promise<CheckResult> {
+export async function checkGit(which: Which, platform: Platform, options: { timeoutMs?: number; developerTools?: () => Promise<DeveloperToolsResult> } = {}): Promise<ToolProbeResult> {
   const timeoutMs = options.timeoutMs ?? CHECK_TIMEOUT_MS;
   const path = which("git");
   if (!path) return { status: "not-installed" };
@@ -180,13 +175,13 @@ async function developerTools(timeoutMs: number): Promise<DeveloperToolsResult> 
 }
 
 /** Is Node.js there? Agents' connectors run on it. */
-export async function checkNode(which: Which, timeoutMs = CHECK_TIMEOUT_MS): Promise<CheckResult> {
+export async function checkNode(which: Which, timeoutMs = CHECK_TIMEOUT_MS): Promise<ToolProbeResult> {
   const path = which("node");
   if (!path) return { status: "not-installed" };
   return versionCheck([path, "--version"], timeoutMs);
 }
 
-async function versionCheck(command: readonly string[], timeoutMs: number): Promise<CheckResult> {
+async function versionCheck(command: readonly string[], timeoutMs: number): Promise<ToolProbeResult> {
   const result = await run(command, tmpdir(), undefined, { timeoutMs });
   const failedStart = startCheckResult(result);
   if (failedStart) return failedStart;

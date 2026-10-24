@@ -8,6 +8,7 @@ import { writeFixtureJson } from "./fixture-json.js";
 export function writeFixtureEngineOptions(path: string, options: EngineOptions): void {
   if (options.files !== undefined) throw new TypeError("File effects are process-local. Configure them inside the child fixture instead of serializing them.");
   if (options.startAgentSession !== undefined) throw new TypeError("Agent sessions are process-local. Configure them inside the child fixture instead of serializing them.");
+  if (options.toolProbe !== undefined) throw new TypeError("Tool probes are process-local. Configure them inside the child fixture instead of serializing them.");
   writeFixtureJson(path, options);
 }
 

@@ -7,6 +7,7 @@ import { Engine } from "./engine.js";
 import { ADAPTERS } from "../src/tools.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { scriptedToolProbe } from "./scripted-probes.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -16,7 +17,11 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
   roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", ...scenario });
-  const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(!antigravity && profile.toolId === "antigravity" ? ["--logged-out"] : [])], toolPath: () => process.execPath, usageCommands: { codex: null } };
+  const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, ...(!antigravity && profile.toolId === "antigravity" ? ["--logged-out"] : [])], toolPath: () => process.execPath, usageCommands: { codex: null },
+    // These journeys test native seat handoffs, not login transport. The setup contract owns real probes.
+    toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" },
+      antigravity: { status: antigravity ? "ready" : "logged-out" }, gh: { status: "unknown" }, git: { status: "ready" }, node: { status: "ready" } }),
+  };
   let engine = new Engine(join(root, "data"), options);
   engine.setPoolPaused(true);
   await engine.checkTools();

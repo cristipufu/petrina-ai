@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as commands from "../src/git.js";
-import { checkGh, checkGit, checkNode, type CheckResult } from "../src/setup.js";
+import { checkGh, checkGit, checkNode } from "../src/setup.js";
+import type { ToolProbeResult } from "@petrina/orchestrator";
 import { removeDir, SLOW, tempDir, testGitEnv } from "./fixtures.js";
 
 const temp = tempDir("petrina-setup-commands-");
@@ -27,7 +28,7 @@ async function probe(blocked: boolean) {
     const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     expect(expired, `Incomplete probe: deadline reached. ${stderr}`).toBe(false);
     expect(code, stderr).toBe(0);
-    return JSON.parse(stdout) as { raw: commands.RunResult } & Record<"git" | "macGit" | "node" | "gh", CheckResult>;
+    return JSON.parse(stdout) as { raw: commands.RunResult } & Record<"git" | "macGit" | "node" | "gh", ToolProbeResult>;
   } finally {
     clearTimeout(deadline); clearTimeout(killDeadline);
     child.stdin.end();
@@ -139,7 +140,7 @@ describe("Command preparation and tool readiness", () => {
       children.push(child);
       return child;
     }) as typeof Bun.spawn);
-    const stopped = async (checking: Promise<CheckResult>) => {
+    const stopped = async (checking: Promise<ToolProbeResult>) => {
       const answer = await checking;
       await Promise.all(children.map(child => child.exited));
       return answer;
