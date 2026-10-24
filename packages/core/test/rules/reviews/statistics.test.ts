@@ -1,18 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createDemoState } from "../src/demo.js";
-import type { Finding, Task } from "../src/model.js";
-import { combineReviewStats, reviewStats, subtractReviewStats, verificationSummary } from "../src/reviews.js";
-
-const demo = createDemoState(1_000_000_000);
-const base = demo.tasks.find((task) => task.state === "done")!;
-
-/** A finished task with one review chain that passed in `rounds`, holding `findings`. */
-function reviewed(id: string, rounds: number, findings: Finding[], extra: Partial<Task> = {}): Task {
-  const chain = base.plan!.stages.find((stage) => stage.kind === "review-chain")!;
-  return { ...base, id, state: "done", rounds: { [chain.id]: rounds }, findings, ...extra };
-}
-
-const finding = (id: string, raisedBy: string, extra: Partial<Finding> = {}): Finding => ({ id, text: `Finding ${id}`, severity: "blocking", raisedBy, confirmedBy: [], status: "open", ...extra });
+import type { Finding } from "../../../src/model.js";
+import { combineReviewStats, reviewStats, subtractReviewStats, verificationSummary } from "../../../src/reviews.js";
+import { finding, reviewed } from "../../fixtures/review-stats.js";
 
 it("names the recorded vote outcomes in step and timeline summaries", () => {
   const checked = (verdict: NonNullable<Finding["verification"]>["verdict"]) => ({ verification: { verdict, by: "tool", at: 1, reason: "Recorded result" } });
@@ -68,7 +57,7 @@ describe("how reviews are going", () => {
       { id: "code", kind: "review-chain" as const, title: "Code", roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"] },
       { id: "security", kind: "review-chain" as const, title: "Security", roleId: "security-reviewer", profileIds: ["sol-high"] },
     ];
-    const task = reviewed("revisited", 1, [], { plan: { ...base.plan!, stages }, rounds: { code: 3, security: 2 }, journey: [1, 2, 3, 3].map((round, index) => ({ id: `code-${index}`, kind: "agent", roleId: "code-reviewer", stageId: "code", round, sub: 0, startedAt: index, endedAt: index + 1, team: ["sol-high", "opus-high"] })) });
+    const task = reviewed("revisited", 1, [], { plan: { ...reviewed("template", 1, []).plan!, stages }, rounds: { code: 3, security: 2 }, journey: [1, 2, 3, 3].map((round, index) => ({ id: `code-${index}`, kind: "agent", roleId: "code-reviewer", stageId: "code", round, sub: 0, startedAt: index, endedAt: index + 1, team: ["sol-high", "opus-high"] })) });
     expect(reviewStats([task])).toMatchObject({ meanRounds: 3, passed: { first: 0, third: 1, total: 1 } });
     task.rounds = { code: 1, security: 1 };
     expect(reviewStats([task])).toMatchObject({ meanRounds: 1, passed: { first: 1, total: 1 } });

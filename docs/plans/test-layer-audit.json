@@ -291,11 +291,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/backlog.test.ts",
+      "file": "packages/core/test/orchestration/simulator/backlog.test.ts",
       "declarations": 2,
       "assertionSites": 25,
       "baselineDigest": "21350633eadffe4db2c1a952e4666036103bdc0de98be499deafff1954f2ebf0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/backlog.test.ts",
+      "layer": "orchestration",
+      "area": "simulator",
+      "review": "Both cases intentionally exercise the real Simulator public operations, queue/slot admission, tick and serialized restart, idempotent combination, approvals, cancellation and rejected graph/product choices. Fresh canonical state replaces a full demo; no real Engine, native agents or storage is launched.",
+      "validation": {
+        "artifact": "core-ownership-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "executedCasesReconciled": 2,
+        "qualification": "core-ownership-reviewed.json: all 1,081 core runtime cases pass; all 30 original migrated cases retain their assertions. Two new pure fixture-isolation controls pass after their type-correct catalog mutation (core-fixture-reviewed.json). Workspace types and conventions pass; next complete batch qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/board.test.ts",
@@ -350,11 +360,26 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/history.test.ts",
+      "file": "packages/core/test/rules/history/status.test.ts",
       "declarations": 3,
       "assertionSites": 11,
       "baselineDigest": "da98b4384ec87a2ede34ffd772ea8bf483749c11cd65f8b8e38f43bf1bb64c2b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/history.test.ts",
+      "layer": "rules",
+      "area": "history",
+      "splitFiles": [
+        "packages/core/test/rules/history/status.test.ts",
+        "packages/core/test/rules/history/paging.test.ts",
+        "packages/core/test/orchestration/simulator/history.test.ts"
+      ],
+      "review": "Eleven outcome variants test actual status classification and serialization; one separate pure paging case filters status, exact routine/product and stable ordering before pagination. The simulator case tests actual MemoryWorkLog replacement, incomplete-start exclusion and per-product whole-task usage parity. Each behavior has its own layer; full demo construction is removed.",
+      "validation": {
+        "artifact": "core-ownership-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "executedCasesReconciled": 13,
+        "qualification": "core-ownership-reviewed.json: all 1,081 core runtime cases pass; all 30 original migrated cases retain their assertions. Two new pure fixture-isolation controls pass after their type-correct catalog mutation (core-fixture-reviewed.json). Workspace types and conventions pass; next complete batch qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/journey.test.ts",
@@ -417,11 +442,25 @@
       }
     },
     {
-      "file": "packages/core/test/products.test.ts",
+      "file": "packages/core/test/rules/products/names.test.ts",
       "declarations": 4,
       "assertionSites": 16,
       "baselineDigest": "c4c29717cce2f5df8c96067689a653d1e6ea1668135697be63d862acce9374d6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/products.test.ts",
+      "layer": "rules",
+      "area": "products",
+      "splitFiles": [
+        "packages/core/test/rules/products/names.test.ts",
+        "packages/core/test/orchestration/simulator/products.test.ts"
+      ],
+      "review": "Two naming/validation cases run pure product rules; two separate simulator cases exercise atomic edit rejection, future defaults, unchanged existing requests, timeline naming and removal/inbox cleanup across all original states. The original product data is retained in one shared private state recipe.",
+      "validation": {
+        "artifact": "core-ownership-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "executedCasesReconciled": 4,
+        "qualification": "core-ownership-reviewed.json: all 1,081 core runtime cases pass; all 30 original migrated cases retain their assertions. Two new pure fixture-isolation controls pass after their type-correct catalog mutation (core-fixture-reviewed.json). Workspace types and conventions pass; next complete batch qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/profiles.test.ts",
@@ -431,11 +470,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/proof-requests.test.ts",
+      "file": "packages/core/test/rules/acceptance/proof-requests.test.ts",
       "declarations": 4,
       "assertionSites": 21,
       "baselineDigest": "ce221a7dcb3a2b6f06b3d7bd3ca0fb364d0a6f44ca652bf0e84cc87a3fc1d8bb",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/proof-requests.test.ts",
+      "layer": "rules",
+      "area": "acceptance",
+      "review": "Four cases test actual proof status and coordinator wording on explicit code versions, complete versus unfinished owned tester records, empty product scope, unavailable evidence and release-version gaps. One production-created task replaces the demo; no full workflow or platform runner is simulated.",
+      "validation": {
+        "artifact": "core-ownership-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "executedCasesReconciled": 4,
+        "qualification": "core-ownership-reviewed.json: all 1,081 core runtime cases pass; all 30 original migrated cases retain their assertions. Two new pure fixture-isolation controls pass after their type-correct catalog mutation (core-fixture-reviewed.json). Workspace types and conventions pass; next complete batch qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/rules/agents/readiness.test.ts",
@@ -462,11 +511,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/reviews.test.ts",
+      "file": "packages/core/test/rules/reviews/statistics.test.ts",
       "declarations": 7,
       "assertionSites": 34,
       "baselineDigest": "2213d0f026fa27b18cd6725030119f03b87f8cb5050b39092db7bccfe094d660",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/reviews.test.ts",
+      "layer": "rules",
+      "area": "reviews",
+      "review": "Seven cases test actual aggregate transformations: settled/unfinished vote wording, sums/subtraction, finished-round means, finding dispositions, role attribution and latest actual-tool votes across reopened checks. A production-created one-review task replaces an unrelated portfolio; cases own their mutable records.",
+      "validation": {
+        "artifact": "core-ownership-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "executedCasesReconciled": 7,
+        "qualification": "core-ownership-reviewed.json: all 1,081 core runtime cases pass; all 30 original migrated cases retain their assertions. Two new pure fixture-isolation controls pass after their type-correct catalog mutation (core-fixture-reviewed.json). Workspace types and conventions pass; next complete batch qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/roles.test.ts",

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { boardSections, createDemoState, journeyView, pipelineOf, queueOf, Simulator } from "../src/index.js";
+import { boardSections, journeyView, pipelineOf, queueOf, Simulator } from "../../../src/index.js";
+import { stateFixture } from "../../fixtures/state.js";
 
 describe("requests awaiting a coordinator's review", () => {
   it("keeps backlog requests out of the queue and every agent slot, even after ticks and a restart", () => {
-    const base = createDemoState(1_000_000_000);
+    const base = stateFixture();
     let sim = new Simulator({ ...base, tasks: [], inbox: [], pool: { ...base.pool, paused: false } });
     const id = sim.addTask({ productId: base.products[0]!.id, title: "Draft request", description: "Check the scope first", backlog: true });
     for (let tick = 0; tick < 10; tick += 1) sim.tick();
@@ -37,7 +38,7 @@ describe("requests awaiting a coordinator's review", () => {
 });
 
 it("combines compatible unstarted requests once, preserving requirements and the stricter approvals", async () => {
-  const state = createDemoState(1_000_000_000);
+  const state = stateFixture();
   const sim = new Simulator({ ...state, tasks: [], inbox: [], pool: { ...state.pool, paused: true } });
   const first = sim.addTask({ productId: state.products[0]!.id, title: "Fix the label", description: "Use plain words.", kind: "chore", approveDelivery: false, backlog: true });
   const second = sim.addTask({ productId: state.products[0]!.id, title: "Fix the space", description: "Keep the focus outline.", kind: "chore", approvePlan: true, approveDelivery: true, backlog: true });

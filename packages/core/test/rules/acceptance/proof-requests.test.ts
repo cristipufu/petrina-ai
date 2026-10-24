@@ -1,14 +1,16 @@
 import { expect, it } from "vitest";
-import { createDemoState } from "../src/demo.js";
-import { gateStatus, gateTitle } from "../src/flow.js";
-import { nextLine } from "../src/summary.js";
-import { proofDecision, proofStatus, refreshProofs, sameProofDecision } from "../src/proof-requests.js";
-import type { DeepMutable } from "../src/flow.js";
-import type { Task, ProofRequest } from "../src/model.js";
+import { gateStatus, gateTitle } from "../../../src/flow.js";
+import { nextLine } from "../../../src/summary.js";
+import { proofDecision, proofStatus, refreshProofs, sameProofDecision } from "../../../src/proof-requests.js";
+import type { DeepMutable } from "../../../src/flow.js";
+import type { ProofRequest } from "../../../src/model.js";
+
+import { stateFixture, taskFixture } from "../../fixtures/state.js";
 
 function fixture() {
-  const state = createDemoState(1_000_000_000_000);
-  const task = state.tasks[0]! as DeepMutable<Task>;
+  const state = stateFixture({ now: 1_000_000_000_000 });
+  const task = taskFixture(state);
+  state.tasks = [task];
   task.state = "running"; task.stageIndex = 0; task.sub = 0; task.findings = [];
   task.plan = { rationale: "Proof", plannerProfileId: "sol-high", stages: [
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["sol-high"] },
