@@ -6,7 +6,7 @@ import type { CheckRun } from "@petrina/core";
 import type { MachineRecords } from "../src/check-interruption.js";
 import type { CheckProgress } from "../src/checks.js";
 import { Aborted } from "../src/kernel.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "./engine.js";
 import { git, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "./fixtures.js";
 import { rejectionOf } from "./rejections.js";

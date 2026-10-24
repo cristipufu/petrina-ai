@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Scenario } from "./fake-agent.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { runtimeWaitView, slotUses, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";

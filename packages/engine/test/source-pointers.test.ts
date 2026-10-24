@@ -1,4 +1,4 @@
-import { executionFor, repositoryView } from "../src/repository-context.js";
+import { executionFor, repositoryView } from "@petrina/orchestrator";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

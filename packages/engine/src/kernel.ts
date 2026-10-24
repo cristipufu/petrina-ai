@@ -5,7 +5,7 @@ import { ScreenCoordinator } from "./screen-coordinator.js";
 import { UsageCoordinator, type Selection } from "./usage-coordinator.js";
 import type { Readiness } from "./readiness.js";
 import { runtimeWaitHolds, runtimeWaitView, runtimeWaitWords, blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, OTHERS_CONTINUE, stopTaskActivity } from "@petrina/core";
-import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "./repository-context.js";
+import { executionFor, executionOf, scopesFor, taskView, restoreRepositoryState, type RepositoryContext } from "@petrina/orchestrator";
 import * as library from "@petrina/core";
 // The engine's shared state and the few operations every part of it uses: lookups, the timeline and
 // session, the inbox, and saving. Feature modules get this, never the Engine itself.
@@ -32,7 +32,7 @@ import { WorkflowEvents } from "./workflow-events.js";
 import { acceptanceGapRecord } from "./checkpoint-acceptance.js";
 
 /** Repository execution fields cannot be read or written on the runtime task. */
-export type MTask = DeepMutable<library.TaskState>;
+export type MTask = import("@petrina/orchestrator").RuntimeTask;
 
 export type MState = Omit<DeepMutable<State>, "tasks"> & { tasks: MTask[] };
 

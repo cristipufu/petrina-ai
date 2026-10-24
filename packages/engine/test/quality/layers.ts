@@ -1,6 +1,7 @@
 import { isSource, isTest, workspaceOf } from "./test-paths.js";
 import { sourceFacts } from "./source.js";
 import { sourceCandidates } from "./source-paths.js";
+import { TEST_WORKSPACES } from "./workspaces.js";
 
 export const TEST_LAYERS = ["rules", "orchestration", "presentation", "contracts", "journeys"] as const;
 type TestLayer = typeof TEST_LAYERS[number];
@@ -36,11 +37,47 @@ export function layerStructure(files: ReadonlyMap<string, string>): string[] {
 
 /** Follow runtime local imports; a helper or barrel must not smuggle a real boundary into a lower layer. */
 export function layerBoundaries(files: ReadonlyMap<string, string>): string[] {
+  return dependencyBoundaries(files, [...files.keys()].filter(isTest).flatMap(file => {
+    const classified = testLayer(file);
+    return classified && ["rules", "orchestration", "presentation"].includes(classified.layer) ? [{ file, label: classified.layer }] : [];
+  }));
+}
+
+/** Enforce production direction too, including untested files and type-only back references. */
+export function packageBoundaries(files: ReadonlyMap<string, string>): string[] {
+  const allowed = new Map<string, readonly string[]>([["packages/core", []], ["packages/orchestrator", ["packages/core"]]]);
+  const roots = [...files.keys()].filter(file => isSource(file) && [...allowed.keys()].some(workspace => file.startsWith(`${workspace}/src/`)));
+  const errors = dependencyBoundaries(files, roots.map(file => ({ file, label: "pure package" })));
+  for (const file of roots) {
+    const owner = workspaceOf(file)!;
+    let parsed;
+    try { parsed = sourceFacts(files.get(file)!, file); } catch { continue; } // The dependency check retains the parse error.
+    for (const entry of parsed.imports) {
+      if (!entry.runtime && EFFECTS.test(entry.path)) errors.push(`${file}: native ${entry.path} types belong to an adapter; keep the controller contract portable`);
+      for (const target of sourceCandidates(file, entry.path).filter(target => files.has(target))) {
+        const other = workspaceOf(target);
+        if (other && other !== owner && !allowed.get(owner)!.includes(other)) errors.push(`${file}: ${owner} cannot depend on ${other}, including through types; use an owned contract`);
+        if (target.includes("/test/")) errors.push(`${file}: production code cannot import test fixtures`);
+      }
+    }
+  }
+  for (const [owner, dependencies] of allowed) {
+    const manifest = files.get(`${owner}/package.json`);
+    if (!manifest) continue;
+    try {
+      for (const name of Object.keys(JSON.parse(manifest).dependencies ?? {})) {
+        const target = TEST_WORKSPACES.find(workspace => workspace.name === name);
+        if (target && !dependencies.includes(target.path)) errors.push(`${owner}/package.json: dependency ${name} violates the package direction`);
+      }
+    } catch { errors.push(`${owner}/package.json: cannot inspect production dependencies`); }
+  }
+  return [...new Set(errors)].sort();
+}
+
+function dependencyBoundaries(files: ReadonlyMap<string, string>, roots: readonly { file: string; label: string }[]): string[] {
   const errors: string[] = [];
   const facts = new Map<string, ReturnType<typeof sourceFacts>>();
-  for (const file of [...files.keys()].filter(isTest).sort()) {
-    const classified = testLayer(file);
-    if (!classified || !["rules", "orchestration", "presentation"].includes(classified.layer)) continue;
+  for (const { file, label } of roots) {
     const seen = new Set<string>(), todo = [file];
     while (todo.length) {
       const next = todo.pop()!;
@@ -49,17 +86,17 @@ export function layerBoundaries(files: ReadonlyMap<string, string>): string[] {
       try {
         let parsed = facts.get(next);
         if (!parsed) { parsed = sourceFacts(files.get(next)!, next); facts.set(next, parsed); }
-        if (parsed.uncertain) errors.push(`${file}: ${classified.layer} dependency ${next} has a computed runtime import; use an explicit pure dependency or effect contract`);
-        for (const access of parsed.effectAccess) errors.push(`${file}: ${classified.layer} dependency ${next}:${access.line} accesses ${access.name}; use an injected effect or test the native boundary in contracts`);
+        if (parsed.uncertain) errors.push(`${file}: ${label} dependency ${next} has a computed runtime import; use an explicit pure dependency or effect contract`);
+        for (const access of parsed.effectAccess) errors.push(`${file}: ${label} dependency ${next}:${access.line} accesses ${access.name}; use an injected effect or test the native boundary in contracts`);
         for (const entry of parsed.imports.filter(entry => entry.runtime)) {
-          if (EFFECTS.test(entry.path)) errors.push(`${file}: ${classified.layer} dependency ${next} imports ${entry.path}; real I/O belongs in contracts or journeys`);
+          if (EFFECTS.test(entry.path)) errors.push(`${file}: ${label} dependency ${next} imports ${entry.path}; real I/O belongs in contracts or journeys`);
           const candidates = sourceCandidates(next, entry.path);
           const target = candidates.find(candidate => files.has(candidate));
           if (target && isSource(target)) todo.push(target);
-          else if (candidates.length && !target) errors.push(`${file}: unresolved ${classified.layer} dependency ${entry.path} in ${next}`);
-          else if (!target && !EFFECTS.test(entry.path) && !PURE_IMPORTS.has(entry.path.replace(/^node:/, "")) && !(classified.layer === "presentation" && UI_IMPORTS.test(entry.path))) errors.push(`${file}: unreviewed external ${classified.layer} dependency ${entry.path} in ${next}; keep native adapters outside this layer`);
+          else if (candidates.length && !target) errors.push(`${file}: unresolved ${label} dependency ${entry.path} in ${next}`);
+          else if (!target && !EFFECTS.test(entry.path) && !PURE_IMPORTS.has(entry.path.replace(/^node:/, "")) && !(label === "presentation" && UI_IMPORTS.test(entry.path))) errors.push(`${file}: unreviewed external ${label} dependency ${entry.path} in ${next}; keep native adapters outside this layer`);
         }
-      } catch (error) { errors.push(`${file}: cannot inspect ${classified.layer} dependency ${next}: ${error instanceof Error ? error.message : String(error)}`); }
+      } catch (error) { errors.push(`${file}: cannot inspect ${label} dependency ${next}: ${error instanceof Error ? error.message : String(error)}`); }
     }
   }
   return [...new Set(errors)].sort();

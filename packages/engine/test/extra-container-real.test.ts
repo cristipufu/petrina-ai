@@ -6,7 +6,7 @@ import { beginAgentStep, type ExtraValidation } from "@petrina/core";
 import { Engine, writeFixtureEngineOptions, type EngineOptions } from "./engine.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { containerCommand, OWNER_LABEL, RUN_LABEL } from "../src/extra-container.js";
 
 const roots: string[] = [];

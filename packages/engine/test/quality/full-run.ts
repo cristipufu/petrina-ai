@@ -7,6 +7,7 @@ import { conventions, inputs, observe, readGit, recordedCoverage, ROOT } from ".
 import { fingerprint, impactPlan, isTest, WORKSPACES } from "./impact.js";
 import { requireFiles, testResults, type TestResults } from "./results.js";
 import { createTestRun } from "../environment.js";
+import { TEST_WORKSPACES } from "./workspaces.js";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -15,14 +16,14 @@ if (args.length) {
   const usage = `Run the required full check with no arguments:
   bun run test
 For focused engine tests, run from the repository root:
-  bun run --cwd packages/engine test test/name.test.ts
+  bun run --cwd packages/engine test test/rules/testing/results.test.ts
 Focused runs do not replace the required full check. See docs/testing.md for other workspaces.`;
   if (help) console.log(usage);
   else console.error(`The root test command does not accept file selectors or options. No tests ran.\n${usage}`);
   process.exit(help ? 0 : 1);
 }
 
-const PRELIMINARY: readonly string[] = ["packages/core", "apps/desktop"];
+const PRELIMINARY: readonly string[] = TEST_WORKSPACES.filter(workspace => workspace.phase === "quick").map(workspace => workspace.path);
 const ORDER = [...PRELIMINARY, ...WORKSPACES.filter(workspace => !PRELIMINARY.includes(workspace))];
 const suite = (workspace: string) => workspace.split("/").at(-1)!;
 type Ran = { workspace: string; code: number; ms: number; failures?: string[]; missedFailures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string };
@@ -63,10 +64,10 @@ try {
   for (const workspace of ORDER) {
     if (interrupted) break;
     if (!PRELIMINARY.includes(workspace) && !results.filter(result => PRELIMINARY.includes(result.workspace)).every(passed)) {
-      results.push({ workspace, notRun: `${PRELIMINARY.map(suite).join(" and ")} did not both pass` });
+      results.push({ workspace, notRun: `${PRELIMINARY.map(suite).join(" and ")} did not all pass` });
       continue;
     }
-    const engine = workspace === "packages/engine";
+    const engine = TEST_WORKSPACES.find(entry => entry.path === workspace)!.runner === "bun";
     const output = join(folder, `${suite(workspace)}.${engine ? "xml" : "json"}`);
     // Per-file wall times expose serial files and idle-worker tails; cumulative case times
     // in JUnit overcount concurrent cases. This records measurements, never selects tests.

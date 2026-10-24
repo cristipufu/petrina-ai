@@ -1,4 +1,4 @@
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

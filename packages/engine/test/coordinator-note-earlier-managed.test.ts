@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, ConversationNote } from "@petrina/core";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { BuildResult } from "../src/roles.js";
 import { Engine } from "./engine.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";

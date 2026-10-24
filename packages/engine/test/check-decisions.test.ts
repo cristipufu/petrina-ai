@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { mcpTools } from "../src/mcp.js";
 import { removeDir, tempDir } from "./fixtures.js";
 

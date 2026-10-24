@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { CheckId, ConversationNote, JourneyAgentInput, StepNote } from "@petrina/core";
 import type { z } from "zod";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { BriefResult, BuildResult, ObjectionsResult, ReviewResult } from "../src/roles.js";
 import { routeMessages } from "../src/messages.js";
 import { prepareReviewInput, type ReviewInput } from "../src/review-context.js";

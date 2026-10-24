@@ -8,7 +8,7 @@ import { beginAgentStep, BUILT_IN_ROLES, createDemoState, panelAnswers, seatRema
 import { Context } from "../src/context.js";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor, repositoryView, scopesFor } from "../src/repository-context.js";
+import { executionFor, repositoryView, scopesFor } from "@petrina/orchestrator";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewConversationScope } from "../src/review-context.js";
 import { fullFollowUpCards } from "../src/review-history.js";
 import { ReviewResult } from "../src/roles.js";

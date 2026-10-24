@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, ConversationNote } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { BuildResult, ReviewResult } from "../src/roles.js";
 import { MESSAGE_RECOVERY_OPTIONS, routeMessages } from "../src/messages.js";
 import { EARLIER_ATTEMPT } from "../src/prompts.js";

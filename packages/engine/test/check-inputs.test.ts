@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../src/checks.js";
 import { makeProduct, removeDir, tempDir, waitForFile } from "./fixtures.js";
 import { expectRejection } from "./rejections.js";

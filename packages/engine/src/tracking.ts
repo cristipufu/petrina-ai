@@ -1,5 +1,5 @@
 import { ADAPTERS } from "./tools.js";
-import { executionOf, type RepositoryContext } from "./repository-context.js";
+import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 // The work log's bookkeeping: one entry for every agent turn and every notable moment (a stage starting and
 // ending, a design round, a reviewer's verdict, a question to the coordinator, a failure, a retry, a task
 // delivered or cancelled), the permanent list of every product, and the shared pool’s latest limits. Only numbers,

@@ -1,4 +1,4 @@
-import { repositoryView, type RepositoryContext } from "./repository-context.js";
+import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { completeAll } from "./parallel.js";
 import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";

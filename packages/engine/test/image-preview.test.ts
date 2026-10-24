@@ -1,6 +1,6 @@
 import { fixtureFiles } from "./fixture-files.js";
 import { expectRejection } from "./rejections.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";

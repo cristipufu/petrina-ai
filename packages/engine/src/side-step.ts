@@ -1,6 +1,6 @@
 import type { Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 
 /** A side errand may survive a restart without replacing the main step's saved conversation. */
 export function beginSideStep(k: Kernel, { task, work }: RepositoryContext, roleId: Id): () => void {

@@ -1,6 +1,7 @@
 import { posix } from "node:path";
+import { TEST_WORKSPACES } from "./workspaces.js";
 
-const aliases = new Map([["@petrina/core", "packages/core/src/index.ts"], ["@petrina/engine", "packages/engine/src/index.ts"]]);
+const aliases = new Map(TEST_WORKSPACES.flatMap(workspace => "entry" in workspace ? [[workspace.name, `${workspace.path}/${workspace.entry}`] as [string, string]] : []));
 
 /** Repository-relative ESM candidates, shared by dependency selection and fixture policy. */
 export function sourceCandidates(from: string, path: string): readonly string[] {

@@ -5,7 +5,7 @@ import * as github from "./github.js";
 import * as git from "./git.js";
 import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
 import { type Kernel, type MStage, RELEASE_MANAGER_PROFILE } from "./kernel.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 import { type Connections, Unreachable } from "./connection.js";
 import { ReleaseNotesResult } from "./roles.js";
 import type { Turns } from "./turn.js";

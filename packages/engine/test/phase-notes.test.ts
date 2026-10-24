@@ -1,4 +1,4 @@
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { expect, it } from "bun:test";
 import { join } from "node:path";
 import { Context } from "../src/context.js";

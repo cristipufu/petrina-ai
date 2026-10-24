@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeliveryMode } from "@petrina/core";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { git, makeWorld, removeDir, type World } from "./support.js";
 
 const worlds: World[] = [];

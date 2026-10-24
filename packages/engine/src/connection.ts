@@ -1,4 +1,4 @@
-import { type RepositoryContext } from "./repository-context.js";
+import { type RepositoryContext } from "@petrina/orchestrator";
 // A product's GitHub connection: the address saved when the product was added, used for every fetch and
 // push with the coordinator's login, and one product's credentialed git steps run one at a time (updates
 // when a task starts, bringing work up to date, publishing). Products added before Petrina kept their

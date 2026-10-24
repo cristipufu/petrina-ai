@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { BuilderContext, Finding, Hunt, Id, Role, Task } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { ContextPart } from "./roles.js";
-import { repositoryView, scopesFor, type RepositoryContext } from "./repository-context.js";
+import { repositoryView, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 import * as git from "./git.js";
 import { saveImmutable } from "./immutable-file.js";
 import { freezeReviewHistory, readReviewHistory, type CompactReviewHistory, type StoodThrough } from "./review-history.js";

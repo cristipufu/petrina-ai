@@ -1,4 +1,4 @@
-import { executionFor, restoreRepositoryState } from "../src/repository-context.js";
+import { executionFor, restoreRepositoryState } from "@petrina/orchestrator";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState, DESIGN_OBJECTION_RULE, draftOf, FINDING_REQUIREMENT_RULE, NOTES_HANDOFF_RULE, ROLE_STARTS, type State } from "@petrina/core";

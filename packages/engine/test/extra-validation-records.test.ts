@@ -5,7 +5,7 @@ import { type ExtraValidation } from "@petrina/core";
 import { Engine, writeFixtureEngineOptions } from "./engine.js";
 import { git, makeProduct, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import * as processTree from "../src/process-tree.js";
 import { Store } from "../src/store.js";
 import { ExtraFixtures } from "./extra-fixtures.js";

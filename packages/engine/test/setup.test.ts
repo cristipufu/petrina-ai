@@ -1,6 +1,6 @@
 import { fixtureFiles } from "./fixture-files.js";
 import { expectRejection } from "./rejections.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";

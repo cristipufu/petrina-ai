@@ -1,5 +1,5 @@
-import { executionFor } from "./repository-context.js";
-import { detachRepositoryState, type RepositoryContext } from "./repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
+import { detachRepositoryState, type RepositoryContext } from "@petrina/orchestrator";
 import { productName, deliveryLabel, workSummary, type TaskSource, type WorkChoice } from "@petrina/core";
 import * as github from "./github.js";
 import * as git from "./git.js";

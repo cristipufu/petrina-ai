@@ -1485,11 +1485,21 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/quality-runner.test.ts",
+      "file": "packages/engine/test/contracts/testing/full-run.test.ts",
       "declarations": 13,
       "assertionSites": 75,
       "baselineDigest": "a18a2650ad0b3d26fa27b24491da46f5ce0319c857d8aa7b898e42f38e5a98f8",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/quality-runner.test.ts",
+      "layer": "contracts",
+      "area": "testing",
+      "review": "All root-runner execution contracts use the actual CLI entrypoint, private repository/environment and tiny stand-in suites. Includes early refusal before scanning, complete structured evidence, mandatory workspace ordering, false/incomplete results, source identity and signal forwarding/cleanup. Original controls retained; adds structure guards and orchestrator required-gate cases. No real product suite is recursively launched.",
+      "validation": {
+        "baselineCasesRetained": 39,
+        "newCases": 8,
+        "run": "orchestrator-final-contracts.xml: 73 passing policy/runner controls, 497 assertions, 14.48s",
+        "reviewedDigest": "d3ee237c36f29ab385710abddbf1706b16e1a6b4b2a5ebf8f9c090f79188161c"
+      }
     },
     {
       "file": "packages/engine/test/queue.test.ts",
@@ -2125,12 +2135,30 @@
     },
     {
       "file": "packages/engine/test/rules/testing/layers.test.ts",
-      "declarations": 5,
+      "declarations": 6,
       "status": "reviewed",
       "layer": "rules",
       "area": "testing",
       "review": "Tests actual policy with in-memory module graphs: inventory identities, transitive imports/aliases/cycles, type-only and mixed imports, globals/unknown external effects, all five layer variants. Native root-runner cases separately establish enforcement before execution. Review reproduced and fixed omitted-file and globalThis/destructuring bypasses.",
-      "validation": "layers-final-engine.xml: five policy cases included in 109 passing engine controls; 628 total assertions"
+      "validation": "orchestrator-final-contracts.xml: six policy cases pass; type-only cycles, native types, global access, unregistered external imports and production dependencies covered"
+    },
+    {
+      "file": "packages/orchestrator/test/orchestration/repairs/routing.test.ts",
+      "declarations": 7,
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "repairs",
+      "review": "Real repair controller with production-created task data and typed role/checkpoint effects: independent budgets, exhaustion, shared owners, final retest routing, role snapshots, no-op variants and checkpoint errors. No Engine/Git/SQLite/native agent; existing real durability and journey controls remain in engine.",
+      "validation": "orchestrator-reviewed-unit.json: all 25 package cases pass in 808ms; type checks and package direction pass"
+    },
+    {
+      "file": "packages/orchestrator/test/rules/repositories/context.test.ts",
+      "declarations": 6,
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "repositories",
+      "review": "Canonical single/shared owners, exclusions, cursor-independent bindings, missing/empty maps, projection, detach and idempotent restore. Direct data tests, no native I/O.",
+      "validation": "orchestrator-reviewed-unit.json: all 25 package cases pass in 808ms; type checks and package direction pass"
     }
   ],
   "rust": [

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import type { CheckAttemptEvidence, CheckRepairEvidence, JourneyProductCheck, JourneyStep, RepositoryState, Task, TaskState } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { Kernel } from "./kernel.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 import { checksFor, commandText } from "./checks.js";
 import * as git from "./git.js";
 

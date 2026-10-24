@@ -2,7 +2,7 @@ import { ExtraValidations } from "./extra-validations.js";
 import { ProfileChoiceReader } from "./profile-choices.js";
 import { completeAll } from "./parallel.js";
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, validateRuntimeWait, changeRuntimeWait, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
-import { executionFor, scopesFor } from "./repository-context.js";
+import { executionFor, scopesFor } from "@petrina/orchestrator";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
 // Each task runs as one async driver while it holds a pool slot. Gates and the queue
 // live in state; questions and permissions wait on the coordinator in code.

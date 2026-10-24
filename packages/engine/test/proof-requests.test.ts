@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceSummary, beginAgentStep, beginPetrinaStep, endAgentStep, proofContext, proofDecision, proofGap, refreshProofs, sameVersions, type DeepMutable, type JourneyStep, type ProofRequest, type Product, type Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "./engine.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
-import { executionFor, scopesFor } from "../src/repository-context.js";
+import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../src/repositories.js";
 import { checkProofRequests, recordReviewProofs } from "../src/proof-requests.js";
 import { ReviewResult } from "../src/roles.js";

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "./engine.js";
 import { commandText } from "../src/checks.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { destination } from "../src/shipping.js";
 import { Coordination } from "../src/coordination.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";

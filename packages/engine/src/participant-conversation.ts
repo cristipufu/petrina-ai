@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { reviewerAt, type AgentProfile, type Role, type Task } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { repositoryView, type RepositoryContext } from "./repository-context.js";
+import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { reviewScopeKey } from "./review-context.js";
 
 export const designDigest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");

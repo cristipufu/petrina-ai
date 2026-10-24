@@ -3,7 +3,7 @@ import type { ShippingVerifier, DeliveryEvidence } from "./shipping-verifier.js"
 import { CLEANUP_WORDS, needsPullRequestCheck, repositoryDelivered, type Id, type Task } from "@petrina/core";
 import * as github from "./github.js";
 import type { Kernel, MTask } from "./kernel.js";
-import { executionFor, type RepositoryContext } from "./repository-context.js";
+import { executionFor, type RepositoryContext } from "@petrina/orchestrator";
 import { Unreachable } from "./connection.js";
 
 interface DeliveryRecorder {

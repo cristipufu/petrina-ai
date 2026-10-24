@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endAgentStep, slotUses, slotWait, type AgentProfile, type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Aborted } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";
 import { BuildResult } from "../src/roles.js";

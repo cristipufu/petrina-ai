@@ -7,7 +7,7 @@ import type { WorkflowEvent } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { EngineClient } from "./client.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { McpPending, mcpRequest } from "../src/mcp.js";

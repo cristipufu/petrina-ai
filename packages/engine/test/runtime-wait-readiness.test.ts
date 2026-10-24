@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slotUses, type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { FAKE_AGENT, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];

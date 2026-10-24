@@ -4,7 +4,7 @@
 
 import { runtimeWaitHolds, CHECK_NAMES, checkOf, slotWait, type CheckId, type Id, type ReadinessWait } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 import { readinessLimitMs, type ToolChecks } from "./tool-checks.js";
 
 /** Readiness alone keeps an otherwise eligible saved participant from its saved tool. */

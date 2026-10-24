@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, MAINTENANCE_ROLES, type DeepMutable, type Finding, type Stage, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../src/checks.js";
 import { changesOf } from "../src/repositories.js";
 import { ReviewResult } from "../src/roles.js";

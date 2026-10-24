@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { layerBoundaries, layerStructure, testLayer } from "../../quality/layers.js";
+import { layerBoundaries, layerStructure, packageBoundaries, testLayer } from "../../quality/layers.js";
 
 const path = "packages/engine/test/rules/reviews/status.test.ts";
 const source = (body: string, extras: [string, string][] = []) => new Map([[path, body], ...extras]);
@@ -49,4 +49,20 @@ it("guards controller and presentation helpers while allowing actual owned bound
     const errors = layerBoundaries(new Map([[file, "import { spawn } from 'node:child_process';"]]));
     expect(errors.length).toBe(["contracts", "journeys"].includes(layer) ? 0 : 1);
   }
+});
+
+it("keeps production controllers independent of native implementations, including unused files and type-only cycles", () => {
+  const controller = "packages/orchestrator/src/repair.ts", adapter = "packages/engine/src/kernel.ts";
+  const files = new Map([[controller, "import type { Kernel } from '../../engine/src/kernel.js';"], [adapter, "import { readFile } from 'node:fs/promises';"]]);
+  expect(packageBoundaries(files)).toEqual([expect.stringContaining("including through types")]);
+  files.set(controller, "type Kernel = import('../../engine/src/kernel.js').Kernel;");
+  expect(packageBoundaries(files)).toEqual([expect.stringContaining("including through types")]);
+  files.set(controller, "import type { ChildProcess } from 'node:child_process';");
+  expect(packageBoundaries(files)).toEqual([expect.stringContaining("keep the controller contract portable")]);
+  files.set(controller, "import { readFile } from 'node:fs/promises';");
+  expect(packageBoundaries(files)).toEqual([expect.stringContaining("real I/O belongs")]);
+  files.set(controller, "export const route = (input: string) => input;");
+  expect(packageBoundaries(files)).toEqual([]);
+  files.set("packages/orchestrator/package.json", JSON.stringify({ dependencies: { "@petrina/engine": "workspace:*" } }));
+  expect(packageBoundaries(files)).toEqual([expect.stringContaining("violates the package direction")]);
 });

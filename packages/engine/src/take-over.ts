@@ -1,5 +1,5 @@
 import { completeAll } from "./parallel.js";
-import { executionFor, repositoryView } from "./repository-context.js";
+import { executionFor, repositoryView } from "@petrina/orchestrator";
 // Take over in the terminal: the coordinator drives a step's agent by hand, then hands it back. The
 // launcher scripts and terminals are in terminal.ts.
 

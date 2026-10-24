@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeepMutable, Product, TaskRepository } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { scopesFor } from "../src/repository-context.js";
+import { scopesFor } from "@petrina/orchestrator";
 import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];

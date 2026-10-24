@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { CheckRun, DeepMutable, Finding, InboxKind, JourneyStep, TaskSource } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { readText } from "../src/evidence-read.js";
 import { CHECK_EXIT_UNREPORTED, tidyOutput } from "../src/checks.js";
 import { CLEANUP_INCOMPLETE } from "../src/process-tree.js";

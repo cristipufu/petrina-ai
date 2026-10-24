@@ -1,4 +1,4 @@
-import { repositoryView, type RepositoryContext } from "./repository-context.js";
+import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { designWorkKey } from "./repositories.js";
 import { designDigest as digest, designConversationScope, participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
 import { reviewContextIntact } from "./review-context.js";

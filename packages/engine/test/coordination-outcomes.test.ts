@@ -1,5 +1,5 @@
 import { fixtureFiles } from "./fixture-files.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it } from "bun:test";
 import { linkSync, mkdirSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

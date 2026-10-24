@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { acceptanceGap, type DeepMutable, type Product } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../src/checks.js";
 import { addDeliveryCheck } from "../src/proof-requests.js";
 

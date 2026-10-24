@@ -1,6 +1,6 @@
 // Account reports, limit wakeups and profile/stand-in selection.
 import { chooseWithRoom, claudeWindow, seatRemaining, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, readinessGate, readinessOutcome, uncertain, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type ReadinessRecheck, type ReadinessWait, type Task, type UsageReport } from "@petrina/core";
-import { executionOf, type RepositoryContext } from "./repository-context.js";
+import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 import { notReady, stepKey, type Kernel, type MTask, type MState, type EngineOptions } from "./kernel.js";
 import { contractFor, freshBuilderRethink } from "./roles.js";
 import { ADAPTERS } from "./tools.js";

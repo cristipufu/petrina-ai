@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beginAgentStep, endAgentStep, type ProductCheck } from "@petrina/core";
 import { CheckPreparationChanged } from "../src/product-checks.js";
 import { checksFingerprint, commandText } from "../src/checks.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "./engine.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 

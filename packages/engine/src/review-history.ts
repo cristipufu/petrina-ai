@@ -6,7 +6,7 @@ import { FINDING_TAG, formatFindings } from "./prompts.js";
 import type { ReviewInput } from "./review-context.js";
 import { saveImmutable } from "./immutable-file.js";
 import type { Section } from "./context.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 
 export const CARD_OPENING = 600;
 export interface StoodThrough { round: number; step: Id }

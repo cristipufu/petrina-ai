@@ -5,7 +5,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { endAgentStep, ROLE_STARTS, slotWait, type AgentProfile, type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { participantConversation } from "../src/participant-conversation.js";
 import { Coordination } from "../src/coordination.js";
 import * as gitOps from "../src/git.js";

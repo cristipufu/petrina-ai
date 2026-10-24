@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { join } from "node:path";
 import { type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { freshBuilderRethink } from "../src/roles.js";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 

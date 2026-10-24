@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import type { InboxItem, Task, TaskSource } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { AcceptedPoints } from "../src/accepted-points.js";
 import { addLearnings, keptLearnings, Learnings } from "../src/learnings.js";
 import * as gitOps from "../src/git.js";

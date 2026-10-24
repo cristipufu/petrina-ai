@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { onScreen, type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];

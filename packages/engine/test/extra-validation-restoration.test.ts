@@ -5,7 +5,7 @@ import { type ExtraValidation } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { git, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import * as processTree from "../src/process-tree.js";
 import { ExtraContainer } from "../src/extra-container.js";

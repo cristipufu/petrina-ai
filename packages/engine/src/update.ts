@@ -1,4 +1,4 @@
-import { type RepositoryContext } from "./repository-context.js";
+import { type RepositoryContext } from "@petrina/orchestrator";
 // Keeping a task's work one commit on top of the latest default branch. Petrina folds the branch into one
 // commit after every build, and right before the delivery check, and again right before shipping, puts it
 // on top of the latest main itself, with git plumbing that never leaves a working copy halfway through a

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { beginAgentStep, BUILT_IN_ROLES, createDemoState, type DeepMutable, type Finding, type JourneyStep } from "@petrina/core";
 import { Context, type Section } from "../src/context.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor, repositoryView } from "../src/repository-context.js";
+import { executionFor, repositoryView } from "@petrina/orchestrator";
 import { prepareReviewInput, readReviewInput, type ReviewInput } from "../src/review-context.js";
 import { CARD_OPENING, historyGuidance, readReviewHistory, settledReviewFindings } from "../src/review-history.js";
 import { builderContext } from "../src/builder-context.js";

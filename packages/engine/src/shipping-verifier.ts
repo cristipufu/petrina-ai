@@ -5,7 +5,7 @@ import * as git from "./git.js";
 import { sourcePr } from "./source-github.js";
 import { type Connections, Unreachable } from "./connection.js";
 import type { Kernel } from "./kernel.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 
 type VerifierHost = Pick<Kernel, "repositoryOf" | "options" | "commit">;
 export type DeliveryEvidence =

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { git, tempDir, waitFor } from "./fixtures.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import * as files from "node:fs/promises";
 import { readGitHub, writeGitHub } from "./fake-gh.js";

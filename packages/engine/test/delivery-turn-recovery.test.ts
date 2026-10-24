@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "./engine.js";
 import { commandText } from "../src/checks.js";
-import { executionFor, scopesFor } from "../src/repository-context.js";
+import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { destination } from "../src/shipping.js";
 import { Aborted } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";

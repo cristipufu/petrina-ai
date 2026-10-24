@@ -1,7 +1,7 @@
 // Coordinator instructions belong to durable participant seats, never a process or profile.
 import { addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
 import { Aborted, type Kernel, type MTask } from "./kernel.js";
-import type { RepositoryContext } from "./repository-context.js";
+import type { RepositoryContext } from "@petrina/orchestrator";
 import type { TurnResult } from "./acp-run.js";
 import type { AgentSession } from "./agent-session.js";
 

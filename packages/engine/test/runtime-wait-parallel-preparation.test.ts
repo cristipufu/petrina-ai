@@ -3,7 +3,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "../src/git.js";
 import { FAKE_AGENT, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 

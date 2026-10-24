@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { currentSlow, waitFor } from "./fixtures.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { McpPending, mcpRequest } from "../src/mcp.js";
 import { AgentRun } from "../src/acp-run.js";
 import { ENGINE_PROFILES } from "../src/tools.js";

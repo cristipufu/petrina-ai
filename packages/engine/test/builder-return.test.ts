@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { Engine } from "./engine.js";
 import { contentTree } from "../src/git.js";
 import { Work } from "../src/work.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import type { Turns } from "../src/turn.js";
 import type { Context } from "../src/context.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";

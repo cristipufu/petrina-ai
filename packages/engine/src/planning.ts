@@ -1,4 +1,4 @@
-import { executionFor } from "./repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 // The planner's turn, and turning its answer into a plan Petrina can run: only roles the planner was told
 // about, always a builder and a review, a security review for high risk, and the delivery stages.
 

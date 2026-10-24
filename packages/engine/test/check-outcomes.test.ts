@@ -6,7 +6,7 @@ import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { Aborted } from "../src/kernel.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import type { MachineRecords } from "../src/check-interruption.js";
 import { heldMachineRecords, makeProduct, noMachineRecords, removeDir, tempDir, waitFor } from "./fixtures.js";
 

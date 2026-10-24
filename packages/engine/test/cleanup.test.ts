@@ -1,5 +1,5 @@
 import { displayTask } from "@petrina/core";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Coordination } from "../src/coordination.js";
 // Real worktrees and fake agents/GitHub: no network, no windows, and branches/history survive removal.
 import { afterAll, describe, expect, it } from "bun:test";

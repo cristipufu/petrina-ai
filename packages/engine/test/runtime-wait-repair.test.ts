@@ -3,8 +3,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeepMutable, Product, TaskRepository } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { scopesFor } from "../src/repository-context.js";
-import { beginRepair } from "../src/repositories.js";
+import { scopesFor } from "@petrina/orchestrator";
+import { beginRepair } from "@petrina/orchestrator";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];

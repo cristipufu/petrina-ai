@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { TaskHistory } from "../src/history-store.js";
 import { assignedCheckFailures, deliveryMissing, namedCheckFailures, projectCheckEvidence, relatedCheckCandidates, type CheckEvidenceTask, type CheckFailureReference } from "../src/related-check-evidence.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { git, makeWorld, removeDir, tempDir } from "./support.js";
 
 const failureName = "real grouped review summaries > credits a grouped review's replacement and excludes the handed-over step from timing history";

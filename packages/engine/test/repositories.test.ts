@@ -1,6 +1,6 @@
 import { expectRejection } from "./rejections.js";
-import { executionFor } from "../src/repository-context.js";
-import type { RepositoryContext } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
+import type { RepositoryContext } from "@petrina/orchestrator";
 import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, independentVotes, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,7 +13,8 @@ import { addCopy, ensureWorktree } from "../src/git.js";
 import { Sources } from "../src/sources.js";
 import type { Connections } from "../src/connection.js";
 import { Kernel, type MTask } from "../src/kernel.js";
-import { beginRepair, invalidateAcceptance, versionsOf } from "../src/repositories.js";
+import { invalidateAcceptance, versionsOf } from "../src/repositories.js";
+import { beginRepair } from "@petrina/orchestrator";
 import { checkReviewEvidence } from "../src/review.js";
 import { ReviewResult } from "../src/roles.js";
 import { Coordination } from "../src/coordination.js";

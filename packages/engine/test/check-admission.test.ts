@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { checksFingerprint, commandText } from "../src/checks.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { git, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "./fixtures.js";
 
 const roots: string[] = [];

@@ -1,4 +1,4 @@
-import { executionFor, scopesFor, type RepositoryContext } from "./repository-context.js";
+import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 

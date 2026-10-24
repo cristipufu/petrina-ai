@@ -68,6 +68,10 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
       const names = value.type === "ExportAllDeclaration" ? ["*"] : specifiers.flatMap(specifier => node(specifier) ? [name(specifier.imported) ?? (specifier.type === "ExportSpecifier" ? name(specifier.local) : undefined) ?? (specifier.type === "ImportNamespaceSpecifier" ? "*" : "default")] : []);
       if (path) facts.imports.push({ path, names, runtime: value.importKind !== "type" && value.exportKind !== "type" && (!Array.isArray(value.specifiers) || !value.specifiers.length || !!specifiers.length) });
     }
+    if (value.type === "TSImportType") {
+      const path = text(value.source);
+      if (path) facts.imports.push({ path, names: ["*"], runtime: false });
+    }
     if (value.type === "ImportExpression" || (value.type === "CallExpression" && (name(value.callee) === "require" || (node(value.callee) && value.callee.type === "Import")))) {
       const path = text(value.type === "ImportExpression" ? value.source : (value.arguments as unknown[])?.[0]);
       if (path) facts.imports.push({ path, names: ["*"], runtime: true });

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slotWait, usageLines, type AgentProfile, type RoutineDraft, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { failureReason } from "../src/tracking.js";
 import { CAPACITY_WAIT, capacityRetryDelay, capacityWaiting, CODEX_MODEL_CAPACITY, codexCapacityFailure, codexModelAtCapacity, limitFromFailure, MODEL_CAPACITY_WAIT_MS, ModelAtCapacity, WaitingForCapacity, WaitingForUsage } from "../src/usage.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";

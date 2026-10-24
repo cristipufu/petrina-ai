@@ -1,7 +1,7 @@
 import { isSource, isTest } from "./test-paths.js";
 import { sourceFacts } from "./source.js";
 import { sourceCandidates } from "./source-paths.js";
-import { layerBoundaries } from "./layers.js";
+import { layerBoundaries, packageBoundaries } from "./layers.js";
 
 export function conventions(files: ReadonlyMap<string, string>): string[] {
   const errors: string[] = [];
@@ -27,6 +27,6 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
     if (engine) for (const line of facts.asyncCallbacks) errors.push(`${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`);
     for (const line of facts.exclusiveTests) errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
   }
-  return [...errors, ...layerBoundaries(files)].sort();
+  return [...errors, ...layerBoundaries(files), ...packageBoundaries(files)].sort();
 }
 

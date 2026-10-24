@@ -4,7 +4,7 @@ import { BUILT_IN_ROLES, createDemoState, type BuilderContext, type Task } from 
 import { builderContext } from "../src/builder-context.js";
 import { coordinatorNotes, type Section } from "../src/context.js";
 import type { MTask } from "../src/kernel.js";
-import { executionFor, repositoryView, restoreRepositoryState } from "../src/repository-context.js";
+import { executionFor, repositoryView, restoreRepositoryState } from "@petrina/orchestrator";
 import { removeDir, tempDir } from "./fixtures.js";
 
 const notesTitle = "The coordinator's notes on this task";

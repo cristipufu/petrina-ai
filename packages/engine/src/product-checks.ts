@@ -1,5 +1,6 @@
-import { executionFor, scopesFor, taskView, type RepositoryContext } from "./repository-context.js";
-import { beginRepair, acceptanceVersion } from "./repositories.js";
+import { executionFor, scopesFor, taskView, type RepositoryContext } from "@petrina/orchestrator";
+import { acceptanceVersion } from "./repositories.js";
+import { beginRepair } from "@petrina/orchestrator";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 

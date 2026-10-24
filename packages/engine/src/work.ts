@@ -1,5 +1,6 @@
-import { type RepositoryContext } from "./repository-context.js";
-import { beginRepair, productsFor, versionsOf, changesOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
+import { type RepositoryContext } from "@petrina/orchestrator";
+import { productsFor, versionsOf, changesOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
+import { beginRepair } from "@petrina/orchestrator";
 import { openProofs, refreshProofs, restorationReason, sameVersions } from "@petrina/core";
 // "do" stages: one role on one profile. The builder answers findings, brings work up to date and writes a pull
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other

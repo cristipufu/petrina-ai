@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { journeyView, MAINTENANCE_ROLES, type InboxKind } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Coordination } from "../src/coordination.js";
 import { coordinator, Fakes, itemOf, makeProduct, removeDir, tempDir, until } from "./support.js";
 import { commandText } from "../src/checks.js";

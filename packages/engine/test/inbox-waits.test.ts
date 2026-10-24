@@ -3,7 +3,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { Connections, CONFIRM_ADDRESS } from "../src/connection.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import * as git from "../src/git.js";
 import { removeDir, tempDir, waitFor } from "./fixtures.js";
 

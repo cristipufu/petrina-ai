@@ -5,7 +5,7 @@ import { runtimeWaitHolds, runtimeWaitView, type CheckId, type DeliveryMode } fr
 import { Coordination } from "../src/coordination.js";
 import { WaitingForUsage } from "../src/usage.js";
 import { commandText } from "../src/checks.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { git, makeWorld, remoteRef, removeDir, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];

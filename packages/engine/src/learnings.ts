@@ -1,4 +1,4 @@
-import { type RepositoryContext } from "./repository-context.js";
+import { type RepositoryContext } from "@petrina/orchestrator";
 // What agents learned about working in a product's repository, kept where every agent already looks: the
 // "Learnings" section of the repository's AGENTS.md, which Claude Code and Codex both load by themselves, in
 // a session Petrina starts or one the coordinator starts by hand. Petrina adds nothing to their prompts.

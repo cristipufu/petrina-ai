@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { NOTES_HANDOFF_RULE, type CheckId } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { EARLIER_REPORTS_RULE } from "../src/context.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const HANDED_BACK = "What earlier agents on this task handed back";

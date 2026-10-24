@@ -2,7 +2,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { ballotOf, beginAgentStep, endAgentStep, type DeepMutable, type Finding, type VerifierPanel, type Vote, type WorkflowEvent } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { tempDir, removeDir } from "./fixtures.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Coordination } from "../src/coordination.js";
 import { ReviewResult } from "../src/roles.js";
 import { formatFindings } from "../src/prompts.js";

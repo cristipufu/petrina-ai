@@ -1,11 +1,12 @@
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "../../fixture-files.js";
 import { afterAll, expect, it } from "bun:test";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
-import { dirname, join } from "node:path";
-import { namedCheckFailures } from "../src/related-check-evidence.js";
-import { git, removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "./fixtures.js";
-import { sourceFacts } from "./quality/source.js";
+import { dirname, join, resolve } from "node:path";
+import { namedCheckFailures } from "../../../src/related-check-evidence.js";
+import { git, removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "../../fixtures.js";
+import { sourceFacts } from "../../quality/source.js";
+import { TEST_WORKSPACES } from "../../quality/workspaces.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -16,13 +17,14 @@ afterAll(() => roots.forEach(removeDir));
  * node_modules reached them only through the installer's own links, and on Windows the copied runner
  * could not load its parser that way.
  */
-const ENGINE = join(import.meta.dir, "..");
+const ENGINE = resolve(import.meta.dir, "../../..");
+const QUALITY = join(ENGINE, "test", "quality");
 /** The engine files the copied runner imports from outside its own folder: the tests' bounded Git path and its helpers. */
 const SUPPORT = ["test/test-git-env.ts", "test/commands.ts", "test/slow.ts", "test/environment.ts", "test/temp-parent.ts", "test/fixture-files.ts", "src/process-tree.ts", "src/process-host.ts"];
 const PACKAGES = (() => {
   const manifest = JSON.parse(readFileSync(join(ENGINE, "package.json"), "utf8")) as Record<"dependencies" | "devDependencies", Record<string, string>>;
   const declared = new Set(Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }));
-  const sources = [...readdirSync(join(import.meta.dir, "quality")).filter(name => name.endsWith(".ts")).map(name => join(import.meta.dir, "quality", name)), ...SUPPORT.map(file => join(ENGINE, file))];
+  const sources = [...readdirSync(QUALITY).filter(name => name.endsWith(".ts")).map(name => join(QUALITY, name)), ...SUPPORT.map(file => join(ENGINE, file))];
   const names = new Set(sources.flatMap(file => sourceFacts(readFileSync(file, "utf8"), file).imports)
     .filter(({ path, runtime }) => runtime && !path.startsWith(".") && !isBuiltin(path))
     .map(({ path }) => path.split("/").slice(0, path.startsWith("@") ? 2 : 1).join("/")));
@@ -30,10 +32,10 @@ const PACKAGES = (() => {
   return [...names].map(name => ({ name, folder: realpathSync.native(dirname(Bun.resolveSync(`${name}/package.json`, ENGINE))) }));
 })();
 
-type Suite = "core" | "desktop" | "engine";
+type Suite = "core" | "desktop" | "orchestrator" | "engine";
 /** A controlled workspace: its exit code, structured report, printed output, and whether it edits an input or waits for a stop signal. */
 type StandIn = { code?: number; report?: "pass" | "fail" | "missing" | "truncated" | "omitted" | "counts" | "running" | "skipped"; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean };
-const NOT_STARTED = "core and desktop did not both pass", INTERRUPTED = "the run was interrupted first";
+const NOT_STARTED = "core and desktop and orchestrator did not all pass", INTERRUPTED = "the run was interrupted first";
 
 /** The real root script and runner, without a repository to scan or any suites to run. */
 function entryFixture(): string {
@@ -42,7 +44,7 @@ function entryFixture(): string {
   mkdirSync(join(root, "docs", "plans"), { recursive: true });
   writeFileSync(join(root, "docs", "plans", "test-layer-audit.json"), JSON.stringify({ version: 1, files: [] }));
   mkdirSync(quality, { recursive: true });
-  cpSync(join(import.meta.dir, "quality"), quality, { recursive: true });
+  cpSync(QUALITY, quality, { recursive: true });
   for (const file of SUPPORT) {
     mkdirSync(dirname(join(root, "packages", "engine", file)), { recursive: true });
     cpSync(join(ENGINE, file), join(root, "packages", "engine", file));
@@ -91,7 +93,7 @@ if (stand.hold) {
   // Never outlive a broken test by long.
   setTimeout(() => { log(workspace + " was never stopped"); process.exit(1); }, 20_000);
 } else process.exit(stand.code ?? 0);`);
-  for (const workspace of ["packages/core", "packages/engine", "apps/desktop"]) {
+  for (const { path: workspace } of TEST_WORKSPACES) {
     const folder = join(root, workspace);
     mkdirSync(join(folder, "test", "contracts", "testing"), { recursive: true });
     writeFileSync(join(folder, "test", "contracts", "testing", "example.test.ts"), "// A controlled runner result, not another full suite.\n");
@@ -141,7 +143,7 @@ for (const args of [
   const result = await runCommand([process.execPath, "run", "test", ...args], { cwd: root, env: environment(), timeoutMs: 10_000 });
   expect(result.code).toBe(1);
   expect(result.stderr).toContain("The root test command does not accept file selectors or options. No tests ran.");
-  expect(result.stderr).toContain("bun run --cwd packages/engine test test/name.test.ts");
+  expect(result.stderr).toContain("bun run --cwd packages/engine test test/rules/testing/results.test.ts");
   expect(result.stderr).not.toContain("Could not inspect test inputs");
   expect(result.stdout).toBe("");
   expect(existsSync(join(root, ".test-results"))).toBe(false);
@@ -152,7 +154,7 @@ for (const option of ["--help", "-h"]) it(`shows ${option} through the root scri
   const root = entryFixture();
   const result = await runCommand([process.execPath, "run", "test", option], { cwd: root, env: environment(), timeoutMs: 10_000 });
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain("bun run --cwd packages/engine test test/name.test.ts");
+  expect(result.stdout).toContain("bun run --cwd packages/engine test test/rules/testing/results.test.ts");
   expect(result.stdout).toContain("Focused runs do not replace the required full check.");
   expect(result.stdout).not.toContain("Test summary:");
   expect(result.stderr).not.toContain("Could not inspect test inputs");
@@ -199,12 +201,12 @@ it("resolves the copied runner's packages from the engine's own install, never a
   }
 });
 
-it("runs core and desktop before engine and passes only when every workspace passed", async () => {
+it("runs every quick workspace before engine and passes only when every workspace passed", async () => {
   const { ran, report, summary, environments } = await run({}, 0);
-  expect(ran).toBe("core\ndesktop\nengine\n");
+  expect(ran).toBe("core\ndesktop\norchestrator\nengine\n");
   expect({ mode: report.mode, scope: report.scope, stableInputs: report.stableInputs, interrupted: report.interrupted }).toEqual({ mode: "observation", scope: "complete", stableInputs: true, interrupted: undefined });
   expect(report.results.every((result: { ms: number; missedFailures: string[] }) => result.ms >= 0 && result.missedFailures.length === 0)).toBe(true);
-  expect(summary).toEqual(["Test summary:", "  core: passed in Ns", "  desktop: passed in Ns", "  engine: passed in Ns"]);
+  expect(summary).toEqual(["Test summary:", "  core: passed in Ns", "  desktop: passed in Ns", "  orchestrator: passed in Ns", "  engine: passed in Ns"]);
   expect(report.source.head).toMatch(/^[a-f0-9]{40}$/);
   expect(report.source.tree).toMatch(/^[a-f0-9]{40}$/);
   expect(report.source.clean).toBe(true);
@@ -220,6 +222,14 @@ it("runs core and desktop before engine and passes only when every workspace pas
   }
 });
 
+it("includes the orchestrator in the required gate and never starts engine after its failure", async () => {
+  const { ran, report, outcomes } = await run({ orchestrator: { code: 1, report: "fail" } }, 1);
+  expect(ran).toBe("core\ndesktop\norchestrator\n");
+  expect(outcomes).toEqual([["packages/core", 0], ["apps/desktop", 0], ["packages/orchestrator", 1], ["packages/engine", NOT_STARTED]]);
+  expect(report.scope).toBe("partial");
+  expect(report.results[2].failures).toEqual(["packages/orchestrator/test/contracts/testing/example.test.ts"]);
+});
+
 for (const [name, scenario, outcomes, lines] of [
   ["core fails", { core: { code: 1, report: "fail" } }, [1, 0], ["  core: failed after Ns; failing files: packages/core/test/contracts/testing/example.test.ts", "  desktop: passed in Ns"]],
   ["desktop fails", { desktop: { code: 1, report: "fail" } }, [0, 1], ["  core: passed in Ns", "  desktop: failed after Ns; failing files: apps/desktop/test/contracts/testing/example.test.ts"]],
@@ -229,12 +239,12 @@ for (const [name, scenario, outcomes, lines] of [
   ["desktop's report contradicts its exit", { desktop: { report: "fail" } }, [0, 0], ["  core: passed in Ns", "  desktop: incomplete after Ns: it exited successfully but its structured results report failures; failing files: apps/desktop/test/contracts/testing/example.test.ts"]],
 ] as const) it(`never starts engine when ${name}, and records it as not run`, async () => {
   const { ran, report, outcomes: recordedOutcomes, summary } = await run(scenario, 1);
-  expect(ran).toBe("core\ndesktop\n");
-  expect(recordedOutcomes).toEqual([["packages/core", outcomes[0]], ["apps/desktop", outcomes[1]], ["packages/engine", NOT_STARTED]]);
+  expect(ran).toBe("core\ndesktop\norchestrator\n");
+  expect(recordedOutcomes).toEqual([["packages/core", outcomes[0]], ["apps/desktop", outcomes[1]], ["packages/orchestrator", 0], ["packages/engine", NOT_STARTED]]);
   // The unexecuted suite claims neither a pass nor an observation without misses.
-  expect(report.results[2]).toEqual({ workspace: "packages/engine", notRun: NOT_STARTED });
+  expect(report.results[3]).toEqual({ workspace: "packages/engine", notRun: NOT_STARTED });
   expect(report.scope).toBe("partial");
-  expect(summary).toEqual(["Test summary: engine did not run, so this run cannot pass and its affected-test observation covers only the suites that ran.", ...lines, "  engine: not run, because core and desktop did not both pass"]);
+  expect(summary).toEqual(["Test summary: engine did not run, so this run cannot pass and its affected-test observation covers only the suites that ran.", ...lines, "  orchestrator: passed in Ns", "  engine: not run, because core and desktop and orchestrator did not all pass"]);
   // Unavailable attribution never invents a failed test.
   if (name.includes("missing") || name.includes("without")) expect(report.results[0].failures).toBeUndefined();
 });
@@ -245,13 +255,13 @@ for (const [name, scenario, engine] of [
   ["engine's report contradicts its exit", { engine: { report: "fail" } }, "  engine: incomplete after Ns: it exited successfully but its structured results report failures; failing files: packages/engine/test/contracts/testing/example.test.ts"],
 ] as const) it(`runs every workspace and fails honestly when ${name}`, async () => {
   const { ran, report, summary } = await run(scenario, 1);
-  expect(ran).toBe("core\ndesktop\nengine\n");
+  expect(ran).toBe("core\ndesktop\norchestrator\nengine\n");
   expect(report.scope).toBe(name === "engine's report is missing" ? "partial" : "complete");
-  expect(summary).toEqual(["Test summary:", "  core: passed in Ns", "  desktop: passed in Ns", engine]);
-  if (name === "engine fails") expect(report.results[2].missedFailures).toEqual(["packages/engine/test/contracts/testing/example.test.ts"]);
+  expect(summary).toEqual(["Test summary:", "  core: passed in Ns", "  desktop: passed in Ns", "  orchestrator: passed in Ns", engine]);
+  if (name === "engine fails") expect(report.results[3].missedFailures).toEqual(["packages/engine/test/contracts/testing/example.test.ts"]);
 });
 
-for (const workspace of ["core", "desktop", "engine"] as const) for (const report of ["truncated", "omitted", "counts", "skipped"] as const) it(`rejects ${workspace}'s ${report} report even after a zero exit code`, async () => {
+for (const workspace of ["core", "desktop", "orchestrator", "engine"] as const) for (const report of ["truncated", "omitted", "counts", "skipped"] as const) it(`rejects ${workspace}'s ${report} report even after a zero exit code`, async () => {
   const { ran, report: result, stderr } = await run({ [workspace]: { report } }, 1);
   expect(result.scope).toBe("partial");
   expect(stderr).toContain("Incomplete test evidence");
@@ -259,7 +269,7 @@ for (const workspace of ["core", "desktop", "engine"] as const) for (const repor
   expect(invalid.code).toBe(0);
   expect(invalid.reportComplete).toBeUndefined();
   expect(invalid.error).toBeTruthy();
-  expect(ran).toBe(workspace === "engine" ? "core\ndesktop\nengine\n" : "core\ndesktop\n");
+  expect(ran).toBe(workspace === "engine" ? "core\ndesktop\norchestrator\nengine\n" : "core\ndesktop\norchestrator\n");
   if (report === "omitted") {
     expect(invalid.error).toContain("omitted.test.ts");
     expect(invalid.failures).toEqual([]);
@@ -274,7 +284,7 @@ it("rejects Vitest cases still running when the report was written", async () =>
 
 it("compares inputs once at the end: a change during core still runs every workspace and cannot pass", async () => {
   const { ran, report, stderr } = await run({ core: { change: true } }, 1);
-  expect(ran).toBe("core\ndesktop\nengine\n");
+  expect(ran).toBe("core\ndesktop\norchestrator\nengine\n");
   expect({ scope: report.scope, stableInputs: report.stableInputs }).toEqual({ scope: "complete", stableInputs: false });
   expect(stderr).toContain("Test inputs changed during the run, or the checkout revision moved. Results cannot authorize delivery.");
 });
@@ -314,6 +324,6 @@ for (const [signal, code, scenario, ran] of [
   // The suite's own process has ended before the runner reports.
   expect(() => process.kill(pid, 0)).toThrow();
   expect({ interrupted: report.interrupted, scope: report.scope }).toEqual({ interrupted: code, scope: "partial" });
-  expect(outcomes.slice(signal === "SIGTERM" ? 1 : 2)).toEqual(signal === "SIGTERM" ? [["apps/desktop", INTERRUPTED], ["packages/engine", INTERRUPTED]] : [["packages/engine", INTERRUPTED]]);
+  expect(outcomes.slice(signal === "SIGTERM" ? 1 : 2)).toEqual(signal === "SIGTERM" ? [["apps/desktop", INTERRUPTED], ["packages/orchestrator", INTERRUPTED], ["packages/engine", INTERRUPTED]] : [["packages/orchestrator", INTERRUPTED], ["packages/engine", INTERRUPTED]]);
   expect(summary).toEqual([]);
 });

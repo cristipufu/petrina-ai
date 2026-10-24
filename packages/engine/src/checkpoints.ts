@@ -1,8 +1,8 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
 import { acceptanceGap, afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, repositoryPublished, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { executionFor, scopesFor } from "./repository-context.js";
-import { beginRepair } from "./repositories.js";
+import { executionFor, scopesFor } from "@petrina/orchestrator";
+import { beginRepair } from "@petrina/orchestrator";
 import { destination, type Shipping } from "./shipping.js";
 import type { Sources } from "./sources.js";
 

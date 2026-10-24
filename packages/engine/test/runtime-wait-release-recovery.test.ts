@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId } from "@petrina/core";
 import { commandText } from "../src/checks.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { FAKE_AGENT, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];

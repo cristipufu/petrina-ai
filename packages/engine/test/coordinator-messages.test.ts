@@ -7,7 +7,7 @@ import { ToolChecks } from "../src/tool-checks.js";
 import { Sources } from "../src/sources.js";
 import { Connections } from "../src/connection.js";
 import { BuildResult } from "../src/roles.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import type { Scenario } from "./fake-agent.js";
 import { standInBrowser } from "./message-browser.js";

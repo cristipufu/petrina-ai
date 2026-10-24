@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitView, type DeepMutable, type Product, type TaskRepository } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { scopesFor } from "../src/repository-context.js";
+import { scopesFor } from "@petrina/orchestrator";
 import { WaitingForUsage } from "../src/usage.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { rejectionOf } from "./rejections.js";

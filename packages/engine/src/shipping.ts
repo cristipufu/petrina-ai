@@ -3,7 +3,7 @@ import { DeliveryTurns } from "./delivery-turns.js";
 import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-verifier.js";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
-import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "./repository-context.js";
+import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
 import { proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { addDeliveryCheck } from "./proof-requests.js";
 import { versionsOf } from "./repositories.js";

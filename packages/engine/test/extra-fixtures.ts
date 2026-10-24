@@ -5,7 +5,7 @@ import { beginAgentStep, type ExtraValidation } from "@petrina/core";
 import { Engine, type EngineOptions } from "./engine.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { EngineClient } from "./client.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";

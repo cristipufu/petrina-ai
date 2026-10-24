@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { roleForTask, type JourneyStep, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../src/checks.js";
 import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, taskOf, tempDir, until, waitFor } from "./support.js";
 

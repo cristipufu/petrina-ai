@@ -1,5 +1,6 @@
-import { executionFor, scopesFor, repositoryView, type RepositoryContext } from "./repository-context.js";
-import { beginRepair, changesOf, productsFor, versionsOf } from "./repositories.js";
+import { executionFor, scopesFor, repositoryView, type RepositoryContext } from "@petrina/orchestrator";
+import { changesOf, productsFor, versionsOf } from "./repositories.js";
+import { beginRepair } from "@petrina/orchestrator";
 import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.

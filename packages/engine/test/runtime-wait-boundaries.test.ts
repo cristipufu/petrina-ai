@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitView, type ProductCheck } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { SourceRefreshRequired } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";
 import { git, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "./fixtures.js";

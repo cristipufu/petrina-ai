@@ -3,7 +3,7 @@ import { runtimeWaitHolds } from "@petrina/core";
 import { join } from "node:path";
 import { onScreen, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type Candidate, type Id, type State, type Task } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
-import { executionFor, executionOf, scopesFor, type RepositoryContext } from "./repository-context.js";
+import { executionFor, executionOf, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 import * as git from "./git.js";
 import { completeAll } from "./parallel.js";
 type ScreenHost = Pick<Kernel, "taskAdmissionWait" | "drivers" | "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "activeState" | "schedule" | "stopped">;

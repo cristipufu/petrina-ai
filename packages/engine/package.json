@@ -22,6 +22,7 @@
     "@agentclientprotocol/sdk": "1.8.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@petrina/core": "workspace:*",
+    "@petrina/orchestrator": "workspace:*",
     "@playwright/mcp": "0.0.83",
     "sharp": "0.35.5",
     "zod": "4.6.7"

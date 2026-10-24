@@ -5,7 +5,7 @@ import { BUILT_IN_ROLES, type ConversationNote, type Stage } from "@petrina/core
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
 import { AgentBrowser } from "../src/browser.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { currentStepAssignment } from "../src/prompts.js";
 import { BuildResult, NotesResult, ReviewResult } from "../src/roles.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";

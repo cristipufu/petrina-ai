@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { Engine } from "./engine.js";
-import { executionFor } from "../src/repository-context.js";
+import { executionFor } from "@petrina/orchestrator";
 import { beginSideStep } from "../src/side-step.js";
 import { SourceRefreshRequired } from "../src/kernel.js";
 import { makeProduct, removeDir, tempDir } from "./fixtures.js";

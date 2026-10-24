@@ -1,4 +1,4 @@
-import { repositoryView, type RepositoryContext } from "./repository-context.js";
+import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 

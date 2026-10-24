@@ -1,4 +1,4 @@
-import { type RepositoryContext } from "./repository-context.js";
+import { type RepositoryContext } from "@petrina/orchestrator";
 // The review guide that learns from misses: the Guide keeper's proposals, the coordinator's yes or no,
 // and accepted points reaching REVIEW.md. Reading and writing the file is in points.ts.
 
