@@ -15,7 +15,7 @@ import type { Connections } from "../src/connection.js";
 import { Kernel, type MTask } from "../src/kernel.js";
 import { invalidateAcceptance, versionsOf } from "../src/repositories.js";
 import { beginRepair } from "@petrina/orchestrator";
-import { checkReviewEvidence } from "../src/review.js";
+import { checkReviewEvidence } from "@petrina/core";
 import { ReviewResult } from "../src/roles.js";
 import { Coordination } from "../src/coordination.js";
 import { Fakes, coordinator, finish, git, headNow, itemOf, makeWorld, removeDir, taskOf, tempDir, until, waitFor, type World } from "./support.js";
@@ -94,33 +94,6 @@ describe.concurrent("one task across products", () => {
       expect(fakes.openings("tester").length).toBeGreaterThan(0);
       expect(prepared).toEqual(products);
     } finally { updates.upToDate = original; await engine.shutdown(); }
-  });
-
-  for (const [name, reports, owners] of [
-    ["omitted ownership", [["second"], undefined], [["second"], []]],
-    ["foreign ownership", [["second"], ["foreign"]], [["second"], []]],
-    ["mixed valid and foreign ownership", [["first"], ["second", "foreign"]], [["first"], []]],
-    ["valid expansion", [["first"], ["second"]], [["first"], ["second"]]],
-    ["unknown-only reports", [undefined, ["foreign"]], [[], []]],
-    ["invalid mixed reports", [["first", "foreign"], ["second", "foreign"]], [[], []]],
-  ] as const) for (const reverse of [false, true]) it(`keeps explicit finding owners across ${name}${reverse ? " in reverse order" : ""}`, async () => {
-    // The restart/repair case below retains full repository and agent integration.
-    const { engine, first, second, task, stage } = await sharedRecords();
-    try {
-      const ids = { first, second, foreign: "unregistered-product" };
-      const ordered = reverse ? [...reports].reverse() : reports;
-      for (const [index, productIds] of ordered.entries()) {
-        const result = ReviewResult.parse({ verdict: "fail", findings: [{ text: index ? "The GREETING is missing!" : "The greeting is missing.", productIds: productIds?.map((id) => ids[id]), severity: "important", evidence: `Current reproduction from reviewer ${index}.` }] });
-        await engine["reviews"]["applyReview"](executionFor(task), stage, result, index ? "sol-high" : "opus-high", "code-reviewer", String(index));
-      }
-      expect(task.findings).toHaveLength(2);
-      const expected = reverse ? [...owners].reverse() : owners;
-      for (const [index, finding] of task.findings.entries()) {
-        expect(finding.productIds?.slice().sort()).toEqual(expected[index]!.map((id) => ids[id]).sort());
-        expect(finding.confirmedBy).toEqual([]);
-        expect(finding.evidence).toBe(`Current reproduction from reviewer ${index}.`);
-      }
-    } finally { await engine.shutdown(); }
   });
 
   it("routes an incompletely repeated finding to its saved owner after restart and keeps ownership in History", async () => {

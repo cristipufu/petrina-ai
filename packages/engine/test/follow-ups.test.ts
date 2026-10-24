@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { ReviewResult } from "../src/roles.js";
-import { checkReviewEvidence } from "../src/review.js";
+import { checkReviewEvidence } from "@petrina/core";
 import { Coordination } from "../src/coordination.js";
 import { coordinationCli } from "../src/coordination-cli.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";

@@ -7,7 +7,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../src/checks.js";
 import { changesOf } from "../src/repositories.js";
 import { ReviewResult } from "../src/roles.js";
-import { checkReviewEvidence } from "../src/review.js";
+import { checkReviewEvidence } from "@petrina/core";
 import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 // Controls for a coordinator's decision to continue an exhausted review (the whole workflow is in

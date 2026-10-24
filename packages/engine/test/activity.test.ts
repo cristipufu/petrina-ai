@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { browserTarget, commandOf, describeTool, isPlumbing } from "../src/tool-activity.js";
+import { browserTarget, commandOf, describeTool, isPlumbing } from "../src/native-tool-activity.js";
 
 // Grok's saved ACP calls put the kind here instead of in ACP's top-level field.
 const grok = (name: string, kind: string, rawInput: unknown = {}) => ({ title: name, rawInput, _meta: { "x.ai/tool": { version: 1, name, kind, namespace: "grok_build" } } });

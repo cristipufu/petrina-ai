@@ -16,3 +16,5 @@ export type { ToolProbe, ToolProbeRequest, ToolProbeResult, ToolCheckHost, ToolC
 export { ToolCheckCoordinator, TOOL_CHECK_LINGER_MS } from "./tool-checks.js";
 export type { PendingVerification, VerifierAnswerSource, VerifierVerdict, VerifierCatalog, VerifierResolution, VerifierSelection, VerifierRecording } from "./ports/verifiers.js";
 export { VerifierBallots } from "./verifier-ballots.js";
+export type { ReviewReport, ReviewReportHost } from "./ports/review-reports.js";
+export { ReviewReports } from "./review-reports.js";

@@ -15,7 +15,7 @@ import { CLEANUP_INCOMPLETE, descendantsKnown, parseDescendants, readProcessList
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import type { SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages } from "./agent-messages.js";
-import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
+import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./native-tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
 import { ownSession } from "./env.js";
 import { ToolInvocations } from "./tool-invocations.js";

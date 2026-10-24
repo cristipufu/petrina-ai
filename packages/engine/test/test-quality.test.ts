@@ -55,7 +55,7 @@ it("parses TypeScript/TSX imports and ignores mentions of forbidden patterns in 
   expect(sourceFacts("import View from './View'; const node = <View />", "a.tsx").imports[0]!.path).toBe("./View");
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `// expect(p).rejects.toThrow();\nconst prose = 'import { Engine } from "../src/engine.js"';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `import { Engine as Alias } from '../src/engine.js'; expect(p).rejects.toThrow();`]]))).toHaveLength(2);
-  expect(conventions(new Map([["packages/engine/test/a.test.ts", `import type { Engine } from '../src/engine.js'; import { recordDisputes } from '../src/engine.js';`]]))).toEqual([]);
+  expect(conventions(new Map([["packages/engine/test/a.test.ts", `import type { Engine } from '../src/engine.js'; import { recordDisputes } from '@petrina/core';`]]))).toEqual([]);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `await import('../src/engine.js');`]]))).toHaveLength(1);
   expect(conventions(new Map([["packages/engine/test/re-export.ts", `export * from '../src/engine.js';`]]))).toHaveLength(1);
   expect(conventions(new Map([["packages/engine/test/a.test.ts", `import { runChecks as run } from '../src/checks.js';`]]))).toHaveLength(1);

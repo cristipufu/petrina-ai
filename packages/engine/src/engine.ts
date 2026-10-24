@@ -93,7 +93,6 @@ import { readTaskImage } from "./image-preview.js";
 
 export type { EngineOptions } from "./kernel.js";
 export type { NewTaskInput, SaidContext } from "@petrina/core";
-export { recordDisputes } from "./review.js";
 
 /** The engine: every command the window can send (Commands) is a method here. */
 export class Engine extends Kernel implements Commands {

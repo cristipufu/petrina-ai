@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ToolInvocation, ToolInvocationStatus } from "@petrina/core";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
-import { commandOf, describeTool, fileOf, isPlumbing, kindOf, type ToolActivity } from "./tool-activity.js";
+import { commandOf, describeTool, fileOf, isPlumbing, kindOf, type ToolActivity } from "./native-tool-activity.js";
 
 export const MAX_TOOL_INVOCATIONS = 100;
 export const MAX_TOOL_COMMAND = 4096;
