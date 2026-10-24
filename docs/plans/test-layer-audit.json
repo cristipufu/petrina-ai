@@ -998,7 +998,8 @@
       "validation": {
         "artifact": "platform-reconciliation.json",
         "qualification": "platform-focused-reviewed.xml: 42 passes / one explicit Windows skip; platform-support-first.xml: 56 passes; platform-files-reviewed.xml and platform-faults-reviewed.xml: three passes; platform-storage-first.xml: four passes; platform-runner-final.xml: 82 passes; platform-native-neighborhood.xml: 90 passes. All workspace types, frozen install and conventions pass. Seven-package full qualification and native Windows/Linux evidence remain due.",
-        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due."
+        "completeRun": "0bccde91b08590e0057bd8bffeed365b983648eb: .test-results/2026-10-24T22-42-20-158Z-d85c3fb6/results.json; all seven manifests complete/stable, 4680 passed / 11 explicit skips / zero failures, normal workers, 492664ms on macOS arm64 / Bun 1.4.2. Native Linux/Windows qualification remains due.",
+        "readinessRefinement": "cleanup-ready-native.xml: all 44 process cases pass in 13.82s. cleanup-ready-final.xml: all four changed native variants pass / 22 assertions / 2.33s. The earlier full run spent 34.45s in these four variants before the change; focused-after timing is not whole-suite speedup. Cleanup assertions stay real, cancellation begins on the PID readiness line, original startup limits remain, and native output/deadline cases are unchanged. Final full qualification and native Linux/Windows remain due."
       }
     },
     {

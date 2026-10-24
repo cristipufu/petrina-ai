@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { childState, processList, type ProcessListRead } from "@petrina/platform/process-tree";
+import { childState, processList, waitForProcessesToEnd, type ProcessListRead } from "@petrina/platform/process-tree";
 import { CLEANUP_MS, runCommand, type Started } from "@petrina/test-support/commands";
 import { removeDir, tempDir, waitFor } from "../../../src/fixtures.js";
 import { currentSlow, SLOW, MOST_SLOW } from "@petrina/test-support/slow";
@@ -25,6 +25,11 @@ const alive = async (pid: number) => (await childState(pid)) === "running";
 const STATE_READ_MS = 3_000;
 /** Programs whose stop is watched run this long by themselves, far past the longest watch. */
 const WATCHED_S = 300;
+
+/** The fixture prints a complete PID line only after it is ready for cleanup. */
+const cancelOnReady = (controller: AbortController) => (text: string, stream: "stdout" | "stderr"): undefined => {
+  if (stream === "stdout" && text.includes("\n")) controller.abort();
+};
 
 /**
  * Wait for the end of a program an unconfirmed cleanup signalled. That cleanup returns once its signals are sent,
@@ -324,12 +329,15 @@ describe("a command that does not end normally", () => {
   for (const stopping of [true, false]) {
     it.skipIf(!unix)(`leaves cleanup unconfirmed when the process list cannot be read, and ${stopping ? "sees" : "fails without"} the program's end at the highest busyness factor, its stop ${stopping ? "sent" : "withheld"}`, async () => {
       let program: Started | undefined;
+      const stop = new AbortController();
       const send = process.kill.bind(process);
       const signals = spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => stopping || Math.abs(pid) !== program?.pid || (signal !== "SIGKILL" && signal !== "SIGSTOP") ? send(pid, signal) : true) as typeof process.kill);
       try {
         const born = Date.now();
         const failure = await failureOf(runCommand(bun(`console.log(process.pid); await Bun.sleep(${WATCHED_S * 1_000})`), {
           timeoutMs: 1_000 * SLOW,
+          signal: stop.signal,
+          onOutput: cancelOnReady(stop),
           processList: async () => undefined,
           // The runtime's own program, its record of the exit kept, so cleanup pauses its group first as usual.
           start: (argv, options) => {
@@ -341,7 +349,7 @@ describe("a command that does not end normally", () => {
             };
           },
         }));
-        expect(failure.reason).toBe("timeout");
+        expect(failure.reason).toBe("cancelled");
         expect(failure.cleanup).toBe("unconfirmed");
         const pid = Number(failure.stdout.trim());
         expect(pid).toBe(program!.pid!);
@@ -354,6 +362,7 @@ describe("a command that does not end normally", () => {
       } finally {
         signals.mockRestore();
         program?.kill("SIGKILL");
+        if (program?.pid) expect((await waitForProcessesToEnd([program.pid], 5_000 * SLOW)).ended).toBe(true);
       }
     });
   }
@@ -361,17 +370,22 @@ describe("a command that does not end normally", () => {
   // The group paused before the first look is stopped whatever that look answers, so nothing is left paused.
   for (const answer of ["fails", "shows only this worker"] as const) {
     it.skipIf(!unix)(`stops the group it paused first when the first look ${answer}`, async () => {
+      const stop = new AbortController();
       const failure = await failureOf(runCommand(["sh", "-c", "sleep 300 & echo $!; wait"], {
         timeoutMs: 1_000 * SLOW,
+        signal: stop.signal,
+        onOutput: cancelOnReady(stop),
         processList: answer === "fails" ? async () => { throw new Error("the list broke"); } : async () => `${process.pid} 1 ${process.pid} S`,
       }));
       const background = Number(failure.stdout.trim());
       try {
+        expect(failure.reason).toBe("cancelled");
         expect(background).toBeGreaterThan(0);
         expect(failure.cleanup).toBe("unconfirmed");
         await waitFor(async () => (await childState(background)) === "ended", "the paused group to be stopped", 5_000);
       } finally {
         if (background && await alive(background)) process.kill(background, "SIGKILL");
+        if (background) expect((await waitForProcessesToEnd([background], 5_000 * SLOW)).ended).toBe(true);
       }
     });
   }
