@@ -174,6 +174,9 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
       })().catch((error) => fail("unreadable", `could not have its ${index ? "error output" : "output"} read (${messageOf(error)})`));
     });
     child.exited.then((code) => { exit = code; finish(); }, (error) => { untracked = true; fail("unreadable", `could not have its exit read (${messageOf(error)})`); });
+    // A controlled starter can abort synchronously before the listener is attached. All
+    // cleanup resources are initialized now; do not accept its result after that cancellation.
+    if (options.signal?.aborted) cancel();
   });
 }
 

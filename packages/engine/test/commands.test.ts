@@ -131,6 +131,24 @@ describe("a command that does not end normally", () => {
     expect(existsSync(marker)).toBe(false);
   });
 
+  it("observes cancellation inside the starter before accepting an already completed program", async () => {
+    const stop = new AbortController();
+    const error = await failureOf(runCommand(["fixture-program"], {
+      signal: stop.signal,
+      start: () => {
+        stop.abort();
+        // No native process: the controlled starter finished before returning its handle.
+        return {
+          stdout: new ReadableStream({ start(controller) { controller.close(); } }),
+          stderr: new ReadableStream({ start(controller) { controller.close(); } }),
+          exited: Promise.resolve(0), exitCode: 0, signalCode: null, kill() {},
+        };
+      },
+    }));
+    expect(error.reason).toBe("cancelled");
+    expect(error.message).toContain("was cancelled");
+  });
+
   it.skipIf(!unix)("stops at its deadline with the output so far, and stops what it started", async () => {
     const started = Date.now();
     const failure = await failureOf(runCommand(["sh", "-c", "sleep 30 & echo $!; echo working >&2; wait"], { timeoutMs: 300 }));
