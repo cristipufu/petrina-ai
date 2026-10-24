@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { changeRuntimeWait, createTaskState, syncRuntimeWait, workflowFacts, WorkflowObserver, type WorkflowContext } from "../src/index.js";
+import { changeRuntimeWait, createTaskState, syncRuntimeWait, workflowFacts, WorkflowObserver, type WorkflowContext } from "../../../src/index.js";
 
 it("stops reporting prerequisite decisions after admitted publication has finished", () => {
   const task = createTaskState({ productId: "", title: "Published work" }, [], { id: "published", now: 1, priority: 0, timelineId: "created" });
@@ -39,13 +39,6 @@ it("reports prerequisite decisions from saved landing facts with the coordinator
   expect(observer.observe(task, context)).toEqual([]);
   changeRuntimeWait(task, { after: [], reason: "Coordinator accepts proceeding", requestId: "clear" }, 5);
   expect(workflowFacts(task, context).waitKind).not.toBe("needs-your-decision");
-});
-
-it("does not derive a prerequisite decision from an agent's status words", () => {
-  const task = createTaskState({ productId: "", title: "Ordinary work" }, [], { id: "normal", now: 1, priority: 0, timelineId: "created" });
-  task.state = "waiting";
-  task.statusLine = "Waiting for your decision: a missing prerequisite was mentioned";
-  expect(workflowFacts(task, { roles: [], profiles: [], products: [], inbox: [], now: 2 }).waitKind).toBe("other");
 });
 
 it("keeps readiness waits separate while saved prerequisites take precedence", () => {

@@ -554,11 +554,20 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/runtime-wait-events.test.ts",
+      "file": "packages/core/test/orchestration/workflow/runtime-wait-events.test.ts",
       "declarations": 4,
       "assertionSites": 15,
       "baselineDigest": "9ad39ed14d81ff68fa9186dfab83156166d337a68e5610ee6002b729d6a66ca2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/runtime-wait-events.test.ts",
+      "layer": "orchestration",
+      "area": "workflow",
+      "splitFiles": [
+        "packages/core/test/orchestration/workflow/runtime-wait-events.test.ts",
+        "packages/core/test/rules/workflow/wait-facts.test.ts"
+      ],
+      "review": "Three original WorkflowObserver transition/repeat-suppression cases stay together with explicit time and task lookup. The fourth workflowFacts-only case owns pure status-word interpretation separately. All four original bodies / 15 assertion sites retained; no native effect.",
+      "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
     },
     {
       "file": "packages/core/test/runtime-wait.test.ts",
@@ -647,11 +656,21 @@
       }
     },
     {
-      "file": "packages/core/test/task-transitions.test.ts",
+      "file": "packages/core/test/rules/tasks/request.test.ts",
       "declarations": 8,
       "assertionSites": 61,
       "baselineDigest": "25822723f5be3b5c1ea41157bb94ccaa81bb59a25e881971853ceebc98d490a7",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/task-transitions.test.ts",
+      "layer": "rules",
+      "area": "tasks",
+      "splitFiles": [
+        "packages/core/test/rules/tasks/request.test.ts",
+        "packages/core/test/rules/tasks/dependencies.test.ts",
+        "packages/core/test/rules/tasks/lifetime.test.ts"
+      ],
+      "review": "All eight original cases / 61 assertion sites retain identical bodies, split by request/queue, dependency/future assignment and step lifetime. The shared request recipe calls the production initializer with an explicit private catalog and time; no demo, Simulator or native effect.",
+      "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
     },
     {
       "file": "packages/core/test/ui-contracts.test.ts",
@@ -2678,6 +2697,30 @@
       "area": "testing",
       "review": "Private filesystem controls for atomic optional hint publication, exact retained seed/hash and invalid-cache preservation, plus a two-file actual Bun ordering contract. One worker is used only in this tiny dispatch-observation probe; required suite defaults remain unchanged.",
       "validation": "timing-hints-reviewed.xml: all 57 native runner/timing controls pass / 405 assertions / 26.91s; workspace types and conventions pass"
+    },
+    {
+      "file": "packages/core/test/rules/tasks/dependencies.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "tasks",
+      "review": "Split owner with unchanged original case bodies; see original inventory entry and core-lifetime-reconciliation.json.",
+      "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/core/test/rules/tasks/lifetime.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "tasks",
+      "review": "Split owner with unchanged original case bodies; see original inventory entry and core-lifetime-reconciliation.json.",
+      "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/core/test/rules/workflow/wait-facts.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "workflow",
+      "review": "Split owner with unchanged original case bodies; see original inventory entry and core-lifetime-reconciliation.json.",
+      "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
     }
   ],
   "rust": [
