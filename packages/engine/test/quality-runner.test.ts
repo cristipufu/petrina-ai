@@ -1,5 +1,6 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { afterAll, expect, it } from "bun:test";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join } from "node:path";
 import { namedCheckFailures } from "../src/related-check-evidence.js";
@@ -17,7 +18,7 @@ afterAll(() => roots.forEach(removeDir));
  */
 const ENGINE = join(import.meta.dir, "..");
 /** The engine files the copied runner imports from outside its own folder: the tests' bounded Git path and its helpers. */
-const SUPPORT = ["test/test-git-env.ts", "test/commands.ts", "test/slow.ts", "test/environment.ts", "test/temp-parent.ts", "src/process-tree.ts"];
+const SUPPORT = ["test/test-git-env.ts", "test/commands.ts", "test/slow.ts", "test/environment.ts", "test/temp-parent.ts", "test/fixture-files.ts", "src/process-tree.ts"];
 const PACKAGES = (() => {
   const manifest = JSON.parse(readFileSync(join(ENGINE, "package.json"), "utf8")) as Record<"dependencies" | "devDependencies", Record<string, string>>;
   const declared = new Set(Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }));
@@ -47,7 +48,7 @@ function entryFixture(): string {
   for (const { name, folder } of PACKAGES) {
     const link = join(root, "packages", "engine", "node_modules", name);
     mkdirSync(dirname(link), { recursive: true });
-    symlinkSync(folder, link, process.platform === "win32" ? "junction" : "dir");
+    fixtureFiles.directoryLink(folder, link);
   }
   const manifest = JSON.parse(readFileSync(join(ENGINE, "..", "..", "package.json"), "utf8"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ private: true, scripts: { test: manifest.scripts.test } }));

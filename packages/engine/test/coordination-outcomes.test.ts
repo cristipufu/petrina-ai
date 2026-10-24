@@ -1,6 +1,7 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, expect, it } from "bun:test";
-import { linkSync, mkdirSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -151,7 +152,7 @@ for (const kind of ["cli", "mcp"] as const) {
         expect(page.text).toBe(saved.slice(0, 8000));
       }
       unlinkSync(logPath);
-      symlinkSync(join(home, "engine.json"), logPath);
+      fixtureFiles.fileLink(join(home, "engine.json"), logPath);
       const symbolic = await call("journey.check", { taskId: task.id, index: 0 });
       expect(JSON.stringify(symbolic).includes(token)).toBe(false);
       expect(symbolic.completeness).toBe("missing-file");
@@ -282,11 +283,11 @@ for (const kind of ["cli", "mcp"] as const) {
       const first = await call("journey.check", args);
       expect(first.text).toBe(log.slice(0, 40));
       renameSync(logPath, join(directory, "retired.log"));
-      symlinkSync(join(home, "engine.json"), logPath);
+      fixtureFiles.fileLink(join(home, "engine.json"), logPath);
       const linkedDirectory = join(directory, "shortcut");
-      symlinkSync(home, linkedDirectory, "dir");
+      fixtureFiles.directoryLink(home, linkedDirectory);
       const insideLink = join(directory, "inside-link.log");
-      symlinkSync(join(directory, "retired.log"), insideLink);
+      fixtureFiles.fileLink(join(directory, "retired.log"), insideLink);
       for (const location of [logPath, join(linkedDirectory, "engine.json"), insideLink]) {
         run.logPath = location;
         const unavailable = await call("journey.check", args);

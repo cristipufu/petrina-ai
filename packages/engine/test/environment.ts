@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { shortTempParent, testTempParent, TEST_BROWSERS } from "./temp-parent.js";
+import { fixtureFiles } from "./fixture-files.js";
 
 export const TEST_GIT_IDENTITY = { name: "Petrina Test Runner", email: "test-runner@example.com" };
 
@@ -53,7 +54,7 @@ export function testEnvironment(folder: string, browsers: string, inherited: Nod
   const provisioned = browserCache(inherited), isolated = browserCache(env);
   if (existsSync(provisioned)) {
     mkdirSync(dirname(isolated), { recursive: true });
-    symlinkSync(realpathSync.native(provisioned), isolated, process.platform === "win32" ? "junction" : "dir");
+    fixtureFiles.directoryLink(fixtureFiles.canonical(provisioned), isolated);
   }
   return env;
 }

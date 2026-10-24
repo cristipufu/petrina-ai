@@ -1,5 +1,6 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { afterAll, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { removeDir, runCommand, tempDir, testGitEnv, waitFor } from "./fixtures.js";
@@ -22,8 +23,8 @@ it("moves only macOS's default temporary parents, including equivalent spellings
 
 it.skipIf(process.platform === "win32")("recognizes a link to the system parent and preserves a link to a custom parent", () => {
   const system = join(fixture, "system-parent"), custom = join(fixture, "custom-parent");
-  symlinkSync("/tmp", system);
-  symlinkSync(fixture, custom);
+  fixtureFiles.directoryLink("/tmp", system);
+  fixtureFiles.directoryLink(fixture, custom);
   expect(testTempParent(system, "darwin")).toBe(join(homedir(), ".petrina", "test-tmp"));
   expect(testTempParent(custom, "darwin")).toBe(custom);
 });

@@ -6,12 +6,12 @@ Active implementation plan, agreed with the coordinator on 24 October 2026. This
 
 Read this plan before continuing after a context reset. Verify the checkout, engine status and recorded evidence before treating an item as complete. Update the checkpoint and evidence after each coherent change, review or test run.
 
-- **Working branch:** `repair/test-foundation`, based on main `fb0ac30b011cf103886d368aaa4cf11cb6e8afbe`. The first foundation batch is reviewed for repair-branch publication; inspect Git log/status for its current commit. Main has not advanced.
+- **Working branch:** `repair/test-foundation`, based on main `fb0ac30b011cf103886d368aaa4cf11cb6e8afbe`. Foundation commit `8be9e365d2aa3a254a442f09e745b31512a4fdc9` is pushed; Windows delivery-path correction `1a5520c2` is committed locally and not pushed. Main has not advanced.
 - **Engine:** paused and drained, rechecked on 24 October 2026 during the structured-evidence work. Do not resume it during this repair.
-- **Current work:** steps 2–3, completing isolated fixtures and owned asynchronous teardown; step 4 has baseline measurements and initial schema work.
+- **Current work:** finish the local foundation in steps 2–4: isolation, canonical fixtures, deterministic tests and measured workflow cost. The user explicitly moved further CI investigation to the end. Finish the already identified Windows path defect and investigate the Release Manager startup timeout through local tests as requested.
 - **Latest full result:** the fourth complete Mac run passed in 465,231ms (7m45s), with stable inputs and complete file manifests: 2,789 engine passes, 10 existing opt-in/platform skips and no failures. Subsequent audit fixes and revision metadata have focused evidence and await full native CI on the committed candidate.
 - **Current checks:** workspace type checks and conventions pass. Teardown, process-boundary, extra-validation and atomic-writer regressions pass. The broader audit and final validation remain required before committing or delivery.
-- **Next actions:** publish the reviewed foundation batch to the repair branch for native CI, inspect each platform's results, then continue performance work and the remaining phases. The generic engine/repository boundary is specified below.
+- **Next actions:** optimize and audit the actual local tests before more CI work. Profile the slowest workflows, remove unrelated setup from focused cases, consolidate remaining fixture bypasses and preserve meaningful native boundaries. CI run `40078978323` is terminal and its evidence has been retained; do not start another CI cycle until the local work is ready. The generic engine/repository boundary remains as specified below.
 - **Later work remains:** Linux root causes, measured suite-cost reduction, actual affected-test execution, environment-aware check reuse, protected candidate delivery, coherent engine promotion and final platform qualification/audit. None is complete merely because a focused test passed.
 
 ## North star
@@ -78,6 +78,12 @@ Affected-test selection remains project-specific. Petrina's Bun analysis belongs
 
 Mocks must not erase the Git, SQLite, transport and process interactions that the test is meant to prove. Keep full workflow coverage where the interaction is essential; avoid constructing a complete workflow for every isolated decision.
 
+### Portable fixture contracts
+
+Shared tests and fixtures use cross-platform APIs. Where the required behavior has no portable API, keep it behind a small, explicit fixture interface with platform-specific implementations. Filesystem aliases and permissions, process-tree ownership/signals, terminal launchers and native tool probes must not each grow their own platform switch in every workflow test. Reuse the existing command, process and environment boundaries rather than building a parallel framework.
+
+Test each adapter's contract with real native controls on its supported platform, including unavailable inspection and failed cleanup. Keep platform-specific behavior tests at that boundary; ordinary workflow tests use the portable contract and private fault injection. An unsupported capability must be explicit, not silently counted as a pass. Native qualification is still necessary because runtime and OS behavior can change; the abstraction contains those changes in one owner.
+
 ## Ordered implementation and exit evidence
 
 Statuses: **pending**, **in progress**, **implemented, unverified**, **verified**. Only recorded evidence can advance an item to verified. Update this file after each coherent change or validation result; a context reset is not a reason to restart completed work.
@@ -104,6 +110,7 @@ Exit evidence: named starting revisions and reviewed diffs, retained original fa
 - [ ] Deterministic cleanup after success, failure, cancellation and restart; unknown process inspection never counts as confirmed stopped.
 - [ ] Matching browser binaries and Linux libraries installed during setup; no downloads or missing-browser skips inside tests.
 - [ ] Audit subprocess fixtures for undeclared tools, shell assumptions and platform behavior.
+- [ ] Consolidate platform-native fixture operations behind explicit interfaces and qualify each implementation; remove duplicated native setup/cleanup from ordinary workflow tests.
 
 Exit evidence: fixture boundary regressions, hostile developer-environment controls, simultaneous independent fixture controls and observable resource cleanup. Run on clean platform environments.
 
@@ -173,7 +180,7 @@ Completion requires both a reliable test foundation and a delivery gate that pro
 
 ## Current evidence and next action
 
-Updated: 24 October 2026, during structured-evidence implementation.
+Updated: 24 October 2026, during local fixture optimization.
 
 - Starting main: `fb0ac30b011cf103886d368aaa4cf11cb6e8afbe`. The checkout was clean before this repair branch was created.
 - Supported CLI confirmed `status: paused`, `drained: true`, no active agents/checks or extra validations; pause operation `coord-user-pause-everything-regroup-20261024` completed.
@@ -222,6 +229,23 @@ Reports now retain commit/tree, clean/dirty state, OS/architecture and Bun ident
 
 The final convention pass caught an analyzer gap: it did not recognize the project's `completeAll` collector. The analyzer now recognizes its actual runtime import (including an import alias), still requires awaiting the collector and rejects unrelated or shadowed functions with that name. Collector/source/runner controls: 59 passed in 11.83s, with workspace type checks and repository conventions passing (`foundation-collector-*.log`). No blanket convention exception was added.
 
-The foundation batch is prepared for its first repair-branch commit and native CI. Main remains `fb0ac30b011cf103886d368aaa4cf11cb6e8afbe`, confirmed remotely during this audit. Petrina was rechecked paused/drained; boot `12b895de9db7`, no active agents/checks/extra validations. No task cards were changed. Do not resume scheduling.
+The reviewed foundation batch was committed and pushed as `8be9e365d2aa3a254a442f09e745b31512a4fdc9`. [Native CI run 40078978323](https://github.com/cristipufu/petrina-ai/actions/runs/40078978323) finished: typecheck/build and all three desktop-shell jobs passed. Linux full tests passed in 764,841ms (12m45s), with a clean stable checkout, exact commit `8be9e365d2aa3a254a442f09e745b31512a4fdc9` / tree `5a7bb74bcfb912831d4ecc627724e8a0a47e1519`, Bun 1.4.2, Linux x64, four normal workers, 2,789 engine passes and 12 existing skips. Its complete manifest matches the file outcomes, including the delivery, participant-conversation and shipping files from the older Linux failure. This is positive qualification evidence, not proof of a cause for every historical stall. Logs and artifacts are retained under `.test-results/ci-40078978323/`.
 
-Next: push the reviewed foundation batch to the repair branch and inspect native results. Native Linux failures, affected execution, environment-aware reuse, main protection, coherent engine promotion, further performance work, platform qualification and the complete final audit remain pending. Do not interpret the focused passes or the full Mac passes as completion of those requirements.
+macOS and Windows CI exceeded the existing 20-minute job limit. Mac had 2,647 passing engine lines and no reported test failures before cancellation; it produced no final engine report. Windows had three reported failures before cancellation: the Release Manager start wait in pickup.test.ts and two shared runtime-wait delivery cases falsely calling the main clone another folder. Its saved runner report is explicitly partial/interrupted, without engine XML. Core/desktop passed on both platforms. Do not treat cancellation, partial results or the lack of a completed failure report as a pass. Further CI investigation is deferred by the user's instruction to finish local optimization first.
+
+The slow-first scheduling experiment was tested and **removed without committing**. It used prior measured file durations, every test and normal workers. The fifth full Mac run passed on stable inputs in 463,416ms (7m43s): core 13,556ms, desktop 21,504ms, engine 426,924ms; 2,801 engine passes, 10 existing skips, 0 failures across 209 files (including 10 temporary scheduling tests). This differed from the fourth run by less than 0.4%, so retaining another cache/action was not justified. Keep `.test-results/2026-10-24T08-53-00-363Z-97f1136f/` and `foundation-full-with-duration-hints.log` as experiment evidence. A read-only host snapshot during the run recorded 72 Bun processes using about 7.6 GiB RSS and a one-minute system load around 87 on this 14-core/48-GiB Mac; this is context for further profiling, not a demonstrated cause. No worker count or deadline was changed.
+
+The Windows delivery fix, reviewed and committed locally as `1a5520c2`, changes the shared delivery-path comparison to native canonical resolution, matching Git's expanded paths instead of retaining an 8.3 spelling. Real Git/symlink/junction controls distinguish the same working copy's aliases from genuinely separate copies. Those controls plus shared runtime waits, shipping and restart tests pass locally: 47 tests in 24.20s (`foundation-native-path-fix.log`), with workspace type checks and conventions passing. The Release Manager restart case passed in 19.77s in that group, but this does not explain the Windows startup timeout. Native Windows qualification remains deferred until the end; that timeout is still being investigated and is not claimed fixed.
+
+Main remains `fb0ac30b011cf103886d368aaa4cf11cb6e8afbe`. Petrina remains paused/drained; boot `12b895de9db7`. No task cards were changed. Do not resume scheduling or publish further CI experiments during local optimization.
+
+Local fixture optimization after the Windows path commit:
+
+- Added the user's portable-fixture requirement to this design, AGENTS.md and testing guidance. `test/fixture-files.ts` now owns native canonical spelling, directory aliases (junctions on Windows, directory links on POSIX) and actual file links. Every engine test/fixture link creation uses that interface; ordinary workflows no longer repeat those native switches. Real contract tests cover relative targets, alias-only removal, dangling file links and link chains. The remaining process, permissions and terminal boundary audit is still open.
+- `Fakes` now reads each immutable published prompt once per fixture, observes every newly published suffix and returns independent snapshots. Malformed new evidence still throws on every observation, including role filters. A bounded three-sample diagnostic with 32 private 32-KiB records and 50 observations took 38–69ms with whole-prefix reads versus 2–4ms with suffix reads (`foundation-prompt-read-cost.json`). This measures fixture I/O only; it consumes no provider tokens and is not a full-suite speedup claim.
+- Fake-agent conversation, script, capacity and environment-report JSON now uses the existing atomic writer. The real concurrent-agent regression keeps opened old conversation snapshots readable while subsequent turns publish new state. EngineProcess exit waits now clear their deadline timer after settlement.
+- Twenty-one report-ownership/settlement permutations now share a small review-record fixture with real private SQLite/restart storage. They do not launch unrelated planners/builders or create unused Git repositories. All assertions remain; the existing complete repository/agent repair, persistence and History case remains. The first twelve ownership cases pass together in 237ms focused (their old full-run cumulative case time was 175.194s, not wall time). The combined 22-case recording and retained end-to-end repair run passed 141 assertions in 6.89s (`foundation-recording-fixtures.log`).
+- The first broad run exposed a missing copied adapter in the runner's miniature repository. Fixed its dependency manifest; retained the failed/interrupted `foundation-portable-fixtures.log`. The corrected parallel run passed 376 tests, with three existing native-browser opt-in skips, in 117.17s (`foundation-portable-fixtures-fixed.log`). The final link/recording review run passed 152 tests in 50.10s (`foundation-portable-final-review.log`). Current type checks/conventions are recorded separately; a full parallel measurement of this batch is next.
+- A local Release Manager startup trace reached its marker at 3.338s, after planning/building/check discovery/checks/review, and stopped its engine at 3.614s (`foundation-release-start-path.log`). This does not explain the Windows timeout. The actual restart test now reports bounded engine status through the existing diagnostic helper while waiting, without changing its deadline, prerequisites or assertions, so future failure evidence identifies which prerequisite or start is waiting.
+
+Next: measure this batch in the full normal parallel suite, finish the local isolation/native-interface audit, and substantially reduce real fixture/workflow cost. Affected execution, environment-aware reuse, main protection, coherent engine promotion, final native qualification and the complete final audit remain pending. Do not interpret the focused passes or full Mac passes as completion of those requirements.

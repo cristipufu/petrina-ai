@@ -37,11 +37,24 @@ export async function recordPrompt(dir: string, record: PromptRecord, write: (pa
   }
 }
 
-export function readPrompts(dir: string): PromptRecord[] {
-  const folder = join(dir, "prompts");
-  if (!existsSync(folder)) return [];
-  // Bound this observation to a published sequence. Read its entire prefix even if readdir races with
-  // more publications; a pending write never reserves a number or blocks another participant.
-  const last = lastRecord(folder);
-  return Array.from({ length: last }, (_, index) => JSON.parse(readFileSync(join(folder, String(index + 1), "prompt.json"), "utf8")) as PromptRecord);
+/** One fixture's append-only evidence. Published records never change during that fixture's lifetime. */
+export class PromptReader {
+  private readonly folder: string;
+  private readonly records: PromptRecord[] = [];
+
+  constructor(dir: string, private readonly load: (path: string) => string = (path) => readFileSync(path, "utf8")) {
+    this.folder = join(dir, "prompts");
+  }
+
+  read(): PromptRecord[] {
+    if (!existsSync(this.folder)) return [];
+    // Bound this observation to a published sequence. A pending writer never reserves a number.
+    // Only read the new suffix: polling must not parse every earlier large prompt again.
+    const last = lastRecord(this.folder);
+    while (this.records.length < last) {
+      this.records.push(JSON.parse(this.load(join(this.folder, String(this.records.length + 1), "prompt.json"))) as PromptRecord);
+    }
+    // Assertions can edit their snapshot without changing a later observation.
+    return this.records.map((record) => ({ ...record }));
+  }
 }

@@ -1,8 +1,9 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as files from "node:fs/promises";
 import { createRequire } from "node:module";
-import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { capturePath, guardCaptureWrites, preserveCaptures } from "../src/captures.js";
@@ -22,7 +23,7 @@ it("resolves named output inside captures and refuses traversal, outside absolut
   expect(await capturePath(captures, "nested/page.png")).toBe(join(captures, "nested/page.png"));
   const outside = join(root, "product");
   mkdirSync(outside);
-  symlinkSync(outside, join(captures, "linked"));
+  fixtureFiles.directoryLink(outside, join(captures, "linked"));
   for (const name of ["../product/escape.png", join(outside, "escape.png"), "linked/escape.png"]) {
     await expectRejection(capturePath(captures, name));
   }
@@ -41,10 +42,10 @@ it("refuses automatic writes through a shortcut or shared file before they can c
   const bytes = Buffer.from("download");
   writeFileSync(victim, png);
   writeFileSync(join(folder, "source.bin"), bytes);
-  symlinkSync(victim, join(folder, "shortcut.png"));
+  fixtureFiles.fileLink(victim, join(folder, "shortcut.png"));
   linkSync(victim, join(folder, "shared.png"));
-  symlinkSync("shared.png", join(folder, "chain.png"));
-  symlinkSync(join(product, "missing.png"), join(folder, "dangling.png"));
+  fixtureFiles.fileLink("shared.png", join(folder, "chain.png"));
+  fixtureFiles.fileLink(join(product, "missing.png"), join(folder, "dangling.png"));
   const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
   const release = guardCaptureWrites(folder);
   try {
@@ -86,13 +87,13 @@ it("refuses shortcuts to shared files and dangling links before writing or accep
   mkdirSync(folder); mkdirSync(product);
   writeFileSync(join(product, "existing.png"), png);
   linkSync(join(product, "existing.png"), join(folder, "shared.png"));
-  symlinkSync("shared.png", join(folder, "shortcut.png"));
-  symlinkSync("shortcut.png", join(folder, "shortcut-chain.png"));
+  fixtureFiles.fileLink("shared.png", join(folder, "shortcut.png"));
+  fixtureFiles.fileLink("shortcut.png", join(folder, "shortcut-chain.png"));
   mkdirSync(join(folder, "nested"));
   linkSync(join(product, "existing.png"), join(folder, "nested", "shared.png"));
-  symlinkSync("nested", join(folder, "alias-folder"));
-  symlinkSync(join(product, "missing.png"), join(folder, "dangling.png"));
-  symlinkSync(join(product, "missing-folder"), join(folder, "dangling-folder"));
+  fixtureFiles.directoryLink("nested", join(folder, "alias-folder"));
+  fixtureFiles.fileLink(join(product, "missing.png"), join(folder, "dangling.png"));
+  fixtureFiles.directoryLink(join(product, "missing-folder"), join(folder, "dangling-folder"));
   for (const path of ["shared.png", "shortcut.png", "shortcut-chain.png", "alias-folder/shared.png", "dangling.png", "dangling-folder/page.png"]) {
     await expectRejection(capturePath(folder, path));
     await expectRejection(preserveCaptures(folder, history, [{ path, caption: "A linked picture" }]), "inside this session's capture folder");
@@ -101,12 +102,12 @@ it("refuses shortcuts to shared files and dangling links before writing or accep
   expect(readFileSync(join(product, "existing.png"))).toEqual(png);
   expect(existsSync(history)).toBe(false);
   const redirected = join(root, "replaced-capture-folder");
-  symlinkSync(product, redirected);
+  fixtureFiles.directoryLink(product, redirected);
   await expectRejection(capturePath(redirected, "existing.png"), "capture folder");
   await expectRejection(preserveCaptures(redirected, history, [{ path: "existing.png", caption: "An outside picture" }]), "inside this session's capture folder");
   // A shortcut is never a picture, even when it names an ordinary file in this folder.
   writeFileSync(join(folder, "ordinary.png"), png);
-  symlinkSync("ordinary.png", join(folder, "ordinary-shortcut.png"));
+  fixtureFiles.fileLink("ordinary.png", join(folder, "ordinary-shortcut.png"));
   await expectRejection(capturePath(folder, "ordinary-shortcut.png"), "capture folder");
   await expectRejection(preserveCaptures(folder, history, [{ path: "ordinary-shortcut.png", caption: "A safe captured page" }]), "inside this session's capture folder");
   const saved = await preserveCaptures(folder, history, [{ path: "ordinary.png", caption: "A safe captured page" }]);
@@ -121,9 +122,9 @@ it("refuses a shortcut that stays in the capture folder but leads through anothe
   mkdirSync(folder); mkdirSync(product);
   const victim = join(product, "existing.png");
   writeFileSync(victim, png);
-  symlinkSync(product, join(folder, "via"));
-  symlinkSync(victim, join(folder, "direct.png"));
-  symlinkSync("via/existing.png", join(folder, "second.png"));
+  fixtureFiles.directoryLink(product, join(folder, "via"));
+  fixtureFiles.fileLink(victim, join(folder, "direct.png"));
+  fixtureFiles.fileLink("via/existing.png", join(folder, "second.png"));
   await expectRejection(capturePath(folder, "direct.png"), "capture folder");
   await expectRejection(capturePath(folder, "via/existing.png"), "capture folder");
   await expectRejection(capturePath(folder, "second.png"), "capture folder");
@@ -146,7 +147,7 @@ it("refuses a shortcut that stays in the capture folder but leads through anothe
 it("rejects missing, broken, outside and blank-caption pictures without saving a partial report", async () => {
   const fresh = join(root, "invalid-history");
   writeFileSync(join(captures, "broken.png"), "not a picture");
-  symlinkSync(join(root, "product"), join(captures, "outside"));
+  fixtureFiles.directoryLink(join(root, "product"), join(captures, "outside"));
   for (const path of ["missing.png", "broken.png", "outside/page.png", "../product/page.png"]) {
     await expectRejection(preserveCaptures(captures, fresh, [{ path: "chosen.png", caption: "Valid first choice" }, { path, caption: "Invalid choice" }]));
   }

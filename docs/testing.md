@@ -67,6 +67,8 @@ On macOS the runner puts each run under `~/.petrina/test-tmp` when the temporary
 
 Keep the real transport, storage or process boundary when that interaction is the point of the test. Do not replace it with a mock that merely agrees with the implementation.
 
+Shared fixtures use portable APIs. Keep operations requiring native behavior behind an explicit fixture interface, with real contract tests for each supported implementation. `test/fixture-files.ts` owns directory aliases (Windows junctions and POSIX directory links), file links and native path spelling; `test/commands.ts` owns bounded test commands and their platform-specific cleanup. Reuse these boundaries instead of repeating OS switches in workflow setup. A native behavior test may assert its platform's contract; a workflow test should use the shared operation. Unavailable inspection is not a successful cleanup, and substituting an ordinary file for a symlink does not test symlink behavior.
+
 ## Choose a focused test
 
 From the repository root, choose the workspace explicitly. Do not append files or filtering options to the root `bun run test` command:

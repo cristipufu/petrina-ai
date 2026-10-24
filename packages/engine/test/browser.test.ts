@@ -1,9 +1,10 @@
+import { fixtureFiles } from "./fixture-files.js";
 import type { ObservedProcess } from "../src/process-tree.js";
 import { expectRejection } from "./rejections.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import * as os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -238,7 +239,7 @@ for (const { name, shown, ends, failure, changed } of [
 
 it.skipIf(process.platform !== "darwin")("keeps the standard home browser folder and recovers it canonically when the home path is a symlink", async () => {
   const home = join(root, "real-home"), link = join(root, "home-link"), registry = join(root, "linked-home-registry");
-  mkdirSync(home); symlinkSync(home, link); mkdirSync(registry);
+  mkdirSync(home); fixtureFiles.directoryLink(home, link); mkdirSync(registry);
   const mockedHome = spyOn(os, "homedir").mockReturnValue(link);
   try {
     // Without a fixture's folder, sessions use the standard short folder in the home.
@@ -263,7 +264,7 @@ it("discards a legacy directory and invalid browser registrations without follow
   mkdirSync(outside);
   writeFileSync(join(legacy, "old.png"), "old browser output");
   writeFileSync(join(outside, "keep.txt"), "product work");
-  symlinkSync(outside, join(registry, "outside-link"), process.platform === "win32" ? "junction" : "dir");
+  fixtureFiles.directoryLink(outside, join(registry, "outside-link"));
   writeFileSync(join(registry, "partial.json"), "{unfinished");
   writeFileSync(join(registry, "outside.json"), JSON.stringify(outside));
   await recoverBrowserTemps(registry, browsers);
@@ -277,7 +278,7 @@ it("keeps a folder registered under another name for the browser root, removing 
   const own = testBrowserRoot(), alias = join(root, "browser-root-alias"), registry = join(root, "alias-registry");
   const session = join(own, "petrina-browser-aliased");
   mkdirSync(session); mkdirSync(registry);
-  symlinkSync(own, alias, process.platform === "win32" ? "junction" : "dir");
+  fixtureFiles.directoryLink(own, alias);
   writeFileSync(join(registry, "aliased.json"), JSON.stringify(join(alias, "petrina-browser-aliased")));
   try {
     await recoverBrowserTemps(registry, own);
@@ -997,7 +998,7 @@ for (const opened of [false, true]) it.skipIf(opened && !process.env.PETRINA_BRO
       }
     }
     renameSync(browser.directory, parked);
-    symlinkSync(product, browser.directory, "dir");
+    fixtureFiles.directoryLink(product, browser.directory);
     for (const args of [{ filename: "named.png" }, {}, { type: "png" }, { type: "jpeg" }, { type: "webp" }]) {
       const result = await client.callTool({ name: "browser_take_screenshot", arguments: args });
       expect(result.isError).toBe(true);
@@ -1112,7 +1113,7 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("real bundled Chromium: named and 
     }
     expect(readdirSync(first.directory).filter((name) => name.endsWith(".png")).length).toBe(2);
     const outside = join(root, "product"); mkdirSync(outside);
-    symlinkSync(outside, join(first.directory, "linked"));
+    fixtureFiles.directoryLink(outside, join(first.directory, "linked"));
     for (const filename of [join(outside, "bad.png"), "linked/bad.png"]) expect((await clients[0]!.callTool({ name: "browser_take_screenshot", arguments: { filename } })).isError).toBe(true);
     const unsafe = await clients[0]!.callTool({ name: "browser_run_code_unsafe", arguments: { code: `async (page) => page.screenshot({ path: ${JSON.stringify(join(outside, "bad.png"))} })` } });
     expect(unsafe.isError).toBe(true);
@@ -1122,9 +1123,9 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("real bundled Chromium: named and 
     const productImage = join(outside, "existing.png");
     writeFileSync(productImage, original);
     linkSync(productImage, join(first.directory, "shared.png"));
-    symlinkSync("shared.png", join(first.directory, "shortcut.png"));
-    symlinkSync("shortcut.png", join(first.directory, "shortcut-chain.png"));
-    symlinkSync(join(outside, "missing.png"), join(first.directory, "dangling.png"));
+    fixtureFiles.fileLink("shared.png", join(first.directory, "shortcut.png"));
+    fixtureFiles.fileLink("shortcut.png", join(first.directory, "shortcut-chain.png"));
+    fixtureFiles.fileLink(join(outside, "missing.png"), join(first.directory, "dangling.png"));
     for (const filename of ["shared.png", "shortcut.png", "shortcut-chain.png", "dangling.png"]) {
       expect((await clients[0]!.callTool({ name: "browser_take_screenshot", arguments: { filename } })).isError).toBe(true);
       expect(readFileSync(productImage)).toEqual(original);
@@ -1141,7 +1142,7 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("real bundled Chromium: named and 
     }, "the ordinary download to stay in the capture folder");
     const victim = join(outside, "victim.png");
     writeFileSync(victim, original);
-    symlinkSync(victim, join(first.directory, "shortcut-download.png"));
+    fixtureFiles.fileLink(victim, join(first.directory, "shortcut-download.png"));
     linkSync(victim, join(first.directory, "hardlink-download.png"));
     for (const target of ["#linked", "#shared"]) {
       expect((await clients[0]!.callTool({ name: "browser_navigate", arguments: { url: `http://127.0.0.1:${page.port}` } })).isError).not.toBe(true);

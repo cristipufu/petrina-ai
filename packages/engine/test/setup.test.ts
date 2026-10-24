@@ -1,8 +1,9 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
@@ -342,11 +343,11 @@ describe("Tool status", () => {
   it.skipIf(process.platform === "win32")("looks tools up on the PATH as it is now, as the Library does, so a Petrina opened from the Dock finds them", async () => {
     const bin = fresh("bin");
     mkdirSync(bin, { recursive: true });
-    symlinkSync(Bun.which("git")!, join(bin, "git"));
+    fixtureFiles.fileLink(Bun.which("git")!, join(bin, "git"));
     const node = Bun.which("node");
-    if (node) symlinkSync(node, join(bin, "node"));
+    if (node) fixtureFiles.fileLink(node, join(bin, "node"));
     // A GitHub CLI that only fails: no real one ever answers Couldn't check here.
-    symlinkSync(Bun.which("false")!, join(bin, "gh"));
+    fixtureFiles.fileLink(Bun.which("false")!, join(bin, "gh"));
     const path = process.env.PATH;
     // This boundary case deliberately discovers the fake programs planted on PATH, rather than
     // the fixture's ordinary scripted-service defaults. No real account tool is present on it.
@@ -437,8 +438,8 @@ describe("The clone finder", () => {
     // A link out of the code folders is never followed.
     const outside = fresh("outside");
     clone(join(outside, "secret"), "https://github.com/acme/secret.git", now);
-    symlinkSync(join(outside, "secret"), join(home, "code", "linked"));
-    symlinkSync(outside, join(home, "code", "linked-folder"));
+    fixtureFiles.directoryLink(join(outside, "secret"), join(home, "code", "linked"));
+    fixtureFiles.directoryLink(outside, join(home, "code", "linked-folder"));
 
     const found = await findClones({ home });
     expect(found.map((entry) => entry.repo)).toEqual(["acme/blog", "acme/shop", "acme/old"]);
@@ -449,10 +450,10 @@ describe("The clone finder", () => {
     // Nor a link on the way to a code folder: Documents in Documents/GitHub, source in source/repos.
     const documents = fresh("documents-elsewhere");
     clone(join(documents, "GitHub", "private"), "https://github.com/acme/private.git", now);
-    symlinkSync(documents, join(home, "Documents"));
+    fixtureFiles.directoryLink(documents, join(home, "Documents"));
     const source = fresh("source-elsewhere");
     clone(join(source, "repos", "hidden"), "https://github.com/acme/hidden.git", now);
-    symlinkSync(source, join(home, "source"));
+    fixtureFiles.directoryLink(source, join(home, "source"));
     expect((await findClones({ home, platform: "linux" })).map((entry) => entry.repo)).toEqual(["acme/blog", "acme/shop", "acme/old"]);
     expect((await findClones({ home, platform: "win32" })).map((entry) => entry.repo)).toEqual(["acme/blog", "acme/shop", "acme/old"]);
 
@@ -484,10 +485,10 @@ describe("The clone finder", () => {
     const future = new Date(now + 100_000);
     utimesSync(head, future, future);
     // The history folder itself points outside the code folders.
-    symlinkSync(outside, join(home, "code", "older", ".git", "logs"));
+    fixtureFiles.directoryLink(outside, join(home, "code", "older", ".git", "logs"));
     // A file shortcut inside a real history folder points at the same outside file.
     mkdirSync(join(home, "code", "middle", ".git", "logs"), { recursive: true });
-    symlinkSync(head, join(home, "code", "middle", ".git", "logs", "HEAD"));
+    fixtureFiles.fileLink(head, join(home, "code", "middle", ".git", "logs", "HEAD"));
     // Adding those shortcuts touches the clone's own folder date; put it back, so only a followed link could reorder.
     const olderWhen = new Date(olderAt);
     utimesSync(join(home, "code", "older", ".git"), olderWhen, olderWhen);

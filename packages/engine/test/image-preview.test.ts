@@ -1,7 +1,8 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { expectRejection } from "./rejections.js";
 import { executionFor } from "../src/repository-context.js";
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
@@ -40,9 +41,9 @@ describe("screenshots read directly from a task's working copy", () => {
       await expectRejection(engine.previewImage(id, other), "Only screenshots in this task");
       const outside = join(world.dir, "outside.png");
       await writeFile(outside, png);
-      await symlink(outside, join(copy, "escape.png"));
+      fixtureFiles.fileLink(outside, join(copy, "escape.png"));
       await expectRejection(engine.previewImage(id, join(copy, "escape.png")), "Only screenshots in this task");
-      await symlink(world.clone, join(copy, "outside-folder"), "dir");
+      fixtureFiles.directoryLink(world.clone, join(copy, "outside-folder"));
       await writeFile(join(world.clone, "outside.png"), png);
       await expectRejection(engine.previewImage(id, join(copy, "outside-folder", "outside.png")), "Only screenshots in this task");
       await rm(copy, { recursive: true });
@@ -145,7 +146,7 @@ describe("screenshots read directly from a task's working copy", () => {
     await mkdir(worktree);
     const outside = join(base, "outside.png");
     await writeFile(outside, png);
-    await symlink(outside, join(worktree, "linked.png"));
+    fixtureFiles.fileLink(outside, join(worktree, "linked.png"));
     for (const image of [outside, "../outside.png", "linked.png"]) await expectRejection(readTaskImage(worktree, image), "Only screenshots in this task");
   });
 

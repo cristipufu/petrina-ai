@@ -7,7 +7,7 @@ import { EARLIER_ATTEMPT, formatWhereYouWere, WHERE_YOU_WERE } from "../src/prom
 import { claudeSandbox } from "../src/sandbox.js";
 import { Store } from "../src/store.js";
 import type { Scenario } from "./fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, waitFor } from "./support.js";
+import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, traceTaskWait, waitFor } from "./support.js";
 
 const roots: string[] = [];
 const engines = new Set<EngineProcess>();
@@ -392,7 +392,8 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
     await engine.act("setProductDelivery", productId, "release", false);
     const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
     const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
-    await waitFor(() => fakes.marked("release-manager-started"), "the Release Manager to start");
+    await traceTaskWait("Release Manager startup and its prerequisite steps", () => engine.windowState(), taskId,
+      () => waitFor(() => fakes.marked("release-manager-started"), "the Release Manager to start"));
     expect(find(await engine.state()).conversation).toBeUndefined();
     await engine.kill();
     engine = await harness(home, w.dir, w.remote);

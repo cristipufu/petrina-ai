@@ -5,7 +5,7 @@ import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, indepen
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { EngineOptions } from "./engine.js";
+import { Engine, type EngineOptions } from "./engine.js";
 import type { Scenario } from "./fake-agent.js";
 import { addCopy, ensureWorktree } from "../src/git.js";
 import { Sources } from "../src/sources.js";
@@ -15,10 +15,11 @@ import { beginRepair, invalidateAcceptance, versionsOf } from "../src/repositori
 import { checkReviewEvidence } from "../src/review.js";
 import { ReviewResult } from "../src/roles.js";
 import { Coordination } from "../src/coordination.js";
-import { Fakes, coordinator, finish, git, headNow, itemOf, makeWorld, removeDir, taskOf, until, waitFor, type World } from "./support.js";
+import { Fakes, coordinator, finish, git, headNow, itemOf, makeWorld, removeDir, taskOf, tempDir, until, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];
-afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
+const recordRoots: string[] = [];
+afterAll(() => { worlds.forEach((world) => removeDir(world.dir)); recordRoots.forEach(removeDir); });
 async function setup(name: string) {
   const shop = await makeWorld(`shared-shop-${name}`), api = await makeWorld(`shared-api-${name}`);
   worlds.push(shop, api);
@@ -32,6 +33,24 @@ async function setup(name: string) {
   const sourceRemotes: Record<string, string> = {};
   const start = (options: Partial<EngineOptions> = {}) => shop.start({ ...options, agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir, `--script=${join(shop.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "fake-portfolio-gh.ts"), mapping], remotes, sourceRemotes });
   return { shop, api, start, fakes, remotes, sourceRemotes };
+}
+
+/** Real review records and restart storage, without unrelated Git, planning or agent execution. */
+async function reviewRecords() {
+  const root = tempDir("petrina-review-records-"); recordRoots.push(root);
+  const start = () => new Engine(root);
+  const engine = start(); engine.setPoolPaused(true);
+  try {
+    await engine.waitUntilReady();
+    const first = "first", second = "second";
+    engine.s.products.push(...[first, second].map(id => ({ id, name: id, repo: `acme/${id}`, tone: "blue" as const })));
+    const task = engine.task(engine.addTask({ productId: first, title: "Keep the shared review records", backlog: true }))!;
+    task.repositories = [first, second].map(productId => ({ productId, delivery: "pull-request", completedStages: [] }));
+    const stage = { id: "review", kind: "review-chain" as const, title: "Review both products", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
+    task.plan = { rationale: "Only review recording is under test", plannerProfileId: "sonnet-medium", stages: [stage] };
+    task.stageIndex = 0;
+    return { engine, start, first, second, task, stage };
+  } catch (error) { await engine.shutdown(); throw error; }
 }
 
 /**
@@ -82,14 +101,9 @@ describe.concurrent("one task across products", () => {
     ["unknown-only reports", [undefined, ["foreign"]], [[], []]],
     ["invalid mixed reports", [["first", "foreign"], ["second", "foreign"]], [[], []]],
   ] as const) for (const reverse of [false, true]) it(`keeps explicit finding owners across ${name}${reverse ? " in reverse order" : ""}`, async () => {
-    const { shop, api, start } = await setup(`finding-owners-${name.replaceAll(" ", "-")}-${reverse}`);
-    const engine = start();
+    // The restart/repair case below retains full repository and agent integration.
+    const { engine, first, second, task, stage } = await reviewRecords();
     try {
-      engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const task = engine.task(engine.addTask({ productId: first, title: "Keep known finding owners", backlog: true }))!;
-      task.repositories = [first, second].map((productId) => ({ productId, delivery: "pull-request", completedStages: [] }));
-      const stage = { id: "review", kind: "review-chain" as const, title: "Review both products", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
       const ids = { first, second, foreign: "unregistered-product" };
       const ordered = reverse ? [...reports].reverse() : reports;
       for (const [index, productIds] of ordered.entries()) {
@@ -1242,16 +1256,11 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   for (const order of ["pass-first", "confirmation-first", "dispute-first", "confirmation-before-dispute", "repeated-finding-after-dispute", "repeated-finding-before-dispute", "dispute-without-confirmation", "both-pass"] as const) it(`combines shared fix reviews regardless of completion order, including restart: ${order}`, async () => {
-    const { shop, api, start } = await setup(`shared-verdict-${order}`); let engine = start();
+    const fixture = await reviewRecords(), { first, second, start, stage } = fixture;
+    let engine = fixture.engine, task = fixture.task;
+    const id = task.id;
     try {
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Verify the shared repair" });
-      await until(engine, (state) => !!itemOf(state, id, "delivery"), coordinator(["plan", "design"]));
-      engine.setPoolPaused(true);
-      let task = engine.task(id)!;
-      const stage = task.plan!.stages.find((entry) => entry.kind === "review-chain")!;
       // Two independent reviewers assess the same saved repaired finding.
-      stage.profileIds = ["opus-high", "sol-high"];
       task.hunt = { stageId: stage.id, round: 2, reported: {}, findings: 1 };
       task.rounds[stage.id] = 2;
       task.findings = [{ id: "shared-fix", text: "The journey still fails across both products", productIds: [first, second], severity: "blocking", raisedBy: "earlier-reviewer", status: "open", confirmedBy: [], answer: { at: Date.now(), fixed: true, text: "Repaired" }, answers: Object.fromEntries([first, second].map((id) => [id, { at: Date.now(), fixed: true, text: "Repaired my part" }])) }];
@@ -1290,16 +1299,8 @@ describe.concurrent("shared-task repair regressions", () => {
   });
 
   it("settles single-product objections with the whole group and preserves checks and unresolved ownership", async () => {
-    const { shop, api, start } = await setup("group-objection-controls"); const engine = start();
+    const { engine, first, second, task, stage } = await reviewRecords();
     try {
-      engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const id = engine.addTask({ productId: first, title: "Keep the review evidence", backlog: true });
-      const task = engine.task(id)!;
-      const stage = { id: "review", kind: "review-chain" as const, title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"] };
-      task.plan = { rationale: "Review together", plannerProfileId: "sonnet-medium", stages: [stage] };
-      task.stageIndex = 0;
-      task.repositories = [first, second].map((productId) => ({ productId, delivery: "pull-request", completedStages: [] }));
       task.hunt = { stageId: stage.id, round: 1, reported: {}, findings: 5 };
       task.findings = [
         { id: "single", text: "Single-product problem", productIds: [first] },

@@ -9,7 +9,7 @@ import { updateGitHub, type FakeGitHub } from "./fake-gh.js";
 import { shortTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import type { MachineRecords } from "../src/check-interruption.js";
 import { runChecks as runProductChecks } from "../src/checks.js";
-import { readPrompts, type PromptRecord } from "./prompt-records.js";
+import { PromptReader, type PromptRecord } from "./prompt-records.js";
 import { commitAt, git } from "./commands.js";
 import { currentSlow } from "./slow.js";
 import { processList } from "../src/process-tree.js";
@@ -214,8 +214,11 @@ export interface Open {
 
 /** A fake dir for one test: scenario, prompts, markers and the fake GitHub. */
 export class Fakes {
+  private readonly inputs: PromptReader;
+
   constructor(readonly dir: string) {
     mkdirSync(dir, { recursive: true });
+    this.inputs = new PromptReader(dir);
   }
 
   scenario(value: Scenario): void {
@@ -238,7 +241,7 @@ export class Fakes {
 
   /** Every complete prompt in publication order, with the conversation it went to. */
   received(role?: string): PromptRecord[] {
-    return readPrompts(this.dir).filter((entry) => !role || entry.role === role);
+    return this.inputs.read().filter((entry) => !role || entry.role === role);
   }
 
   /**

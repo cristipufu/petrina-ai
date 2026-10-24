@@ -126,7 +126,12 @@ export class EngineProcess {
   }
 
   async exited(ms: number): Promise<number> {
-    return Promise.race([this.proc.exited, Bun.sleep(ms).then(() => Promise.reject(new Error(`The engine did not stop within ${ms / 1000} seconds`)))]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([this.proc.exited, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`The engine did not stop within ${ms / 1000} seconds`)), ms);
+      })]);
+    } finally { clearTimeout(timer); }
   }
 }
 

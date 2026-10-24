@@ -1,7 +1,8 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { expectRejection } from "./rejections.js";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { addCopy, commitAll, commitTree, contains, copyFolderName, ensureWorktree, fastForward, fetchBranch, githubRepo, githubRepoOf, isClean, mergeTree, moveTo, patchId, push, removeCopies, removeFinishedCopies, removeWorktree, repoInfo, riskySettings, sameRepo } from "../src/git.js";
@@ -80,7 +81,7 @@ describe("Petrina's own git steps", () => {
     await git(repo, "worktree", "lock", old);
     writeFileSync(join(active, "unsaved.txt"), "Keep my work");
     rmSync(oldFolder, { recursive: true, force: true });
-    symlinkSync(activeFolder, oldFolder, process.platform === "win32" ? "junction" : "dir");
+    fixtureFiles.directoryLink(activeFolder, oldFolder);
     expect(await removeFinishedCopies(repo, oldFolder)).toBe(true);
     expect(existsSync(oldFolder)).toBe(false);
     expect(readFileSync(join(active, "unsaved.txt"), "utf8")).toBe("Keep my work");
@@ -200,7 +201,7 @@ describe("Petrina's own git steps", () => {
     const screen = join(real, "screen"), peer = join(real, "peer");
     for (const copy of [screen, peer]) await addCopy(repo, copy, await git(repo, "rev-parse", "HEAD"));
     writeFileSync(join(peer, "unsaved.txt"), "Unrelated work");
-    symlinkSync(real, alias, process.platform === "win32" ? "junction" : "dir");
+    fixtureFiles.directoryLink(real, alias);
     await removeCopies(repo, alias, [join(alias, "screen")]);
     expect(existsSync(alias)).toBe(false);
     expect(readFileSync(join(peer, "unsaved.txt"), "utf8")).toBe("Unrelated work");
@@ -251,7 +252,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     for (const target of [active, repo]) {
       await ensureWorktree(repo, finished, "petrina/finished", "main");
       rmSync(finished, { recursive: true, force: true });
-      symlinkSync(target, finished, process.platform === "win32" ? "junction" : "dir");
+      fixtureFiles.directoryLink(target, finished);
       expect(await removeWorktree(repo, finished)).toBe(true);
       expect(existsSync(finished)).toBe(false);
       const registered = (await git(repo, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree ")).map((field) => realpathSync.native(field.slice("worktree ".length)));
@@ -280,9 +281,9 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     await git(repo, "commit", "-q", "-m", "init");
     // Git records the native folder name; callers can arrive through a parent alias or a Windows
     // short temporary-folder name. Match the record even after the copy's parent is already gone.
-    symlinkSync(parent, alias, process.platform === "win32" ? "junction" : "dir");
+    fixtureFiles.directoryLink(parent, alias);
     await ensureWorktree(repo, copy, `petrina/identity-${missing}`, "main");
-    symlinkSync(cache, join(copy, "cache"), process.platform === "win32" ? "junction" : "dir");
+    fixtureFiles.directoryLink(cache, join(copy, "cache"));
     const refs = await git(repo, "for-each-ref", "--format=%(refname) %(objectname)");
     const registered = async () => (await git(repo, "worktree", "list", "--porcelain", "-z")).split("\0").filter((field) => field.startsWith("worktree "));
     expect(await registered()).toHaveLength(2);

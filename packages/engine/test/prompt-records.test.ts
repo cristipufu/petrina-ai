@@ -1,9 +1,9 @@
 import { expect, it } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import { FAKE_AGENT, Fakes, firstLine, removeDir, tempDir } from "./fixtures.js";
-import { recordPrompt, type PromptRecord } from "./prompt-records.js";
+import { PromptReader, recordPrompt, type PromptRecord } from "./prompt-records.js";
 import { expectRejection } from "./rejections.js";
 
 // Split a real subprocess's write inside a UTF-8 character, then wait for an explicit release.
@@ -48,6 +48,7 @@ const large = "🧩 café 漢字 \"quoted\"\n".repeat(40_000);
 it("records large prompts from simultaneous fake agents with their original conversations and turn order", async () => {
   const root = tempDir("petrina-prompt-agents-");
   const fakes = new Fakes(root), processes: ReturnType<typeof writer>[] = [];
+  const saved = new Map<string, { file: number; state: unknown }>();
   try {
     const participants = await Promise.all(Array.from({ length: 3 }, async (_, index) => {
       const child = Bun.spawn([process.execPath, FAKE_AGENT, root], { stdin: "pipe", stdout: "pipe", stderr: "pipe", windowsHide: true });
@@ -63,15 +64,47 @@ it("records large prompts from simultaneous fake agents with their original conv
       await Promise.all(participants.map(({ client, sessionId, texts }) => client.prompt({ sessionId, prompt: [{ type: "text", text: texts[turn]! }] })));
       expect(fakes.received()).toHaveLength(participants.length * (turn + 1));
       for (const { sessionId, texts } of participants) expect(fakes.received().filter((entry) => entry.session === sessionId)).toEqual(texts.slice(0, turn + 1).map((text) => prompt(sessionId, text)));
+      for (const { sessionId } of participants) {
+        const path = join(root, "conversations", `${sessionId}.json`);
+        if (turn === 0) saved.set(sessionId, { file: openSync(path, "r"), state: JSON.parse(readFileSync(path, "utf8")) });
+        else {
+          const earlier = saved.get(sessionId)!;
+          expect(JSON.parse(readFileSync(earlier.file, "utf8"))).toEqual(earlier.state);
+          expect(JSON.parse(readFileSync(path, "utf8"))).not.toEqual(earlier.state);
+        }
+      }
     }
     for (const { child } of participants) child.stdin.end();
     expect(await Promise.all(processes.map(({ child }) => child.exited))).toEqual([0, 0, 0]);
     expect(await Promise.all(processes.map(({ errors }) => errors))).toEqual(["", "", ""]);
     expect(fakes.opens().map((entry) => entry.session).sort()).toEqual(participants.map((entry) => entry.sessionId).sort());
   } finally {
+    for (const { file } of saved.values()) closeSync(file);
     await stop(processes);
     removeDir(root);
   }
+});
+
+it("reads an immutable prompt once while observing new publications and keeping snapshots private", async () => {
+  const root = tempDir("petrina-prompt-reader-");
+  try {
+    const loaded: string[] = [];
+    const reader = new PromptReader(root, path => { loaded.push(path); return readFileSync(path, "utf8"); });
+    expect(reader.read()).toEqual([]);
+    const first = prompt("first", large), second = prompt("second", "New complete evidence", "builder");
+    await recordPrompt(root, first);
+    const earlier = reader.read();
+    earlier[0]!.text = "A local assertion's edit"; earlier.push(second);
+    expect(reader.read()).toEqual([first]);
+    expect(loaded).toEqual([join(root, "prompts", "1", "prompt.json")]);
+    await recordPrompt(root, second);
+    expect(reader.read()).toEqual([first, second]);
+    expect(loaded).toEqual([join(root, "prompts", "1", "prompt.json"), join(root, "prompts", "2", "prompt.json")]);
+    expect(new Fakes(root).received()).toEqual([first, second]);
+    await recordPrompt(root, prompt("broken", ""), path => writeFileSync(path, "{"));
+    for (let observation = 0; observation < 2; observation++) expect(() => reader.read()).toThrow(SyntaxError);
+    expect(loaded.slice(2)).toEqual([join(root, "prompts", "3", "prompt.json"), join(root, "prompts", "3", "prompt.json")]);
+  } finally { removeDir(root); }
 });
 
 it("keeps complete prompt evidence in publication order while several large writes are in progress", async () => {

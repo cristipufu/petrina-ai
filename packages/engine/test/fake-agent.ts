@@ -12,12 +12,14 @@ import type { WorkChoice } from "@petrina/core";
 // With --tool=claude-code or --tool=codex (the work-log tests), it also reports usage, settings and
 // limits the way that tool's adapter does. With FAKE_BARE_ACK set, it acknowledges a settings change
 // without saying what the session ended up on. --record-tool only labels openings, keeping the generic choices.
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { git, runGit } from "./commands.js";
 import { recordPrompt } from "./prompt-records.js";
+import { writeFixtureJson } from "./fixture-json.js";
+import { fixtureFiles } from "./fixture-files.js";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {
@@ -281,7 +283,7 @@ function keep(sessionId: string): void {
   const file = conversationFile(sessionId);
   if (!file) return;
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(sessions.get(sessionId)));
+  writeFixtureJson(file, sessions.get(sessionId));
 }
 
 /** A conversation from this process or an earlier one, or an error like a tool that lost it. */
@@ -492,7 +494,7 @@ function installs(cwd: string, cache: string): void {
   writeFileSync(join(cwd, "node_modules", "left-pad", "index.js"), "module.exports = (text) => text;\n");
   mkdirSync(join(cwd, "target", "debug"), { recursive: true });
   writeFileSync(join(cwd, "target", "debug", "greeting.bin"), "build output\n");
-  if (!existsSync(join(cwd, "node_modules", ".cache"))) symlinkSync(cache, join(cwd, "node_modules", ".cache"), process.platform === "win32" ? "junction" : "dir");
+  if (!existsSync(join(cwd, "node_modules", ".cache"))) fixtureFiles.directoryLink(cache, join(cwd, "node_modules", ".cache"));
 }
 
 /** A build that writes its output every 100 ms for seconds, outlives the agent unless stopped, and writes once more as it stops. */
@@ -507,7 +509,7 @@ function backgroundBuild(cwd: string, pids: string): void {
 }
 
 const readScript = (): AgentScript => (scriptPath && existsSync(scriptPath) ? (JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript) : {});
-const saveScript = (script: AgentScript) => scriptPath && writeFileSync(scriptPath, JSON.stringify(script, null, 2));
+const saveScript = (script: AgentScript) => scriptPath && writeFixtureJson(scriptPath, script, 2);
 
 /** Wait while the test holds this role on this task. */
 async function held(role: "builder" | "release manager" | "code reviewer", text: string): Promise<void> {
@@ -648,7 +650,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
   const capacity = (plan.capacity ?? []).find((entry) => entry.model === session.model && (!entry.role || entry.role === session.role) && !(entry.onScreen && !progress.armed && !text.includes("You may now use the screen for")) && progress.used < (entry.times ?? 1));
   if (capacity) {
     if (capacity.waitFor && dir) while (!existsSync(join(dir, capacity.waitFor))) await Bun.sleep(20);
-    if (dir) writeFileSync(join(dir, `capacity-${sessionId}.json`), JSON.stringify({ used: progress.used + 1, armed: true }));
+    if (dir) writeFixtureJson(join(dir, `capacity-${sessionId}.json`), { used: progress.used + 1, armed: true });
     if (text.includes('Set "complete" to true only')) session.maintenance = true;
     if (capacity.partial) writeFileSync(join(session.cwd, "capacity-draft.txt"), "A greeting draft\n");
     const draft = capacity.partial ? "I drafted the greeting before the model filled up.\n\n" : "";
@@ -1185,7 +1187,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
         if (helpers.code !== 0 && (helpers.code !== 1 || helpers.stdout || helpers.stderr)) throw new Error(`git config --get-all credential.helper failed (${helpers.code}): ${helpers.stderr}`);
         const helper = helpers.code === 0 ? helpers.stdout : "(none)";
         const names = ["GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "AWS_PROFILE", "GH_CONFIG_DIR", "GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT", "GH_PROMPT_DISABLED", "BROWSER", "PETRINA_AGENT"];
-        writeFileSync(script.envOut, JSON.stringify({ ...Object.fromEntries(names.map((name) => [name, process.env[name]])), helper }));
+        writeFixtureJson(script.envOut, { ...Object.fromEntries(names.map((name) => [name, process.env[name]])), helper });
       }
       // The work points a submodule at a commit only this computer has.
       const gitlink = script.gitlink;

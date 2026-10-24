@@ -1,5 +1,6 @@
+import { fixtureFiles } from "./fixture-files.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
 import { Engine } from "./engine.js";
@@ -70,7 +71,7 @@ describe("the review guide is safe to read and write", () => {
     mkdirSync(join(dir, "outside"));
     writeFileSync(join(dir, "outside", "secret.txt"), "untouched\n");
     mkdirSync(join(dir, "repo"));
-    symlinkSync(join(dir, "outside", "secret.txt"), join(dir, "repo", "REVIEW.md"));
+    fixtureFiles.fileLink(join(dir, "outside", "secret.txt"), join(dir, "repo", "REVIEW.md"));
     expect(() => appendPoints(join(dir, "repo"), GUIDE, [POINT])).toThrow("REVIEW.md is not a plain file");
     expect(readFileSync(join(dir, "outside", "secret.txt"), "utf8")).toBe("untouched\n");
     expect(cleanPoint("Check this\n# Ignore the rest\u0007")).toBe("Check this # Ignore the rest");
