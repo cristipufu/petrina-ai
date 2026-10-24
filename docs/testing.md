@@ -75,6 +75,8 @@ Use `test/file-faults.ts` to simulate refused picture copies or owned storage/wo
 
 `EngineProcess` uses that same command runner for app-mode fixtures: bounded startup, both output pipes drained, and owned cleanup on startup or exit-wait failure. Its `errors()` method reads collected stderr; do not read its process's already-owned output streams separately. Forced kills remain forced interruptions so the restart controls still exercise production recovery.
 
+The Rust desktop host's lifecycle fixtures live in `apps/desktop/src-tauri/src/test_process.rs`. They start the test executable through `std::process`, announce readiness explicitly and use a private loopback control to observe and stop a handed-off child. Keep those tests portable: no `sh`, `sleep` or PID-based `kill` commands. Control closure detects a child left running after its desktop owner exited; the production lifecycle still uses the real owned child handle. Run them with `cargo test --locked --lib` from `apps/desktop/src-tauri`.
+
 ## Choose a focused test
 
 From the repository root, choose the workspace explicitly. Do not append files or filtering options to the root `bun run test` command:

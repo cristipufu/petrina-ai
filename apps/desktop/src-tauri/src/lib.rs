@@ -24,6 +24,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewWindow};
 use tauri_plugin_notification::NotificationExt;
 
+#[cfg(test)]
+mod test_process;
+
 /// How long a starting engine may take to say it is ready.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long an ordinary desktop recovery or quit gives the owned engine to exit cleanly.
@@ -728,137 +731,81 @@ mod tests {
         assert_eq!(handoff_event(r#"{"type":"handoff","active":true,"requestId":"private"}"#), None);
     }
 
-    #[cfg(unix)]
-    fn controlled_child(script: Option<&str>) -> Started {
-        let mut command = if let Some(script) = script {
-            let mut command = Command::new("sh");
-            command.args(["-c", script]);
-            command
-        } else {
-            Command::new("sleep")
-        };
-        if script.is_none() { command.arg("30"); }
-        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-        let mut child = command.spawn().expect("controlled child starts");
-        let handoff = Arc::new(AtomicBool::new(false));
-        let stdout = child.stdout.take().unwrap();
-        let line = child.stdin.take();
-        let reader_handoff = Arc::clone(&handoff);
-        thread::spawn(move || read_handoff_events(BufReader::new(stdout), reader_handoff));
-        Started { child, line, hello: "ready".into(), handoff }
-    }
+    use super::test_process::{child_entry, controlled_child, start_child, Control, Listener, OwnedOuter};
 
-    #[cfg(unix)]
-    fn process_alive(pid: u32) -> bool {
-        Command::new("kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).status().is_ok_and(|status| status.success())
-    }
-
-    #[cfg(unix)]
-    fn kill_controlled(pid: u32) {
-        let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).stderr(Stdio::null()).status();
-    }
-
-    #[cfg(unix)]
     #[test]
     fn recovery_rechecks_a_handoff_arriving_during_shutdown_before_killing() {
-        let started = controlled_child(Some("read ignored; printf '%s\\n' '{\"type\":\"handoff\",\"active\":true}'; exec sleep 30"));
-        let pid = started.child.id();
-        let mut old = stop_for_recovery_with_grace(started, Duration::from_secs(1)).expect_err("accepted handoff must preserve child");
+        let (started, mut control) = controlled_child("handoff");
+        let old = stop_for_recovery_with_grace(started, Duration::from_secs(1)).expect_err("accepted handoff must preserve child");
         assert!(old.handoff.load(Ordering::Acquire));
-        assert!(process_alive(pid));
-        kill_controlled(pid);
-        let _ = old.child.wait();
-        assert!(!process_alive(pid));
+        let mut child = OwnedOuter(old.child);
+        assert!(child.0.try_wait().unwrap().is_none());
+        control.ping();
+        control.quit();
+        assert!(child.0.wait().unwrap().success(), "fixture owner reaps its handed-off child");
     }
 
-    #[cfg(unix)]
     #[test]
     fn ordinary_recovery_kills_a_live_child_after_its_grace() {
-        let started = controlled_child(None);
-        let pid = started.child.id();
+        let (started, mut control) = controlled_child("hold");
         assert!(stop_for_recovery_with_grace(started, Duration::from_millis(100)).is_ok());
-        assert!(!process_alive(pid));
+        control.stopped();
     }
 
-    #[cfg(unix)]
     #[test]
     fn ordinary_quit_closes_stdin_and_reaps_a_cooperative_child() {
-        let started = controlled_child(Some("cat >/dev/null"));
-        let pid = started.child.id();
+        if child_entry() { return; }
+        let (started, mut control) = controlled_child("cooperative");
         stop(started);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while process_alive(pid) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(!process_alive(pid), "ordinary quit should let the child exit on stdin EOF");
+        control.stopped();
     }
 
-    #[cfg(unix)]
-    fn outer_exit_probe(mode: &str) -> u32 {
-        use std::process::ExitStatus;
-        let pid_file = std::env::temp_dir().join(format!("petrina-shell-child-{}-{mode}.pid", std::process::id()));
-        let _ = std::fs::remove_file(&pid_file);
-        let mut outer = Command::new(std::env::current_exe().expect("test executable path"))
+    fn outer_exit_probe(mode: &str) -> Control {
+        let listener = Listener::new();
+        let mut outer = OwnedOuter(Command::new(std::env::current_exe().expect("test executable path"))
             .args(["--exact", "tests::desktop_shutdown_waits_for_owned_child_or_preserves_handoff", "--nocapture"])
             .env("PETRINA_OUTER_EXIT_CHILD_CASE", mode)
-            .env("PETRINA_OUTER_EXIT_PID_FILE", &pid_file)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("outer shell test process starts");
+            .env("PETRINA_OUTER_CONTROL_ADDRESS", listener.address())
+            .env_remove("PETRINA_TEST_SHELL_CHILD").env_remove("PETRINA_TEST_SHELL_CONTROL")
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().expect("outer shell test process starts"));
+        let control = listener.accept().expect("outer shell's child connects to its fixture owner");
         let deadline = Instant::now() + Duration::from_secs(12);
-        let status: ExitStatus = loop {
-            if let Some(status) = outer.try_wait().expect("outer test process can be checked") { break status; }
+        let status = loop {
+            if let Some(status) = outer.0.try_wait().expect("outer test process can be checked") { break status; }
             assert!(Instant::now() < deadline, "outer shell process must exit after stop returns");
             thread::sleep(Duration::from_millis(20));
         };
         assert!(status.success(), "outer shell test process should exit successfully");
-        let pid: u32 = std::fs::read_to_string(&pid_file).expect("owned child pid was recorded").parse().expect("pid is numeric");
-        let _ = std::fs::remove_file(pid_file);
-        pid
+        control
     }
 
-    #[cfg(unix)]
     #[test]
     fn desktop_shutdown_waits_for_owned_child_or_preserves_handoff() {
         if let Ok(mode) = std::env::var("PETRINA_OUTER_EXIT_CHILD_CASE") {
-            let script = if mode == "handoff" {
-                "read ignored; printf '%s\\n' '{\"type\":\"handoff\",\"active\":true}'; exec sleep 30"
-            } else {
-                "exec sleep 30"
-            };
-            let started = controlled_child(Some(script));
-            let pid = started.child.id();
-            std::fs::write(std::env::var("PETRINA_OUTER_EXIT_PID_FILE").unwrap(), pid.to_string()).unwrap();
+            let address = std::env::var("PETRINA_OUTER_CONTROL_ADDRESS").unwrap();
+            let started = start_child(if mode == "handoff" { "handoff" } else { "hold" }, &address);
             stop(started);
             std::process::exit(0);
         }
 
-        let recovered_pid = outer_exit_probe("ordinary");
-        assert!(!process_alive(recovered_pid), "ordinary shutdown must kill/reap before the outer shell exits");
+        let mut recovered = outer_exit_probe("ordinary");
+        recovered.stopped();
 
-        let handoff_pid = outer_exit_probe("handoff");
-        assert!(process_alive(handoff_pid), "accepted handoff must survive outer shell exit");
-        kill_controlled(handoff_pid);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while process_alive(handoff_pid) && Instant::now() < deadline { thread::sleep(Duration::from_millis(10)); }
-        assert!(!process_alive(handoff_pid), "test cleanup reaps its detached controlled child");
+        let mut handed_off = outer_exit_probe("handoff");
+        handed_off.ping();
+        handed_off.quit();
     }
 
-    #[cfg(unix)]
     #[test]
     fn an_accepted_handoff_survives_beyond_the_eight_second_shutdown_grace() {
         assert_eq!(STOP_GRACE, Duration::from_secs(8));
-        let started = controlled_child(None);
+        let (started, mut control) = controlled_child("hold");
         started.handoff.store(true, Ordering::Release);
-        let pid = started.child.id();
         stop(started);
         thread::sleep(Duration::from_millis(8_100));
-        assert!(process_alive(pid));
-        kill_controlled(pid);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while process_alive(pid) && Instant::now() < deadline { thread::sleep(Duration::from_millis(10)); }
-        assert!(!process_alive(pid));
+        control.ping();
+        control.quit();
     }
 
     fn screen(x: f64, y: f64, width: f64, height: f64) -> Area {
