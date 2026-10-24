@@ -2,11 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
-import { Engine } from "./engine.js";
+import { Engine, writeFixtureEngineOptions } from "./engine.js";
 import { waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "../src/repository-context.js";
 import { ExtraFixtures } from "./extra-fixtures.js";
+import { FileFaults } from "./file-faults.js";
 
 const owned = new ExtraFixtures();
 const { engines } = owned;
@@ -36,7 +37,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     const record = await f.submit("crash-running", ["probe", output === "saved output" ? "hold" : "hold-silent"]);
     await f.engine.shutdown();
     const settings = join(f.root, "settings.json");
-    writeFileSync(settings, JSON.stringify(f.settings));
+    writeFixtureEngineOptions(settings, f.settings);
     const folder = join(f.data, "checks", record.taskId);
     if (output === "no log file") {
       mkdirSync(join(f.data, "checks"), { recursive: true });
@@ -170,14 +171,15 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
   });
 
   for (const heldCopy of [false, true]) it(`returns interrupted preparation to its original place${heldCopy ? " after cleanup was held" : ""}`, async () => {
-    const f = await fixture();
+    const faults = new FileFaults();
+    const f = await fixture({ files: faults.files });
     const record = await f.submit("crash-preparing", ["probe", "pass"]);
     const second = await f.add();
     const following = await f.submit("after-preparation", ["probe", "pass"], second.id);
     const current = f.engine.s.extraValidations![0]!;
     current.state = "preparing";
     mkdirSync(current.snapshot, { recursive: true }); writeFileSync(join(current.snapshot, "partial"), "incomplete copy");
-    const allowRemoval = heldCopy ? f.faults.blockRemoval(current.snapshot) : () => {};
+    const allowRemoval = heldCopy ? faults.blockRemoval(current.snapshot) : () => {};
     try {
       f.engine.commitNow(); await f.engine.shutdown();
       const replacement = new Engine(f.data, f.settings); engines.push(replacement);
@@ -287,10 +289,11 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
   });
 
   it("makes copy-cleanup failures visible across restart and retries them without leaking a hidden place", async () => {
-    const f = await fixture();
+    const faults = new FileFaults();
+    const f = await fixture({ files: faults.files });
     const record = await f.submit("copy-cleanup");
     f.engine.setPoolPaused(false); await f.started(record);
-    const allowRemoval = f.faults.blockRemoval(record.snapshot);
+    const allowRemoval = faults.blockRemoval(record.snapshot);
     try {
       f.release(record);
       await waitFor(() => f.engine.s.extraValidations?.[0]?.state === "held", "inaccessible copy to hold cleanup");

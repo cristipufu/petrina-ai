@@ -716,8 +716,8 @@ describe("explicit repository execution contexts", () => {
       const main = spyOn(gitOps, "removeWorktree").mockResolvedValue(true);
       try {
         await new Cleanup(engine).removeCopy(task.id);
-        expect(copies.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, join(engine.dataDir, "worktrees", work.productId, `${task.id}.copies`)]));
-        expect(main.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, work.worktree!]));
+        expect(copies.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, join(engine.dataDir, "worktrees", work.productId, `${task.id}.copies`), engine.files]));
+        expect(main.mock.calls).toEqual(works.map((work) => [work.source!.product.path!, work.worktree!, engine.files]));
         expect(works.every((work) => work.cleanup?.reviewCopiesRemovedAt !== undefined)).toBe(true);
         const times = works.map(work => ({ ...work.cleanup }));
         copies.mockClear(); main.mockClear();

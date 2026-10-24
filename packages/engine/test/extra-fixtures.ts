@@ -10,7 +10,6 @@ import { EngineClient } from "./client.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { completeAll } from "../src/parallel.js";
-import { FileFaults } from "./file-faults.js";
 
 /** Owned writable state for every extra-validation test, including failed setup and replaced engines. */
 export class ExtraFixtures {
@@ -24,9 +23,8 @@ export class ExtraFixtures {
     const root = tempDir("petrina-extra-"); this.roots.push(root);
     const service = join(root, "service"); mkdirSync(service);
     const data = join(root, "data");
-    const faults = new FileFaults();
     const settings: EngineOptions = { agentCommand: () => { throw new Error("Extra-validation controls must not start agents"); }, containerTool: [process.execPath, join(import.meta.dir, "fake-extra-container.ts"), service],
-      extraCleanupEveryMs: 60_000, files: faults.files, ...options };
+      extraCleanupEveryMs: 60_000, ...options };
     const engine = new Engine(data, settings); this.engines.push(engine); engine.setPoolPaused(true);
     const productId = await engine.addProduct(await makeProduct(root));
     const add = async () => {
@@ -54,7 +52,7 @@ export class ExtraFixtures {
       await waitFor(() => engine.extraValidations.get(record.requestId)?.outcome === "completed", "extra evidence to finish");
       return engine.extraValidations.get(record.requestId)!.validation as ExtraValidation;
     };
-    return { root, data, settings, service, engine, faults, productId, task, add, coordination, request, submit, started, release, finished };
+    return { root, data, settings, service, engine, productId, task, add, coordination, request, submit, started, release, finished };
   }
 }
 

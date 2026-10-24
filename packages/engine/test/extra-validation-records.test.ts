@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
-import { Engine } from "./engine.js";
+import { Engine, writeFixtureEngineOptions } from "./engine.js";
 import { git, makeProduct, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "../src/repository-context.js";
@@ -211,7 +211,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
     const f = await fixture(), record = await f.submit("atomic-late-crash", ["probe", "pass"]);
     await f.engine.shutdown();
     const settings = join(f.root, "checkpoint-settings.json"), marker = join(f.root, "checkpoint-marker.json");
-    writeFileSync(settings, JSON.stringify(f.settings));
+    writeFixtureEngineOptions(settings, f.settings);
     const child = Bun.spawn([process.execPath, join(import.meta.dir, "extra-checkpoint-crash.ts"), f.data, settings, marker, phase, storage], { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
     let replacement: Engine | undefined;
     try {

@@ -1,6 +1,8 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
-import { Engine, fixtureEngineOptions } from "./engine.js";
+import { Engine, fixtureEngineOptions, writeFixtureEngineOptions } from "./engine.js";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { FileFaults } from "./file-faults.js";
 import { AgentRun } from "../src/acp-run.js";
 import { ADAPTERS, agentCommandFor } from "../src/tools.js";
 import { FAKE_AGENT, Fakes, removeDir, tempDir } from "./fixtures.js";
@@ -9,6 +11,23 @@ import { TAKE_OVER_WORDS } from "@petrina/core";
 
 const root = tempDir("petrina-engine-boundary-");
 afterAll(() => removeDir(root));
+
+it("rejects process-local adapters before replacing a child fixture's settings", () => {
+  const path = join(root, "blocked-child-options.json");
+  writeFileSync(path, "Existing settings");
+  expect(() => writeFixtureEngineOptions(path, { files: new FileFaults().files })).toThrow("File effects are process-local");
+  expect(readFileSync(path, "utf8")).toBe("Existing settings");
+  const absent = join(root, "absent-child-options.json");
+  expect(() => writeFixtureEngineOptions(absent, { files: new FileFaults().files })).toThrow("File effects are process-local");
+  expect(existsSync(absent)).toBe(false);
+});
+
+it("publishes child fixture configuration as data, leaving its guarded agent command to the child", () => {
+  const path = join(root, "child-options.json");
+  writeFixtureEngineOptions(path, { containerTool: [process.execPath, "private-container.ts"], extraCleanupEveryMs: 60_000,
+    agentCommand: () => { throw new Error("The writer must not start an agent"); } });
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ containerTool: [process.execPath, "private-container.ts"], extraCleanupEveryMs: 60_000 });
+});
 
 it("never creates a native usage reader by default, but lets a test explicitly supply its own", async () => {
   const path = tempDir("petrina-usage-fixture-");

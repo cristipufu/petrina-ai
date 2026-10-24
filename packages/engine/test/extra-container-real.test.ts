@@ -3,7 +3,7 @@ import * as childProcess from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, type ExtraValidation } from "@petrina/core";
-import { Engine, type EngineOptions } from "./engine.js";
+import { Engine, writeFixtureEngineOptions, type EngineOptions } from "./engine.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "../src/repository-context.js";
@@ -157,7 +157,7 @@ echo snapshot-control-passed`;
     try {
       const record = await f.submit("real-crash", ["sh", "-ec", "test -z \"${HTTP_PROXY:-}${http_proxy:-}${HTTPS_PROXY:-}${https_proxy:-}\"; echo workload-started; exec sleep 300"]);
       await f.engine.shutdown();
-      const settings = join(f.root, "settings.json"); writeFileSync(settings, JSON.stringify(f.settings));
+      const settings = join(f.root, "settings.json"); writeFixtureEngineOptions(settings, f.settings);
       const config = join(f.root, "client-config"); mkdirSync(config);
       writeFileSync(join(config, "config.json"), JSON.stringify({ proxies: { default: { httpProxy: "http://fake-user:fixture-only@invalid.example:9", httpsProxy: "http://fake-user:fixture-only@invalid.example:9" } } }));
       const contexts = JSON.parse(await containerCommand(["docker", "context", "inspect"], 4_000, true));
