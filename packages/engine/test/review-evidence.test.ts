@@ -5,6 +5,7 @@ import { tempDir, removeDir } from "./fixtures.js";
 import { executionFor } from "../src/repository-context.js";
 import { Coordination } from "../src/coordination.js";
 import { ReviewResult } from "../src/roles.js";
+import { formatFindings } from "../src/prompts.js";
 
 const roots: string[] = [];
 const engines: Engine[] = [];
@@ -417,6 +418,39 @@ for (const rule of ["majority", "bounded"] as const) it(`keeps the reviewers' pr
   expect(event.nodeId).toBe("vote");
   expect(step.agentResults).toEqual(own);
   expect(f.task.journey![0]).toEqual(before);
+});
+
+for (const [verdict, label] of [["pre-existing", "an older bug unrelated to the approved task"], ["nit", "only a nit"], ["not-a-bug", "not a bug"]] as const) it(`records the scope of a disputed ${verdict} vote in saved reasons and downstream findings, preserving history`, async () => {
+  const repair = finding("required-repair", { text: "The explicitly requested older repair still fails.", evidence: "The starting and current versions fail the requested case; the nearby control passes." });
+  const f = fixture([repair]);
+  const oldReason = "An earlier verifier answered older than the change: the problem was already there.";
+  f.task.journey![0]!.result = { findings: [finding("historical", { verification: { by: "sol-high", verdict: "real", reason: oldReason, at: 1 } })], findingsSettled: true };
+  const history = structuredClone(f.task.journey![0]);
+  const panel: VerifierPanel = {
+    rule: "bounded", usable: ["codex", "grok"],
+    seats: [{ key: "real", profileId: "sol-high", toolId: "codex", findingIds: [repair.id], reason: "Check the required repair" },
+      { key: "dispute", profileId: "grok-high", toolId: "grok", findingIds: [repair.id], reason: "Independently check the same finding" }],
+  };
+  f.task.hunt!.panel = structuredClone(panel) as DeepMutable<VerifierPanel>;
+  const realReason = "The approved task explicitly requires this older repair; the current reproduction still fails.";
+  const disputeReason = "The independent verifier's recorded explanation.";
+  repair.votes = panel.seats.map(seat => ({ by: seat.profileId, toolId: seat.toolId, verdict: seat.key === "real" ? "real" : verdict, reason: seat.key === "real" ? realReason : disputeReason, ballot: ballotOf(f.task.hunt!, seat.key) }));
+  f.task.journey!.push({ id: "vote", kind: "agent", roleId: "verifier", profileId: "sol-high", stageId: "review", round: 1, sub: 0, startedAt: Date.now() });
+  const votes = structuredClone(repair.votes);
+  const outcome = f.engine["reviews"]["tally"](f.task, { findings: f.task.findings, seats: [], voters: [], panel });
+  expect(outcome).toBe("1 checked: 1 must be fixed in this change (1 disputed)");
+  expect(repair.status).toBe("open"); expect(repair.severity).toBe("blocking");
+  expect(repair.verification?.verdict).toBe("real");
+  expect(repair.verification!.reason).toStartWith(`${realReason} Disputed: `);
+  expect(repair.verification!.reason).toContain(`answered ${label}: ${disputeReason}`);
+  expect(repair.votes).toEqual(votes);
+  expect(f.task.journey!.at(-1)!.result?.findings?.[0]?.verification).toEqual(repair.verification);
+  expect(formatFindings([repair], { complete: true })).toContain(repair.verification!.reason);
+  expect(f.task.journey![0]).toEqual(history);
+  await f.engine.shutdown();
+  const reloaded = start(f.home).task(f.task.id)!;
+  expect(reloaded.findings[0]!.verification).toEqual(repair.verification);
+  expect(reloaded.journey![0]).toEqual(history);
 });
 
 it("settles added reviewer roles by their result contract", async () => {

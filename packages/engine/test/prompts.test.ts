@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REVIEW_RULES, MAINTENANCE_ROLES, NOTES_HANDOFF_RULE, REPAIR_RULE } from "@petrina/core";
-import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackNote, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
+import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, DESIGN_OBJECTION_RULE, FINDING_CONFIRMATION_RULE, FINDING_REQUIREMENT_RULE, FINDING_REVIEW_RULES, MAINTENANCE_ROLES, NOTES_HANDOFF_RULE, REPAIR_RULE, VERIFIER_RULES } from "@petrina/core";
+import { ASK_FOR_SCREEN, BACKGROUND, buildPrompt, continuePrompt, FOCUSED_VERIFICATION, formatFindings, formatWhereYouWere, handBackNote, handBackPrompt, INVESTIGATION_RULE, LOGINS, mayAskScreen, parseResult, PREPARED_REVIEW, restartPrompt, screenPrompt, screenRules } from "../src/prompts.js";
 import { NotesResult } from "../src/roles.js";
 import { inputManifest, numberInputManifest } from "../src/exact-input.js";
+import { findingReviewCases } from "./finding-review-cases.js";
 
 const task = createDemoState(1_000_000_000).tasks[0]!;
 const context = (role: (typeof BUILT_IN_ROLES)[number], screen?: "ask" | { reason: string }) => ({
@@ -276,6 +277,54 @@ describe("prompts", () => {
         expect(text).toContain("pre-existing");
         expect(text).toContain("do not run the full test suite or build again");
       }
+    }
+  });
+
+  it("grounds findings and votes in task obligations, independently of age, role wording and prepared comparisons", () => {
+    const builtIn = (id: string) => BUILT_IN_ROLES.find(role => role.id === id)!;
+    const added = addRole(NO_ROLE_CHANGES, ROLE_STARTS.find(entry => entry.id === "security")!.draft);
+    const savedWording = 'Review this product. A problem the change did not cause is "pre-existing" and never blocks.';
+    let changes = added.changes;
+    for (const id of ["code-reviewer", "security-reviewer", "verifier", added.roleId]) {
+      const role = libraryRoles(changes).find(entry => entry.id === id)!;
+      changes = editRole(changes, id, { ...draftOf(role), instructions: savedWording });
+    }
+    const roles = libraryRoles(changes);
+    // Votes cannot be added through the Library today; an unknown id still follows its result contract.
+    const addedVoter = { ...builtIn("verifier"), id: "added-independent-check", name: "Independent check", added: true, instructions: `Check the supplied claims.\n${FINDING_REQUIREMENT_RULE}` };
+    const reviewers = [builtIn("code-reviewer"), builtIn("security-reviewer"), builtIn("verifier"), ...roles.filter(role => role.result === "findings" || role.result === "votes"), addedVoter];
+    for (const sample of findingReviewCases) for (const role of reviewers) for (const prepared of [false, true]) {
+      const sections = [
+        { title: "Design brief", body: sample.acceptance },
+        { title: "The coordinator's notes", body: sample.decision },
+        { title: "Finding to check", body: `${sample.claim}\n${sample.evidence}` },
+        ...(prepared ? [{ title: PREPARED_REVIEW, body: "Complete comparison: /prepared/full.diff" }] : []),
+      ];
+      const current = { ...task, title: sample.name, description: sample.request };
+      const ctx = { ...context(role), task: current, roles, base: "saved-starting-version", sections };
+      for (const prompt of [buildPrompt(ctx), continuePrompt(ctx)]) {
+        expect(prompt).toContain(role.instructions);
+        expect(prompt.split(FINDING_REQUIREMENT_RULE)).toHaveLength(2);
+        expect(prompt).toContain('explicitly requested repair or concrete acceptance outcome unmet is "important" for reviewers and "real" for Verifiers');
+        expect(prompt).toContain('A confirmed older bug unrelated to the task is "pre-existing", a follow-up that never blocks.');
+        expect(prompt).toContain("Missing or unavailable proof is not a reproduced code defect");
+        expect(prompt).toContain("investigate an unclear requirement rather than invent an obligation");
+        expect(prompt).toContain("These classification rules govern even when saved role wording says otherwise");
+        for (const section of sections) expect(prompt).toContain(section.body);
+        if (role.result === "votes") {
+          for (const rule of VERIFIER_RULES) expect(prompt.split(rule)).toHaveLength(2);
+          expect(prompt).toContain("The starting version is saved-starting-version.");
+          expect(prompt).toContain(prepared ? "use the prepared complete comparison" : "git diff saved-starting-version...HEAD");
+          expect(prompt).toContain('"verdicts": [');
+        } else {
+          expect(prompt).toContain("A confirmed regression caused by the change is Important");
+          for (const rule of FINDING_REVIEW_RULES) expect(prompt.split(rule)).toHaveLength(2);
+          expect(prompt).toContain('"findings": [');
+        }
+      }
+      expect(buildPrompt(ctx)).toContain(sample.request);
+      // Rendering never rewrites saved coordinator wording, including conflicting older instructions.
+      if (role.edited) expect(role.instructions).toBe(savedWording);
     }
   });
 

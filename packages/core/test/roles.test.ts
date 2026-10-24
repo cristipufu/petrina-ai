@@ -9,6 +9,7 @@ import {
   draftOf,
   editRole,
   FINDING_REVIEW_RULES,
+  FINDING_REQUIREMENT_RULE,
   libraryRoles,
   journeyProblems,
   NO_ROLE_CHANGES,
@@ -19,6 +20,7 @@ import {
   ROLE_LIMITS,
   ROLE_STARTS,
   REPAIR_RULE,
+  VERIFIER_RULES,
   Simulator,
   stepMayChange,
   type Role,
@@ -46,12 +48,18 @@ describe("the role library", () => {
       const role = builtIn(id);
       for (const rule of FINDING_REVIEW_RULES) expect(role.instructions.split(rule)).toHaveLength(2);
     }
+    for (const rule of VERIFIER_RULES) expect(builtIn("verifier").instructions.split(rule)).toHaveLength(2);
+    expect(builtIn("verifier").handsBack).toContain("unrelated older bug");
+    for (const id of ["code-reviewer", "security-reviewer", "verifier"]) {
+      expect(builtIn(id).instructions).toContain(FINDING_REQUIREMENT_RULE);
+      expect(builtIn(id).instructions).not.toContain('"pre-existing": the problem was already there before this change');
+    }
     // Every built-in notes role shows the handoff rule once, after its own job.
     const notes = BUILT_IN_ROLES.filter((role) => role.result === "notes");
     expect(notes.map((role) => role.id)).toEqual(["researcher", "ux-designer"]);
     for (const role of notes) expect(role.instructions.split(NOTES_HANDOFF_RULE)).toEqual([expect.stringMatching(/\S\n$/), ""]);
     expect(builtIn("ux-designer").instructions).toContain("describe the design in your notes");
-    for (const id of ["builder", "code-reviewer", "security-reviewer", "researcher", "ux-designer"]) {
+    for (const id of ["builder", "code-reviewer", "security-reviewer", "verifier", "researcher", "ux-designer"]) {
       const role = builtIn(id);
       // The defaults fit the same editor limits as coordinator-authored wording.
       expect(() => editRole(NO_ROLE_CHANGES, id, draftOf(role))).not.toThrow();
@@ -59,6 +67,18 @@ describe("the role library", () => {
       expect(roleIn(changes, id).instructions).toBe("Follow our product's conventions.");
       expect(roleIn(resetRole(changes, id), id).instructions).toBe(role.instructions);
     }
+  });
+
+  it("preserves older saved classification wording verbatim rather than migrating custom instructions", () => {
+    const wording = 'A problem the change did not cause is "pre-existing" and never blocks.';
+    const changes = {
+      edits: Object.fromEntries(["code-reviewer", "security-reviewer", "verifier"].map((id) => [id, { instructions: wording }])),
+      added: [{ ...builtIn("code-reviewer"), id: "added-compatibility", name: "Compatibility", instructions: wording, added: true }],
+    };
+    const before = JSON.stringify(changes);
+    for (const id of [...Object.keys(changes.edits), "added-compatibility"]) expect(roleIn(changes, id).instructions).toBe(wording);
+    expect(JSON.stringify(changes)).toBe(before);
+    expect(builtIn("verifier").instructions).toContain("explicitly requested repair");
   });
 
   it("loads data saved before roles were editable, and ignores what is not a role change", () => {

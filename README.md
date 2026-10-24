@@ -33,11 +33,11 @@ An architect proposes the design and a design reviewer challenges it, using diff
   <img src="docs/screenshots/flow-review.png" alt="A task's flow: the build and automated checks have passed, and two code reviewers are examining the change together." />
 </p>
 
-A review finding must hold up before it can send work back. Reviewers mark findings **Important**, **Nit** or **Pre-existing**. Only confirmed Important findings block delivery; smaller issues and problems the change did not cause stay on the record without another builder round.
+A review finding must hold up before it can send work back. Reviewers mark findings **Important**, **Nit** or **Pre-existing**. Only confirmed Important findings block delivery; smaller issues and confirmed older bugs unrelated to the approved task stay on the record without another builder round. Age alone is no exemption: an older defect can remain Important when it leaves an explicitly requested repair or concrete acceptance outcome unmet. Reviewers and Verifiers explain the governing request, brief or coordinator decision and the current reproduction.
 
 | Step | What happens |
 | --- | --- |
-| **Reviewers** | Reviewers read the change at the same time, each in a separate conversation and working copy. They see neither the builder's transcript nor each other's current verdicts. Important means the change should not ship with the issue; Nit means it is smaller; Pre-existing means this change did not cause it. |
+| **Reviewers** | Reviewers read the change at the same time, each in a separate conversation and working copy. They see neither the builder's transcript nor each other's current verdicts. Important means the change should not ship with the issue; Nit means it is smaller; Pre-existing means a confirmed older bug unrelated to the approved task. |
 | **Checks** | Petrina runs the product's checks itself. A passing result is evidence from the command, not an agent's claim. |
 | **Verifiers** | Support from another tool confirms an Important finding. Otherwise, two fresh verifiers on different available tools check it in parallel, avoiding the tool that reported it where they can. Any real answer keeps it blocking. When both say it does not block and a third tool was available, that tool gives a third answer before it is recorded as a nit, pre-existing or not a bug. |
 | **Security** | High-risk work gets a security review, preferring a tool that did not build the change. The same finding rules apply. The planner sets the risk; unrated work counts as medium. |

@@ -3,7 +3,7 @@ import { executionFor } from "../src/repository-context.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, NOTES_HANDOFF_RULE, REPAIR_RULE, ROLE_STARTS, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
+import { BUILT_IN_ROLES, MAINTENANCE_ROLES, draftOf, FINDING_REVIEW_RULES, journeyProblems, mainLine, NOTES_HANDOFF_RULE, REPAIR_RULE, ROLE_STARTS, VERIFIER_RULES, type AnalyticsUsage, type RoleDraft, type State, type Task, type TaskUsage } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { EARLIER_REPORTS_RULE } from "../src/context.js";
@@ -288,6 +288,9 @@ describe("roles the coordinator edits and adds", () => {
     await engine.act("saveRole", "researcher", { ...researcher, purpose: "Finds out what people expect, with sources." });
     const builder = (await engine.state()).roles.find((role) => role.id === "builder")!;
     await engine.act("saveRole", "builder", { ...draftOf(builder), instructions: "Keep the greeting simple and match this product's style." });
+    const verifier = (await engine.state()).roles.find((role) => role.id === "verifier")!;
+    const verifierWording = "Check each reported problem against the approved request.";
+    await engine.act("saveRole", "verifier", { ...draftOf(verifier), instructions: verifierWording });
     const security = (await engine.act("addRole", start("security"))) as string;
     const copywriter = (await engine.act("addRole", COPYWRITER)) as string;
     const factChecker = (await engine.act("addRole", FACT_CHECKER)) as string;
@@ -371,6 +374,12 @@ describe("roles the coordinator edits and adds", () => {
     expect(reviews[0]).toContain("Look for security problems the change brings in");
     expect(reviews[0]).toContain("## What the builder reports");
     for (const prompt of reviews) for (const rule of FINDING_REVIEW_RULES) expect(prompt.split(rule)).toHaveLength(2);
+    const votes = fakes.openings("verifier");
+    expect(votes.length).toBeGreaterThan(0);
+    for (const prompt of votes) {
+      expect(prompt).toContain(verifierWording);
+      for (const rule of VERIFIER_RULES) expect(prompt.split(rule)).toHaveLength(2);
+    }
     expect(reviews[1]).toContain("## Findings so far (confirm or dispute by id)");
     // It follows the rule that a dispute always gives its reason: it is told so, and Petrina refused its dispute without one.
     expect(reviews[0]).toContain("Dispute findings you think are wrong by id, always with the reason and your evidence");
@@ -391,6 +400,7 @@ describe("roles the coordinator edits and adds", () => {
     await engine.quit();
     engine = await EngineProcess.harness(home, fakes.dir, join(root, "origin.git"));
     const roles = (await engine.state()).roles;
+    expect(roles.find(role => role.id === "verifier")?.instructions).toBe(verifierWording);
     expect(roles.find((role) => role.id === "researcher")).toMatchObject({ purpose: "Finds out what people expect, with sources.", edited: true });
     expect(roles.find((role) => role.id === copywriter)).toMatchObject({ name: "Copywriter", canEdit: false, added: true });
     expect(roles.find((role) => role.id === security)).toMatchObject({ result: "findings", canEdit: false, column: "reviewing" });

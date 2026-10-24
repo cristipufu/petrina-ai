@@ -16,12 +16,22 @@ export const REPAIR_RULE = `When repairing a reported problem, from the first re
 /** A role's result reaches later agents, never its conversation: built-in, edited, added and maintenance notes roles all get this. */
 export const NOTES_HANDOFF_RULE = `Your saved report is your result's summary and notes: later agents on this task receive it, never this conversation, so anything needed later must be there, not only in your messages. Keep the notes concise and specific: your actual findings or proposals and the facts that distinguish them, rather than a restatement of the task. Plain-language notes can still name exact sources where relevant and available: a link, a repository location, or a check you ran and what it showed, with the version or platform when the conclusion depends on it. Do not invent sources or do extra research only to add one. When relevant, say in the notes what you inspected, what you ran, what remains uncertain or open, and what you could not check. Keep suggested approaches separate from observed facts and established constraints.`;
 
+/** Age and task obligations are separate judgments for both findings and votes. */
+export const FINDING_REQUIREMENT_RULE = `Judge each finding against the approved request, brief and coordinator decisions, the current code and the starting version. An older defect that leaves an explicitly requested repair or concrete acceptance outcome unmet is "important" for reviewers and "real" for Verifiers: explain the governing requirement and current reproduction. Age alone is no exemption. A confirmed older bug unrelated to the task is "pre-existing", a follow-up that never blocks. Do not grow scope from nearby code, a general wish for quality or speculation; investigate an unclear requirement rather than invent an obligation. Missing or unavailable proof is not a reproduced code defect; keep it separate under the existing proof-request rules. These classification rules govern even when saved role wording says otherwise.`;
+
+/** Shared editable defaults and fixed contract rules for every votes result. */
+export const VERIFIER_RULES: readonly string[] = [
+  `Before an Important finding can send the work back to the builder, check it yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:\n- "real": the change should not ship with it;\n- "not-a-bug": it is wrong, and say why;\n- "nit": real but small, it should not hold the work back;\n- "pre-existing": a confirmed older bug unrelated to the approved task, checked against the starting version, so it is a follow-up.\nBe strict both ways: a finding without real evidence is not real, and a real one stays real however it was worded.`,
+  FINDING_REQUIREMENT_RULE,
+];
+
 /** The same review rules apply to built-in, edited and added findings roles. Keep each once. */
 export const FINDING_REVIEW_RULES: readonly string[] = [
   `When a change fixes or alters one case, check nearby cases affected by the same code or rule: sibling operations or inputs, relevant normal, failure and recovery paths, themes and window sizes, and other ways into and out of the flow. Compare with the starting version. A confirmed regression caused by the change is Important, even when the intended case now works.`,
-  `Each finding says where it is and the evidence; never give a score. Tag it "important" only if the change should not ship with it, "nit" for anything smaller, and "pre-existing" for a problem the change did not cause: that becomes a follow-up and never holds the work back.`,
+  FINDING_REQUIREMENT_RULE,
+  `Each finding says where it is and the evidence; never give a score. Tag it "important" if it must be repaired in this task, "nit" for anything smaller, and "pre-existing" for a confirmed older bug unrelated to the task.`,
   `When you find a bug, look for the whole class of it in the change and report one finding per root cause, with all observed affected paths together. Give a minimal reproduction and a nearby passing control that distinguishes the bug. For a variant of an earlier finding's cause, use that finding's id and include the variant in fresh confirmation evidence; reserve new findings for distinct root causes. Never repeat a finding listed below, whether open, fixed or dismissed: confirm or dispute it by id instead. Select relevant cases; do not enumerate paraphrases, synonyms, or permutations unless they exercise a distinct code path or reveal a separate regression. For open-ended inputs such as natural language, review the defined behavior and representative syntax classes; do not try to exhaust every possible wording or grow the task.`,
-  `A problem the change did not cause is "pre-existing": give "steps" for how to see it again, and put in "evidence" how you checked that this change neither caused it nor made it worse. When open follow-up cards are listed, set "sameBug" to that card's id if this is the same bug, or "none" if it is none of those cards. If no cards are listed, leave "sameBug" out.`,
+  `For a "pre-existing" follow-up, give "steps" for how to see it again, and put in "evidence" how you checked that this change neither caused it nor made it worse and the approved task does not require its repair. When open follow-up cards are listed, set "sameBug" to that card's id if this is the same bug, or "none" if it is none of those cards. If no cards are listed, leave "sameBug" out.`,
   FINDING_CONFIRMATION_RULE,
   `Dispute findings you think are wrong by id, always with the reason and your evidence: the coordinator reads it. A finding another reviewer confirmed stays open whatever you say, so make your case.`,
 ];
@@ -179,16 +189,11 @@ Do not change any files.`,
     purpose: "Votes on Important review findings with fresh eyes, one actual tool per answer, before they can send work back.",
     canEdit: false,
     sees: "The change, the findings to check and the reviewers' evidence.",
-    handsBack: "For each finding: real, not a bug, only a nit, or older than the change, with why.",
+    handsBack: "For each finding: real, not a bug, only a nit, or an unrelated older bug, with why.",
     column: "reviewing",
     internal: true,
     result: "votes",
-    instructions: `Before an Important finding can send the work back to the builder, check it yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:
-- "real": the change should not ship with it;
-- "not-a-bug": it is wrong, and say why;
-- "nit": real but small, it should not hold the work back;
-- "pre-existing": the problem was already there before this change (check the starting version), so it is a follow-up.
-Be strict both ways: a finding without real evidence is not real, and a real one stays real however it was worded.`,
+    instructions: VERIFIER_RULES.join("\n"),
   },
   {
     id: "tester",

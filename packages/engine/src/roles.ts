@@ -4,7 +4,7 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, stepOf, followingCall, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, stepOf, followingCall, VERIFIER_RULES, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
@@ -154,7 +154,7 @@ export const ReviewResult = z.object({
         where: z.string().optional(),
         severity: z.enum(["important", "nit", "pre-existing"]),
         evidence: z.string().optional(),
-        /** How to see a problem the change did not cause. */
+        /** How to reproduce a confirmed older follow-up. */
         steps: z.string().optional(),
         /** An open follow-up card this is, or "none" when it is none of the cards shown. */
         sameBug: z.string().optional(),
@@ -447,14 +447,7 @@ Do not change any files.`;
     withInstructions: ({ base, branch, preparedReview }, wording) => `Reviewers raised the Important findings below about the change on branch ${branch} (${preparedReview ? "use the prepared complete comparison" : `see \`git diff ${base}...HEAD\``}). The starting version is ${base}.
 ${wording}
 Do not change any files.`,
-    instructions: ({ base, branch, preparedReview }) => {
-      return `Reviewers raised the Important findings below about the change on branch ${branch} (${preparedReview ? "use the prepared complete comparison" : `see \`git diff ${base}...HEAD\``}). Before any of them can send the work back to the builder, check each one yourself, with fresh eyes: read the code, and run a single test when that is the quickest proof. For each finding, by id, give your verdict:
-- "real": the change should not ship with it;
-- "not-a-bug": it is wrong, and say why;
-- "nit": real but small, it should not hold the work back;
-- "pre-existing": the problem was already there before this change (check ${base}), so it is a follow-up.
-Be strict both ways: a finding without real evidence is not real, and a real one stays real however it was worded. Do not change any files.`;
-    },
+    instructions: ctx => ROLE_CONTRACTS.verifier!.withInstructions!(ctx, ctx.role.instructions),
   },
   "check-finder": {
     withInstructions: (_ctx, wording) => wording,
@@ -502,7 +495,7 @@ export function plannerRoles(roles: readonly Role[]): string {
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
-  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "build" ? "builder" : role.result === "checks" ? "tester" : role.result === "findings" ? "code-reviewer" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
+  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[role.result === "build" ? "builder" : role.result === "checks" ? "tester" : role.result === "findings" ? "code-reviewer" : role.result === "votes" ? "verifier" : role.result === "brief" ? "architect" : role.result === "objections" ? "design-reviewer" : "researcher"]!;
   if (role.id === "release-manager") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);
@@ -512,7 +505,7 @@ export function contractFor(role: Role): RoleContract {
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx) + (role.category === "maintenance" ? '\nSet "complete" to true only after completing the bounded investigation. Return false for an incomplete investigation and explain what prevented completion. Distinguish findings from missing evidence.\n' : "");
     const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "votes" ? VERIFIER_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

@@ -41,7 +41,7 @@ export function recordDisputes(findings: DeepMutable<Finding>[], disputes: reado
 const SEVERITY = { important: "blocking", nit: "suggestion", "pre-existing": "pre-existing" } as const;
 
 /** A verifier's answer in plain words. */
-const VERDICT_WORDS: Record<Vote["verdict"], string> = { real: "real", "not-a-bug": "not a bug", nit: "only a nit", "pre-existing": "older than the change" };
+const VERDICT_WORDS: Record<Vote["verdict"], string> = { real: "real", "not-a-bug": "not a bug", nit: "only a nit", "pre-existing": "an older bug unrelated to the approved task" };
 
 const listWords = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 

@@ -250,10 +250,19 @@ for (const continued of [false, true]) it(`repairs an independent review finding
     const [first, second] = f.ids;
     // A failure owned by both products uses up both returns; then a reviewer raises an Important finding on the first product.
     f.fakes.scenario({ builder: "plain", reviewer: "important", affectedProducts: [first], testerChecks: [failing([first, second])], ...(continued ? { reopen: "resume" as const } : {}) });
+    await f.drive(task => task.repair?.kind === "review");
+    expect(f.task.repair?.kind).toBe("review");
+    const review = f.task.findings.find(finding => finding.text === "The greeting is missing on the welcome page.")!;
+    const nit = f.task.findings.find(finding => finding.text === "Consider a friendlier greeting.")!;
+    expect(nit.severity).toBe("suggestion");
+    // Parallel reviewers may finish in either order. Exercise a leading Important report for the fresh Builder
+    // and a leading nit for the continuing Builder, without relying on process timing or changing worker counts.
+    const leading = continued ? nit : review;
+    f.task.findings = [leading, ...f.task.findings.filter(finding => finding.id !== leading.id)];
     await f.drive();
     expect(f.order().slice(0, 7)).toEqual(["test", "build:1", "build:2", "test", "build:1", "build:2", "test"]);
     expect(f.task.repositories!.map(work => work.acceptanceReturns)).toEqual([2, 2]);
-    const [held] = f.heldFailure(), review = f.task.findings.find(finding => finding.text === "The greeting is missing on the welcome page.")!;
+    const [held] = f.heldFailure();
     expect(review.productIds).toEqual([first]);
     // The review's repair visited only its finding's product, and asked only about that finding.
     expect(f.order().slice(7)).toEqual(["review", "build:1", "review", "security", "decision"]);
@@ -264,8 +273,10 @@ for (const continued of [false, true]) it(`repairs an independent review finding
     expect(prompt).toContain(review.text); expect(prompt).not.toContain(held!.text);
     expect(prompt).not.toContain(`[${held!.id}]`); expect(prompt).not.toContain(`${held!.id}: open`);
     if (continued) {
-      expect(prompt).toContain(`## Current finding status index\n- ${review.id}: open, important\n`);
-      expect(prompt).toContain(`No longer present: ${held!.id}.`);
+      const index = prompt.split("## Current finding status index\n")[1]?.split("\n\n")[0]?.split("\n") ?? [];
+      expect(index).toContain(`- ${review.id}: open, important`);
+      expect(index).toContain(`- ${nit.id}: open, nit`);
+      expect(index).toContain(`No longer present: ${held!.id}.`);
     } else expect(prompt).not.toContain(held!.id);
     const packet = readFileSync(f.task.repositories![0]!.builderSession!.context!.file, "utf8");
     expect(packet).toContain(review.id); expect(packet).not.toContain(held!.id); expect(packet).not.toContain(held!.text);

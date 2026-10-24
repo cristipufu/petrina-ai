@@ -800,7 +800,8 @@ export interface DesignCall {
 
 /**
  * What a review found. `blocking` is shown as Important (must be fixed before it ships), `suggestion`
- * as Nit, and `pre-existing` is an old problem the change did not cause: a follow-up, never blocking.
+ * as Nit, and `pre-existing` is a confirmed older bug unrelated to the approved task: a follow-up,
+ * never blocking. An older defect can still be Important when the task requires its repair.
  */
 export interface Finding {
   /** Reproduced failure of one explicit proof request; text is not its identity. */
