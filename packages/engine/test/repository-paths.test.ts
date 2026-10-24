@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { checkedOut } from "../src/git.js";
 import { realPath } from "../src/shipping-verifier.js";
 import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

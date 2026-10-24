@@ -1,5 +1,5 @@
-import { fixtureFiles } from "./fixture-files.js";
-import { expectRejection } from "./rejections.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
@@ -11,7 +11,7 @@ import { Connections } from "../src/connection.js";
 import { Engine, type EngineOptions } from "./engine.js";
 import { AgentRun } from "../src/acp-run.js";
 import { AGENT_CHECK_TIMEOUT_MS, CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { ToolChecks } from "../src/tool-checks.js";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "../src/tools.js";
 import { EngineProcess, FAKE_GH, Fakes, git, makeProduct, makeWorld, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./support.js";

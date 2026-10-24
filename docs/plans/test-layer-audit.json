@@ -1291,18 +1291,36 @@
       }
     },
     {
-      "file": "packages/engine/test/fixture-files.test.ts",
+      "file": "packages/test-support/test/contracts/filesystem/aliases.test.ts",
       "declarations": 2,
       "assertionSites": 12,
       "baselineDigest": "cd6863b335e6fdf63c0478540ad70452bcf046723e8144f276075347fccc7073",
-      "status": "pending"
+      "status": "reviewed",
+      "review": "Every original case and assertion retained. The real SQLite or filesystem boundary is exercised directly with private state, the canonical shared runtime and lightweight fixtures; no running Engine, Git setup or native account is needed.",
+      "from": "packages/engine/test/fixture-files.test.ts",
+      "validation": {
+        "artifact": "storage-support-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/fixture-json.test.ts",
+      "file": "packages/test-support/test/contracts/filesystem/json.test.ts",
       "declarations": 3,
       "assertionSites": 11,
       "baselineDigest": "4435ff3b7660bef43a90817e96d50c64faf959bda0f334888e3bbc3d6c94c026",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/test-support/test/contracts/filesystem/json.test.ts",
+        "packages/engine/test/contracts/fixtures/json-consumers.test.ts"
+      ],
+      "review": "Both real-file atomic publication controls keep every assertion; the actual Fakes/scenario consumer integration is retained in the engine fixture contract. All three original bodies retain their assertions; shared code is owned by test-support, not copied into a mock.",
+      "from": "packages/engine/test/fixture-json.test.ts",
+      "validation": {
+        "artifact": "storage-support-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/fixture-repositories.test.ts",
@@ -2248,11 +2266,18 @@
       "review": "Partial audit: five source-selection variants moved to the real source controller. Retain one complete error-correction and one complete invalid-plan recovery, plus all exact Git delivery, PR identities, restart and integration controls. Other source journeys remain pending semantic review."
     },
     {
-      "file": "packages/engine/test/sql-log.test.ts",
+      "file": "packages/storage/test/contracts/sqlite/sql-log.test.ts",
       "declarations": 7,
       "assertionSites": 50,
       "baselineDigest": "26390e37092b5a6d55569cfb41a24c0d9162d294a10236080005ae04bef9b7fe",
-      "status": "pending"
+      "status": "reviewed",
+      "review": "Every original case and assertion retained. The real SQLite or filesystem boundary is exercised directly with private state, the canonical shared runtime and lightweight fixtures; no running Engine, Git setup or native account is needed.",
+      "from": "packages/engine/test/sql-log.test.ts",
+      "validation": {
+        "artifact": "storage-support-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/start.test.ts",
@@ -2276,11 +2301,13 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/store-startup.test.ts",
+      "file": "packages/storage/test/contracts/sqlite/startup.test.ts",
       "declarations": 3,
       "assertionSites": 17,
       "baselineDigest": "0e9f84b1f3816e29124d858e68722e4e265a5b963ea93e5409c1609f5abd1395",
-      "status": "pending"
+      "status": "pending",
+      "review": "Physical storage ownership moved with every SQLite schema/lock case and original assertion. Still pending: bounded child execution and native Windows/Linux qualification must be audited; a folder move is not completion.",
+      "from": "packages/engine/test/store-startup.test.ts"
     },
     {
       "file": "packages/engine/test/takeover.test.ts",
@@ -2391,11 +2418,18 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/usage-history.test.ts",
+      "file": "packages/storage/test/contracts/sqlite/usage-history.test.ts",
       "declarations": 3,
       "assertionSites": 21,
       "baselineDigest": "26b4a2aa02305f0b95157c90367798621ed15ad25adf3230c3eefd127abf1624",
-      "status": "pending"
+      "status": "reviewed",
+      "review": "Every original case and assertion retained. The real SQLite or filesystem boundary is exercised directly with private state, the canonical shared runtime and lightweight fixtures; no running Engine, Git setup or native account is needed.",
+      "from": "packages/engine/test/usage-history.test.ts",
+      "validation": {
+        "artifact": "storage-support-reconciliation.json",
+        "originalCaseAndAssertionInventoryRetained": true,
+        "qualification": "test-support-package-first.xml: 9 passes; storage-package-first.xml: 14 passes; storage-support-runner-reviewed.xml: 93 passes across seven runner/fixture files; storage-host-neighborhood.xml: 75 passes across five history/work-log/evidence files. The final native-workspace guard addition passes in storage-support-guards-reviewed.log. Core full suite, all workspace types, frozen install and conventions pass. Complete parallel batch qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/orchestration/usage/reader.test.ts",

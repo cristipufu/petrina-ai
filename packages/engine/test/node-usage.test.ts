@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { type WorkTurn } from "@petrina/core";
-import { WorkLog } from "../src/worklog.js";
+import { WorkLog } from "@petrina/storage/worklog";
 
 const turn: WorkTurn = { id: "turn", taskId: "task", productId: "product", stageId: "build", stageTitle: "Build", stageKind: "do", round: 1, fixing: false, roleId: "builder", toolId: "codex", profileId: "sol", sessionId: "continued-session", reason: "first", startedAt: 10, mainOnly: false, helpers: 0 };
 

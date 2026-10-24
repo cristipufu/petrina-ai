@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, independentVotes, reviewRoundEnd, type InboxItem, type Product } from "@petrina/core";

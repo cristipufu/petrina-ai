@@ -1,4 +1,4 @@
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { checkDecisionLabel, checkResult, journeyView, type CheckRun } from "@petrina/core";

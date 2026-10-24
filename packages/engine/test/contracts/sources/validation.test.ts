@@ -1,4 +1,4 @@
-import { expectRejection } from "../../rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import type { TaskSource, WorkChoice } from "@petrina/core";

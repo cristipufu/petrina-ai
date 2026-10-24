@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
-import { FALLBACK_TIMEOUT, testCommand } from "./run.js";
+import { FALLBACK_TIMEOUT, testCommand, TEST_RUNNER } from "@petrina/test-support/run";
 
 // Each probe is a real Bun run of private tests that only sleep. Bun reports the limit that stopped each
 // test; the probe's own bound stops the whole command if Bun never finishes, which is not a test timeout.
@@ -99,7 +99,7 @@ it("${helper} keeps its own shorter limit", () => Bun.sleep(${WAIT}), ${SHORTER}
 it("${helper} is left out by the name filter", () => { throw new Error("The name filter did not reach Bun"); });`));
   const filter = ["-t", "limit"];
   const runs = await probes([
-    probe("runner-in-engine", ["test/run.ts", ...files, "--timeout", String(COMMAND), ...filter], ENGINE),
+    probe("runner-in-engine", [TEST_RUNNER, ...files, "--timeout", String(COMMAND), ...filter], ENGINE),
     probe("runner-from-root", ["run", "--cwd", "packages/engine", "test", ...files, `--timeout=${COMMAND}`, ...filter], ROOT),
     probe("direct-in-engine", ["test", ...files, `--timeout=${COMMAND}`, ...filter], ENGINE),
     probe("direct-from-root", ["test", ...files, "--timeout", String(COMMAND), ...filter], ROOT),
@@ -125,7 +125,7 @@ it("${helper} runs just past five seconds", () => Bun.sleep(${PAST_DEFAULT}));
 it("${helper} keeps its own shorter limit", () => Bun.sleep(${WAIT}), ${SHORTER});`));
   // Direct runs get one file each: a single Bun process runs its files one after another.
   const [runner, ...direct] = await probes([
-    probe("runner-in-temporary-folder", [join(import.meta.dir, "run.ts"), ...files], fixture),
+    probe("runner-in-temporary-folder", [TEST_RUNNER, ...files], fixture),
     ...helpers.map((helper, index) => probe(`direct-default-${helper}`, ["test", files[index]!], ENGINE)),
   ]);
   expect(runner!.outcomes, runner!.output).toEqual(Object.fromEntries(helpers.flatMap(helper => [

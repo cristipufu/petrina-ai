@@ -7,7 +7,7 @@ import { git, makeProduct, tempDir, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as processTree from "../src/process-tree.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { ExtraFixtures } from "./extra-fixtures.js";
 
 const owned = new ExtraFixtures();

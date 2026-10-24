@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { headroom, limitOf } from "@petrina/core";
 import { Engine } from "./engine.js";

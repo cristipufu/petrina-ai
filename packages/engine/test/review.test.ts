@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { findingCount, reviewStats, ROLE_STARTS, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 

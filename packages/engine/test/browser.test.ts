@@ -1,6 +1,7 @@
-import { fixtureFiles } from "./fixture-files.js";
+import { TEST_RUNNER } from "@petrina/test-support/run";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import type { ObservedProcess } from "../src/process-tree.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -857,7 +858,7 @@ it("stops a browser whose helper was killed", async () => {
 `);
   try {
     const checks = join(work, "data", "checks", "task-1");
-    const [run] = await runChecks(work, [{ name: "Tests", argv: [process.execPath, join(import.meta.dir, "run.ts"), "./shutdown.test.ts"] }], { ...process.env, PATH: bin }, 60_000 * SLOW, undefined, checks);
+    const [run] = await runChecks(work, [{ name: "Tests", argv: [process.execPath, TEST_RUNNER, "./shutdown.test.ts"] }], { ...process.env, PATH: bin }, 60_000 * SLOW, undefined, checks);
     expect(run!.ok).toBe(false);
     expect(dirname(run!.logPath!)).toBe(checks);
     const log = readFileSync(run!.logPath!, "utf8");

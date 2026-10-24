@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import type { UsageReport } from "@petrina/core";
-import { WorkLog } from "../src/worklog.js";
+import { WorkLog } from "@petrina/storage/worklog";
 
 const NOW = new Date(2026, 9, 17, 15, 0, 0).getTime();
 const HOUR = 3_600_000;

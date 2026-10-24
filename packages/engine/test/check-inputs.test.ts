@@ -5,7 +5,7 @@ import { Engine } from "./engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../src/checks.js";
 import { makeProduct, removeDir, tempDir, waitForFile } from "./fixtures.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

@@ -85,3 +85,29 @@ it("keeps production controllers independent of native implementations, includin
   files.set("packages/orchestrator/package.json", JSON.stringify({ dependencies: { "@petrina/engine": "workspace:*" } }));
   expect(packageBoundaries(files)).toEqual([expect.stringContaining("violates the package direction")]);
 });
+
+it("keeps native persistence and shared test infrastructure independent of the application host", () => {
+  const host = "packages/engine/src/kernel.ts";
+  for (const [owner, dependency] of [
+    ["packages/storage", "../../engine/src/kernel.js"],
+    ["packages/test-support", "../../engine/src/kernel.js"],
+    ["packages/storage", "../../test-support/src/environment.js"],
+  ]) {
+    const file = `${owner}/src/adapter.ts`;
+    const target = dependency!.includes("test-support") ? "packages/test-support/src/environment.ts" : host;
+    const errors = packageBoundaries(new Map([[file, `import type { Host } from '${dependency}';`], [target, "export interface Host {}"]]));
+    expect(errors.some(error => error.includes("including through types"))).toBe(true);
+  }
+  expect(packageBoundaries(new Map([["packages/storage/src/adapter.ts", "import { Database } from 'bun:sqlite';"],
+    ["packages/test-support/src/fixtures.ts", "import { mkdir } from 'node:fs/promises';"]]))).toEqual([]);
+});
+
+it("follows package subpaths and rejects test-support imports from any shipped source", () => {
+  const target = "packages/test-support/src/fixtures.ts", caller = "packages/storage/test/rules/testing/private.test.ts";
+  expect(layerBoundaries(new Map([[caller, "import { make } from '@petrina/test-support/fixtures';"], [target, "import 'node:fs';"]])))
+    .toEqual([expect.stringContaining("imports node:fs")]);
+  for (const imported of ["@petrina/test-support/fixtures", "../../test-support/src/fixtures.js"]) {
+    expect(packageBoundaries(new Map([["packages/engine/src/host.ts", `import type { Fixture } from '${imported}';`], [target, "export interface Fixture {}"]])))
+      .toEqual([expect.stringContaining("production code cannot depend on test support")]);
+  }
+});

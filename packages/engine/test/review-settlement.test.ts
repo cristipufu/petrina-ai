@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

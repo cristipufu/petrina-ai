@@ -1,6 +1,6 @@
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { FileFaults } from "./file-faults.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import * as operations from "../src/git.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";

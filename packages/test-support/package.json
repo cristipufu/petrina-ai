@@ -1,0 +1,22 @@
+{
+  "name": "@petrina/test-support",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun src/run.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "1.3.4",
+    "typescript": "7.0.2"
+  }
+}

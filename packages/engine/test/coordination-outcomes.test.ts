@@ -1,4 +1,4 @@
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it } from "bun:test";
 import { linkSync, mkdirSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";

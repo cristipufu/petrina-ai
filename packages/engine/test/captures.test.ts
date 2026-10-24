@@ -1,5 +1,5 @@
-import { fixtureFiles } from "./fixture-files.js";
-import { expectRejection } from "./rejections.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as files from "node:fs/promises";
 import { createRequire } from "node:module";

@@ -1,5 +1,5 @@
-import { fixtureFiles } from "./fixture-files.js";
-import { expectRejection } from "./rejections.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

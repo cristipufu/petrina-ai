@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git, gitWith, headNow, makeProduct, makeWorld, removeDir, repositorySeed, tempDir, testGitEnv } from "./support.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

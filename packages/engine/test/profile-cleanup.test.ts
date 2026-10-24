@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { expect, it, spyOn } from "bun:test";
 import { ProfileChoiceReader } from "../src/profile-choices.js";
 import { AgentRun } from "../src/acp-run.js";

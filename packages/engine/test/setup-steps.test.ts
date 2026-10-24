@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCommand, type Started } from "./commands.js";
 import { removeDir, tempDir, waitForFile } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { SetupSteps } from "./setup-steps.js";
 
 it("receives a real completion and its complete output before the deadline while later setup steps are ready", async () => {

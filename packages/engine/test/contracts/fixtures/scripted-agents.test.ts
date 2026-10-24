@@ -5,7 +5,7 @@ import { parseResult } from "../../../src/prompts.js";
 import { BuildResult } from "../../../src/roles.js";
 import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { nativeAgentProcess } from "../../native-agent.js";
-import { rejectionOf } from "../../rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const role = BUILT_IN_ROLES.find(role => role.result === "build")!;
 function options(signal = new AbortController().signal): AgentSessionOptions {

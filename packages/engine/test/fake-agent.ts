@@ -19,8 +19,8 @@ import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { git, runGit } from "./commands.js";
 import { recordPrompt } from "./prompt-records.js";
-import { writeFixtureJson } from "./fixture-json.js";
-import { fixtureFiles } from "./fixture-files.js";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import * as acp from "@agentclientprotocol/sdk";
 
 export interface Scenario {

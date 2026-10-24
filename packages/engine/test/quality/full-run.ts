@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import { conventions, inputs, observe, readGit, recordedCoverage, ROOT } from "./repository.js";
 import { fingerprint, impactPlan, isTest, WORKSPACES } from "./impact.js";
 import { requireFiles, testResults, type TestResults } from "./results.js";
-import { createTestRun } from "../environment.js";
+import { createTestRun } from "@petrina/test-support/environment";
 import { TEST_WORKSPACES } from "./workspaces.js";
 
 // This entry point is the required full check, never a focused test selector.
@@ -71,7 +71,7 @@ try {
     const output = join(folder, `${suite(workspace)}.${engine ? "xml" : "json"}`);
     // Per-file wall times expose serial files and idle-worker tails; cumulative case times
     // in JUnit overcount concurrent cases. This records measurements, never selects tests.
-    const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`, `--timings=${join(folder, "engine-timings.json")}`, "--update-timings"] : ["--reporter=json", `--outputFile=${output}`];
+    const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`, `--timings=${join(folder, `${suite(workspace)}-timings.json`)}`, "--update-timings"] : ["--reporter=json", `--outputFile=${output}`];
     const start = performance.now();
     child = Bun.spawn([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, env: owned.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     const code = await child.exited;

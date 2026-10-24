@@ -1,4 +1,4 @@
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { expect, it } from "bun:test";
 import { FixtureTrace } from "./fixture-trace.js";
 

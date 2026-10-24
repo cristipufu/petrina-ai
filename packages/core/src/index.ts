@@ -52,3 +52,4 @@ export * from "./runtime-wait.js";
 
 export * from "./extra-validation.js";
 export * from "./review-evidence.js";
+export * from "./related-check-contract.js";

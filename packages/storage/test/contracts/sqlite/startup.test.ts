@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Store } from "../src/store.js";
-import { WorkLog } from "../src/worklog.js";
-import { removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
+import { Store } from "@petrina/storage/store";
+import { WorkLog } from "@petrina/storage/worklog";
+import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
+import { SLOW } from "@petrina/test-support/slow";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -55,7 +56,7 @@ for (const releases of [true, false]) it(`database startup ${releases ? "waits f
   blocker.run("BEGIN EXCLUSIVE");
   writeFileSync(wrapper, `
 import { writeFileSync } from "node:fs";
-import { Store } from ${JSON.stringify(join(import.meta.dir, "../src/store.ts"))};
+import { Store } from ${JSON.stringify(new URL("../../../src/store.ts", import.meta.url).href)};
 writeFileSync(${JSON.stringify(marker)}, "opening");
 const started = performance.now();
 try {

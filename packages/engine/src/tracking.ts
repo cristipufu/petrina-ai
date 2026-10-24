@@ -10,7 +10,7 @@ import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProf
 import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
 import type { Kernel, MStage, MTask } from "./kernel.js";
 import { ModelAtCapacity, UsageLimited, WaitingForCapacity, WaitingForUsage } from "./usage.js";
-import { WaitClock, WorkLog } from "./worklog.js";
+import { WaitClock, WorkLog } from "@petrina/storage/worklog";
 
 /** A stage that started and hasn't ended: kept in the work log, mirrored here. */
 interface OpenStage {

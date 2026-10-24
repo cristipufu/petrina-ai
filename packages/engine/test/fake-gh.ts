@@ -4,7 +4,7 @@
 // it is logged in, unless the state says otherwise.
 // bun fake-gh.ts <state.json> <remote folder> <gh arguments…>
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { writeFixtureJson } from "./fixture-json.js";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { commitAt, gitWith } from "./commands.js";
 import { testGitEnv } from "./test-git-env.js";
 

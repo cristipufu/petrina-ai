@@ -8,7 +8,7 @@ import { claudeInterruptions, codexInterruptions, GROK_OVERLOADED, grokInterrupt
 import { ADAPTERS } from "../src/tools.js";
 import { limitFromFailure, ModelAtCapacity, UsageLimited } from "../src/usage.js";
 import type { NativeStep, Scenario } from "./fake-agent.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { isAuthRequired } from "../src/setup.js";
 import { Fakes, removeDir, tempDir, waitFor } from "./fixtures.js";
 

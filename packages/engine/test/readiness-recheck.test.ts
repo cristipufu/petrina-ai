@@ -8,7 +8,7 @@ import { Aborted } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";
 import { BuildResult } from "../src/roles.js";
 import { Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
-import { expectRejection, rejectionOf } from "./rejections.js";
+import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

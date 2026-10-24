@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { localFiles } from "../src/file-operations.js";
 import { FileFaults } from "./file-faults.js";
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { removeDir, tempDir } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

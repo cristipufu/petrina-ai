@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { expect, it } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import { createDemoState } from "@petrina/core";

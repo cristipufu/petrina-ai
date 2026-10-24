@@ -8,7 +8,7 @@ import { CHECK_EXIT_UNREPORTED, checksFingerprint, commandText, detectChecks, pa
 import { checkCommandOutcome } from "../src/check-log-read.js";
 import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "../src/process-tree.js";
 import { Engine } from "./engine.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { defunctProcess, EngineProcess, Fakes, HARNESS, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];

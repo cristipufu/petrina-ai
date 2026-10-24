@@ -7,7 +7,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { SourceRefreshRequired } from "../src/kernel.js";
 import { WaitingForUsage } from "../src/usage.js";
 import { git, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

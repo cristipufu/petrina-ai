@@ -9,7 +9,7 @@ import { Aborted } from "../src/kernel.js";
 import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "./engine.js";
 import { git, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

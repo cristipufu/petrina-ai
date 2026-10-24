@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test/run.ts",
+    "test": "bun ../test-support/src/run.ts",
     "serve": "bun run src/cli.ts serve"
   },
   "dependencies": {
@@ -25,12 +25,14 @@
     "@petrina/orchestrator": "workspace:*",
     "@playwright/mcp": "0.0.83",
     "sharp": "0.35.5",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@petrina/storage": "workspace:*"
   },
   "devDependencies": {
     "@babel/parser": "8.0.7",
     "@types/bun": "1.3.4",
     "saxes": "6.0.0",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "@petrina/test-support": "workspace:*"
   }
 }

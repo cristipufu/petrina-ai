@@ -9,7 +9,7 @@ import { AcceptedPoints } from "../src/accepted-points.js";
 import { addLearnings, keptLearnings, Learnings } from "../src/learnings.js";
 import * as gitOps from "../src/git.js";
 import { Fakes, git, gitWith, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

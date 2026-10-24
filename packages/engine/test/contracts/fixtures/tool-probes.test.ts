@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { scriptedToolProbe } from "../../scripted-probes.js";
-import { rejectionOf } from "../../rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 it("refuses missing observations, aborted probes and shared mutable result records", async () => {
   const probe = scriptedToolProbe({ codex: { status: "ready" } });

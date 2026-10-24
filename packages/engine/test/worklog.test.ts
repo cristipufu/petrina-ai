@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 // The work log, end to end: a real engine with the fake agent reporting usage and settings the
 // way Claude Code and Codex do, and the product list that never hands an id out again.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
@@ -12,9 +12,9 @@ import { Tracking } from "../src/tracking.js";
 import { AgentRun, reportOf } from "../src/acp-run.js";
 import { Engine } from "./engine.js";
 import { dispatch } from "../src/server.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { WaitClock, WorkLog } from "../src/worklog.js";
+import { WaitClock, WorkLog } from "@petrina/storage/worklog";
 import type { CodexScript } from "./fake-codex.js";
 import { git, removeDir, SLOW, testBrowserRoot, waitFor } from "./fixtures.js";
 

@@ -15,7 +15,7 @@ import { checkReviewEvidence } from "@petrina/core";
 import { ReviewResult } from "../src/roles.js";
 import { Cleanup } from "../src/cleanup.js";
 import { Engine } from "./engine.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];

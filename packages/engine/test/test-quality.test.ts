@@ -90,7 +90,14 @@ it("keeps fixture import guards effective for package aliases, extensionless pat
 
 describe("test programs and the waits on them", () => {
   const found = (source: string, file = "packages/engine/test/a.test.ts") => conventions(new Map([[file, source]])).map((error) => error.slice(file.length + 1));
-  const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "./rejections.js";\n`;
+  const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "@petrina/test-support/rejections";\n`;
+
+  it("applies Bun assertion rules to every native workspace and accepts the shared rejection helper", () => {
+    for (const file of ["packages/storage/test/contracts/sqlite/calls.test.ts", "packages/test-support/test/contracts/processes/calls.test.ts"]) {
+      expect(found('await expect(work()).rejects.toThrow();', file)).toEqual([expect.stringContaining("do not use Bun's promise matchers")]);
+      expect(found('import { rejectionOf } from "@petrina/test-support/rejections";\nasync function check() { await rejectionOf(work()); }', file)).toEqual([]);
+    }
+  });
 
   it("keeps engine shutdown owned through cleanup and restart, including optional and computed calls", () => {
     for (const source of [

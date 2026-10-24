@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { codexLimits, limitBuckets, limitsOverTime, type ReadingsView } from "@petrina/core";
 import { grokReports } from "../src/grok-usage.js";
 import { expect, it, spyOn } from "bun:test";

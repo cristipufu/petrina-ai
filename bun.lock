@@ -50,12 +50,14 @@
         "@modelcontextprotocol/sdk": "1.32.1",
         "@petrina/core": "workspace:*",
         "@petrina/orchestrator": "workspace:*",
+        "@petrina/storage": "workspace:*",
         "@playwright/mcp": "0.0.83",
         "sharp": "0.35.5",
         "zod": "4.6.7",
       },
       "devDependencies": {
         "@babel/parser": "8.0.7",
+        "@petrina/test-support": "workspace:*",
         "@types/bun": "1.3.4",
         "saxes": "6.0.0",
         "typescript": "7.0.2",
@@ -70,6 +72,26 @@
       "devDependencies": {
         "typescript": "7.0.2",
         "vitest": "4.1.11",
+      },
+    },
+    "packages/storage": {
+      "name": "@petrina/storage",
+      "version": "0.1.0",
+      "dependencies": {
+        "@petrina/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@petrina/test-support": "workspace:*",
+        "@types/bun": "1.3.4",
+        "typescript": "7.0.2",
+      },
+    },
+    "packages/test-support": {
+      "name": "@petrina/test-support",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/bun": "1.3.4",
+        "typescript": "7.0.2",
       },
     },
   },
@@ -197,6 +219,10 @@
     "@petrina/engine": ["@petrina/engine@workspace:packages/engine"],
 
     "@petrina/orchestrator": ["@petrina/orchestrator@workspace:packages/orchestrator"],
+
+    "@petrina/storage": ["@petrina/storage@workspace:packages/storage"],
+
+    "@petrina/test-support": ["@petrina/test-support@workspace:packages/test-support"],
 
     "@playwright/mcp": ["@playwright/mcp@0.0.83", "", { "dependencies": { "playwright": "1.64.0-alpha-1790635538000", "playwright-core": "1.64.0-alpha-1790635538000" }, "bin": { "playwright-mcp": "cli.js" } }, "sha512-oNcl+Ae2/IAjhfPeP46BfIkSakfmprY+aOtkv5MjrQ4lPav4/yNtPhL0iq8SlIM90oApWgBDUxaNKvktazUKOg=="],
 

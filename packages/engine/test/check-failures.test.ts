@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { decisionEvidence, displayTask, draftOf, journeyProblems, journeyView, type DeepMutable, type State, type Task, type WorkflowEvent } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { commandText } from "../src/checks.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import type { Scenario } from "./fake-agent.js";
 import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskOf, traceTaskWait, until, waitFor } from "./support.js";
 

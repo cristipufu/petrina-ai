@@ -2,7 +2,7 @@ import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { childState } from "../src/process-tree.js";
 import { EngineProcess, removeDir, tempDir } from "./support.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const root = tempDir("petrina-engine-process-");
 const children = new Set<EngineProcess["proc"]>();

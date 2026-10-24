@@ -2,8 +2,8 @@ import { expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { createDemoState, MemoryWorkLog, taskUsageSummaries, usageView, type HistoryQuery, type Task, type WorkTurn } from "@petrina/core";
 import { StateProjection } from "../src/state-projection.js";
-import { Store } from "../src/store.js";
-import { WorkLog } from "../src/worklog.js";
+import { Store } from "@petrina/storage/store";
+import { WorkLog } from "@petrina/storage/worklog";
 import { removeDir, tempDir } from "./fixtures.js";
 
 const base = createDemoState(1_800_000_000_000);

@@ -1,4 +1,4 @@
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";

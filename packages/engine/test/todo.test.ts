@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mainLine, nextLine, timeLeft, workedSoFar, type State, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { EngineProcess, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./support.js";
 
 const roots: string[] = [];

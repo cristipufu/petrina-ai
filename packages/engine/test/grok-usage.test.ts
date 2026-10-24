@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { AgentRun, reportOf } from "../src/acp-run.js";
 import { Engine } from "./engine.js";
 import { grokReports, grokTurnReport, readGrokUsage } from "../src/grok-usage.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { WorkLog } from "../src/worklog.js";
+import { WorkLog } from "@petrina/storage/worklog";
 import { removeDir, tempDir, testBrowserRoot, waitFor } from "./fixtures.js";
 
 // Conversations started here keep their browsers, in this file's own browser folder.

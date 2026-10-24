@@ -2,10 +2,10 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { Store } from "../src/store.js";
-import { WorkLog } from "../src/worklog.js";
-import { logSqlExecutions, SqlExecutionLog } from "../src/sql-log.js";
-import { removeDir, tempDir } from "./fixtures.js";
+import { Store } from "@petrina/storage/store";
+import { WorkLog } from "@petrina/storage/worklog";
+import { logSqlExecutions, SqlExecutionLog } from "@petrina/storage/sql-log";
+import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 
 const root = tempDir("petrina-sql-log-");
 afterAll(() => removeDir(root));

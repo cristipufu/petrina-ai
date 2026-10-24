@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { blocksDependents, BUILT_IN_ROLES, createDemoState, demoHistoryPage, HISTORY_STATUSES, historyAt, historyItem, reviewStats, taskLanding, withoutProduct, type Finding, type State, type Task } from "@petrina/core";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { dispatch, serve } from "../src/server.js";
 import { makeWorld, removeDir, tempDir, type World } from "./support.js";
 

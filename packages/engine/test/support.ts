@@ -9,13 +9,13 @@ import type { InboxKind, State, Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "./engine.js";
 import { readConnection } from "../src/instance.js";
 import type { ShellMessage } from "../src/launch.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import type { AgentScript } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
 import { testGitEnv } from "./test-git-env.js";
-import { writeFixtureJson } from "./fixture-json.js";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { CommandFailure, runCommand, type CommandResult, type Started } from "./commands.js";
-import { FALLBACK_TIMEOUT } from "./run.js";
+import { FALLBACK_TIMEOUT } from "@petrina/test-support/run";
 export { testGitEnv } from "./test-git-env.js";
 
 export * from "./fixtures.js";

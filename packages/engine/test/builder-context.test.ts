@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import * as files from "node:fs/promises";

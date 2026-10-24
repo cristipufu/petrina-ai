@@ -2,7 +2,7 @@ import { Engine as ProductionEngine, type EngineOptions } from "../src/engine.js
 import { ADAPTERS } from "../src/tools.js";
 import { noMachineRecords } from "./fixtures.js";
 import { join } from "node:path";
-import { writeFixtureJson } from "./fixture-json.js";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 
 /** Child fixtures reconstruct their runtime effects; JSON must never turn them into empty adapters. */
 export function writeFixtureEngineOptions(path: string, options: EngineOptions): void {

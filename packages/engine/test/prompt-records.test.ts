@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import { FAKE_AGENT, Fakes, firstLine, removeDir, tempDir } from "./fixtures.js";
 import { PromptReader, recordPrompt, type PromptRecord } from "./prompt-records.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 
 // Split a real subprocess's write inside a UTF-8 character, then wait for an explicit release.
 // This uses the same publisher as the fake agents, without unrelated planning, Git or engine work.

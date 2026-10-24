@@ -20,7 +20,7 @@ import { ADAPTERS, agentCommandFor } from "./tools.js";
 import { CLEANUP_INCOMPLETE } from "./process-tree.js";
 import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
-import { WaitClock } from "./worklog.js";
+import { WaitClock } from "@petrina/storage/worklog";
 import { isAuthRequired } from "./setup.js";
 import type { ToolChecks } from "./tool-checks.js";
 import { coordinatorNotes, type Section } from "./context.js";

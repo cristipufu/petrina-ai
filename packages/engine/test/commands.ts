@@ -6,7 +6,7 @@
 // test. Here every wait ends on a timer the worker schedules itself, and a command only succeeds once its exit
 // is reported and its output is complete. Closed output alone proves nothing.
 import { parseDescendants, type ProcessListRead } from "../src/process-tree.js";
-import { SLOW } from "./slow.js";
+import { SLOW } from "@petrina/test-support/slow";
 import { testGitEnv } from "./test-git-env.js";
 import { execFile } from "node:child_process";
 import { createProcessHost } from "../src/process-host.js";

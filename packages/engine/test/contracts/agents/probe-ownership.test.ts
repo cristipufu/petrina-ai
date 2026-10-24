@@ -6,7 +6,7 @@ import { AgentBrowser } from "../../../src/browser.js";
 import { ENGINE_PROFILES } from "../../../src/tools.js";
 import { FAKE_AGENT, removeDir, tempDir, waitFor } from "../../fixtures.js";
 import { nativeAgentProcess } from "../../native-agent.js";
-import { rejectionOf } from "../../rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 for (const incomplete of [false, true]) it(`releases native session ownership only after ${incomplete ? "an explicitly failed cleanup remains a failure" : "unexpected exit finishes browser cleanup"}`, async () => {
   const root = tempDir("petrina-probe-ownership-");

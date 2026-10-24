@@ -1,5 +1,5 @@
 import { createServer, type Socket } from "node:net";
-import { SLOW } from "../slow.js";
+import { SLOW } from "./slow.js";
 
 /** An out-of-band lifetime for fixture actors, independent of the cleanup being tested. */
 export interface ProcessLease {

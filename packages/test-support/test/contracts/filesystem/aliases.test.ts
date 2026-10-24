@@ -1,8 +1,8 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fixtureFiles } from "./fixture-files.js";
-import { removeDir, tempDir } from "./fixtures.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
+import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

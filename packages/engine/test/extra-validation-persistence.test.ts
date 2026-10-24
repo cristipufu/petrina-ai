@@ -7,7 +7,7 @@ import { git, waitFor } from "./fixtures.js";
 import { Coordination } from "../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as processTree from "../src/process-tree.js";
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { ExtraFixtures, failPrelaunchSave } from "./extra-fixtures.js";
 
 const owned = new ExtraFixtures();

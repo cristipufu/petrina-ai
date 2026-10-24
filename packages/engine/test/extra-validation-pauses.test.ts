@@ -8,7 +8,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { McpPending, mcpRequest } from "../src/mcp.js";
 import { AgentRun } from "../src/acp-run.js";
 import { ENGINE_PROFILES } from "../src/tools.js";
-import { WaitClock } from "../src/worklog.js";
+import { WaitClock } from "@petrina/storage/worklog";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { WaitingForUsage } from "../src/usage.js";
 import { ExtraFixtures, connection } from "./extra-fixtures.js";

@@ -1,30 +1,29 @@
+import { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
+export { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
 import { ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { State } from "@petrina/core";
 import type { Scenario } from "./fake-agent.js";
 import { updateGitHub, type FakeGitHub } from "./fake-gh.js";
-import { shortTempParent, TEST_BROWSERS } from "./temp-parent.js";
+import { shortTempParent, TEST_BROWSERS } from "@petrina/test-support/temp-parent";
 import type { MachineRecords } from "../src/check-interruption.js";
 import { runChecks as runProductChecks } from "../src/checks.js";
 import { PromptReader, type PromptRecord } from "./prompt-records.js";
 import { commitAt, git } from "./commands.js";
-import { currentSlow } from "./slow.js";
+import { currentSlow } from "@petrina/test-support/slow";
 import { processList } from "../src/process-tree.js";
-import { writeFixtureJson } from "./fixture-json.js";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 export { testGitEnv } from "./test-git-env.js";
-export { SLOW, currentSlow } from "./slow.js";
+export { SLOW, currentSlow } from "@petrina/test-support/slow";
 export { CommandFailure, commitAt, git, gitWith, runCommand, runGit } from "./commands.js";
 
 /** The real CLI parser with the canonical fixture launch policy; no native account readers. */
 export const CLI = join(import.meta.dir, "cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");
 
-export function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
-}
+
 
 /**
  * A fixture's own parent for temporary browser folders, instead of the user's standard one. Run
@@ -37,15 +36,6 @@ export function tempDir(prefix: string): string {
 export function testBrowserRoot(): string {
   const owned = process.env[TEST_BROWSERS];
   return realpathSync.native(mkdtempSync(owned ? `${owned}${sep}` : join(shortTempParent(), "pb-")));
-}
-
-/** Windows keeps files open a moment after a process ends: cleaning up is best effort. */
-export function removeDir(path: string): void {
-  try {
-    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch {
-    // Left for the system's temp cleanup.
-  }
 }
 
 /** A product with a GitHub-like origin: a bare repository and a clone of it, on main. */
@@ -148,15 +138,7 @@ async function startsNewProgram(ms: number): Promise<void> {
   }
 }
 
-export async function waitFor<T>(check: () => T | undefined | false | Promise<T | undefined | false>, what: string, ms = 30_000): Promise<T> {
-  const started = Date.now();
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() - started > ms * currentSlow()) throw new Error(`Timed out waiting for ${what}`);
-    await Bun.sleep(50);
-  }
-}
+
 
 /** Leave context before a test's own timeout, without changing what it waits for or its deadline. */
 export async function traceTaskWait<T>(label: string | undefined, state: () => State | Promise<State>, taskId: string, wait: () => Promise<T>): Promise<T> {

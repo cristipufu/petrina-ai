@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { ReleaseEvents } from "../../release-events.js";
-import { expectRejection } from "../../rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 
 it("releases current and future waits once without releasing another key", async () => {
   const events = new ReleaseEvents(), signal = new AbortController().signal;

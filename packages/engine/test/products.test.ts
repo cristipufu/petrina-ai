@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { serve } from "../src/server.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 describe("product settings in the engine", () => {

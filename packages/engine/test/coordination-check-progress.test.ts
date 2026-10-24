@@ -1,4 +1,4 @@
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";

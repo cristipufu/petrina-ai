@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, expect, it } from "bun:test";
 import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";

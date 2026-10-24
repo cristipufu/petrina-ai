@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 // Where agents' temporary browser folders live. Real agents keep the user's standard folder; test
 // fixtures use their own short folders, and scripted agents that never open a page get no browser.
 import { expect, it, spyOn } from "bun:test";

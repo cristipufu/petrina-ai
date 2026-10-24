@@ -20,7 +20,7 @@ import type { AgentSession, StartAgentSession, ToolProbe } from "@petrina/orches
 import * as git from "./git.js";
 import type { DeveloperToolsResult, Which } from "./setup.js";
 import type { MachineRecords } from "./check-interruption.js";
-import { Store } from "./store.js";
+import { Store } from "@petrina/storage/store";
 import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
 import { restoreProfileCatalog } from "@petrina/core";

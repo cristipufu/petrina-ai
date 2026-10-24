@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { childState, processList, type ProcessListRead } from "../src/process-tree.js";
 import { CLEANUP_MS, CommandFailure, commitAt, git, gitWith, runCommand, runGit, type Started } from "./commands.js";
 import { currentSlow, defunctProcess, makeProduct, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./fixtures.js";
-import { MOST_SLOW } from "./slow.js";
-import { rejectionOf } from "./rejections.js";
-import { createProcessLease } from "./fixtures/process-lease.js";
+import { MOST_SLOW } from "@petrina/test-support/slow";
+import { rejectionOf } from "@petrina/test-support/rejections";
+import { createProcessLease } from "@petrina/test-support/process-lease";
 
 const root = tempDir("petrina-commands-");
 afterAll(() => removeDir(root));

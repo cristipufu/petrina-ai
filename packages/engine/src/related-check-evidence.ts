@@ -1,14 +1,12 @@
 // Small navigation leads from recorded check/build facts. No report, prompt or reviewer text crosses tasks.
 import { existsSync } from "node:fs";
-import type { CheckAttemptEvidence, CheckRepairEvidence, JourneyProductCheck, JourneyStep, RepositoryState, Task, TaskState } from "@petrina/core";
+import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, type CheckEvidenceTask, type CheckEvidenceStep, type CheckAttemptEvidence, type CheckRepairEvidence, type JourneyProductCheck, type RepositoryState, type TaskState } from "@petrina/core";
 import type { Section } from "./context.js";
 import type { Kernel } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import { checksFor, commandText } from "./checks.js";
 import * as git from "./git.js";
 
-export const EVIDENCE_TASK_LIMIT = 24;
-export const EVIDENCE_STEP_LIMIT = 64;
 const EVIDENCE_ENTRY_LIMIT = 3;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const fullSha = (value: string) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
@@ -49,14 +47,6 @@ function recordedNames(check: JourneyProductCheck): readonly { name: string; fil
   return namedCheckFailures(detail.length >= 1000 ? detail.slice(0, Math.max(0, detail.lastIndexOf("\n"))) : detail);
 }
 
-type EvidenceStep = Pick<JourneyStep, "id" | "kind" | "startedAt" | "endedAt" | "end" | "productChecks" | "checkAttempts" | "checkRepairs" | "checkReviews" | "buildVersions" | "buildProductId">;
-export interface CheckEvidenceTask {
-  id: string;
-  state: Task["state"];
-  held?: boolean;
-  journey: readonly EvidenceStep[];
-  delivery?: RepositoryState["confirmedDelivery"];
-}
 
 /** The same restricted shape is used for live state and archived storage. */
 export function projectCheckEvidence(task: TaskState, productId: string): CheckEvidenceTask | undefined {
@@ -79,7 +69,7 @@ export interface CheckFailureReference {
   attempt: CheckAttemptEvidence;
 }
 
-function failures(journey: readonly EvidenceStep[], productId: string): CheckFailureReference[] {
+function failures(journey: readonly CheckEvidenceStep[], productId: string): CheckFailureReference[] {
   return journey.flatMap((step) => (step.productChecks ?? []).slice(-32).flatMap((check) => {
     const attempt = step.checkAttempts?.slice(-8).find((attempt) => attempt.id === check.attemptId && attempt.productId === productId);
     if (!attempt?.tree || !attempt.sha || !fullSha(attempt.tree) || !fullSha(attempt.sha) || check.productId !== productId || !check.id || !/(?:^|:)check-\d+$/.test(check.id) || !check.findingId || check.result !== "fail" || !check.run || check.run.ok || check.run.interruption || check.run.interrupted || check.run.timedOut || check.run.cleanupIncomplete || !attempt.commands.includes(check.run.command)) return [];

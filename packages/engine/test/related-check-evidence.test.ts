@@ -1,10 +1,11 @@
+import type { CheckEvidenceTask } from "@petrina/core";
 import { describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { beginAgentStep, createDemoState, openStep, type DeepMutable, type Task } from "@petrina/core";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
-import { TaskHistory } from "../src/history-store.js";
-import { assignedCheckFailures, deliveryMissing, namedCheckFailures, projectCheckEvidence, relatedCheckCandidates, type CheckEvidenceTask, type CheckFailureReference } from "../src/related-check-evidence.js";
+import { TaskHistory } from "@petrina/storage/history-store";
+import { assignedCheckFailures, deliveryMissing, namedCheckFailures, projectCheckEvidence, relatedCheckCandidates, type CheckFailureReference } from "../src/related-check-evidence.js";
 import { executionFor } from "@petrina/orchestrator";
 import { git, makeWorld, removeDir, tempDir } from "./support.js";
 

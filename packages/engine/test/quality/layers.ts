@@ -49,15 +49,17 @@ export function layerBoundaries(files: ReadonlyMap<string, string>): string[] {
 
 /** Enforce production direction too, including untested files and type-only back references. */
 export function packageBoundaries(files: ReadonlyMap<string, string>): string[] {
-  const allowed = new Map<string, readonly string[]>([["packages/core", []], ["packages/orchestrator", ["packages/core"]]]);
+  const pure = new Set(["packages/core", "packages/orchestrator"]);
+  const allowed = new Map<string, readonly string[]>([["packages/core", []], ["packages/orchestrator", ["packages/core"]],
+    ["packages/storage", ["packages/core"]], ["packages/test-support", []]]);
   const roots = [...files.keys()].filter(file => isSource(file) && [...allowed.keys()].some(workspace => file.startsWith(`${workspace}/src/`)));
-  const errors = dependencyBoundaries(files, roots.map(file => ({ file, label: "pure package" })));
+  const errors = dependencyBoundaries(files, roots.filter(file => pure.has(workspaceOf(file)!)).map(file => ({ file, label: "pure package" })));
   for (const file of roots) {
     const owner = workspaceOf(file)!;
     let parsed;
     try { parsed = sourceFacts(files.get(file)!, file); } catch { continue; } // The dependency check retains the parse error.
     for (const entry of parsed.imports) {
-      if (!entry.runtime && EFFECTS.test(entry.path)) errors.push(`${file}: native ${entry.path} types belong to an adapter; keep the controller contract portable`);
+      if (pure.has(owner) && !entry.runtime && EFFECTS.test(entry.path)) errors.push(`${file}: native ${entry.path} types belong to an adapter; keep the controller contract portable`);
       for (const target of sourceCandidates(file, entry.path).filter(target => files.has(target))) {
         const other = workspaceOf(target);
         if (other && other !== owner && !allowed.get(owner)!.includes(other)) errors.push(`${file}: ${owner} cannot depend on ${other}, including through types; use an owned contract`);
@@ -74,6 +76,16 @@ export function packageBoundaries(files: ReadonlyMap<string, string>): string[] 
         if (target && !dependencies.includes(target.path)) errors.push(`${owner}/package.json: dependency ${name} violates the package direction`);
       }
     } catch { errors.push(`${owner}/package.json: cannot inspect production dependencies`); }
+  }
+  // Test support is shared by test packages, never by the shipped application.
+  for (const [file, source] of files) {
+    const owner = workspaceOf(file);
+    if (!isSource(file) || !owner || owner === "packages/test-support" || !file.startsWith(`${owner}/src/`)) continue;
+    let parsed;
+    try { parsed = sourceFacts(source, file); } catch { continue; }
+    if (parsed.imports.some(entry => entry.path === "@petrina/test-support" || entry.path.startsWith("@petrina/test-support/")
+      || sourceCandidates(file, entry.path).some(target => target.startsWith("packages/test-support/"))))
+      errors.push(`${file}: production code cannot depend on test support, including through types`);
   }
   return [...new Set(errors)].sort();
 }

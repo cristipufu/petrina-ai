@@ -6,7 +6,7 @@ import { Engine } from "./engine.js";
 import { scopesFor } from "@petrina/orchestrator";
 import { WaitingForUsage } from "../src/usage.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

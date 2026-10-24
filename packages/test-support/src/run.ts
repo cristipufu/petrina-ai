@@ -3,6 +3,8 @@
 // and fixtures' private browser folders after every worker stops.
 import { createTestRun } from "./environment.js";
 export { TEST_GIT_IDENTITY } from "./environment.js";
+/** Native probes invoke this same runner from arbitrary working folders. */
+export const TEST_RUNNER = import.meta.path;
 
 /**
  * An engine test's time limit when neither the command nor the test sets one. The tests drive real

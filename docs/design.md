@@ -48,7 +48,7 @@ A `RepositoryContext` binds a task to a specific execution record. An operation 
 
 ## Shared rules and scripted demos
 
-The engine owns I/O: Git, ACP processes, checks, SQLite, clocks and authenticated commands. The simulator owns its deterministic clock, scripted agents and fake GitHub results. Both call the same core rules:
+The engine composes I/O: Git, ACP processes, checks, SQLite, clocks and authenticated commands. The storage package owns SQLite persistence. The simulator owns its deterministic clock, scripted agents and fake GitHub results. Both call the same core rules:
 
 | Shared module | Decisions it owns |
 |---|---|
@@ -72,6 +72,8 @@ Shared transitions receive state and an explicit time. Callers retain persistenc
 | `packages/core` | Domain types, pure rules, analytics definitions and the scripted demo |
 | `packages/orchestrator` | Portable workflow controllers and execution handles, consuming narrow effect contracts; currently repository context, repairs, source selection, acceptance/delivery-return routing, agent-session contracts, shared readiness checks and verifier ballots |
 | `packages/engine` | Bun process coordinating agents, repositories, checks, storage and local API |
+| `packages/storage` | SQLite snapshots, indexed history, work log, receipts and SQL diagnostics; consumes core data contracts |
+| `packages/test-support` | Shared private test environment, Bun runner and portable lightweight fixtures; never imported by shipped code |
 
 `Engine` implements coordinator commands. The kernel shares lookups, recording and persistence; stage modules own their workflows. Detailed module ownership is in [Engine runtime](architecture/engine-runtime.md#architecture).
 

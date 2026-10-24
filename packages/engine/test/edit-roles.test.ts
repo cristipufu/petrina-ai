@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
@@ -8,7 +8,7 @@ import { Engine } from "./engine.js";
 import { MAY_CHANGE } from "../src/prompts.js";
 import { EARLIER_REPORTS_RULE } from "../src/context.js";
 import { dispatch } from "../src/server.js";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { findProgram } from "../src/tools.js";
 import { readGitHub } from "./fake-gh.js";
 import { EngineProcess, Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";

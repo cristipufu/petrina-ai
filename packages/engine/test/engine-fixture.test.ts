@@ -6,7 +6,7 @@ import { FileFaults } from "./file-faults.js";
 import { AgentRun } from "../src/acp-run.js";
 import { ADAPTERS, agentCommandFor } from "../src/tools.js";
 import { FAKE_AGENT, Fakes, removeDir, tempDir } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { TAKE_OVER_WORDS } from "@petrina/core";
 import { ScriptedAgents } from "./scripted-agents.js";
 import { scriptedToolProbe } from "./scripted-probes.js";

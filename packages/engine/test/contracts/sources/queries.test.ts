@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { sourceQueries } from "../../../src/source-queries.js";
 import { removeDir, tempDir } from "../../fixtures.js";
-import { expectRejection } from "../../rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

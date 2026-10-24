@@ -1,4 +1,4 @@
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

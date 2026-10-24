@@ -1,4 +1,4 @@
-import { expectRejection } from "./rejections.js";
+import { expectRejection } from "@petrina/test-support/rejections";
 // Take over in the coordinator's terminal, and hand back, end to end on fake agents. The "terminal"
 // runs Petrina's real launcher with sh, and the launcher opens a fake of the agent's own app
 // (fake-cli.ts) that adds a turn to the conversation and changes the working copy like a person would.

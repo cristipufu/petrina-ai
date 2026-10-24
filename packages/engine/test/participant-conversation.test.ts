@@ -1,5 +1,5 @@
 import { nativeAgentProcess } from "./native-agent.js";
-import { expectRejection, rejectionOf } from "./rejections.js";
+import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";

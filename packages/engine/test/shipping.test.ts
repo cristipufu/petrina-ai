@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type DeliveryMode, type State, type Task } from "@petrina/core";
-import { Store } from "../src/store.js";
+import { Store } from "@petrina/storage/store";
 import { EngineProcess, Fakes, git, makeWorld, remoteRef, removeDir, waitFor, type World } from "./support.js";
 
 const worlds: World[] = [];

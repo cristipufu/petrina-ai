@@ -5,7 +5,7 @@ import * as commands from "../src/git.js";
 import { canSee, findRelease, inGitHubTerms } from "../src/github.js";
 import { branchExists } from "../src/source-github.js";
 import { makeProduct, removeDir, SLOW, tempDir, testGitEnv } from "./fixtures.js";
-import { rejectionOf } from "./rejections.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const temp = tempDir("petrina-repository-reads-");
 afterAll(() => removeDir(temp));

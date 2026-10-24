@@ -1,4 +1,4 @@
-import { expectRejection, rejectionOf } from "./rejections.js";
+import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import * as processes from "node:child_process";

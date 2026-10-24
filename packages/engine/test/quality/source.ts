@@ -24,7 +24,7 @@ const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
 /** What the fixtures export as asynchronous work: their callers must wait for it. */
 const ASYNC_HELPERS = new Set(["git", "gitWith", "runGit", "runCommand", "commitAt", "makeProduct", "makeWorld", "repositorySeed", "remoteRef"]);
 const FIXTURE_MODULE = /^\.\.?\/(?:.*\/)?(?:fixtures|support|commands)(?:\.[jt]s)?$/;
-const REJECTIONS = /^\.\.?\/(?:.*\/)?rejections(?:\.[jt]s)?$/;
+const REJECTIONS = /^(?:\.\.?\/(?:.*\/)?rejections(?:\.[jt]s)?|@petrina\/test-support\/rejections)$/;
 const COMBINATORS = new Set(["all", "allSettled", "race", "any"]);
 /** Array methods that use a callback's answer at once: a promise there is never waited for. */
 const SYNC_CALLBACKS = new Set(["forEach", "filter", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "sort"]);

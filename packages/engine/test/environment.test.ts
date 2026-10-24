@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { testEnvironment, TEST_GIT_IDENTITY } from "./environment.js";
+import { testEnvironment, TEST_GIT_IDENTITY } from "@petrina/test-support/environment";
 import { gitWith, removeDir, tempDir } from "./fixtures.js";
 
 const root = tempDir("petrina-environment-");

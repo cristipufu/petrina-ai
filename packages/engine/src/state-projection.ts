@@ -1,7 +1,7 @@
 // Live projections, bounded archive ownership and revision/persistence bookkeeping.
 import { finishedTask, historyPageUsage, involvesProduct, type HistoryDependency, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
-import { settledHistoryTask } from "./store.js";
+import { settledHistoryTask } from "@petrina/storage/store";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "@petrina/orchestrator";
 
 type ProjectionHost = Pick<Kernel, "s" | "store" | "boot" | "stopped" | "activeState" | "save" | "drivers" | "settling" | "switching" | "copyCleanups" | "followsUpHeld" | "usageCoordinator" | "events" | "tracking">;

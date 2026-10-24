@@ -1,9 +1,9 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createProcessLease } from "../../fixtures/process-lease.js";
-import { removeDir, tempDir, waitFor } from "../../fixtures.js";
-import { rejectionOf } from "../../rejections.js";
+import { createProcessLease } from "@petrina/test-support/process-lease";
+import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
+import { rejectionOf } from "@petrina/test-support/rejections";
 
 const root = tempDir("petrina-process-lease-");
 const children = new Set<Actor>();
@@ -77,8 +77,8 @@ it("lets a completed actor exit normally while its owner stays open", () => with
 
 it("ends an actor when its owner process dies without running teardown", async () => {
   const recipe = join(root, "abandoned-program.json"), ready = join(root, "abandoned-ready");
-  const fixture = new URL("../../fixtures/process-lease.ts", import.meta.url).href;
-  const json = new URL("../../fixture-json.ts", import.meta.url).href;
+  const fixture = new URL("../../../src/process-lease.ts", import.meta.url).href;
+  const json = new URL("../../../src/fixture-json.ts", import.meta.url).href;
   const owner = start(`const { createProcessLease } = await import(${JSON.stringify(fixture)});
 const { writeFixtureJson } = await import(${JSON.stringify(json)});
 const lease = await createProcessLease();

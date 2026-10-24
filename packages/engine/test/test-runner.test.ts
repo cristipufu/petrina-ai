@@ -1,11 +1,11 @@
-import { fixtureFiles } from "./fixture-files.js";
+import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { removeDir, runCommand, tempDir, testGitEnv, waitFor } from "./fixtures.js";
-import { TEST_GIT_IDENTITY } from "./run.js";
-import { testTempParent } from "./temp-parent.js";
+import { TEST_GIT_IDENTITY, TEST_RUNNER } from "@petrina/test-support/run";
+import { testTempParent } from "@petrina/test-support/temp-parent";
 
 const fixture = tempDir("petrina-test-runner-");
 afterAll(() => removeDir(fixture));
@@ -49,7 +49,7 @@ it("records the worker's temporary folder", () => writeFileSync(${JSON.stringify
         if (parent === undefined) delete env[key];
         else env[key] = parent;
       }
-      const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const child = Bun.spawn([process.execPath, TEST_RUNNER, test], { cwd: fixture, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
       const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect(code, `${stdout}\n${stderr}`).toBe(0);
       const { folder, ordinary } = JSON.parse(readFileSync(record, "utf8")) as { folder: string; ordinary: string };
@@ -88,7 +88,7 @@ it("leaves files for its parent to reclaim", async () => {
   writeFileSync(${JSON.stringify(record)}, JSON.stringify({ folder: tmpdir(), helper: dirname(result.stdout.trim()), left, ordinary: tempDir("ordinary-"), browser: browserTempRoot(), browsers, owned: realpathSync.native(process.env.PETRINA_TEST_BROWSERS!), env: [process.env.TMPDIR, process.env.TMP, process.env.TEMP] }));
   expect(${passes}).toBe(true);
 });`);
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: { ...testGitEnv(), TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, TEST_RUNNER, test], { cwd: fixture, env: { ...testGitEnv(), TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   expect(code, `${stdout}\n${stderr}`).toBe(passes ? 0 : 1);
   const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; helper: string; left: string; ordinary: string; browser: string; browsers: string; owned: string; env: string[] };
@@ -135,7 +135,7 @@ it("commits as the engine does in fresh repositories", async () => {
   writeFileSync(record + ".tmp", JSON.stringify({ folder: tmpdir(), config: process.env.GIT_CONFIG_GLOBAL, fresh: await who(fresh), own: await who(own) }));
   renameSync(record + ".tmp", record);
 });`);
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: { ...testGitEnv(), GIT_CONFIG_GLOBAL: callers, TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, TEST_RUNNER, test], { cwd: fixture, env: { ...testGitEnv(), GIT_CONFIG_GLOBAL: callers, TMPDIR: parent, TMP: parent, TEMP: parent }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
   expect(code, `${stdout}\n${stderr}`).toBe(0);
   const saved = JSON.parse(readFileSync(record, "utf8")) as { folder: string; config: string; fresh: string; own: string };
@@ -173,7 +173,7 @@ it("owns only this run's repositories, database and captures", async () => {
     expect(existsSync(repo)).toBe(true); expect(existsSync(join(browser, "captures"))).toBe(true);
   } finally { db.close(); }
 });`);
-  const runs = ["first", "second"].map(label => ({ label, child: Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], {
+  const runs = ["first", "second"].map(label => ({ label, child: Bun.spawn([process.execPath, TEST_RUNNER, test], {
     cwd: fixture, env: { ...testGitEnv(), TMPDIR: parent, TMP: parent, TEMP: parent, PETRINA_FIXTURE_RUN: label },
     stdin: "ignore", stdout: "pipe", stderr: "pipe",
   }) }));
@@ -221,7 +221,7 @@ it("waits to be interrupted", async () => {
   renameSync(record + ".tmp", record);
   await Bun.sleep(60_000);
 }, 90_000);`);
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), test], { cwd: fixture, env: testGitEnv(), stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  const child = Bun.spawn([process.execPath, TEST_RUNNER, test], { cwd: fixture, env: testGitEnv(), stdin: "ignore", stdout: "ignore", stderr: "ignore" });
   let worker: number | undefined;
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   try {
