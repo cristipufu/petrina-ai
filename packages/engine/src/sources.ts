@@ -1,10 +1,10 @@
 import { executionFor, resolveSource, SourceSelections, type RepositoryContext } from "@petrina/orchestrator";
 import { productName, type TaskSource, type WorkChoice } from "@petrina/core";
-import * as git from "./git.js";
-import { background, sourcePr } from "./source-github.js";
+import * as git from "@petrina/repositories/git";
+import { background, sourcePr } from "@petrina/repositories/source-github";
 import type { Kernel, MTask } from "./kernel.js";
 import type { Connections } from "./connection.js";
-import { sourceQueries } from "./source-queries.js";
+import { sourceQueries } from "@petrina/repositories/source-queries";
 
 import { mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { isAbsolute, resolve, dirname } from "node:path";

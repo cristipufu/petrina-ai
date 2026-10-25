@@ -7,7 +7,7 @@ import { Engine } from "./engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { AcceptedPoints } from "../src/accepted-points.js";
 import { addLearnings, keptLearnings, Learnings } from "../src/learnings.js";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { Fakes, git, gitWith, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 

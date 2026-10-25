@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import * as commands from "../src/git.js";
+import * as commands from "@petrina/repositories/git";
 import { checkGh, checkGit, checkNode } from "../src/setup.js";
 import type { ToolProbeResult } from "@petrina/orchestrator";
 import { removeDir, SLOW, tempDir, testGitEnv } from "./fixtures.js";

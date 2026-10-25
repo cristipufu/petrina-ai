@@ -113,7 +113,7 @@ function unfinishedWork(program: Node, facts: SourceFacts): void {
   // Callees that wait for the promise they are given, by argument position.
   const awaiting = new Map<string, number[]>();
   for (const statement of program.body as Node[]) {
-    if (statement.type === "ImportDeclaration" && statement.importKind !== "type" && /^(?:\.\.\/)+src\/parallel\.[jt]s$/.test(text(statement.source) ?? "")) {
+    if (statement.type === "ImportDeclaration" && statement.importKind !== "type" && text(statement.source) === "@petrina/core") {
       for (const specifier of statement.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type" && name(specifier.imported) === "completeAll") collectors.add(name(specifier.local)!);
     }
     if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {

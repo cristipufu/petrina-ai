@@ -5,7 +5,7 @@ import type { BuilderContext, Finding, Hunt, Id, Role, Task } from "@petrina/cor
 import type { Section } from "./context.js";
 import type { ContextPart } from "./roles.js";
 import { repositoryView, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { saveImmutable } from "./immutable-file.js";
 import { freezeReviewHistory, readReviewHistory, type CompactReviewHistory, type StoodThrough } from "./review-history.js";
 

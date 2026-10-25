@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState, type JourneyAgentInput, type Role, type Task, type WorkChoice } from "@petrina/core";
-import { AgentBrowser } from "../src/browser.js";
+import { AgentBrowser } from "@petrina/agent-runtime/browser";
 import { Context } from "../src/context.js";
 import { Engine } from "./engine.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";

@@ -5,7 +5,10 @@ import { slotWait, usageLines, type AgentProfile, type RoutineDraft, type Task }
 import { Engine } from "./engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { failureReason } from "../src/tracking.js";
-import { CAPACITY_WAIT, capacityRetryDelay, capacityWaiting, CODEX_MODEL_CAPACITY, codexCapacityFailure, codexModelAtCapacity, limitFromFailure, MODEL_CAPACITY_WAIT_MS, ModelAtCapacity, WaitingForCapacity, WaitingForUsage } from "../src/usage.js";
+import { CAPACITY_WAIT, ModelAtCapacity } from "@petrina/agent-runtime/failures";
+import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, WaitingForCapacity, WaitingForUsage } from "../src/usage.js";
+import { CODEX_MODEL_CAPACITY, codexCapacityFailure, codexModelAtCapacity } from "@petrina/agent-runtime/provider-interruptions";
+import { limitFromFailure } from "@petrina/agent-runtime/usage";
 import type { NativeStep, Scenario } from "./fake-agent.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, makeWorld, removeDir, tempDir, waitFor } from "./support.js";
 

@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { ScreenArbitration, executionOf, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 import type { Id, ScreenMode } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
-import * as git from "./git.js";
-import { completeAll } from "./parallel.js";
+import * as git from "@petrina/repositories/git";
+import { completeAll } from "@petrina/core";
 import { runtimeClock } from "./clock.js";
 type ScreenHost = Pick<Kernel, "taskAdmissionWait" | "drivers" | "settling" | "dataDir" | "productOf" | "log" | "syncIdleSleep" | "s" | "columnFor" | "commitNow" | "id" | "schedule" | "stopped" | "task">;
 

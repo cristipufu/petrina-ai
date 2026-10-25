@@ -1,4 +1,4 @@
-import { ADAPTERS } from "./tools.js";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 // The work log's bookkeeping: one entry for every agent turn and every notable moment (a stage starting and
 // ending, a design round, a reviewer's verdict, a question to the coordinator, a failure, a retry, a task
@@ -9,7 +9,8 @@ import { randomUUID } from "node:crypto";
 import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
 import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
 import type { Kernel, MStage, MTask } from "./kernel.js";
-import { ModelAtCapacity, UsageLimited, WaitingForCapacity, WaitingForUsage } from "./usage.js";
+import { ModelAtCapacity, UsageLimited } from "@petrina/agent-runtime/failures";
+import { WaitingForCapacity, WaitingForUsage } from "./usage.js";
 import { WaitClock, WorkLog } from "@petrina/storage/worklog";
 
 /** A stage that started and hasn't ended: kept in the work log, mirrored here. */

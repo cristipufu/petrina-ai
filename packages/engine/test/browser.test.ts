@@ -11,8 +11,8 @@ import * as os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Engine } from "./engine.js";
-import * as browserRecovery from "../src/browser.js";
-import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowserTemps } from "../src/browser.js";
+import * as browserRecovery from "@petrina/agent-runtime/browser";
+import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, cleanupNote, recoverBrowserTemps } from "@petrina/agent-runtime/browser";
 import { connectionPath } from "../src/instance.js";
 import { LifecycleStore } from "../src/lifecycle.js";
 import { parseDescendants, parseProcessState, processList, readProcessList } from "@petrina/platform/process-tree";
@@ -560,7 +560,7 @@ it.skipIf(process.platform === "win32")("keeps browser ownership when a dead con
   const pids = join(directory, "owned.json");
   const script = join(directory, "owner.ts");
   writeFileSync(script, `import { writeFileSync, existsSync, readdirSync } from "node:fs";
-import { AgentBrowser } from ${JSON.stringify(join(import.meta.dir, "../src/browser.ts"))};
+import { AgentBrowser } from ${JSON.stringify(join(import.meta.dir, "../../agent-runtime/src/browser.ts"))};
 import { descendantsKnown } from ${JSON.stringify(import.meta.resolve("@petrina/platform/process-tree"))};
 import { Client } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/index.js"))};
 import { StreamableHTTPClientTransport } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/streamableHttp.js"))};
@@ -846,7 +846,7 @@ it.skipIf(process.platform === "win32")("a failing test run leaves the whole not
   // test's private folders. The process list is unreadable there. No configured check or live log is involved.
   writeFileSync(join(work, "shutdown.test.ts"), `import { it } from "bun:test";
 import { rmSync } from "node:fs";
-import { AgentBrowser } from ${JSON.stringify(join(import.meta.dir, "../src/browser.ts"))};
+import { AgentBrowser } from ${JSON.stringify(join(import.meta.dir, "../../agent-runtime/src/browser.ts"))};
 it("stops a browser whose helper was killed", async () => {
   const browser = await AgentBrowser.start(undefined, process.env, undefined, ${JSON.stringify(browsers)});
   const child = (browser as any).child;
@@ -1026,14 +1026,14 @@ it.skipIf(!process.env.PETRINA_BROWSER_CHECK)("startup recovery retains a browse
   const work = tempDir("petrina-browser-recovery-retry-");
   const registry = join(work, "registry");
   const bin = join(work, "bin");
-  const recoveryScript = join(import.meta.dir, ".browser-recovery-retry.ts");
+  const recoveryScript = join(work, "browser-recovery-retry.ts");
   const page = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<title>Recovery retry</title><p>Open</p>", { headers: { "content-type": "text/html" } }) });
   const sentinel = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
   const sentinelPid = requiredPid(sentinel.pid, "The unrelated process");
   mkdirSync(bin);
   writeFileSync(join(bin, "ps"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
   writeFileSync(recoveryScript, `import { existsSync, readdirSync } from "node:fs";
-import { recoverBrowserTemps } from "../src/browser.js";
+import { recoverBrowserTemps } from ${JSON.stringify(import.meta.resolve("@petrina/agent-runtime/browser"))};
 const [registry, browsers] = process.argv.slice(2) as [string, string];
 try {
   await recoverBrowserTemps(registry, browsers);

@@ -1,8 +1,8 @@
 import { observeCommittedCode, scopesFor } from "@petrina/orchestrator";
 import { assignedProducts, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import type { MTask } from "./kernel.js";
-import { repositoryObservationQueries } from "./repository-observations.js";
+import { repositoryObservationQueries } from "@petrina/repositories/observations";
 
 export function committedCodeOf(task: MTask) {
   return observeCommittedCode(task, repositoryObservationQueries);

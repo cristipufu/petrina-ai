@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS, type RoleChanges, type Stage } from "@petrina/core";
 import { normalizePlan } from "../src/plan.js";
 import { PlanResult } from "../src/roles.js";
-import { ENGINE_PROFILES } from "../src/tools.js";
+import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import type { z } from "zod";
 
 type Raw = z.input<typeof PlanResult>["stages"][number];

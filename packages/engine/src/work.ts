@@ -6,7 +6,7 @@ import { openProofs, refreshProofs, restorationReason, sameVersions } from "@pet
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
 import { builderFindings, builderReturnWords, checkProblem, recordStepResult, endAgentStep, JOURNEY_WORDS as W, noteReproduction, openStep, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
 import { Kernel, stepKey, type MStage } from "./kernel.js";

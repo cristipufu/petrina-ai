@@ -2,7 +2,7 @@
 import { spyOn } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { AgentBrowser } from "../src/browser.js";
+import { AgentBrowser } from "@petrina/agent-runtime/browser";
 
 export function standInBrowser() {
   return spyOn(AgentBrowser, "start").mockImplementation(async parent => {

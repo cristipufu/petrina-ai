@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, s
 import { join, resolve } from "node:path";
 import { slotUses, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "./engine.js";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { sessionState } from "../src/terminal.js";
 import type { CliScript } from "./fake-cli.js";
 import type { Scenario } from "./fake-agent.js";

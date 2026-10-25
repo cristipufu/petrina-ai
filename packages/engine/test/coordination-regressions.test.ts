@@ -1,7 +1,7 @@
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { z } from "zod";
-import type { AgentRun } from "../src/acp-run.js";
+import type { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { Engine } from "./engine.js";
 import { Coordination, type Result } from "../src/coordination.js";
 import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";

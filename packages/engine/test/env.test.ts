@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { agentEnv, loginShellPath, mergePath, pathFromEnv, withoutCredentials } from "../src/env.js";
-import { ADAPTERS } from "../src/tools.js";
+import { agentEnv, loginShellPath, mergePath, pathFromEnv } from "../src/env.js";
+import { withoutCredentials } from "@petrina/platform/process-environment";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { BACKGROUND } from "../src/prompts.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

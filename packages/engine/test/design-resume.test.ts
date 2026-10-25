@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { BUILT_IN_ROLES, createDemoState } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { designConversationScope } from "../src/design.js";
-import { ENGINE_PROFILES } from "../src/tools.js";
+import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 

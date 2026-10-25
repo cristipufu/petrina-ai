@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ROLE_STARTS } from "@petrina/core";
 import { Context, EARLIER_REPORTS_RULE } from "../src/context.js";
 import { Engine } from "./engine.js";
-import { fileAt } from "../src/git.js";
+import { fileAt } from "@petrina/repositories/git";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import { makeProduct, removeDir, SLOW, tempDir } from "./fixtures.js";
 

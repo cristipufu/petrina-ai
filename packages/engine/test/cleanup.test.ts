@@ -8,7 +8,7 @@ import { FileFaults } from "@petrina/test-support/file-faults";
 import { basename, dirname, join } from "node:path";
 import { CLEANUP_WORDS, type Task } from "@petrina/core";
 import type { Engine } from "./engine.js";
-import { addCopy, branchName, ensureWorktree, removeWorktree } from "../src/git.js";
+import { addCopy, branchName, ensureWorktree, removeWorktree } from "@petrina/repositories/git";
 import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, waitFor, waitForFile, type World } from "./support.js";
 
 const worlds: World[] = [];

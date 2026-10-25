@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { journeyProblems, journeyView, usageLines, type AgentProfile, type Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { failureReason } from "../src/tracking.js";
-import { claudeReport, claudeReports, clockTime, limitFromFailure, limitFromReport, UsageLimited, WaitingForUsage } from "../src/usage.js";
+import { claudeReport, claudeReports } from "@petrina/agent-runtime/claude-usage-report";
+import { clockTime } from "@petrina/agent-runtime/provider-refusals";
+import { limitFromFailure, limitFromReport } from "@petrina/agent-runtime/usage";
+import { UsageLimited } from "@petrina/agent-runtime/failures";
+import { WaitingForUsage } from "../src/usage.js";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 

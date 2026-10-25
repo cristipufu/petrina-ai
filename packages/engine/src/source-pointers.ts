@@ -1,6 +1,6 @@
 import type { Id, SourcePointer, Task } from "@petrina/core";
 import { z } from "zod";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 
 /** One optional navigation location. Each is checked on its own, so a bad entry never costs an agent's result. */
 export const SourcePointerEntry = z.object({

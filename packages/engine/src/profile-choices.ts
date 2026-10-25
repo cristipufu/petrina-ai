@@ -1,10 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProfileChoices } from "@petrina/core";
-import { AgentRun } from "./acp-run.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { agentEnv } from "./env.js";
 import type { Kernel } from "./kernel.js";
-import { ADAPTERS, agentCommandFor } from "./tools.js";
+import { ADAPTERS, agentCommandFor } from "@petrina/agent-runtime/tools";
 
 type ProfileHost = Pick<Kernel, "dataDir" | "options" | "stopped"> & { s: Pick<Kernel["s"], "profiles"> };
 

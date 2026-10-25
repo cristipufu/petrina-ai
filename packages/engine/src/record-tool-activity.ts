@@ -1,6 +1,6 @@
 import type { Id } from "@petrina/core";
 import type { MTask } from "./kernel.js";
-import { MAX_TOOL_INVOCATIONS } from "./tool-invocations.js";
+import { MAX_TOOL_INVOCATIONS } from "@petrina/agent-runtime/tool-invocations";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
 
 /** Shared bookkeeping for main agents, reviewer seats and voter seats. */

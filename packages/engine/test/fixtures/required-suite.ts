@@ -19,7 +19,7 @@ export const PACKAGES = (() => {
   return [...names].map(name => ({ name, folder: realpathSync.native(dirname(Bun.resolveSync(`${name}/package.json`, ENGINE))) }));
 })();
 
-export type Suite = "core" | "desktop" | "orchestrator" | "test-support" | "storage" | "platform" | "engine";
+export type Suite = "core" | "desktop" | "orchestrator" | "test-support" | "storage" | "platform" | "agent-runtime" | "repositories" | "engine";
 export type StandIn = { report?: "fail" | "missing" | "truncated" | "omitted" | "counts" | "running" | "skipped"; code?: number; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean };
 export const NOT_STARTED = "core and desktop and orchestrator did not all pass";
 export const EXAMPLE = "test/contracts/testing/example.test.ts";

@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeDir, runChecks, runCommand } from "./fixtures.js";
-import { withoutCredentials } from "../src/env.js";
+import { withoutCredentials } from "@petrina/platform/process-environment";
 
 describe("git commands while Petrina runs the suite", () => {
   it("starts an isolated test engine from a restarted engine's check environment", async () => {

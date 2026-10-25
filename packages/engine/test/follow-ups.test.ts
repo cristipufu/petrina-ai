@@ -13,7 +13,7 @@ import { coordinationCli } from "../src/coordination-cli.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";
 import type { EngineClient } from "./client.js";
 import { dispatch } from "../src/server.js";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];

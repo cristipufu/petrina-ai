@@ -4,8 +4,9 @@ import type { AgentProfile, CheckId } from "@petrina/core";
 import type { ToolProbe, ToolProbeRequest, ToolProbeResult } from "@petrina/orchestrator";
 import type { Kernel } from "./kernel.js";
 import { agentEnv } from "./env.js";
-import { checkAgentTool, checkGh, checkGit, checkNode, type Which } from "./setup.js";
-import { ADAPTERS, agentCommandFor, findProgram } from "./tools.js";
+import { checkGh, checkGit, checkNode, type Which } from "./setup.js";
+import { checkAgentTool } from "@petrina/agent-runtime/probe";
+import { ADAPTERS, agentCommandFor, findProgram } from "@petrina/agent-runtime/tools";
 
 /** Native installation/login observations; no admission, shared-check or workflow decisions. */
 export class NativeToolProbe implements ToolProbe {

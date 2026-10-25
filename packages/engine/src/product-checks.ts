@@ -6,7 +6,7 @@ import { beginRepair } from "@petrina/orchestrator";
 
 import { beginPetrinaStep, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, runtimeWaitHolds, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
 import { livePowerRecords, powerInterruption, readMachineRecords, type MachineRecords } from "./check-interruption.js";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { CheckFinderResult } from "./roles.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -15,7 +15,7 @@ import type { CheckAttemptEvidence, CheckRun, DeepMutable, JourneyCheckReuse, Jo
 import { namedCheckFailures } from "./related-check-evidence.js";
 import { CHECKS_SEEN, checksFingerprint, checksFor, detectChecks, runChecks, commandText, expectedCheckCommands, orderedChecks, staticCheck, type CheckProgress } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
-import { withoutCredentials } from "./env.js";
+import { withoutCredentials } from "@petrina/platform/process-environment";
 import { Kernel, Aborted, CHECK_FINDER_PROFILE, ScreenWait, SourceRefreshRequired, type MTask } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";

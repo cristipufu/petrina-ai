@@ -3,7 +3,7 @@ import { beginAgentStep, JOURNEY_WORDS, type Stage, type DeepMutable } from "@pe
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { Engine } from "./engine.js";
-import { contentTree } from "../src/git.js";
+import { contentTree } from "@petrina/repositories/git";
 import { Work } from "../src/work.js";
 import { executionFor } from "@petrina/orchestrator";
 import type { Turns } from "../src/turn.js";

@@ -1,9 +1,9 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { chooseProfile, HOLDING_BACK, headroom, limitOf, nearLimit, pickStarts, toolCapNow, usageLines, type AgentProfile } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { claudeReports } from "../src/claude-usage-report.js";
-import { claudeAccountReports } from "../src/claude-usage.js";
-import { limitFromFailure } from "../src/usage.js";
+import { claudeReports } from "@petrina/agent-runtime/claude-usage-report";
+import { claudeAccountReports } from "@petrina/agent-runtime/claude-account-report";
+import { limitFromFailure } from "@petrina/agent-runtime/usage";
 import { removeDir, tempDir } from "./fixtures.js";
 
 const NOW = Date.parse("2026-10-21T12:00:00Z"), HOUR = 3_600_000;

@@ -2,11 +2,11 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ActiveAgent, State, Task, TaskUsage } from "@petrina/core";
-import { AgentRun } from "../src/acp-run.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { Engine } from "./engine.js";
 import { agentEnv } from "../src/env.js";
-import { claudeSandbox, sandboxFailure } from "../src/sandbox.js";
-import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
+import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
+import { ADAPTERS, ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "./fake-agent.js";
 import { engineEnv, EngineProcess, Fakes, makeProduct, removeDir, tempDir, testBrowserRoot, traceTaskWait, waitFor, type Open } from "./support.js";
 
@@ -405,78 +405,5 @@ describe("Claude Code's own sandbox", () => {
     ]);
     expect(done.session.filter((line) => line.roleId === "builder" && line.text === REFUSED)).toHaveLength(1);
     await engine.quit();
-  });
-});
-
-describe("what Petrina asks of Claude Code's sandbox", () => {
-  const mac = { home: "/Users/me", tmp: "/var/folders/xy/T", platform: "darwin" as const, env: {} };
-
-  it("required, every command reviewed by Auto mode, with Claude Code's own escape hatch kept", () => {
-    const sandbox = claudeSandbox(mac);
-    expect(sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: true });
-    // Every website without a question; on a Mac, local test servers and the system's certificate check.
-    expect(sandbox.network).toEqual({ allowedDomains: ["*"], allowLocalBinding: true });
-    expect(sandbox.enableWeakerNetworkIsolation).toBe(true);
-    // Nothing else: no command lists, no reading limits, no credential rules.
-    expect(Object.keys(sandbox).sort()).toEqual(["allowUnsandboxedCommands", "autoAllowBashIfSandboxed", "enableWeakerNetworkIsolation", "enabled", "failIfUnavailable", "filesystem", "network"]);
-    expect(Object.keys(sandbox.filesystem)).toEqual(["allowWrite"]);
-    const linux = claudeSandbox({ ...mac, home: "/home/me", tmp: "/tmp", platform: "linux" });
-    expect(linux.network).toEqual({ allowedDomains: ["*"] });
-    expect(linux.enableWeakerNetworkIsolation).toBeUndefined();
-  });
-
-  it("writes only to temporary folders, sign-in caches and package download caches, beside the working copy", () => {
-    const write = claudeSandbox(mac).filesystem.allowWrite;
-    for (const path of [
-      "/tmp",
-      "/private/tmp",
-      "/var/folders/xy/T",
-      "/Users/me/.aws/sso/cache",
-      "/Users/me/.aws/cli/cache",
-      "/Users/me/.aws/login/cache",
-      "/Users/me/.azure",
-      "/Users/me/.gcm",
-      "/Users/me/.local/.IdentityService",
-      "/Users/me/.npm/_cacache",
-      "/Users/me/.bun/install/cache",
-      "/Users/me/Library/Caches/pnpm",
-      "/Users/me/Library/pnpm/store",
-      "/Users/me/Library/Caches/Yarn",
-      "/Users/me/Library/Caches/pip",
-      "/Users/me/.cargo/registry",
-      "/Users/me/go/pkg/mod",
-    ])
-      expect(write).toContain(path);
-    // Never aws's settings or credentials, the home folder itself, or where tools keep installed programs.
-    for (const path of ["/Users/me", "/Users/me/.aws", "/Users/me/.aws/config", "/Users/me/.aws/credentials", "/Users/me/.bun", "/Users/me/.bun/bin", "/Users/me/.cargo", "/Users/me/.cargo/bin", "/Users/me/.npm", "/Users/me/Library/pnpm", "/Users/me/.ssh", "/Users/me/.config/gh"])
-      expect(write).not.toContain(path);
-    expect(new Set(write).size).toBe(write.length);
-  });
-
-  it("follows the coordinator's own az folder", () => {
-    expect(claudeSandbox({ ...mac, env: { AZURE_CONFIG_DIR: "/Users/me/work/azure" } }).filesystem.allowWrite).toContain("/Users/me/work/azure");
-  });
-
-  it("reads Claude Code's own report that its sandbox cannot start, in plain words", () => {
-    const report = (details: string) => Object.assign(new Error("Internal error"), { code: -32603, data: { details } });
-    expect(
-      sandboxFailure(
-        report(
-          "Claude Code returned an error result: Sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed · install missing tools (e.g. apt install bubblewrap socat) or see https://code.claude.com/docs/en/sandboxing. Set sandbox.failIfUnavailable=false to allow unsandboxed execution.",
-        ),
-      ),
-    ).toBe("this computer lacks what it needs (bubblewrap (bwrap) not installed, socat not installed)");
-    expect(sandboxFailure(report("Claude Code returned an error result: Sandbox required but unavailable: sandbox is enabled but the Windows sandbox is not active on this session (feature gate off). Set sandbox.failIfUnavailable=false to allow unsandboxed execution."))).toBe(
-      "it is not switched on for Windows on this computer",
-    );
-    expect(sandboxFailure(report("Claude Code returned an error result: Sandbox required but unavailable: sandbox is enabled but freebsd is not supported (requires macOS, Linux, or WSL2). Set sandbox.failIfUnavailable=false to allow unsandboxed execution."))).toBe(
-      "it does not run on this system",
-    );
-    // Broken sandbox settings are not a missing sandbox: Claude Code keeps it required, and Petrina keeps it on for everyone else.
-    expect(sandboxFailure(report("Sandbox is required but failed to initialize: invalid sandbox settings. Fix the sandbox settings to retry (a --settings file is pinned for the process: restart)."))).toBeUndefined();
-    // Any other failure to open is not about the sandbox.
-    expect(sandboxFailure(report("Claude Code returned an error result: Authentication required"))).toBeUndefined();
-    expect(sandboxFailure(new Error("Resource not found"))).toBeUndefined();
-    expect(sandboxFailure(undefined)).toBeUndefined();
   });
 });

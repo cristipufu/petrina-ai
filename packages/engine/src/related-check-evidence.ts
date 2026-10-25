@@ -5,7 +5,7 @@ import type { Section } from "./context.js";
 import type { Kernel } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import { checksFor, commandText } from "./checks.js";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 
 const EVIDENCE_ENTRY_LIMIT = 3;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

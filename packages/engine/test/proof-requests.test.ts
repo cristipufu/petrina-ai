@@ -12,7 +12,7 @@ import { recordReviewProofs } from "@petrina/orchestrator";
 import { ReviewResult } from "../src/roles.js";
 import { commandText } from "../src/checks.js";
 import { Store } from "@petrina/storage/store";
-import * as gitSteps from "../src/git.js";
+import * as gitSteps from "@petrina/repositories/git";
 import { stepKey } from "../src/kernel.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { MAY_CHANGE } from "../src/prompts.js";

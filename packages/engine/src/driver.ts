@@ -6,7 +6,7 @@ import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from
 import { acceptanceGap, openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, requiredUnverified, sameVersions } from "@petrina/core";
 import { join } from "node:path";
 import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { Kernel, Aborted, type MTask, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired, stepKey } from "./kernel.js";
 import { WaitingForUsage } from "./usage.js";
 import type { Sources } from "./sources.js";

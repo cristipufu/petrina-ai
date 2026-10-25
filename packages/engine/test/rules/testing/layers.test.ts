@@ -90,6 +90,8 @@ it("keeps native persistence and shared test infrastructure independent of the a
   const host = "packages/engine/src/kernel.ts";
   for (const [owner, dependency] of [
     ["packages/storage", "../../engine/src/kernel.js"],
+    ["packages/agent-runtime", "../../engine/src/kernel.js"],
+    ["packages/repositories", "../../engine/src/kernel.js"],
     ["packages/platform", "../../engine/src/kernel.js"],
     ["packages/platform", "../../test-support/src/environment.js"],
     ["packages/test-support", "../../engine/src/kernel.js"],
@@ -102,6 +104,8 @@ it("keeps native persistence and shared test infrastructure independent of the a
   }
   expect(packageBoundaries(new Map([["packages/storage/src/adapter.ts", "import { Database } from 'bun:sqlite';"],
     ["packages/platform/src/process-host.ts", "import { execFile } from 'node:child_process';"],
+    ["packages/agent-runtime/src/session.ts", "import type { AgentSession } from '@petrina/orchestrator';"],
+    ["packages/repositories/src/query.ts", "import type { RepositoryQueries } from '@petrina/orchestrator';"],
     ["packages/test-support/src/fixtures.ts", "import { mkdir } from 'node:fs/promises';"]]))).toEqual([]);
 });
 

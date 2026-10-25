@@ -35,7 +35,7 @@ async function run(scenario: Partial<Record<Suite, StandIn>>, expected: number) 
 }
 function expectRuns(ran: string[], native: boolean) {
   expect(ran.slice(0, 3)).toEqual(["core", "desktop", "orchestrator"]);
-  expect(ran.slice(3).sort()).toEqual(native ? ["engine", "platform", "storage", "test-support"] : []);
+  expect(ran.slice(3).sort()).toEqual(native ? ["agent-runtime", "engine", "platform", "repositories", "storage", "test-support"] : []);
 }
 
 for (const args of [["test/chosen.test.ts"], ["--watch"], ["-t", "chosen"], ["--reporter=json"], ["--help", "chosen"], ["chosen", "-h"]]) it(`rejects root arguments before any repository scan: ${args.join(" ")}`, async () => {
@@ -100,10 +100,10 @@ it("runs every package with one native execution, complete manifests and a priva
 });
 for (const scenario of [{ orchestrator: { report: "fail", code: 1 } }, { core: { report: "fail", code: 1 }, desktop: { report: "fail", code: 1 } }, { core: { report: "missing" } }, { desktop: { report: "fail" } }] satisfies Partial<Record<Suite, StandIn>>[]) it(`runs independent preliminary work and gates the whole native group: ${JSON.stringify(scenario)}`, async () => {
   const { ran, report } = await run(scenario, 1); expectRuns(ran, false); expect(report.scope).toBe("partial");
-  expect(report.executions.at(-1)).toEqual({ id: "native", workspaces: ["packages/test-support", "packages/storage", "packages/platform", "packages/engine"], notRun: NOT_STARTED });
+  expect(report.executions.at(-1)).toEqual({ id: "native", workspaces: ["packages/test-support", "packages/storage", "packages/platform", "packages/agent-runtime", "packages/repositories", "packages/engine"], notRun: NOT_STARTED });
   for (const work of report.results.slice(3)) expect(work).toEqual({ workspace: work.workspace, executionId: "native", notRun: NOT_STARTED });
 });
-for (const name of ["test-support", "storage", "platform", "engine"] as const) it(`attributes a genuine ${name} failure without blaming its passing peers`, async () => {
+for (const name of ["test-support", "storage", "platform", "agent-runtime", "repositories", "engine"] as const) it(`attributes a genuine ${name} failure without blaming its passing peers`, async () => {
   const { ran, report, summary } = await run({ [name]: { report: "fail" } }, 1); expectRuns(ran, true); expect(report.scope).toBe("complete");
   expect(report.executions.at(-1)).toMatchObject({ id: "native", code: 1 });
   for (const work of report.results.slice(3)) {
@@ -159,10 +159,10 @@ it("reuses the exact shared timing seed without omitting any native package", as
   const root = await fixture(), first = await runCommand(command(root), { cwd: root, env: environment() });
   expect(first.code, first.stderr).toBe(0);
   const cache = join(root, ".test-results", "timings", "native.json"), body = readFileSync(cache, "utf8");
-  expect(Object.keys(JSON.parse(body).files)).toHaveLength(4);
+  expect(Object.keys(JSON.parse(body).files)).toHaveLength(6);
   const second = await runCommand(command(root), { cwd: root, env: environment() }); expect(second.code, second.stderr).toBe(0);
   const { report } = recorded(root, second.stdout), execution = report.executions.at(-1);
-  expect(execution.durationHints).toMatchObject({ kind: "used", files: 4 }); expect(report.scope).toBe("complete"); expect(report.stableInputs).toBe(true);
+  expect(execution.durationHints).toMatchObject({ kind: "used", files: 6 }); expect(report.scope).toBe("complete"); expect(report.stableInputs).toBe(true);
   expect(readFileSync(join(root, execution.durationHints.artifact), "utf8")).toBe(body);
 });
 for (const report of ["fail", "skipped"] as const) it(`does not publish timing hints after native ${report} evidence`, async () => {

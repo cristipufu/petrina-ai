@@ -1,10 +1,10 @@
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { AgentRun, reportOf } from "../src/acp-run.js";
-import { ADAPTERS, type ToolAdapter } from "../src/tools.js";
+import { AgentRun, reportOf } from "@petrina/agent-runtime/acp-run";
+import { ADAPTERS, type ToolAdapter } from "@petrina/agent-runtime/tools";
 import { Engine } from "./engine.js";
-import { UsageReader } from "../src/usage-reader.js";
-import { limitFromFailure } from "../src/usage.js";
+import { UsageReader } from "@petrina/agent-runtime/usage-reader";
+import { limitFromFailure } from "@petrina/agent-runtime/usage";
 import { Fakes, removeDir, tempDir } from "./fixtures.js";
 
 const roots: string[] = [];

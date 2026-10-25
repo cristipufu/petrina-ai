@@ -11,7 +11,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { McpPending, mcpRequest } from "../src/mcp.js";
-import { ADAPTERS } from "../src/tools.js";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { saveExactMessage } from "../src/exact-input.js";
 import { boundEvent, EVENT_BYTES } from "../src/workflow-events.js";
 import { CLI, Fakes, engineEnv, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";

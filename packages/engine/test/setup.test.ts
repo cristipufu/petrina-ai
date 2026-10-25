@@ -9,11 +9,12 @@ import { join, sep } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import { Connections } from "../src/connection.js";
 import { Engine, type EngineOptions } from "./engine.js";
-import { AgentRun } from "../src/acp-run.js";
-import { AGENT_CHECK_TIMEOUT_MS, CHECK_TIMEOUT_MS, checkAgentTool, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { AGENT_CHECK_TIMEOUT_MS, checkAgentTool } from "@petrina/agent-runtime/probe";
+import { CHECK_TIMEOUT_MS, checkGh, checkGit, codeFolders, expandPath, findClones, originUrl } from "../src/setup.js";
 import { Store } from "@petrina/storage/store";
 import { ToolChecks } from "../src/tool-checks.js";
-import { ADAPTERS, ENGINE_PROFILES, findProgram } from "../src/tools.js";
+import { ADAPTERS, ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
 import { EngineProcess, FAKE_GH, Fakes, git, makeProduct, makeWorld, removeDir, SLOW, tempDir, testGitEnv, waitFor } from "./support.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");

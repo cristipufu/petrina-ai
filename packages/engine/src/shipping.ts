@@ -1,6 +1,7 @@
 import { CompanionLinks } from "./companion-links.js";
 import { DeliveryTurns } from "./delivery-turns.js";
-import { ShippingVerifier, realPath, type DeliveryEvidence } from "./shipping-verifier.js";
+import { ShippingVerifier, type DeliveryEvidence } from "./shipping-verifier.js";
+import { realPath } from "@petrina/repositories/paths";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { addDeliveryCheck, clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
@@ -34,8 +35,8 @@ import {
   type ShippingStep,
   type TaskSource,
 } from "@petrina/core";
-import * as github from "./github.js";
-import * as git from "./git.js";
+import * as github from "@petrina/repositories/github";
+import * as git from "@petrina/repositories/git";
 import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
 import { WaitingForUsage } from "./usage.js";
 import { Aborted, type Kernel, type MStage, type MTask, RELEASE_MANAGER_PROFILE } from "./kernel.js";

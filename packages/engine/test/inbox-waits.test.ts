@@ -4,7 +4,7 @@ import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { Connections, CONFIRM_ADDRESS } from "../src/connection.js";
 import { executionFor } from "@petrina/orchestrator";
-import * as git from "../src/git.js";
+import * as git from "@petrina/repositories/git";
 import { removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];

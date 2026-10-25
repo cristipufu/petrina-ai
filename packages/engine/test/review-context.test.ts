@@ -1,7 +1,7 @@
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, BUILT_IN_ROLES, createDemoState, findingsNeedingVotes, panelAnswers, seatRemaining, type DeepMutable, type Finding, type Task } from "@petrina/core";
@@ -13,7 +13,7 @@ import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, re
 import { fullFollowUpCards } from "../src/review-history.js";
 import { ReviewResult } from "../src/roles.js";
 import { WaitingForCapacity } from "../src/usage.js";
-import { ENGINE_PROFILES } from "../src/tools.js";
+import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { Fakes, git, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "./fixtures.js";
 import type { Scenario } from "./fake-agent.js";
 

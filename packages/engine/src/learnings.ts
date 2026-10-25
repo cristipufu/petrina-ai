@@ -6,7 +6,7 @@ import { type RepositoryContext } from "@petrina/orchestrator";
 // and accepted ones reach AGENTS.md with a delivery.
 
 import type { DeepMutable, GuideLine, Id, Product } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { addToSection, AGENTS_FILE, cleanPoint, hasPoint, localPoints, sectionEnd, withSection } from "./points.js";
 import type { Kernel } from "./kernel.js";
 

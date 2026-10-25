@@ -2,7 +2,7 @@ import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import * as steps from "../src/git.js";
+import * as steps from "@petrina/repositories/git";
 import { git, makeWorld, removeDir, type World } from "./support.js";
 
 const worlds: World[] = [];

@@ -5,7 +5,7 @@ import { type RepositoryContext } from "@petrina/orchestrator";
 // address ask the coordinator once.
 
 import type { DeepMutable, Id, Product } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { Aborted, abortable, type Kernel } from "./kernel.js";
 
 /** Where credentialed steps go, or why they cannot. `missing`: the product has no GitHub repository at all. */

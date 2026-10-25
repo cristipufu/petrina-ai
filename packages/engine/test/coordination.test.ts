@@ -10,7 +10,7 @@ import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";
-import { ToolInvocations } from "../src/tool-invocations.js";
+import { ToolInvocations } from "@petrina/agent-runtime/tool-invocations";
 import { recordToolActivity } from "../src/record-tool-activity.js";
 import { CLI, firstLine, removeDir, runChecks, tempDir, engineEnv, SLOW, waitFor } from "./support.js";
 const roots: string[] = [];

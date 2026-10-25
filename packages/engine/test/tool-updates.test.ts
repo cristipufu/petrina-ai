@@ -2,7 +2,7 @@ import { expectRejection } from "@petrina/test-support/rejections";
 import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgentRun } from "../src/acp-run.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { removeDir, tempDir } from "./fixtures.js";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
 

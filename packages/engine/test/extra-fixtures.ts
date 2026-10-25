@@ -9,7 +9,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { EngineClient } from "./client.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
-import { completeAll } from "../src/parallel.js";
+import { completeAll } from "@petrina/core";
 
 /** Owned writable state for every extra-validation test, including failed setup and replaced engines. */
 export class ExtraFixtures {

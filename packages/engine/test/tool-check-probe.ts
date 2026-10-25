@@ -3,7 +3,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkGh, checkGit, checkNode } from "../src/setup.js";
-import { run } from "../src/git.js";
+import { run } from "@petrina/repositories/git";
 
 const [root, limitText] = process.argv.slice(2);
 if (!root || !limitText) throw new Error("A private folder and check deadline are required");

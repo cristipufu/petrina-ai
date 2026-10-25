@@ -7,7 +7,7 @@ import type { Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { addedLessons, addLearnings, Learnings, withLearnings } from "../src/learnings.js";
 import { hasPoint } from "../src/points.js";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];

@@ -8,11 +8,11 @@ import { Engine } from "./engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { participantConversation } from "../src/participant-conversation.js";
 import { Coordination } from "../src/coordination.js";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 import { FixtureTrace } from "./fixture-trace.js";
 import { SetupSteps } from "./setup-steps.js";
-import { completeAll } from "../src/parallel.js";
+import { completeAll } from "@petrina/core";
 
 const roots: string[] = [];
 const traces = new Map<string, FixtureTrace>();

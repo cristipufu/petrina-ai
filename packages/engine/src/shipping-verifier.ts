@@ -1,8 +1,8 @@
 // Observe exact approved delivery destinations. This module never publishes or records delivery.
-import { realpathSync } from "node:fs";
-import * as github from "./github.js";
-import * as git from "./git.js";
-import { sourcePr } from "./source-github.js";
+import { realPath } from "@petrina/repositories/paths";
+import * as github from "@petrina/repositories/github";
+import * as git from "@petrina/repositories/git";
+import { sourcePr } from "@petrina/repositories/source-github";
 import { type Connections, Unreachable } from "./connection.js";
 import type { Kernel } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
@@ -13,16 +13,6 @@ export type DeliveryEvidence =
   | { kind: "release"; release: { tag: string; url: string } }
   | { kind: "local"; branch: string; tested: string };
 export type DeliveryLookup = { found: true; text: string; evidence: DeliveryEvidence } | { found: false | "unknown" | "other"; text: string };
-
-export function realPath(path: string): string {
-  try {
-    // Git reports expanded Windows paths. Bun's non-native resolver can retain an 8.3
-    // spelling, making the main copy appear to be a different checked-out worktree.
-    return realpathSync.native(path);
-  } catch {
-    return path;
-  }
-}
 
 export class ShippingVerifier {
   constructor(private readonly k: VerifierHost, private readonly connections: Connections) {}

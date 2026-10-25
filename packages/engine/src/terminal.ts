@@ -1,4 +1,4 @@
-import { ADAPTERS } from "./tools.js";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 // Take over in the coordinator's own terminal. Petrina writes one small launcher into a folder only
 // the coordinator can read, and asks the usual terminal of the system to run it. The launcher opens
 // the agent's own tool (Claude Code or Codex) on the same conversation, in the task's working copy,

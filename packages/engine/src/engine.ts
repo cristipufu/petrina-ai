@@ -1,6 +1,6 @@
 import { ExtraValidations } from "./extra-validations.js";
 import { ProfileChoiceReader } from "./profile-choices.js";
-import { completeAll } from "./parallel.js";
+import { completeAll } from "@petrina/core";
 import { createTaskState, queueBacklogTask, returnQueuedTaskToBacklog, editBacklogRequest, combineBacklogTasks, assertTaskDependenciesEditable, validateTaskDependencies, validateRuntimeWait, changeRuntimeWait, assignFutureProfile, appendFutureReviewer, pauseTaskState, resumeTaskState, cancelTaskState } from "@petrina/core";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
 // The real engine: the same state the UI renders, driven by real agents over ACP.
@@ -62,9 +62,9 @@ import {
   type WorkChoice,
 } from "@petrina/core";
 import * as library from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { parseCommand } from "./checks.js";
-import { CODEX_USAGE_EVERY_MS } from "./codex-usage.js";
+import { CODEX_USAGE_EVERY_MS } from "@petrina/agent-runtime/codex-usage";
 import { Kernel, TONES, stepKey, type EngineOptions, type MTask } from "./kernel.js";
 import { browserCommand, expandPath, findClones } from "./setup.js";
 import { ToolChecks } from "./tool-checks.js";

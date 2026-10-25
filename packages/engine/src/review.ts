@@ -10,7 +10,7 @@ import { checkReviewEvidence, reopenFinding, runtimeWaitHolds, coveredByDecision
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
 import { Kernel, type MStage, type MTask, ScreenWait, SourceRefreshRequired } from "./kernel.js";
@@ -23,7 +23,7 @@ import { finishMessageGroup, routeMessages } from "./messages.js";
 import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
-import { completeAll } from "./parallel.js";
+import { completeAll } from "@petrina/core";
 import { checkProofRequests, recordReviewProofs } from "@petrina/orchestrator";
 import type { ReadinessNeed } from "./readiness.js";
 

@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { CLEANUP_WORDS, copyNoLongerNeeded, finishedTask, involvesProduct, type Id, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import type { Kernel, MTask } from "./kernel.js";
 
 export class Cleanup {

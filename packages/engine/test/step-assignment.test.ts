@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BUILT_IN_ROLES, type ConversationNote, type Stage } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { Coordination } from "../src/coordination.js";
-import { AgentBrowser } from "../src/browser.js";
+import { AgentBrowser } from "@petrina/agent-runtime/browser";
 import { executionFor } from "@petrina/orchestrator";
 import { currentStepAssignment } from "../src/prompts.js";
 import { BuildResult, NotesResult, ReviewResult } from "../src/roles.js";

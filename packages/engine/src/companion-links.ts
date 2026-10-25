@@ -1,7 +1,7 @@
 // Finish cross-product PR links after every delivery is recorded. Never republishes a delivery.
 import { companionText } from "@petrina/core";
-import * as github from "./github.js";
-import { api } from "./source-github.js";
+import * as github from "@petrina/repositories/github";
+import { api } from "@petrina/repositories/source-github";
 import type { Kernel, MTask } from "./kernel.js";
 
 type LinkHost = Pick<Kernel, "commitNow" | "options" | "raise">;

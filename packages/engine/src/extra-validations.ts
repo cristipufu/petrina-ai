@@ -6,7 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor } from "@petrina/orchestrator";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { unreportedCheckExit } from "./check-log-read.js";
 import { runChecks, CHECK_TIMEOUT_MS, checkLogBeginning, commandText } from "./checks.js";
 import { containerEnv, ExtraContainer } from "./extra-container.js";

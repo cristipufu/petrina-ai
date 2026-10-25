@@ -6,7 +6,7 @@ import { type RepositoryContext } from "@petrina/orchestrator";
 // only added lessons the coordinator approved to AGENTS.md: Petrina keeps those itself.
 
 import { JOURNEY_WORDS as W, lastIndexWhere, petrinaMoment } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { keptLearnings } from "./learnings.js";
 import { AGENTS_FILE } from "./points.js";
 import type { Sources } from "./sources.js";

@@ -9,7 +9,7 @@ import { MAY_CHANGE } from "../src/prompts.js";
 import { EARLIER_REPORTS_RULE } from "../src/context.js";
 import { dispatch } from "../src/server.js";
 import { Store } from "@petrina/storage/store";
-import { findProgram } from "../src/tools.js";
+import { findProgram } from "@petrina/agent-runtime/tools";
 import { readGitHub } from "./fake-gh.js";
 import { EngineProcess, Fakes, git, makeProduct, removeDir, SLOW, tempDir, waitFor } from "./support.js";
 

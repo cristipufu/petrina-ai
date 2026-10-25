@@ -1,7 +1,7 @@
 import { expectRejection } from "@petrina/test-support/rejections";
 import { expect, it, spyOn } from "bun:test";
 import { ProfileChoiceReader } from "../src/profile-choices.js";
-import { AgentRun } from "../src/acp-run.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { demoProfileChoices } from "@petrina/core";
 import { removeDir, tempDir } from "./fixtures.js";
 

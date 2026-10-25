@@ -1,7 +1,7 @@
 import { VerifierBallots, type VerifierSelection } from "@petrina/orchestrator";
 import { verifierProfiles, type Id, type Stage } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
-import { CAPACITY_WAIT } from "./usage.js";
+import { CAPACITY_WAIT } from "@petrina/agent-runtime/failures";
 
 /** Native composition only: the controller receives its existing narrow catalog/selection/recording ports. */
 type SelectionHost = Pick<Kernel, "profile" | "choose" | "usableTools" | "taskAdmissionsClosed"> & {

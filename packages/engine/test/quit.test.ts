@@ -2,9 +2,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgentRun } from "../src/acp-run.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { Engine } from "./engine.js";
-import { ADAPTERS, ENGINE_PROFILES } from "../src/tools.js";
+import { ADAPTERS, ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { parseChildState, readProcessList } from "@petrina/platform/process-tree";
 import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor, waitForFile } from "./support.js";
 
@@ -228,7 +228,7 @@ spyOn(processes, "execFile").mockImplementation((...args) => {
   setTimeout(() => done(timeout <= 100 ? new Error("Process list timed out") : null, timeout <= 100 ? "" : listed, ""), Math.min(100, timeout));
   return finishedHelper();
 });`}
-const { AgentRun, AGENT_CLEANUP_NOTE } = await import(${JSON.stringify(join(import.meta.dir, "../src/acp-run.ts"))});
+const { AgentRun, AGENT_CLEANUP_NOTE } = await import(${JSON.stringify(join(import.meta.dir, "../../agent-runtime/src/acp-run.ts"))});
 const start = AgentRun.start;
 AgentRun.start = function(options) {
   return start.call(this, { ...options, callbacks: { ...options.callbacks, onLog(text) {

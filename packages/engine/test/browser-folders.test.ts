@@ -13,9 +13,9 @@ import { BUILT_IN_ROLES } from "@petrina/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import sharp from "sharp";
-import { AgentRun } from "../src/acp-run.js";
-import { AgentBrowser, browserTempRoot, CLEANUP_NOTE } from "../src/browser.js";
-import { preserveCaptures } from "../src/captures.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { AgentBrowser, browserTempRoot, CLEANUP_NOTE } from "@petrina/agent-runtime/browser";
+import { preserveCaptures } from "@petrina/agent-runtime/captures";
 import { Engine } from "./engine.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { mayAskScreen } from "../src/prompts.js";
@@ -179,7 +179,7 @@ it.skipIf(process.platform === "win32")("opens a real headless page and saves a 
   const page = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<title>Fixture page</title><h1>Checked</h1>", { headers: { "content-type": "text/html" } }) });
   const options = {
     profile: { id: "fixture", toolId: "claude-code", model: "test", effort: "high" as const }, cwd: work, callbacks, signal: new AbortController().signal,
-    browserRoot: registry, browserTempRoot: browsers, command: [process.execPath, join(import.meta.dir, "browser-agent.ts")], env: { ...process.env, FAKE_REOPEN: "resume" },
+    browserRoot: registry, browserTempRoot: browsers, command: [process.execPath, join(import.meta.dir, "../../agent-runtime/test/fixtures/browser-agent.ts")], env: { ...process.env, FAKE_REOPEN: "resume" },
   };
   const runs: AgentRun[] = [];
   const directories: string[] = [];

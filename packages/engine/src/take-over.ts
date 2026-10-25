@@ -1,14 +1,14 @@
-import { completeAll } from "./parallel.js";
+import { completeAll } from "@petrina/core";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
 // Take over in the terminal: the coordinator drives a step's agent by hand, then hands it back. The
 // launcher scripts and terminals are in terminal.ts.
 
 import { join } from "node:path";
 import { runtimeWaitHolds, lastIndexWhere, TAKE_OVER_TOOLS, TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { handBackNote } from "./prompts.js";
 import { askMode, clearEnded, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, writeLauncher } from "./terminal.js";
-import { ADAPTERS } from "./tools.js";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { Kernel, type MTask } from "./kernel.js";
 
 export class TakeOver {

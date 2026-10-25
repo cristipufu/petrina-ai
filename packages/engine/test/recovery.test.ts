@@ -5,7 +5,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ShippingRecord, State } from "@petrina/core";
 import type { Engine } from "./engine.js";
-import { branchName } from "../src/git.js";
+import { branchName } from "@petrina/repositories/git";
 import { finish, git, gitWith, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World, SLOW } from "./support.js";
 
 const worlds: World[] = [];

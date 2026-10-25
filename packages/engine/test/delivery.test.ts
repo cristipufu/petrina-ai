@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
 import { coordinator, finish, git, gitWith, itemOf, makeWorld, removeDir, REPO, remoteRef, runGit, taskOf, until, type World } from "./support.js";
 import { SetupSteps } from "./setup-steps.js";
-import { completeAll } from "../src/parallel.js";
+import { completeAll } from "@petrina/core";
 
 const worlds: World[] = [];
 const setup = new SetupSteps(), setupLifetime = new AbortController();

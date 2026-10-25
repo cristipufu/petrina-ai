@@ -6,8 +6,8 @@
 import { CHECK_NAMES, checkOf, type CheckId, type Id, type ToolCheck } from "@petrina/core";
 import { ToolCheckCoordinator, TOOL_CHECK_LINGER_MS, type ToolCheckClock } from "@petrina/orchestrator";
 import { Kernel, notReady, ToolProblem, type MTask } from "./kernel.js";
-import { AGENT_CHECK_TIMEOUT_MS, isAuthRequired } from "./setup.js";
-import { ADAPTERS } from "./tools.js";
+import { AGENT_CHECK_TIMEOUT_MS, isAuthRequired } from "@petrina/agent-runtime/probe";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { NativeToolProbe } from "./tool-probe.js";
 
 /** Everything the tools check looks at, in the order it is shown. */

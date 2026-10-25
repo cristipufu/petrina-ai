@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { CheckId, DeepMutable, TaskRepository } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { executionFor } from "@petrina/orchestrator";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { FAKE_AGENT, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 
 const roots: string[] = [];

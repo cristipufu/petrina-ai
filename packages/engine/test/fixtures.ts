@@ -1,15 +1,14 @@
 export { defunctProcess } from "@petrina/test-support/defunct-process";
 export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
 import { tempDir, removeDir } from "@petrina/test-support/fixtures";
-export { tempDir, removeDir, waitFor, waitForFile } from "@petrina/test-support/fixtures";
+export { tempDir, removeDir, waitFor, waitForFile, firstLine, testBrowserRoot } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
 import { ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { State } from "@petrina/core";
 import type { Scenario } from "./fake-agent.js";
 import { updateGitHub, type FakeGitHub } from "./fake-gh.js";
-import { shortTempParent, TEST_BROWSERS } from "@petrina/test-support/temp-parent";
 import type { MachineRecords } from "../src/check-interruption.js";
 import { runChecks as runProductChecks } from "../src/checks.js";
 import { PromptReader, type PromptRecord } from "./prompt-records.js";
@@ -24,20 +23,6 @@ export { CommandFailure, commitAt, git, gitWith, runCommand, runGit } from "@pet
 export const CLI = join(import.meta.dir, "cli.ts");
 export const HARNESS = join(import.meta.dir, "harness.ts");
 
-
-
-/**
- * A fixture's own parent for temporary browser folders, instead of the user's standard one. Run
- * folders can be too long for macOS browser sockets, so the runner owns a short folder for these and
- * reclaims it even after an interrupted run; a standalone script gets one in the system's short
- * temporary folder. Pass it to every engine, browser and recovery of the fixture, and remove it once
- * they have stopped. It is spelled as browser sessions and recovery canonicalize their folders: on
- * Windows only native resolution expands a short name such as RUNNER~1 to the full one.
- */
-export function testBrowserRoot(): string {
-  const owned = process.env[TEST_BROWSERS];
-  return realpathSync.native(mkdtempSync(owned ? `${owned}${sep}` : join(shortTempParent(), "pb-")));
-}
 
 
 /**
@@ -74,8 +59,6 @@ async function startsNewProgram(ms: number): Promise<void> {
   }
 }
 
-
-
 /** Leave context before a test's own timeout, without changing what it waits for or its deadline. */
 export async function traceTaskWait<T>(label: string | undefined, state: () => State | Promise<State>, taskId: string, wait: () => Promise<T>): Promise<T> {
   if (!label) return wait();
@@ -100,20 +83,6 @@ export async function traceTaskWait<T>(label: string | undefined, state: () => S
   timer.unref();
   try { return await wait(); }
   finally { finished = true; clearInterval(timer); }
-}
-
-/** The first line a process writes to stdout. */
-export async function firstLine(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  while (!text.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    text += decoder.decode(value);
-  }
-  reader.releaseLock();
-  return text.split("\n")[0]!;
 }
 
 

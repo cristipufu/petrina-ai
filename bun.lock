@@ -29,6 +29,26 @@
         "vitest": "4.1.11",
       },
     },
+    "packages/agent-runtime": {
+      "name": "@petrina/agent-runtime",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agentclientprotocol/claude-agent-acp": "0.89.1",
+        "@agentclientprotocol/codex-acp": "2.2.2",
+        "@agentclientprotocol/sdk": "1.8.0",
+        "@modelcontextprotocol/sdk": "1.32.1",
+        "@petrina/core": "workspace:*",
+        "@petrina/orchestrator": "workspace:*",
+        "@petrina/platform": "workspace:*",
+        "@playwright/mcp": "0.0.83",
+        "sharp": "0.35.5",
+      },
+      "devDependencies": {
+        "@petrina/test-support": "workspace:*",
+        "@types/bun": "1.3.4",
+        "typescript": "7.0.2",
+      },
+    },
     "packages/core": {
       "name": "@petrina/core",
       "version": "0.1.0",
@@ -44,22 +64,23 @@
         "petrina": "./src/cli.ts",
       },
       "dependencies": {
-        "@agentclientprotocol/claude-agent-acp": "0.89.1",
-        "@agentclientprotocol/codex-acp": "2.2.2",
-        "@agentclientprotocol/sdk": "1.8.0",
-        "@modelcontextprotocol/sdk": "1.32.1",
+        "@petrina/agent-runtime": "workspace:*",
         "@petrina/core": "workspace:*",
         "@petrina/orchestrator": "workspace:*",
         "@petrina/platform": "workspace:*",
+        "@petrina/repositories": "workspace:*",
         "@petrina/storage": "workspace:*",
-        "@playwright/mcp": "0.0.83",
-        "sharp": "0.35.5",
         "zod": "4.6.7",
       },
       "devDependencies": {
+        "@agentclientprotocol/claude-agent-acp": "0.89.1",
+        "@agentclientprotocol/codex-acp": "2.2.2",
+        "@agentclientprotocol/sdk": "1.8.0",
         "@babel/parser": "8.0.7",
+        "@modelcontextprotocol/sdk": "1.32.1",
         "@petrina/test-support": "workspace:*",
         "@types/bun": "1.3.4",
+        "sharp": "0.35.5",
         "typescript": "7.0.2",
       },
     },
@@ -77,6 +98,20 @@
     "packages/platform": {
       "name": "@petrina/platform",
       "version": "0.1.0",
+      "devDependencies": {
+        "@petrina/test-support": "workspace:*",
+        "@types/bun": "1.3.4",
+        "typescript": "7.0.2",
+      },
+    },
+    "packages/repositories": {
+      "name": "@petrina/repositories",
+      "version": "0.1.0",
+      "dependencies": {
+        "@petrina/core": "workspace:*",
+        "@petrina/orchestrator": "workspace:*",
+        "@petrina/platform": "workspace:*",
+      },
       "devDependencies": {
         "@petrina/test-support": "workspace:*",
         "@types/bun": "1.3.4",
@@ -225,6 +260,8 @@
 
     "@oxc-project/types": ["@oxc-project/types@0.154.0", "", {}, "sha512-KYOUGQFlLWR+s4QMV2Q9ko38TZm7EdO87Qm7rvZLqk/webse/cDjtyxKhg/47l0byCbs/k46LT8qc4PKjAikzA=="],
 
+    "@petrina/agent-runtime": ["@petrina/agent-runtime@workspace:packages/agent-runtime"],
+
     "@petrina/core": ["@petrina/core@workspace:packages/core"],
 
     "@petrina/desktop": ["@petrina/desktop@workspace:apps/desktop"],
@@ -234,6 +271,8 @@
     "@petrina/orchestrator": ["@petrina/orchestrator@workspace:packages/orchestrator"],
 
     "@petrina/platform": ["@petrina/platform@workspace:packages/platform"],
+
+    "@petrina/repositories": ["@petrina/repositories@workspace:packages/repositories"],
 
     "@petrina/storage": ["@petrina/storage@workspace:packages/storage"],
 

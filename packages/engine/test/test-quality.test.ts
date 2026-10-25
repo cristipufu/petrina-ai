@@ -131,7 +131,7 @@ describe("test programs and the waits on them", () => {
   });
 
   it("recognizes an awaited completeAll import without accepting unawaited, unrelated or shadowed collectors", () => {
-    const imported = `import { completeAll as settle } from "../src/parallel.js";\n`;
+    const imported = `import { completeAll as settle } from "@petrina/core";\n`;
     expect(found(imported + `await settle(engines.map(engine => engine.shutdown()));`)).toEqual([]);
     expect(found(imported + `settle(engines.map(engine => engine.shutdown()));`)).toContainEqual(expect.stringContaining("await shutdown"));
     expect(found(`import { settle } from "./other.js"; await settle(engines.map(engine => engine.shutdown()));`)).toContainEqual(expect.stringContaining("await shutdown"));

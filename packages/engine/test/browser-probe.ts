@@ -2,11 +2,11 @@
 // bun packages/engine/test/browser-probe.ts <claude-code|codex> <output folder>
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRun } from "../src/acp-run.js";
-import { preserveCaptures } from "../src/captures.js";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { preserveCaptures } from "@petrina/agent-runtime/captures";
 import { browserPrompt, parseResult, repairPrompt } from "../src/prompts.js";
 import { BuildResult } from "../src/roles.js";
-import { claudeSandbox } from "../src/sandbox.js";
+import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 
 const [toolId = "claude-code", output = "/private/tmp/petrina-browser-verification"] = process.argv.slice(2);
 const root = resolve(output);

@@ -4,7 +4,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JOURNEY_WORDS as W, journeyView, type ProductCheck, type WorkflowEvent } from "@petrina/core";
-import * as gitOps from "../src/git.js";
+import * as gitOps from "@petrina/repositories/git";
 import { Engine } from "./engine.js";
 import { Aborted } from "../src/kernel.js";
 import { Coordination } from "../src/coordination.js";

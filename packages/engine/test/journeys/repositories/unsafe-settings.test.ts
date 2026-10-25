@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { finish, git, makeWorld, removeDir, remoteRef, taskOf } from "../../support.js";
-import { plantedGitProgram } from "../../fixtures/git-program.js";
-import { unsafeGitSettings } from "../../fixtures/git-safety.js";
+import { plantedGitProgram } from "@petrina/test-support/git-program";
+import { unsafeGitSettings } from "@petrina/test-support/git-safety";
 
 it("refuses to fetch or publish once unsafe settings are planted after setup, and runs none of them", async () => {
   const w = await makeWorld("planted");

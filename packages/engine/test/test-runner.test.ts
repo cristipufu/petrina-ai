@@ -84,8 +84,8 @@ for (const passes of [true, false]) it(`cleans a parallel run's fixtures and Git
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { run } from ${JSON.stringify(join(import.meta.dir, "../src/git.ts"))};
-import { browserTempRoot } from ${JSON.stringify(join(import.meta.dir, "../src/browser.ts"))};
+import { run } from ${JSON.stringify(join(import.meta.dir, "../../repositories/src/git.ts"))};
+import { browserTempRoot } from ${JSON.stringify(join(import.meta.dir, "../../agent-runtime/src/browser.ts"))};
 import { tempDir, testBrowserRoot } from ${JSON.stringify(join(import.meta.dir, "support.ts"))};
 it("leaves files for its parent to reclaim", async () => {
   const left = join(tmpdir(), "abandoned-fixture");
@@ -129,7 +129,7 @@ it("gives engine commits the run's own Git identity, yields to a repository's ow
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitAll } from ${JSON.stringify(join(import.meta.dir, "../src/git.ts"))};
+import { commitAll } from ${JSON.stringify(join(import.meta.dir, "../../repositories/src/git.ts"))};
 import { git } from ${JSON.stringify(join(import.meta.dir, "fixtures.ts"))};
 it("commits as the engine does in fresh repositories", async () => {
   const repo = async (name: string) => {

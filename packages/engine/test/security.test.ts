@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { plantedGitProgram } from "./fixtures/git-program.js";
+import { plantedGitProgram } from "@petrina/test-support/git-program";
 import { ADDRESS, commitAt, coordinator, FAKE_AGENT, FAKE_GH, finish, git, gitWith, itemOf, makeWorld, removeDir, remoteRef, taskOf, testGitEnv, until, type World } from "./support.js";
 
 const worlds: World[] = [];

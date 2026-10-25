@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { clearRunningTools } from "@petrina/core";
 import type { MTask } from "../src/kernel.js";
-import { MAX_TOOL_COMMAND, MAX_TOOL_INVOCATIONS, ToolInvocations } from "../src/tool-invocations.js";
+import { MAX_TOOL_COMMAND, MAX_TOOL_INVOCATIONS, ToolInvocations } from "@petrina/agent-runtime/tool-invocations";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
 import { recordToolActivity } from "../src/record-tool-activity.js";
 

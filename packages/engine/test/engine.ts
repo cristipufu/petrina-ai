@@ -1,5 +1,5 @@
 import { Engine as ProductionEngine, type EngineOptions } from "../src/engine.js";
-import { ADAPTERS } from "../src/tools.js";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { noMachineRecords } from "./fixtures.js";
 import { join } from "node:path";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";

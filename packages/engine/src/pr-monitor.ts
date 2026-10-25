@@ -1,7 +1,7 @@
 import type { ShippingVerifier, DeliveryEvidence } from "./shipping-verifier.js";
 // Observe PRs and interrupted cancelled deliveries. This module never publishes.
 import { CLEANUP_WORDS, needsPullRequestCheck, repositoryDelivered, type Id, type Task } from "@petrina/core";
-import * as github from "./github.js";
+import * as github from "@petrina/repositories/github";
 import type { Kernel, MTask } from "./kernel.js";
 import { executionFor, type RepositoryContext } from "@petrina/orchestrator";
 import { Unreachable } from "./connection.js";

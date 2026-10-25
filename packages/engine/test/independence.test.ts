@@ -4,7 +4,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { draftOf, independentVotes, slotUses, type Vote } from "@petrina/core";
 import { Engine } from "./engine.js";
-import { ADAPTERS } from "../src/tools.js";
+import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "./fake-agent.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
 import { scriptedToolProbe } from "./scripted-probes.js";

@@ -1,4 +1,4 @@
-import { completeAll as probes } from "../src/parallel.js";
+import { completeAll as probes } from "@petrina/core";
 import { afterAll, expect, it } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";

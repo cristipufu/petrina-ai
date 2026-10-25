@@ -296,11 +296,28 @@
       }
     },
     {
-      "file": "packages/core/test/analytics.test.ts",
+      "file": "packages/core/test/rules/usage/token-accounting.test.ts",
       "declarations": 41,
       "assertionSites": 233,
       "baselineDigest": "ae26593b2b5efedb7cfcfa9bd480562c10a968c76aac45b263f8f5d64ea76255",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "usage",
+      "review": "All 44 runtime cases/parameter variants and 233 assertion sites retained. Canonical private task/state and in-memory log fixtures replace a duplicated task constructor. Token/task/missing-data/format/aggregation rules are separate from true demo contracts. Cancellation-history orchestration now arranges one explicit unanswered request instead of starting the whole demo.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/analytics.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/usage/token-accounting.test.ts",
+        "packages/core/test/rules/usage/task-usage.test.ts",
+        "packages/core/test/rules/usage/incomplete-reporting.test.ts",
+        "packages/core/test/rules/analytics/aggregation.test.ts",
+        "packages/core/test/rules/usage/formatting.test.ts",
+        "packages/core/test/contracts/demo/analytics.test.ts",
+        "packages/core/test/orchestration/simulator/cancelled-usage.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/orchestration/simulator/backlog.test.ts",
@@ -320,18 +337,43 @@
       }
     },
     {
-      "file": "packages/core/test/board.test.ts",
+      "file": "packages/core/test/contracts/demo/board.test.ts",
       "declarations": 12,
       "assertionSites": 28,
       "baselineDigest": "f58ef96e27291776a875166ddbb962dfa1dc418dfa0bfd7e623187af9db30731",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "demo",
+      "review": "All 12 runtime cases/parameter variants and 28 assertion sites retained. Synthetic strip cases remain rules; named-plan, board-order and portfolio fixtures intentionally test shipped demo data.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/board.test.ts",
+      "splitFiles": [
+        "packages/core/test/contracts/demo/board.test.ts",
+        "packages/core/test/rules/navigation/pipeline-strip.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/charts.test.ts",
+      "file": "packages/core/test/rules/usage/charts.test.ts",
       "declarations": 9,
       "assertionSites": 68,
       "baselineDigest": "77e78b70b58666ab878a993428c8dac7fb316cd4b98f95b783b68187eed70aaa",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "usage",
+      "review": "All 9 runtime cases/parameter variants and 68 assertion sites retained. Explicit turn/count aggregation and in-memory reading history are rules. Seeded chart content remains a demo contract.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/charts.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/usage/charts.test.ts",
+        "packages/core/test/rules/usage/history.test.ts",
+        "packages/core/test/contracts/demo/charts.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/checks/evidence.test.ts",
@@ -351,11 +393,23 @@
       }
     },
     {
-      "file": "packages/core/test/dependency-creation.test.ts",
+      "file": "packages/core/test/orchestration/simulator/dependencies.test.ts",
       "declarations": 5,
       "assertionSites": 32,
       "baselineDigest": "6a14bc2b42f24802de2fc15537df7f23fc2f7ffd6040e26567546eebb6e93049",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "simulator",
+      "review": "All 5 runtime cases/parameter variants and 32 assertion sites retained. Four command/graph/restart cases remain Simulator ownership; the fifth canonical/shared landing outcome rule now uses plain private records.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/dependency-creation.test.ts",
+      "splitFiles": [
+        "packages/core/test/orchestration/simulator/dependencies.test.ts",
+        "packages/core/test/rules/tasks/dependency-outcomes.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/workflow/rounds.test.ts",
@@ -370,11 +424,24 @@
       "validation": "flow-rules-8ec20612/core-reviewed.json: all 1083 cases pass. review.json reconciles every runtime case identity/outcome against the full source8ec20612 core report; body-reconciliation.json proves original rule bodies retained. All workspace types and conventions pass. Full changed-batch qualification remains due."
     },
     {
-      "file": "packages/core/test/follow-ups.test.ts",
+      "file": "packages/core/test/rules/reviews/follow-up-eligibility.test.ts",
       "declarations": 24,
       "assertionSites": 175,
       "baselineDigest": "14580abf9893a43477c5ee976f5e3ee70df0da21e7bb1fbe12869ccce73bfd51",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "reviews",
+      "review": "All 24 runtime cases/parameter variants and 175 assertion sites retained. Snapshot/current-card eligibility and review tags are rules; semantic matching uses only scripted callbacks under orchestration/reviews. Private tasks replace unrelated generated history; sample boards remain demo contracts.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/follow-ups.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/reviews/follow-up-eligibility.test.ts",
+        "packages/core/test/orchestration/reviews/follow-up-matching.test.ts",
+        "packages/core/test/contracts/demo/follow-ups.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/history/status.test.ts",
@@ -399,18 +466,47 @@
       }
     },
     {
-      "file": "packages/core/test/journey.test.ts",
+      "file": "packages/core/test/rules/journey/records.test.ts",
       "declarations": 55,
       "assertionSites": 271,
       "baselineDigest": "ef26f071083794620986bd2525c4826d4654ebbd464dd289f3bafbe9b492a253",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "journey",
+      "review": "All 66 runtime cases/parameter variants and 271 assertion sites retained. Record/projection/key/legacy/landing/name rules use explicit task/repository/journey records and shared record helpers. Actual command transitions remain Simulator coverage; generated sample journeys remain contracts. Two assertion references substitute the explicit inbox timestamp and a controlled time for Date.now().",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/journey.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/journey/records.test.ts",
+        "packages/core/test/rules/journey/recorded-steps.test.ts",
+        "packages/core/test/rules/journey/legacy.test.ts",
+        "packages/core/test/rules/journey/names.test.ts",
+        "packages/core/test/rules/journey/landing.test.ts",
+        "packages/core/test/orchestration/simulator/journey.test.ts",
+        "packages/core/test/contracts/demo/journey.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/limit-history-view.test.ts",
+      "file": "packages/core/test/rules/usage/limit-history.test.ts",
       "declarations": 10,
       "assertionSites": 59,
       "baselineDigest": "c8e7e640a4bbdeb928bec051172f503f3c89c21e8cdf8df7f29e3cf587f47f26",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "usage",
+      "review": "All 16 runtime cases/parameter variants and 59 assertion sites retained. All alias/history/reset/pagination rules use explicit reports. The native timezone/DST environment contract stays isolated with try/finally restoration.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/limit-history-view.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/usage/limit-history.test.ts",
+        "packages/core/test/contracts/time/local-calendar.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/conversations/message-delivery.test.ts",
@@ -430,11 +526,24 @@
       }
     },
     {
-      "file": "packages/core/test/navigation.test.ts",
+      "file": "packages/core/test/contracts/demo/navigation.test.ts",
       "declarations": 10,
       "assertionSites": 41,
       "baselineDigest": "2e2369070d8db9d76bfdd1014997b5f6e2babf03d852cded272410e1493c17b9",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "demo",
+      "review": "All 10 runtime cases/parameter variants and 41 assertion sites retained. Palette/keyboard rules use explicit Guest/finished/queued records and requests. Simulator queue commands use private queued tasks; whole-portfolio coverage remains a demo contract.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/navigation.test.ts",
+      "splitFiles": [
+        "packages/core/test/contracts/demo/navigation.test.ts",
+        "packages/core/test/rules/navigation/keyboard-search.test.ts",
+        "packages/core/test/orchestration/simulator/queue.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/usage/node.test.ts",
@@ -480,11 +589,24 @@
       }
     },
     {
-      "file": "packages/core/test/profiles.test.ts",
+      "file": "packages/core/test/contracts/demo/profiles.test.ts",
       "declarations": 9,
       "assertionSites": 30,
       "baselineDigest": "2bb843449e3bd24565cc6165a1a8ff3bfa8d0e4ec13c01e68d77ce827e385898",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "demo",
+      "review": "All 9 runtime cases/parameter variants and 30 assertion sites retained. Profile restoration/reference rules use private canonical records; projected-stand-in removal and planner edits stay Simulator commands; every shipped demo plan is separately checked against the catalog.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/profiles.test.ts",
+      "splitFiles": [
+        "packages/core/test/contracts/demo/profiles.test.ts",
+        "packages/core/test/orchestration/simulator/profiles.test.ts",
+        "packages/core/test/rules/agents/profile-catalog.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/acceptance/proof-requests.test.ts",
@@ -521,11 +643,23 @@
       }
     },
     {
-      "file": "packages/core/test/repositories.test.ts",
+      "file": "packages/core/test/orchestration/simulator/shared-delivery.test.ts",
       "declarations": 11,
       "assertionSites": 51,
       "baselineDigest": "9c778b160fc870cbe5173481225cc11576551e2ebc67bedd0f3c7330f97bd8d9",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "simulator",
+      "review": "All 11 runtime cases/parameter variants and 51 assertion sites retained. Ownership/landing projections use explicit repository records. Simulator shared-delivery commands use two private products and preserve one-decision and history-removal controls.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/repositories.test.ts",
+      "splitFiles": [
+        "packages/core/test/orchestration/simulator/shared-delivery.test.ts",
+        "packages/core/test/rules/repositories/ownership.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/reviews/statistics.test.ts",
@@ -545,18 +679,44 @@
       }
     },
     {
-      "file": "packages/core/test/roles.test.ts",
+      "file": "packages/core/test/rules/roles/library.test.ts",
       "declarations": 15,
       "assertionSites": 53,
       "baselineDigest": "68f7052b07fbf6f3a8ba75608eb0cfaa53570783d6ed3b38cd37336e15c9191e",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "roles",
+      "review": "All 27 runtime cases/parameter variants and 54 assertion sites retained. Catalog/permission and parameterized composePlan cases are rules. Editing/removal and added-reviewer attribution use private Simulator state.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/roles.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/roles/library.test.ts",
+        "packages/core/test/rules/roles/plans.test.ts",
+        "packages/core/test/orchestration/simulator/roles.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/routines.test.ts",
+      "file": "packages/core/test/rules/routines/calendar.test.ts",
       "declarations": 13,
       "assertionSites": 53,
       "baselineDigest": "36e8327b8e0d1a22b3e61384710dc392de31f8091137d06aefe19fed282efc09",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "routines",
+      "review": "All 24 runtime cases/parameter variants and 53 assertion sites retained. Calendar validation, routine edit/outcome and role permissions are rules. Admission uses explicit clock instants and a scripted enqueue callback with failure controls.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/routines.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/routines/calendar.test.ts",
+        "packages/core/test/rules/routines/library.test.ts",
+        "packages/core/test/orchestration/routines/admission.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/orchestration/workflow/runtime-wait-events.test.ts",
@@ -575,11 +735,19 @@
       "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
     },
     {
-      "file": "packages/core/test/runtime-wait.test.ts",
+      "file": "packages/core/test/rules/runtime/prerequisites.test.ts",
       "declarations": 21,
       "assertionSites": 159,
       "baselineDigest": "cb36eef70b0da787c1d83a61d200a4137bf4d9a5f145233fb6ae81d2a6138bdf",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "runtime",
+      "review": "All 21 runtime cases/parameter variants and 159 assertion sites retained. All cases already exercised pure graph/record transitions with supplied times and lookups. Moved unchanged into rules/runtime after semantic review.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/runtime-wait.test.ts"
     },
     {
       "file": "packages/core/test/rules/scheduling/admission.test.ts",
@@ -616,32 +784,93 @@
       }
     },
     {
-      "file": "packages/core/test/screen.test.ts",
+      "file": "packages/core/test/rules/runtime/screen.test.ts",
       "declarations": 12,
       "assertionSites": 78,
       "baselineDigest": "5954f267fb29148ad25338479f39f5a04255505b8132e1327f3b70cb859329bd",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "runtime",
+      "review": "All 14 runtime cases/parameter variants and 78 assertion sites retained. FIFO/allowance/runtime-hold rules directly arrange screen requests. Simulator turn, timing, permission and pause/cancel controls remain orchestration; the seeded scene remains a demo contract.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/screen.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/runtime/screen.test.ts",
+        "packages/core/test/orchestration/simulator/screen.test.ts",
+        "packages/core/test/contracts/demo/screen.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/setup.test.ts",
+      "file": "packages/core/test/contracts/demo/setup.test.ts",
       "declarations": 20,
       "assertionSites": 85,
       "baselineDigest": "f792ae86e9be2e7d6aa089a4d67d310da83ef220f568e3ec2fa56ba6991c40ae",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "demo",
+      "review": "All 20 runtime cases/parameter variants and 85 assertion sites retained. Status/platform matrices and first-task/inbox wording use explicit private data; first-run command/idempotency/seeded-analytics behavior remains the actual demo contract.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/setup.test.ts",
+      "splitFiles": [
+        "packages/core/test/contracts/demo/setup.test.ts",
+        "packages/core/test/rules/setup/tools.test.ts",
+        "packages/core/test/rules/setup/guidance.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/sim.test.ts",
+      "file": "packages/core/test/rules/calls/parsing.test.ts",
       "declarations": 62,
       "assertionSites": 355,
       "baselineDigest": "6500ba230074484480d0f407413340a2c38d8cf85b594b9b290d5a2ca877daee",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "calls",
+      "review": "All 440 runtime cases/parameter variants and 355 assertion sites retained. Pure call parsing/answer and review-convergence rules move out of the mixed file. All design-call/correction/ambiguity variants still execute real Simulator commands. A cached text-only entered-disagreement recipe replaces repeated unrelated prior design rounds; each case owns its parsed writable state and new work log. Queue, messages, delivery, cleanup, product choices and representative workflows have separate owners; actual generated scenes remain demo contracts.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/sim.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/calls/parsing.test.ts",
+        "packages/core/test/rules/reviews/convergence.test.ts",
+        "packages/core/test/orchestration/simulator/design-calls.test.ts",
+        "packages/core/test/orchestration/simulator/slots-queue.test.ts",
+        "packages/core/test/orchestration/simulator/messages.test.ts",
+        "packages/core/test/orchestration/simulator/workflow.test.ts",
+        "packages/core/test/orchestration/simulator/delivery.test.ts",
+        "packages/core/test/orchestration/simulator/cleanup.test.ts",
+        "packages/core/test/orchestration/simulator/product-choices.test.ts",
+        "packages/core/test/contracts/demo/simulator.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/summary.test.ts",
+      "file": "packages/core/test/rules/workflow/status-summary.test.ts",
       "declarations": 37,
       "assertionSites": 184,
       "baselineDigest": "afa4229a60e53fdabb430f0dcf23d81ee16b4bcf876714aee6de661ec6885ccb",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "workflow",
+      "review": "All 37 runtime cases/parameter variants and 184 assertion sites retained. Pure next-step, retry/progress and duration predictions arrange named plan points/clock records directly. Actual changing-plan, review-loop, checkpoint and step-record transitions retain Simulator commands. Demo scenes remain. Three assertion expressions only replace sim.getState() with the equivalent explicit state.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/summary.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/workflow/status-summary.test.ts",
+        "packages/core/test/rules/workflow/next-step.test.ts",
+        "packages/core/test/rules/workflow/step-time.test.ts",
+        "packages/core/test/contracts/demo/summary.test.ts",
+        "packages/core/test/orchestration/simulator/summary.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/conversations/takeover.test.ts",
@@ -678,18 +907,43 @@
       "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
     },
     {
-      "file": "packages/core/test/ui-contracts.test.ts",
+      "file": "packages/core/test/rules/tasks/role-and-queue-contracts.test.ts",
       "declarations": 3,
       "assertionSites": 13,
       "baselineDigest": "18198c219004062326cfda845b70b3b7c29d72902c76d3335da92a650fc22fa2",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "tasks",
+      "review": "All 4 runtime cases/parameter variants and 13 assertion sites retained. Gate/dependency eligibility and custom result-role command execution are separated; both use canonical private workflow state.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/ui-contracts.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/tasks/role-and-queue-contracts.test.ts",
+        "packages/core/test/orchestration/simulator/role-contracts.test.ts"
+      ]
     },
     {
-      "file": "packages/core/test/usage.test.ts",
+      "file": "packages/core/test/rules/usage/profile-selection.test.ts",
       "declarations": 38,
       "assertionSites": 184,
       "baselineDigest": "a640d462e02940bccecfc99e3575df4e46c288e55d883c9f3b392fa90463911d",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "usage",
+      "review": "All 39 runtime cases/parameter variants and 184 assertion sites retained. All cases already used explicit profiles, quotas, readiness, times and scheduler data. Split by profile selection, report/wording and balancing responsibility with all threshold/status variants retained.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/usage.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/usage/profile-selection.test.ts",
+        "packages/core/test/rules/usage/reports.test.ts",
+        "packages/core/test/rules/usage/balancing.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/rules/reviews/panel.test.ts",
@@ -708,11 +962,25 @@
       }
     },
     {
-      "file": "packages/core/test/workflow-events.test.ts",
+      "file": "packages/core/test/rules/workflow/publishing.test.ts",
       "declarations": 40,
       "assertionSites": 219,
       "baselineDigest": "36c057cd10e0111d079f7905e2a85360b9ecfc9c86ca524ec07c1c666718b4c9",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "workflow",
+      "review": "All 54 runtime cases/parameter variants and 219 assertion sites retained. Explicit private task/repository records replace generated history. Publishing, compact event differences and review populations are rules; stateful baseline/retention observation is separate orchestration. Nested repair-cause cases and thirteen publishing states remain.",
+      "validation": {
+        "artifact": "core-reconciliation.json",
+        "qualification": "Complete @petrina/core normal-config run: 1093 passed, zero failed/skipped, 104 files, 4.99s. All 1092 ec8a0077 baseline case identities retained plus root completeAll control. Core types pass. Full combined repository/platform qualification remains due."
+      },
+      "from": "packages/core/test/workflow-events.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/workflow/publishing.test.ts",
+        "packages/core/test/rules/workflow/events.test.ts",
+        "packages/core/test/rules/workflow/review-populations.test.ts",
+        "packages/core/test/orchestration/workflow/observer.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/acceptance-gap.test.ts",
@@ -782,14 +1050,53 @@
       "declarations": 12,
       "assertionSites": 73,
       "baselineDigest": "0e1285e6f66f0351cbaa32cca5ab626faf4e9a403d2dfda06f813cdedf668b7d",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "template:`reclaims a started agent when its ${observer} observer throws (${reopen ? \"reopen\" : \"fresh\"})`",
+          "file": "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts",
+          "assertionSites": 5,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "stops a process aborted synchronously by its ownership callback without opening a browser",
+          "file": "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts",
+          "assertionSites": 5,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "releases stopped and failed runs from a shared task cancellation signal",
+          "file": "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts",
+          "assertionSites": 3,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "does not retain completed turns on the live agent's process",
+          "file": "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts",
+          "assertionSites": 1,
+          "assertionsUnchanged": true
+        }
+      ],
+      "review": "Partial semantic audit: Four simple lifecycle sites moved. Native late-fork/scan/deadline matrix and pure final-snapshot permutations remain mixed; separate platform observation policy from ACP shutdown before moving remaining file."
     },
     {
-      "file": "packages/engine/test/agent-messages.test.ts",
+      "file": "packages/agent-runtime/test/rules/activity/messages.test.ts",
       "declarations": 3,
       "assertionSites": 11,
       "baselineDigest": "7740541f0163decf4effa851b2eb6f4dd32c78f4540c47a8a641042cb23d2886",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "activity",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/agent-messages.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/rules/activity/messages.test.ts",
+        "packages/agent-runtime/test/contracts/activity/message-clock.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/analytics-read.test.ts",
@@ -803,7 +1110,28 @@
       "declarations": 13,
       "assertionSites": 55,
       "baselineDigest": "13316a69af7cbe17673f7699b414f8c57c9758dccf3a372f95e13bad91652b37",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "reads real cached session reports and counts only the resumed turn's input and cache once",
+          "file": "packages/agent-runtime/test/rules/providers/antigravity-report.test.ts",
+          "assertionSites": 7,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "reads the native quota groups and explicit UTC resets, without blocking Gemini for unavailable third-party models",
+          "file": "packages/agent-runtime/test/rules/providers/antigravity-report.test.ts",
+          "assertionSites": 7,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "uses differences across turns and resume, includes thinking once in output, and leaves cache/new input unknown",
+          "file": "packages/agent-runtime/test/rules/providers/antigravity-report.test.ts",
+          "assertionSites": 5,
+          "assertionsUnchanged": true
+        }
+      ],
+      "review": "Partial semantic audit: Pure account parsing moved. Remaining actual ACP sessions, provider probe and Engine refresh composition still share workflow fake; migrate native cases after defining protocol-only peer capabilities needed by each."
     },
     {
       "file": "packages/engine/test/awake.test.ts",
@@ -862,11 +1190,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/captures.test.ts",
+      "file": "packages/agent-runtime/test/contracts/browser/captures.test.ts",
       "declarations": 9,
       "assertionSites": 31,
       "baselineDigest": "a8cd8fff875dd94cd921678025d609327c742c1cf3dad1da9a776d24983833d3",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "browser",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/captures.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/browser/captures.test.ts",
+        "packages/engine/test/rules/agents/report-images.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/journeys/checks/admission.test.ts",
@@ -998,11 +1338,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/claude-usage.test.ts",
+      "file": "packages/agent-runtime/test/rules/providers/claude-account.test.ts",
       "declarations": 6,
       "assertionSites": 19,
       "baselineDigest": "01e52acf726c96b15f947cbf352115ec171cf4d7e62642d3365b211f9fb0b344",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "providers",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/claude-usage.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/rules/providers/claude-account.test.ts",
+        "packages/agent-runtime/test/contracts/providers/claude-usage.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/cleanup.test.ts",
@@ -1012,18 +1364,53 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/codex-background.test.ts",
+      "file": "packages/agent-runtime/test/contracts/providers/codex-background.test.ts",
       "declarations": 1,
       "assertionSites": 8,
       "baselineDigest": "ed2d7fd82649c2d1fcde115f795ca2ecdc3b2eb8830e37564c1448721f726b68",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "providers",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/codex-background.test.ts"
     },
     {
       "file": "packages/engine/test/codex-usage.test.ts",
       "declarations": 5,
       "assertionSites": 22,
       "baselineDigest": "eeb5ec6666326f0cbdc083bc9949f2c730eb1ad26e6d6bb106fdcae51b20c429",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "forces an app-server that reports usage but ignores its normal stop",
+          "file": "packages/agent-runtime/test/contracts/providers/codex-usage.test.ts",
+          "assertionSites": 2,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "maps each window by its length, with the reset time in milliseconds, and the status by how much is used",
+          "file": "packages/agent-runtime/test/rules/providers/codex-report.test.ts",
+          "assertionSites": 5,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "does the adapter's handshake first, reads once, and stops the process",
+          "file": "packages/agent-runtime/test/contracts/providers/codex-usage.test.ts",
+          "assertionSites": 3,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "gives up within its time limit when Codex does not answer, and says plainly when it refuses or is missing",
+          "file": "packages/agent-runtime/test/contracts/providers/codex-usage.test.ts",
+          "assertionSites": 5,
+          "assertionsUnchanged": true
+        }
+      ],
+      "review": "Partial semantic audit: One complete Engine startup/usage admission journey retained; native protocol/parsing cases moved."
     },
     {
       "file": "packages/test-support/test/contracts/processes/commands.test.ts",
@@ -1045,11 +1432,23 @@
       }
     },
     {
-      "file": "packages/engine/test/connector-browser.test.ts",
+      "file": "packages/agent-runtime/test/contracts/browser/connector.test.ts",
       "declarations": 5,
       "assertionSites": 37,
       "baselineDigest": "c74c64f20596dd62da6a7f1f4312a2c2266e252148de5e34343609ac299e0707",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "browser",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/connector-browser.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/browser/connector.test.ts",
+        "packages/agent-runtime/test/contracts/agents/detached.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/coordination-check-progress.test.ts",
@@ -1362,7 +1761,7 @@
         "packages/core/test/rules/reviews/evidence-updates.test.ts",
         "packages/engine/test/contracts/agents/review-results.test.ts",
         "packages/engine/test/journeys/checkpoints/change-request.test.ts",
-        "packages/engine/test/rules/agents/tool-activity.test.ts"
+        "packages/agent-runtime/test/rules/activity/formatting.test.ts"
       ],
       "review": "All ten original cases have explicit owners: two actual core evidence/dispute mutations; six native role-response parsing and evidence-validation contracts; one public Engine checkpoint rejection using the canonical owned folder/Engine fixtures; one pure tool-activity formatter. The pure finding recipe is shared from core, remains privately writable, and removes casts to never. All original assertions are retained. Native result parsing remains real; no accounts, agent processes or platform tmpdir are needed.",
       "validation": {
@@ -1429,18 +1828,68 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/git.test.ts",
+      "file": "packages/repositories/test/contracts/git/versions.test.ts",
       "declarations": 32,
       "assertionSites": 203,
       "baselineDigest": "9d12f77d9168e84a4a64503c6c41fe77a00a87d7ac602f1188b808bc687bfb78",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "git",
+      "review": "Native repository contracts and portable identity rules separated by actual boundary. All original case names and assertion sites retained; process fixtures use portable private actors, including a confirmed parent-exit control. No Engine or account dependency.",
+      "validation": {
+        "artifact": "repositories-batch-ec8a0077/reconciliation.json",
+        "native": "57 pass / 672 assertions / 11 files; additional source/safety 9 pass, parent-exit 1 pass; portable 2 pass / 130 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/git.test.ts",
+      "splitFiles": [
+        "packages/repositories/test/contracts/git/versions.test.ts",
+        "packages/repositories/test/contracts/worktrees/cleanup.test.ts",
+        "packages/repositories/test/rules/worktrees/names.test.ts",
+        "packages/repositories/test/contracts/processes/commands.test.ts",
+        "packages/repositories/test/contracts/git/safety.test.ts",
+        "packages/repositories/test/rules/identity/addresses.test.ts",
+        "packages/repositories/test/contracts/delivery/branches.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/grok-usage.test.ts",
       "declarations": 9,
       "assertionSites": 33,
       "baselineDigest": "f47a8885cb277953595a00502cfddea549aa09b679b73ed51f395aa84d8c2aad",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "keeps the resolved model's tokens and agent time on the same Analytics row",
+          "file": "packages/storage/test/contracts/usage/grok-model.test.ts",
+          "assertionSites": 3,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "keeps different models and cache creation, and rejects partial or legacy last-call figures",
+          "file": "packages/agent-runtime/test/rules/providers/grok-report.test.ts",
+          "assertionSites": 8,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "uses the actual allowance percentage and period, keeping no financial fields",
+          "file": "packages/agent-runtime/test/rules/providers/grok-report.test.ts",
+          "assertionSites": 8,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "reads the installed CLI extension without creating a session or sending a prompt, then stops",
+          "file": "packages/agent-runtime/test/contracts/providers/grok-usage.test.ts",
+          "assertionSites": 2,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "stops an unresponsive CLI, and reports refusal and missing executables without an AI turn",
+          "file": "packages/agent-runtime/test/contracts/providers/grok-usage.test.ts",
+          "assertionSites": 4,
+          "assertionsUnchanged": true
+        }
+      ],
+      "review": "Partial semantic audit: Native reader + pure parser + SQLite-row case moved. Registry mapping, real workflow fake ACP prompt and Engine refresh/history remain to split."
     },
     {
       "file": "packages/engine/test/guide.test.ts",
@@ -1625,11 +2074,19 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/managed-launch.test.ts",
+      "file": "packages/agent-runtime/test/contracts/agents/managed-launch.test.ts",
       "declarations": 6,
       "assertionSites": 25,
       "baselineDigest": "a533b01e34a115e2ede1a1d1eb0aced052a90302fd6e5160d70b60e67737e74f",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "agents",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/managed-launch.test.ts"
     },
     {
       "file": "packages/engine/test/model-capacity.test.ts",
@@ -1660,7 +2117,7 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/orchestration/runtime/parallel.test.ts",
+      "file": "packages/core/test/orchestration/runtime/settlement.test.ts",
       "declarations": 1,
       "assertionSites": 3,
       "baselineDigest": "b300d011c9e875ea7e610ad6cebe48fc58d65671d7795d87fe834aa58e1fa502",
@@ -1668,12 +2125,9 @@
       "from": "packages/engine/test/parallel.test.ts",
       "layer": "orchestration",
       "area": "runtime",
-      "review": "One declaration: all independent operations settle before failure reaches recovery. Real Promise ordering and controlled release, no OS or Engine.",
+      "review": "Portable independent-promise settlement moved unchanged to core. Explicit resolver replaces unavailable Promise.withResolvers in this package target; all original assertions retained. Existing Engine baseline provenance remains in from.",
       "validation": {
-        "casesIdenticalToBaseline": 1,
-        "assertionAstUnchanged": true,
-        "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
-        "reviewedDigest": "34142f2c7eb403a5bb908640a70a3c5eeb211ccc50064ee7be76054776191178"
+        "run": "Complete core 1093 pass / no fail or skip, including original settlement control."
       }
     },
     {
@@ -1807,7 +2261,9 @@
       "declarations": 13,
       "assertionSites": 84,
       "baselineDigest": "bee219f8e32134a1cf1aec7ff199c513ab29d3d957854b60f7c5902a78d91af6",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [],
+      "review": "Partial semantic audit: Imports updated only. Metadata decisions, real SDK errors, native scripted notices and workflow-aware fixture remain mixed; not declared audited."
     },
     {
       "file": "packages/engine/test/contracts/testing/full-run.test.ts",
@@ -1964,18 +2420,34 @@
       "review": "Partial audit only: three source-proposal decisions moved to their actual portable controller. Other repository-context cases remain pending; native Git/release/storage interactions stay intact."
     },
     {
-      "file": "packages/engine/test/repository-paths.test.ts",
+      "file": "packages/repositories/test/contracts/worktrees/paths.test.ts",
       "declarations": 2,
       "assertionSites": 6,
       "baselineDigest": "b8815abce4046c5288a319104684822a27cffca296fa781b25206b4960bc26ad",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "worktrees",
+      "review": "Native repository contracts and portable identity rules separated by actual boundary. All original case names and assertion sites retained; process fixtures use portable private actors, including a confirmed parent-exit control. No Engine or account dependency.",
+      "validation": {
+        "artifact": "repositories-batch-ec8a0077/reconciliation.json",
+        "native": "57 pass / 672 assertions / 11 files; additional source/safety 9 pass, parent-exit 1 pass; portable 2 pass / 130 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/repository-paths.test.ts"
     },
     {
-      "file": "packages/engine/test/repository-reads.test.ts",
+      "file": "packages/repositories/test/contracts/github/reads.test.ts",
       "declarations": 6,
       "assertionSites": 48,
       "baselineDigest": "b8fb8784a7b12ad9da8597db90451c3f6fa569195fd0552c2d5783ca941a1cd8",
-      "status": "pending"
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "github",
+      "review": "Native repository contracts and portable identity rules separated by actual boundary. All original case names and assertion sites retained; process fixtures use portable private actors, including a confirmed parent-exit control. No Engine or account dependency.",
+      "validation": {
+        "artifact": "repositories-batch-ec8a0077/reconciliation.json",
+        "native": "57 pass / 672 assertions / 11 files; additional source/safety 9 pass, parent-exit 1 pass; portable 2 pass / 130 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/repository-reads.test.ts"
     },
     {
       "file": "packages/engine/test/restart.test.ts",
@@ -2191,7 +2663,34 @@
       "declarations": 14,
       "assertionSites": 72,
       "baselineDigest": "11ea512e056dc80627ff7bdd97829ef41a366fdb29a1ff872e255b901dce9100",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [
+        {
+          "original": "required, every command reviewed by Auto mode, with Claude Code's own escape hatch kept",
+          "file": "packages/agent-runtime/test/contracts/providers/sandbox-config.test.ts",
+          "assertionSites": 7,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "writes only to temporary folders, sign-in caches and package download caches, beside the working copy",
+          "file": "packages/agent-runtime/test/contracts/providers/sandbox-config.test.ts",
+          "assertionSites": 3,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "follows the coordinator's own az folder",
+          "file": "packages/agent-runtime/test/contracts/providers/sandbox-config.test.ts",
+          "assertionSites": 1,
+          "assertionsUnchanged": true
+        },
+        {
+          "original": "reads Claude Code's own report that its sandbox cannot start, in plain words",
+          "file": "packages/agent-runtime/test/rules/providers/sandbox-failures.test.ts",
+          "assertionSites": 7,
+          "assertionsUnchanged": true
+        }
+      ],
+      "review": "Partial semantic audit: Four config/failure sites moved. Actual session settings plus whole workflow sandbox selection/recovery cases remain to split; preserve Engine composition cases."
     },
     {
       "file": "packages/engine/test/screen-review.test.ts",
@@ -2531,7 +3030,9 @@
       "declarations": 5,
       "assertionSites": 38,
       "baselineDigest": "237d079520b2a527d2d8be3832362ae9404b06876e4cab669f24e2bc24c00275",
-      "status": "pending"
+      "status": "pending",
+      "migratedCases": [],
+      "review": "Partial semantic audit: Imports updated only. Runtime invocation tracker plus host recordToolActivity/core recovery assertions share one fixture; separate pure tracker from host persistence/summary ownership before moving."
     },
     {
       "file": "packages/engine/test/tool-updates.test.ts",
@@ -2665,13 +3166,17 @@
       }
     },
     {
-      "file": "packages/engine/test/contracts/git/unsafe-settings.test.ts",
+      "file": "packages/repositories/test/contracts/git/unsafe-settings.test.ts",
       "declarations": 2,
       "status": "reviewed",
       "layer": "contracts",
       "area": "git",
-      "review": "One real-Git positive helper/hook control with spaces/apostrophes and seven actual local/worktree setting cases. Four real credentialed operation adapters refuse each setting, report its key, leave FETCH_HEAD absent, preserve all remote refs and execute no marker. Private writable repositories and explicit fake helper input; no Engine, agent transport, account or network. Native Linux/Windows qualification remains due.",
-      "validation": "security-native-first.xml; security-reviewed-neighborhood.xml; security-boundary-after-2026-10-24T18-16-51-840Z/cases.xml"
+      "review": "Native repository contracts and portable identity rules separated by actual boundary. All original case names and assertion sites retained; process fixtures use portable private actors, including a confirmed parent-exit control. No Engine or account dependency.",
+      "validation": {
+        "artifact": "repositories-batch-ec8a0077/reconciliation.json",
+        "native": "57 pass / 672 assertions / 11 files; additional source/safety 9 pass, parent-exit 1 pass; portable 2 pass / 130 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/contracts/git/unsafe-settings.test.ts"
     },
     {
       "file": "packages/engine/test/journeys/repositories/unsafe-settings.test.ts",
@@ -2881,12 +3386,16 @@
       "validation": "repository-observations-11dc2080/orchestrator.json: all 242 orchestrator cases pass. native-neighborhood.xml: 16 relevant native/acceptance cases pass with 295 assertions. Reviewed workspace types and conventions pass. Combined full-suite qualification remains due."
     },
     {
-      "file": "packages/engine/test/contracts/repositories/observations.test.ts",
+      "file": "packages/repositories/test/contracts/observations/committed.test.ts",
       "status": "reviewed",
       "layer": "contracts",
-      "area": "repositories",
-      "review": "Three real-Git contracts retain SHA-1/SHA-256 version pairs, fingerprints pinned across later commits, stable workspace bindings and untouched tracked/untracked edits. Unprepared, non-repository, unborn and missing/invalid-base observations cannot invent unchanged code. Private writable repositories copied from the canonical immutable seed; no Engine, agent, account or persistence. Portable failure/peer ordering remains in the controller layer.",
-      "validation": "repository-observations-11dc2080/native-reviewed.xml: 3 pass / 32 assertions / 2.29s. Sixteen neighboring native/acceptance cases pass / 295 assertions. Reviewed workspace types and conventions pass. comparison.json preserves one selected existing case and all 76 report identities while observed Git launches fall 92 to 88; no whole-suite timing claim. Combined full-suite qualification remains due."
+      "area": "observations",
+      "review": "Native repository contracts and portable identity rules separated by actual boundary. All original case names and assertion sites retained; process fixtures use portable private actors, including a confirmed parent-exit control. No Engine or account dependency.",
+      "validation": {
+        "artifact": "repositories-batch-ec8a0077/reconciliation.json",
+        "native": "57 pass / 672 assertions / 11 files; additional source/safety 9 pass, parent-exit 1 pass; portable 2 pass / 130 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/contracts/repositories/observations.test.ts"
     },
     {
       "file": "packages/core/test/rules/repositories/source-hints.test.ts",
@@ -2976,6 +3485,30 @@
       "assertionSites": 10,
       "review": "Four controlled ownership variants cover background work, review-copy work, nested registration during shutdown, rejection propagation and an independent unfinished owner. Real isolated Engine/SQLite and private files, no agents or repository prerequisites. Explicit releases and the native event-loop boundary control completion; no elapsed-time assertions.",
       "validation": "check-workflows-4a6dd436/shutdown-before.xml: all three initial controls reproduce premature completion. shutdown-fixed.xml passes; shutdown-neighborhood.xml: all 102 cleanup/recovery/follow-up contracts pass / 1226 assertions. Complete changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/repositories/test/contracts/sources/queries.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "sources",
+      "review": "Native repository contracts and portable identity rules separated by actual boundary. All original case names and assertion sites retained; process fixtures use portable private actors, including a confirmed parent-exit control. No Engine or account dependency.",
+      "validation": {
+        "artifact": "repositories-batch-ec8a0077/reconciliation.json",
+        "native": "57 pass / 672 assertions / 11 files; additional source/safety 9 pass, parent-exit 1 pass; portable 2 pass / 130 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/contracts/sources/queries.test.ts"
+    },
+    {
+      "file": "packages/agent-runtime/test/rules/activity/formatting.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "activity",
+      "review": "Agent boundary responsibilities split between pure provider/activity data rules, real protocol/process/browser/file contracts and retained Engine report schemas. Original assertion AST sites preserved. Native peers have private files and no accounts; image cases own separate capture state.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/reconciliation.json",
+        "runtime": "68 pass / 588 assertions, storage control 1 pass / 3 assertions. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/rules/agents/tool-activity.test.ts"
     }
   ],
   "rust": [

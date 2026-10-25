@@ -9,17 +9,17 @@ import { join } from "node:path";
 import type { State, Task, WorkTurn } from "@petrina/core";
 import type { Kernel, MStage, MTask } from "../src/kernel.js";
 import { Tracking } from "../src/tracking.js";
-import { AgentRun, reportOf } from "../src/acp-run.js";
+import { AgentRun, reportOf } from "@petrina/agent-runtime/acp-run";
 import { Engine } from "./engine.js";
 import { dispatch } from "../src/server.js";
 import { Store } from "@petrina/storage/store";
-import { ENGINE_PROFILES } from "../src/tools.js";
+import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { WaitClock, WorkLog } from "@petrina/storage/worklog";
-import type { CodexScript } from "./fake-codex.js";
+import type { CodexScript } from "../../agent-runtime/test/fixtures/fake-codex.js";
 import { git, removeDir, SLOW, testBrowserRoot, waitFor } from "./fixtures.js";
 
 const fake = join(import.meta.dir, "fake-agent.ts");
-const fakeCodex = join(import.meta.dir, "fake-codex.ts");
+const fakeCodex = join(import.meta.dir, "../../agent-runtime/test/fixtures/fake-codex.ts");
 const temp = mkdtempSync(join(tmpdir(), "petrina-worklog-"));
 const data = join(temp, "data");
 // The stand-in Codex app-server's answer, and its log of every request it gets.

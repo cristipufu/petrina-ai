@@ -1,6 +1,6 @@
 import type { Product } from "@petrina/core";
 import type { Section } from "./context.js";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 
 /** Bounded source facts for navigation, never another agent's conclusions. */
 export class RepoOrientation {

@@ -8,14 +8,14 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, productsOn, takesFollowUps, type AgentProfile, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type MatchAnswer, type MatchAsk, type ReportImage, type Task } from "@petrina/core";
-import { completeAll } from "./parallel.js";
-import { AgentRun } from "./acp-run.js";
-import { agentCommandFor } from "./tools.js";
+import { completeAll } from "@petrina/core";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { agentCommandFor } from "@petrina/agent-runtime/tools";
 import type { Kernel, MTask } from "./kernel.js";
 import { parseResult } from "./prompts.js";
 import { extraSlot, limitOf } from "@petrina/core";
 import { agentEnv } from "./env.js";
-import { claudeSandbox } from "./sandbox.js";
+import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 
 const MatchBody = z.object({
   groups: z.array(z.object({ keys: z.array(z.string()).min(1), cardId: z.string().optional() })).default([]),

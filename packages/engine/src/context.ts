@@ -12,7 +12,7 @@ import type { GuideKeeper } from "./guide-keeper.js";
 import { backgroundMessage } from "./messages.js";
 import { currentSourcePointers } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { verificationContext } from "./verification-context.js";
 import { relatedCheckEvidence } from "./related-check-evidence.js";
 import { compactCards, compactFindings, fullFollowUpCards, readReviewHistory, settledReviewFindings, type CompactReviewHistory } from "./review-history.js";

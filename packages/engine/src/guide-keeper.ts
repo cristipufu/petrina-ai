@@ -3,7 +3,7 @@ import { type RepositoryContext } from "@petrina/orchestrator";
 // and accepted points reaching REVIEW.md. Reading and writing the file is in points.ts.
 
 import { endAgentStep, JOURNEY_WORDS as W, type DeepMutable, type Id, type GuideLine, type Task } from "@petrina/core";
-import * as git from "./git.js";
+import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
 import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, localPoints, pointsText } from "./points.js";

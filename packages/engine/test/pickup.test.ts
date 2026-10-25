@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
 import { Engine } from "./engine.js";
 import { EARLIER_ATTEMPT, formatWhereYouWere, WHERE_YOU_WERE } from "../src/prompts.js";
-import { claudeSandbox } from "../src/sandbox.js";
+import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { Store } from "@petrina/storage/store";
 import type { Scenario } from "./fake-agent.js";
 import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, traceTaskWait, waitFor } from "./support.js";

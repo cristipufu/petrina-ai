@@ -1,8 +1,8 @@
 // Release versions and notes preparation. Publishing and its gates stay in Shipping.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import * as github from "./github.js";
-import * as git from "./git.js";
+import * as github from "@petrina/repositories/github";
+import * as git from "@petrina/repositories/git";
 import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
 import { type Kernel, type MStage, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";

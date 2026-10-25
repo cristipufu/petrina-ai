@@ -10,7 +10,7 @@ import type { Scenario } from "./fake-agent.js";
 import { ScriptedAgents, scriptedResult } from "./scripted-agents.js";
 import { reviewRecords } from "./fixtures/review-records.js";
 import { answersTo, findingIds } from "./scripted-findings.js";
-import { addCopy, ensureWorktree } from "../src/git.js";
+import { addCopy, ensureWorktree } from "@petrina/repositories/git";
 import { Sources } from "../src/sources.js";
 import type { Connections } from "../src/connection.js";
 import { Kernel, type MTask } from "../src/kernel.js";
