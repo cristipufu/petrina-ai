@@ -1775,7 +1775,8 @@
       "baselineDeclarations": 32,
       "baselineAssertionSites": 186,
       "review": "All current 32 declaration bodies / 188 assertion sites are unchanged across prompt-rule and role-edit owners; 35 runtime cases retain all 3813 assertions. Native tool-name/Git imports are replaced by explicit PromptContext tool data and the pure retained-owner rule. Input manifests are pure, separate from native exact-message storage. Private production-created task fixtures replace an unrelated completed demo task. Golden role-contract bytes are unchanged. Screen, hand-back, role permissions, findings/verification, source scopes and edited/default instruction variants retain their existing controls.",
-      "validation": "prompt-layers-e19eb144/reconciliation.json proves case bodies, every assertion site and golden bytes. prompts-fixed.xml: 35 pass / 3813 assertions. new-contracts-first.xml: 39 pass / 3831 assertions including new default/edited Builder and tool-catalog rules plus one actual Builder-turn composition. native-neighborhood.xml: 115 pass / 1392 assertions. exact-input-neighborhood.xml: 2 real workflows pass / 236 assertions. Types and conventions pass; combined full-run qualification remains due."
+      "validation": "prompt-layers-e19eb144/reconciliation.json proves case bodies, every assertion site and golden bytes. prompts-fixed.xml: 35 pass / 3813 assertions. new-contracts-first.xml: 39 pass / 3831 assertions including new default/edited Builder and tool-catalog rules plus one actual Builder-turn composition. native-neighborhood.xml: 115 pass / 1392 assertions. exact-input-neighborhood.xml: 2 real workflows pass / 236 assertions. Types and conventions pass; combined full-run qualification remains due.",
+      "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
     },
     {
       "file": "packages/engine/test/proof-requests.test.ts",
@@ -2871,7 +2872,8 @@
       "layer": "rules",
       "area": "repositories",
       "review": "Four data-only variants cover retained approved order, removed owners, an explicitly empty approved map and both unapproved selectedProducts/workRows proposals. Canonical private state/task fixtures; no demo workflow or native effect.",
-      "validation": "prompt-layers-e19eb144/core-hints.json: all 4 pass. Native source-hint/role neighbors pass in the 115-case run. types-final.log and conventions-final.log pass; combined full qualification remains due."
+      "validation": "prompt-layers-e19eb144/core-hints.json: all 4 pass. Native source-hint/role neighbors pass in the 115-case run. types-final.log and conventions-final.log pass; combined full qualification remains due.",
+      "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
     },
     {
       "file": "packages/engine/test/rules/agents/builder-checks.test.ts",
@@ -2879,7 +2881,8 @@
       "layer": "rules",
       "area": "agents",
       "review": "Two default/edited Builder variants retain all 13 assertions from the former two complete check workflows. One additional planner control proves supplied display labels are used without native provider registration. Actual core role editing and prompt construction, with explicit context data; no Engine, Git, filesystem, native tools or processes.",
-      "validation": "prompt-layers-e19eb144/new-contracts-first.xml passes. reconciliation.json compares all seven moved assertion sites. Focused process-cost observation is paired with the separate real-turn contract, not used as a correctness substitute."
+      "validation": "prompt-layers-e19eb144/new-contracts-first.xml passes. reconciliation.json compares all seven moved assertion sites. Focused process-cost observation is paired with the separate real-turn contract, not used as a correctness substitute.",
+      "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
     },
     {
       "file": "packages/engine/test/contracts/agents/prompt-context.test.ts",
@@ -2887,7 +2890,8 @@
       "layer": "contracts",
       "area": "agents",
       "review": "Two actual Builder-turn variants prove configured check arguments reach Context, the generated prompt and its recorded input for default and app-edited roles. The edited variant uses Engine.saveRole before creating the task. Private canonical Git seed copies and SQLite; typed scripted sessions and explicit readiness observations; no planning, review, product-check execution or publishing. Existing complete check-failure/restart/delivery tests remain unchanged. Owned cleanup runs on setup and test failure; unexpected participants/native session fallback fail.",
-      "validation": "prompt-layers-e19eb144/after-reviewed/cases.xml: two real-turn variants pass / 7 assertions; paired with three rule cases, 5 pass / 22 assertions. after-reviewed/summary.json: the replacement controls use 11 direct Git children / 19 unique Git starts, no Bun/ps children, complete file flushes and no unsettled observed launches; before used 137/146 Git, 8 Bun and 6 ps. Review added the actual edited-role path to retain the former integration assertion. Final types pass. Focused observation only; reviewed probe overlapped type checking, so elapsed time is not a speed estimate."
+      "validation": "prompt-layers-e19eb144/after-reviewed/cases.xml: two real-turn variants pass / 7 assertions; paired with three rule cases, 5 pass / 22 assertions. after-reviewed/summary.json: the replacement controls use 11 direct Git children / 19 unique Git starts, no Bun/ps children, complete file flushes and no unsettled observed launches; before used 137/146 Git, 8 Bun and 6 ps. Review added the actual edited-role path to retain the former integration assertion. Final types pass. Focused observation only; reviewed probe overlapped type checking, so elapsed time is not a speed estimate.",
+      "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
     },
     {
       "file": "packages/engine/test/rules/agents/role-edits.test.ts",
@@ -2898,7 +2902,8 @@
       "layer": "rules",
       "area": "agents",
       "review": "Nine original declaration bodies / twelve runtime role-edit variants retain their 53 assertion sites and golden contract bytes. Uses actual role-edit rules and result contracts, typed tool metadata and canonical private prompt contexts. Temporary incremental-contract mutation retains its original finally restoration. No native services or I/O.",
-      "validation": "prompt-layers-e19eb144/reconciliation.json and prompts-fixed.xml: all 35 original cases / 3813 assertions across the two owners pass. The golden JSON is byte identical. Full changed-batch qualification remains due."
+      "validation": "prompt-layers-e19eb144/reconciliation.json and prompts-fixed.xml: all 35 original cases / 3813 assertions across the two owners pass. The golden JSON is byte identical. Full changed-batch qualification remains due.",
+      "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
     }
   ],
   "rust": [
