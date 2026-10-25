@@ -1,12 +1,67 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+import * as gitOps from "@petrina/repositories/git";
+import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { join } from "node:path";
 import { beginAgentStep, panelAnswers } from "@petrina/core";
-import { prepareReviewInput } from "../../../src/review-context.js";
+import { prepareReviewInput, readReviewInput } from "../../../src/review-context.js";
 import { git } from "../../fixtures.js";
 import { reviewContextFixtures } from "../../fixtures/review-context.js";
 const { bare, ballot, earlier, answer, place, close } = reviewContextFixtures();
 afterAll(close);
+
+describe("one fresh review version per owner", () => {
+  it("keeps both identities from the paired observation when HEAD moves before material is prepared", async () => {
+    const f = await bare();
+    const before = { head: await git(f.repo, "rev-parse", "HEAD"), tree: await git(f.repo, "rev-parse", "HEAD^{tree}") };
+    const read = gitOps.commitVersion;
+    const paired = spyOn(gitOps, "commitVersion").mockImplementation(async path => {
+      const version = await read(path);
+      writeFileSync(join(path, "later-during-capture.txt"), "Later work must not enter this review snapshot\n");
+      await git(path, "add", "."); await git(path, "commit", "-qm", "Later work while review input is captured");
+      return version;
+    });
+    const heads = spyOn(gitOps, "head"), trees = spyOn(gitOps, "treeOf");
+    try {
+      const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
+      expect(input.heads).toEqual({ p: before.head });
+      expect(input.trees).toEqual({ p: before.tree });
+      const saved = await readReviewInput(input);
+      const comparisons = (saved.artifacts ?? []).map(artifact => readFileSync(artifact.file, "utf8")).join("\n");
+      expect(comparisons).toContain("FIRST-CHANGE");
+      expect(comparisons).not.toContain("later-during-capture.txt");
+      expect(await git(f.repo, "rev-parse", "HEAD")).not.toBe(before.head);
+      expect(paired).toHaveBeenCalledTimes(1);
+      expect(heads).not.toHaveBeenCalled(); expect(trees).not.toHaveBeenCalled();
+    } finally { paired.mockRestore(); heads.mockRestore(); trees.mockRestore(); await f.shutdown(); }
+  });
+
+  it("does not prepare review material from unavailable, partial, malformed or rejected observations", async () => {
+    const f = await bare();
+    const before = { head: await git(f.repo, "rev-parse", "HEAD"), tree: await git(f.repo, "rev-parse", "HEAD^{tree}") };
+    try {
+      // None of these reads may write review material or change this private committed fixture.
+      for (const observed of ["unavailable", "head-only", "tree-only", "malformed", "rejected"] as const) {
+        const failure = new Error("The review version could not be observed");
+        const value = observed === "head-only" ? { head: before.head } : observed === "tree-only" ? { tree: before.tree }
+          : observed === "malformed" ? { head: before.head, tree: "not-a-tree" } : {};
+        const paired = spyOn(gitOps, "commitVersion");
+        if (observed === "rejected") paired.mockRejectedValue(failure); else paired.mockResolvedValue(value);
+        const heads = spyOn(gitOps, "head"), trees = spyOn(gitOps, "treeOf");
+        try {
+          const input = await f.context.captureReview(f.scope);
+          const pending = prepareReviewInput(f.engine.dataDir, f.scope, input, new AbortController().signal);
+          if (observed === "rejected") expect(await rejectionOf(pending)).toBe(failure);
+          else await expectRejection(pending, "could not read the product's committed version before review");
+          expect(paired).toHaveBeenCalledTimes(1);
+          expect(heads).not.toHaveBeenCalled(); expect(trees).not.toHaveBeenCalled();
+          expect(existsSync(join(f.engine.dataDir, "contexts", f.task.id, "reviews"))).toBe(false);
+        } catch (error) { console.error(`Review ${observed} control failed`); throw error; }
+        finally { paired.mockRestore(); heads.mockRestore(); trees.mockRestore(); }
+      }
+    } finally { await f.shutdown(); }
+  });
+});
 
 describe("immutable review inputs", () => {
 it("records a passed round against its saved snapshot, and omits unknown versions on older inputs", async () => {

@@ -128,11 +128,16 @@ export class Work {
         else delete repository.reviewedTree;
         this.k.log(scope, "done", `Brought up to date with ${sourceName}: ${result.summary}`, roleId, by);
       } else delete repository.reviewedTree;
-      await this.updates.fold(scope);
-      const builtTree = await git.treeOf(repository.worktree!);
+      const folded = await this.updates.fold(scope);
+      if (folded && (!git.isSha(folded.version.head) || !git.isSha(folded.version.tree))) {
+        if (repository.checks) repository.checks.current = false;
+        throw new Error("Petrina could not read the folded product version");
+      }
+      // A successful fold already observed or created this exact version. No fold still needs a fresh read.
+      const builtTree = folded ? folded.version.tree : await git.treeOf(repository.worktree!);
       if (task.proofRequests?.length) refreshProofs(task, await versionsOf(task));
       const changed = startingTree && builtTree ? startingTree !== builtTree : undefined;
-      if (repository.checks) repository.checks.current = repository.checks.tree === builtTree;
+      if (repository.checks) repository.checks.current = !!builtTree && repository.checks.tree === builtTree;
       const buildReport = openStep(task)?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === by);
       if (buildReport && builtTree) buildReport.versions = { [repository.productId]: builtTree };
       const completedStep = openStep(task);

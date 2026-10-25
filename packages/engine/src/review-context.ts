@@ -63,10 +63,10 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
   for (const work of task.repositories ?? [scope.work]) {
     signal.throwIfAborted();
     const path = work.worktree!;
-    const head = await git.head(path), base = work.baseSha ?? work.base!;
+    const { head, tree } = await git.commitVersion(path), base = work.baseSha ?? work.base!;
+    if (!head || !tree || !git.isSha(head) || !git.isSha(tree)) throw new Error("Petrina could not read the product's committed version before review");
     heads[work.productId] = head;
-    const tree = await git.treeOf(path, head);
-    if (tree) trees[work.productId] = tree;
+    trees[work.productId] = tree;
     const full = `${base}...${head}`;
     const delta = !work.portReview && work.reviewedSha ? `${work.reviewedSha}..${head}` : undefined;
     const [guide, change, fixes] = await Promise.all([

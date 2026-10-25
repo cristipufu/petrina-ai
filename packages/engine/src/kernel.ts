@@ -1050,17 +1050,24 @@ export abstract class Kernel {
     const role = conversation?.role ?? this.role(roleId);
     if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
       const sha = await git.commitAll(repository.worktree!, `${task.title}: ${role.name}`);
-      if (repository.checks && (sha || repository.checks.current !== false)) repository.checks.current = repository.checks.tree === await git.treeOf(repository.worktree!);
-      await this.rememberVersion(scope);
+      const checks = repository.checks, refreshChecks = !!checks && !!(sha || checks.current !== false);
+      // An unreadable post-save version cannot leave a previous pass displayed as current.
+      if (checks && refreshChecks) checks.current = false;
+      const version = await git.commitVersion(repository.worktree!);
+      if (checks && refreshChecks) checks.current = !!version.head && !!version.tree
+        && git.isSha(version.head) && git.isSha(version.tree) && checks.tree === version.tree;
+      await this.rememberVersion(scope, version);
       if (sha) this.log(scope, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
   }
 
   /** Reuse only a version this operation just observed or created, never an earlier saved freshness flag. */
-  async rememberVersion(scope: RepositoryContext, observed?: { head: string; tree: string }): Promise<void> {
+  async rememberVersion(scope: RepositoryContext, observed?: { head?: string; tree?: string }): Promise<void> {
     if (!scope.work.worktree) return;
+    // An explicit empty observation is unavailable, not permission to read again and upgrade it.
+    // Keep a prior saved version as history; its consumers compare fresh HEAD rather than treating it as current proof.
     const version = observed ?? await git.commitVersion(scope.work.worktree);
-    if (version.head && version.tree) scope.work.savedVersion = { commit: version.head, tree: version.tree };
+    if (version.head && version.tree && git.isSha(version.head) && git.isSha(version.tree)) scope.work.savedVersion = { commit: version.head, tree: version.tree };
   }
 
   columnFor(task: MTask): Column {

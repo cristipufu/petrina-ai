@@ -1,4 +1,4 @@
-import { expectRejection } from "@petrina/test-support/rejections";
+import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -64,12 +64,45 @@ describe("explicit repository execution contexts", () => {
       writeFileSync(join(path, "agent-commit.txt"), "Committed by the agent before handoff\n");
       await git(path, "add", "."); await git(path, "commit", "-qm", "Agent's own commit");
     }
-    const trees = spyOn(gitOps, "treeOf");
+    const trees = spyOn(gitOps, "treeOf"), versions = spyOn(gitOps, "commitVersion");
     try {
       await engine.saveRoleEdits(scope, "builder", "sol-high");
       expect(scope.work.checks.current).toBe(false);
-      expect(trees).toHaveBeenCalledTimes(current ? 1 : 0);
-    } finally { trees.mockRestore(); await engine.shutdown(); }
+      expect(trees).not.toHaveBeenCalled();
+      expect(versions).toHaveBeenCalledTimes(1);
+      expect(scope.work.savedVersion).toEqual({ commit: await git(path, "rev-parse", "HEAD"), tree: await git(path, "rev-parse", "HEAD^{tree}") });
+    } finally { trees.mockRestore(); versions.mockRestore(); await engine.shutdown(); }
+  });
+
+  it("does not upgrade unavailable, partial, malformed or rejected saved-role observations into current proof", async () => {
+    const { engine, task } = await fixture("save-role-unknown", { git: ["first"] });
+    const scope = executionFor(task), path = scope.work.worktree!;
+    const saved = { commit: await git(path, "rev-parse", "HEAD"), tree: await git(path, "rev-parse", "HEAD^{tree}") };
+    try {
+      // These failure permutations inspect the same untouched private repository; none may change it.
+      for (const observed of ["unavailable", "head-only", "tree-only", "malformed", "rejected"] as const) {
+        scope.work.savedVersion = { ...saved };
+        scope.work.checks = { current: true, at: 1, ...(observed === "unavailable" || observed === "head-only" ? {} : { tree: saved.tree }), results: [] };
+        const failure = new Error("The paired repository observation failed");
+        const value = observed === "head-only" ? { head: saved.commit } : observed === "tree-only" ? { tree: saved.tree }
+          : observed === "malformed" ? { head: "not-a-commit", tree: saved.tree } : {};
+        const versions = spyOn(gitOps, "commitVersion");
+        if (observed === "rejected") versions.mockRejectedValue(failure); else versions.mockResolvedValue(value);
+        const trees = spyOn(gitOps, "treeOf"), heads = spyOn(gitOps, "head");
+        try {
+          if (observed === "rejected") expect(await rejectionOf(engine.saveRoleEdits(scope, "builder", "sol-high"))).toBe(failure);
+          else {
+            await engine.saveRoleEdits(scope, "builder", "sol-high");
+          }
+          expect(scope.work.checks.current).toBe(false);
+          expect(versions).toHaveBeenCalledTimes(1);
+          expect(trees).not.toHaveBeenCalled(); expect(heads).not.toHaveBeenCalled();
+          // Explicit history: extra validation compares fresh HEAD before queueing this exact snapshot.
+          expect(scope.work.savedVersion).toEqual(saved);
+        } catch (error) { console.error(`Saved-role ${observed} control failed`); throw error; }
+        finally { versions.mockRestore(); trees.mockRestore(); heads.mockRestore(); }
+      }
+    } finally { await engine.shutdown(); }
   });
 
   for (const hooks of [false, true]) it(`restores checks with one combined inspection${hooks ? " and verifies a hook's reverted commit" : ", retaining untracked build output"}`, async () => {

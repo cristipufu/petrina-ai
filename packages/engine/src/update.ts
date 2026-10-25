@@ -13,6 +13,11 @@ import type { Sources } from "./sources.js";
 import type { Connections } from "./connection.js";
 import type { Kernel } from "./kernel.js";
 
+export interface FoldedVersion {
+  fork: string;
+  version: { head: string; tree: string };
+}
+
 export class Updates {
   constructor(
     private readonly k: Kernel,
@@ -30,7 +35,7 @@ export class Updates {
   }
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */
-  async fold(scope: RepositoryContext): Promise<string | undefined> {
+  async fold(scope: RepositoryContext): Promise<FoldedVersion | undefined> {
     const { work: repository } = scope;
     // While the builder brings the work up to date, the branch sits on main with the change not committed yet.
     if (!repository.worktree || repository.updating) return;
@@ -41,7 +46,7 @@ export class Updates {
     if (!fork) return;
     const version = await git.squash(repository.worktree, fork, this.message(scope));
     await this.k.rememberVersion(scope, version);
-    return fork;
+    return { fork, version };
   }
 
   /**
@@ -107,7 +112,7 @@ export class Updates {
     const worktree = repository.worktree;
     const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? "main";
     if (!worktree) return "current";
-    const foldedFork = await this.fold(scope);
+    const foldedFork = (await this.fold(scope))?.fork;
     const latest = await this.latestMain(scope, signal, fresh, requiredSource);
     if (!latest) return "current";
     // Checked before treating an older tip as already current. A rewrite can keep the first starting commit
