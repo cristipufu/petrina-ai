@@ -2156,7 +2156,8 @@
       "declarations": 23,
       "assertionSites": 201,
       "baselineDigest": "995bedd03a1f8cf357b2baa67bddd8ac650bc160b48352d2bd683909c5e50bca",
-      "status": "pending"
+      "status": "pending",
+      "partialReview": "The hour-expiry decision moved to the actual portable ScreenArbitration with a controlled clock; a real native-clock contract remains. All other native case bytes and assertions are unchanged. Whole-file audit remains pending; see screen-7c6d60ae/moved-hour-case.json."
     },
     {
       "file": "packages/engine/test/contracts/fixtures/scripted-agents.test.ts",
@@ -2781,6 +2782,22 @@
       "area": "testing",
       "review": "Seven actual CLI controls with private files and bounded programs. A missing explicit peer rejects before the valid marker case can run; existing directory discovery and a new output path succeed; both native cwd option spellings resolve the selected directory with absolute and relative paths. Real previous behavior reproduces the missing-path failure. No real accounts or external service. Bare filename discovery retains the installed Bun behavior without requiring an identically named file in cwd.",
       "validation": "selector-filter-reviewed.xml: 23 combined rule/native controls pass, including absolute/relative cwd spellings and actual bare filename discovery. selector-neighborhood.xml: 55 runner/deadline/root/timing controls pass / 539 assertions / 15.91s. selector-boundaries.xml: three actual shared-report/saved-check-log controls pass. All workspace types and conventions pass. This guard postdates the full source1583713a qualification."
+    },
+    {
+      "file": "packages/orchestrator/test/orchestration/runtime/screen.test.ts",
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "runtime",
+      "review": "Twenty-four portable controller cases cover actual screen grants, queue fairness, quiet Inbox attribution, per-request and per-task permission, expiry, shutdown, group-seat ownership, held prerequisites and active repository binding. The hour decision replaces one whole-engine test; all remaining native cases are retained. Private production-created task state, a shared controlled clock and typed host observations replace unrelated ACP/Git/SQLite setup. Review found and reproduced deadline-order inversion in the shared clock; due callbacks now run in deadline order, so earlier cancellation suppresses a later callback even in one advance.",
+      "validation": "screen-7c6d60ae/orchestrator-final.json: all 213 orchestrator cases in 13 files pass / 1.99s, including all existing readiness controls. clock-order-before.log retains the failing ordering regression. screen-native-neighborhood.xml: 51 native screen/review/timer cases pass / 416 assertions / 66.98s. All 1083 core cases pass; types and conventions pass. Core screen function bodies and native copy-selection/cleanup method bodies are unchanged. Full changed-batch and native Linux/Windows qualification remain due."
+    },
+    {
+      "file": "packages/engine/test/contracts/runtime/clock.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "One bounded native timer contract checks deferred delivery after the current operation and microtask, cancellation before delivery, repeated cancellation and an actual current-time observation. The real timer remains native while decision permutations use the portable clock. It starts no Engine, agent, Git repository or database.",
+      "validation": "screen-clock-first.xml and screen-native-neighborhood.xml: native timer control passes with five assertions, including the complete 51-case screen/review neighborhood. All workspace types and conventions pass."
     }
   ],
   "rust": [

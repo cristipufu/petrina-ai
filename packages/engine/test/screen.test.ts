@@ -351,30 +351,6 @@ describe("an agent that needs the screen", () => {
     }
   });
 
-  it("is Off again once For an hour runs out, without anyone touching it", async () => {
-    const f = await fixture({ screen: "hold", reopen: "resume" }, 2, { screenHourMs: 800 });
-    try {
-      f.engine.setScreenUse("on");
-      f.engine.setPoolPaused(false);
-      const first = await waitFor(() => f.onScreen()[0], "an agent on the screen");
-      const other = await waitFor(() => f.ids.find((id) => f.asking(id)), "the other agent to wait its turn");
-      f.engine.setScreenUse("hour");
-      expect(f.state().pool.screen).toMatchObject({ mode: "hour" });
-      expect(f.state().pool.screen!.until! - Date.now()).toBeLessThanOrEqual(800);
-      expect(f.task(other).statusLine).toBe("Waiting its turn on the screen");
-
-      await f.until((state) => state.pool.screen?.mode === "off", "For an hour to run out", 5_000);
-      expect(f.task(other).statusLine).toBe(NEEDS);
-      expect(f.screenItems().map((item) => item.taskId)).toEqual([other]);
-      expect(onScreen(f.state().tasks)?.screen?.granted).toBe(true);
-      f.release(first);
-      await Bun.sleep(600);
-      expect(f.asking(other)).toBe(true);
-    } finally {
-      await f.close();
-    }
-  });
-
   it("keeps the screen through a restart and picks up as after any restart", async () => {
     const f = await fixture({ screen: "hold", reopen: "resume" });
     const [id] = f.ids as [string];

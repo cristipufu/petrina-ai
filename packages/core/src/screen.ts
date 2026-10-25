@@ -3,13 +3,16 @@
 // decides: the screen goes to one agent at a time, first asked, first served, and only when the
 // switch, the task's own allowance or the coordinator's Allow now lets it.
 
-import type { Id, Pool, ScreenMode, State, Task } from "./model.js";
+import type { Id, Pool, ScreenMode, TaskState } from "./model.js";
 import { runtimeWaitHolds } from "./runtime-wait.js";
 
 export const SCREEN_HOUR_MS = 60 * 60_000;
+/** Screen rules use the same small view of canonical runtime and public display tasks. */
+export type ScreenTask = Pick<TaskState, "id" | "state" | "screen" | "screenAllowed" | "runtimeWait">;
+export interface ScreenState { readonly tasks: readonly ScreenTask[]; readonly pool: Pick<Pool, "screen"> }
 
 /** The switch as it stands at `now`: For an hour that ran out is Off. */
-export function screenMode(pool: Pool, now: number): ScreenMode {
+export function screenMode(pool: Pick<Pool, "screen">, now: number): ScreenMode {
   const screen = pool.screen;
   if (!screen) return "off";
   if (screen.mode === "hour") return (screen.until ?? 0) > now ? "hour" : "off";
@@ -17,33 +20,33 @@ export function screenMode(pool: Pool, now: number): ScreenMode {
 }
 
 /** Screen use is on: On, or For an hour before it runs out. */
-export function screenOn(pool: Pool, now: number): boolean {
+export function screenOn(pool: Pick<Pool, "screen">, now: number): boolean {
   return screenMode(pool, now) !== "off";
 }
 
 /** May this task's screen request go ahead: the switch, the task's own allowance, or Allow now. */
-export function screenAllowed(task: Task, pool: Pool, now: number): boolean {
+export function screenAllowed(task: ScreenTask, pool: Pick<Pool, "screen">, now: number): boolean {
   return screenOn(pool, now) || task.screenAllowed === true || task.screen?.allowed === true;
 }
 
 /** The task whose agent is on the screen. It keeps it until its step ends. */
-export function onScreen(tasks: readonly Task[]): Task | undefined {
+export function onScreen<T extends ScreenTask>(tasks: readonly T[]): T | undefined {
   return tasks.find((task) => task.screen?.granted);
 }
 
 /** Requests still waiting for the screen, first asked first. */
-export function screenQueue(tasks: readonly Task[]): Task[] {
+export function screenQueue<T extends ScreenTask>(tasks: readonly T[]): T[] {
   return tasks.filter((task) => (task.state === "waiting" || task.state === "needs-you") && task.screen && !task.screen.granted && !runtimeWaitHolds(task)).sort((a, b) => a.screen!.at - b.screen!.at);
 }
 
 /** The request that gets the screen next: the earliest allowed one, once nobody is on the screen. */
-export function screenNext(state: State, now: number): Id | undefined {
+export function screenNext(state: ScreenState, now: number): Id | undefined {
   if (onScreen(state.tasks)) return undefined;
   return screenQueue(state.tasks).find((task) => screenAllowed(task, state.pool, now))?.id;
 }
 
 /** As far as the screen goes, the task's next agent may start. */
-export function screenReady(task: Task, state: State, now: number): boolean {
+export function screenReady(task: ScreenTask, state: ScreenState, now: number): boolean {
   return !task.screen || task.screen.granted === true || screenNext(state, now) === task.id;
 }
 
@@ -51,7 +54,7 @@ export function screenReady(task: Task, state: State, now: number): boolean {
  * Why a task waits for the screen: "ask" until the coordinator allows it, "turn" while another
  * agent is on the screen (or asked first). Undefined when it does not wait for the screen.
  */
-export function screenWait(task: Task, state: State, now: number): "ask" | "turn" | undefined {
+export function screenWait(task: ScreenTask, state: ScreenState, now: number): "ask" | "turn" | undefined {
   if ((task.state !== "waiting" && task.state !== "needs-you") || !task.screen || task.screen.granted) return undefined;
   if (!screenAllowed(task, state.pool, now)) return "ask";
   // A prerequisite wait yields the screen line, while the existing permission remains answerable.

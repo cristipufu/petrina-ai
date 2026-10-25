@@ -34,7 +34,6 @@ import {
   queueOf,
   queuePlacement,
   SCREEN_HOUR_MS,
-  SCREEN_WORDS,
   settleAsk,
   SETUP_STEPS,
   suggestProductName,
@@ -874,30 +873,14 @@ export class Engine extends Kernel implements Commands {
    * screen; it keeps it until its step ends, and nobody new gets it.
    */
   setScreenUse(mode: ScreenMode): void {
-    this.s.pool.screen = mode === "hour" ? { mode, until: Date.now() + (this.options.screenHourMs ?? SCREEN_HOUR_MS) } : { mode };
-    this.armScreenTimer();
-    // Scheduling commits, once each waiting request's line says what it waits for now.
-    this.schedule();
+    this.screens.setScreenUse(mode, this.options.screenHourMs ?? SCREEN_HOUR_MS);
   }
 
   /** Allow now: this request may use the screen, still one agent at a time. */
-  allowScreen(taskId: Id): void {
-    const task = this.task(taskId);
-    if (!task?.screen || task.screen.granted || task.screen.allowed) return;
-    task.screen.allowed = true;
-    this.log(task, "you", SCREEN_WORDS.allowedNow);
-    this.schedule();
-  }
+  allowScreen(taskId: Id): void { this.screens.allowScreen(taskId); }
 
-  /** "Allow the screen for this task": its requests go ahead even while the switch is off, one agent at a time. */
-  setTaskScreen(taskId: Id, allowed: boolean): void {
-    const task = this.task(taskId);
-    if (!task || task.state === "done" || task.state === "cancelled" || (task.screenAllowed === true) === allowed) return;
-    if (allowed) task.screenAllowed = true;
-    else delete task.screenAllowed;
-    this.log(task, "you", allowed ? SCREEN_WORDS.taskOn : SCREEN_WORDS.taskOff);
-    this.schedule();
-  }
+  /** "Allow the screen for this task": its requests go ahead even while the switch is off. */
+  setTaskScreen(taskId: Id, allowed: boolean): void { this.screens.setTaskScreen(taskId, allowed); }
 
   pause(taskId: Id): void {
     const task = this.task(taskId);
