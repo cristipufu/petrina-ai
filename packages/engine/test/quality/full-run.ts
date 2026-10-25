@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { conventions, inputs, observe, readGit, recordedCoverage, ROOT } from "./repository.js";
 import { fingerprint, impactPlan, isTest, WORKSPACES } from "./impact.js";
-import { requireFiles, testResults, type TestResults } from "./results.js";
+import { requireFiles, testResults, type TestResults } from "@petrina/test-support/test-results";
 import { createTestRun } from "@petrina/test-support/environment";
 import { TEST_WORKSPACES } from "./workspaces.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";

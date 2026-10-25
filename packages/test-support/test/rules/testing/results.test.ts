@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { resolve } from "node:path";
-import { requireFiles, testResults } from "../../quality/results.js";
+import { requireFiles, testResults } from "../../../src/test-results.js";
 
 const root = resolve("controlled-reports");
 const xml = '<testsuites tests="3" failures="0" skipped="2"><testsuite file="test/a.test.ts" tests="3" failures="0" skipped="2"><testcase /><testsuite file="test/a.test.ts" tests="2" failures="0" skipped="2"><testcase><skipped /></testcase><testcase><skipped message="TODO" /></testcase></testsuite></testsuite></testsuites>';

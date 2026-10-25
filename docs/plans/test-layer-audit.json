@@ -2443,7 +2443,7 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/rules/testing/results.test.ts",
+      "file": "packages/test-support/test/rules/testing/results.test.ts",
       "declarations": 6,
       "assertionSites": 10,
       "baselineDigest": "2bec63e158f9995097b8bd7bec8e49e4c723545b5a010f0affc260ce47193e9b",
@@ -2451,12 +2451,13 @@
       "from": "packages/engine/test/test-results.test.ts",
       "layer": "rules",
       "area": "testing",
-      "review": "Six declarations plus table variants: complete/invalid/truncated/contradictory reports and file coverage. Actual report parser with in-memory text; native runner controls remain separate.",
+      "review": "All original parser cases and fixtures are AST-identical apart from imports. The actual report parser now belongs to test support, with shared counts/data contracts; native CLI/report controls stay in the engine.",
       "validation": {
         "casesIdenticalToBaseline": 27,
         "assertionAstUnchanged": true,
         "run": "layers-initial-core.json (all 1049 core cases) or layers-final-engine.xml (109 engine controls)",
-        "reviewedDigest": "d383387fa0e363121881cc15e96c99f17f2ac8928531d888b6cd602159f11f15"
+        "reviewedDigest": "d383387fa0e363121881cc15e96c99f17f2ac8928531d888b6cd602159f11f15",
+        "sharedOwner": "native-group-probe-4106eaa7/case-reconciliation.json proves original bodies/fixtures unchanged. suite-results-rules-reviewed.xml: 81 passes across original parser, grouped parser and coordinator rules. suite-results-native-first.xml: 81 native/guard controls / 551 assertions / 23.31s. Replayed all seven authentic full reports with exact 335-file manifests and original counts; replay is not a fresh full qualification."
       }
     },
     {
@@ -2729,6 +2730,22 @@
       "area": "testing",
       "review": "Actual portable required-suite coordinator: prerequisites, independent failures, shared workspace membership, honest report/skip counts, exact source binding, pending cancellation ownership, rejected effects, immutable observations and invalid plans. Typed value effects and controlled release events; no native process, filesystem, Engine, Git or clock.",
       "validation": "suite-coordinator-reviewed.xml: 38 passes / 100 assertions / 7ms. suite-coordinator-native-first.xml: all 57 retained root CLI/report/timing/signal controls pass / 405 assertions / 24.75s. Workspace types and conventions pass. Native multi-package probe runs all four workspaces at normal 14-worker defaults with engine CWD; report paths are relative for engine and absolute for peers. Group adapter and complete qualification remain due."
+    },
+    {
+      "file": "packages/test-support/test/rules/testing/execution-results.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Actual shared report parser with in-memory Bun/Vitest data: nested-count attribution, mixed relative/absolute paths, exact registered workspace ownership, absent and skipped-only peers, ambiguous/escaping scopes and per-workspace manifests. No I/O or native execution.",
+      "validation": "suite-results-rules-reviewed.xml: all 81 parser/coordinator cases pass. Authentic seven-workspace full-report replay retains exact file manifests and counts. Native four-workspace success/failure controls also pass; types, conventions and frozen lockfile validation pass."
+    },
+    {
+      "file": "packages/engine/test/contracts/testing/execution-results.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "testing",
+      "review": "Two actual normal-worker Bun executions over four private package folders, with one explicit inner skip and an actual storage-case failure control. Asserts engine CWD, no inherited account token, all file outcomes, global/per-package counts and precise failure ownership. Uses the canonical bounded runner and isolated environment.",
+      "validation": "suite-results-native-first.xml: all 81 native/guard controls pass / 551 assertions / 23.31s, including both actual shared Bun success/failure controls. Native Linux/Windows and complete changed-batch qualification remain due."
     }
   ],
   "rust": [

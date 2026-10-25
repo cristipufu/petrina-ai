@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { keepTestTimings, seedTestTimings } from "../../quality/timings.js";
-import { testResults } from "../../quality/results.js";
+import { testResults } from "@petrina/test-support/test-results";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { runCommand } from "@petrina/test-support/commands";
 import { TEST_RUNNER } from "@petrina/test-support/run";

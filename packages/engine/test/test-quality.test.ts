@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { fingerprint, impactPlan, type CoverageMap } from "./quality/impact.js";
 import { conventions } from "./quality/conventions.js";
 import { sourceFacts } from "./quality/source.js";
-import { testResults } from "./quality/results.js";
+import { testResults } from "@petrina/test-support/test-results";
 import { coveredFiles } from "./quality/coverage.js";
 
 const fixture = () => new Map([
