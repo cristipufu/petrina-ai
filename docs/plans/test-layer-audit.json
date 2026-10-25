@@ -2827,7 +2827,7 @@
       ],
       "layer": "orchestration",
       "area": "validation",
-      "review": "Identity/advice and budget algorithms consume explicit read/signal/time ports, so11identity+3budget variants need no Engine/Git/fake Docker. Keep actual native surviving child and service cancellation/removal contracts. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "review": "Identity/advice and budget algorithms consume explicit read/signal/time ports, so11identity+3budget variants need no Engine/Git/fake Docker. Keep actual native surviving child and service cancellation/removal contracts. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership. Remembered process identities are scalar snapshots, including when an adapter reuses a mutable row; unchanged and changed-birth controls retain advice distinctions.",
       "variants": [
         "saved number/verified client/surviving helper/unknown command",
         "same helper/changed start/changed command/new member/missing start/new observer",
@@ -2839,12 +2839,12 @@
         "queued/running cancel"
       ],
       "reviewedOriginalRuntimePasses": 20,
-      "currentRuntimePasses": 24,
+      "currentRuntimePasses": 26,
       "reviewedOriginalAssertionSites": 49,
-      "currentAssertionSites": 56,
+      "currentAssertionSites": 66,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Root native361pass/7unchanged skips/52files52.29s, full core1110/controller290, types/conventions pass. Follow-up reused-row controls pass in the actual controller; combined required full remains pending."
       }
     },
     {

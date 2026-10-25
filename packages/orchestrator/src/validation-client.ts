@@ -33,7 +33,7 @@ export class ValidationClientCleanup {
       const groups = new Set(rows.filter(row => row.pid === row.group && row.state !== "defunct" && isClient(row)).map(row => row.group));
       if (!groups.size) return;
       const known = this.knownClients.get(record.id) ?? new Map<number, ClientProcess>();
-      for (const row of rows) if (groups.has(row.group) && row.birthIdentity && row.command) known.set(row.pid, row);
+      for (const row of rows) if (groups.has(row.group) && row.birthIdentity && row.command) known.set(row.pid, { ...row });
       this.knownClients.set(record.id, known);
     };
     const rows = list;

@@ -86,3 +86,22 @@ it("preserves the owner of a method-backed client observation effect", async () 
   expect(effects.reads).toBe(2);
   expect(effects.signals).toBe(0);
 });
+
+for (const mutation of ["unchanged", "different birth"] as const) it(`retains a helper snapshot when the observation reuses a row: ${mutation}`, async () => {
+  const record = { id: "snapshot-record", name: "snapshot observation", containerName: "snapshot-container", cleanupDetail: undefined as string | undefined };
+  const leader: ValidationClientProcess = { pid: 712345, group: 712345, state: "running", birthIdentity: "leader birth",
+    command: `docker run --name ${record.containerName} --label app.petrina.validation-run=${record.id} image` };
+  const helper: ValidationClientProcess = { pid: 712346, group: 712345, state: "running", birthIdentity: "helper birth", command: "helper" };
+  let reads = 0;
+  let signals = 0;
+  const cleanup = new ValidationClientCleanup({ groups: true, read: async () => {
+    if (reads++ === 0) return [leader, helper];
+    if (mutation === "different birth") helper.birthIdentity = "replacement birth";
+    return [helper];
+  }, killGroup() { signals++; } });
+  expect(await cleanup.stop(record)).toBe(false);
+  expect(reads).toBe(2);
+  expect(signals).toBe(1);
+  expect(record.cleanupDetail).toContain(mutation === "unchanged" ? "verified local helpers" : "may be unrelated");
+  expect(record.cleanupDetail).toContain(mutation === "unchanged" ? "Stop those owned programs" : "Do not stop programs based on the saved number");
+});
