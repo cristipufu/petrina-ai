@@ -9,6 +9,7 @@ export interface NativePlan {
   prompt?: NativePrompt;
   prompts?: Record<string, NativePrompt | NativePrompt[]>;
   config?: SessionConfigOption[];
+  bareConfigAck?: boolean;
   recordInitialize?: boolean;
   recordEnvironment?: boolean;
   recordRequests?: boolean;

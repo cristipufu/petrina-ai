@@ -1,3 +1,4 @@
+import { CHECK_EXIT_UNREPORTED } from "@petrina/core";
 // A product's checks: the commands that prove it works (type check, lint, tests, build). Petrina
 // runs them itself, so "the tests pass" is evidence, never an agent's word. Commands are argument
 // arrays, never a shell, and they run in the task's working copy without credentials.
@@ -14,7 +15,7 @@ import { livePowerRecords, machineInterruption, type MachineRecords } from "./ch
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
 const OUTPUT_KEPT = 6000;
-export const CHECK_EXIT_UNREPORTED = "The check ended, but the system did not report its exit, so whether it passed is unknown.";
+export { CHECK_EXIT_UNREPORTED } from "@petrina/core";
 
 /** The scripts that usually prove a JavaScript project works, in the order they are worth running. */
 const SCRIPTS: readonly [string, string][] = [

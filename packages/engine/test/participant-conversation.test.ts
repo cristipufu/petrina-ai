@@ -91,7 +91,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
       pid: nativeAgentProcess(run).pid, exitCode: nativeAgentProcess(run).exitCode, signalCode: nativeAgentProcess(run).signalCode,
     })),
     toolChecks: engine["tools"].pending().checking, lingeringTools: engine["tools"].pending().stopping,
-    profileReads: [...engine["profileReader"]["pending"].keys()], lingeringProfiles: [...engine["profileReader"]["lingering"].keys()],
+    profileReads: engine["profileReader"].pending().checking, lingeringProfiles: engine["profileReader"].pending().stopping,
     yieldedStops: engine["turns"]["yieldedStops"].length,
   });
   if (trace) trace.snapshot = () => ({ root, ownedWork: ownedWork() });

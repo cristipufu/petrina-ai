@@ -1,3 +1,4 @@
+import { ProfileChoiceController } from "@petrina/orchestrator";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProfileChoices } from "@petrina/core";
@@ -10,40 +11,18 @@ type ProfileHost = Pick<Kernel, "dataDir" | "options" | "stopped"> & { s: Pick<K
 
 /** On-demand configuration discovery: no prompt, browser, or polling. One probe per tool at a time. */
 export class ProfileChoiceReader {
-  private cache = new Map<string, { at: number; choices: ProfileChoices }>();
-  private pending = new Map<string, Promise<ProfileChoices>>();
-  private tools = new Map<string, Promise<unknown>>();
-  private lingering = new Map<string, Promise<void>>();
-  private stopping = new AbortController();
-  constructor(private readonly k: ProfileHost) {}
-  async stop(): Promise<void> { this.stopping.abort(); await Promise.allSettled([...this.pending.values()]); await Promise.allSettled([...this.lingering.values()]); }
-  read(toolId: string, modelId?: string, refresh = false): Promise<ProfileChoices> {
-    if (this.stopping.signal.aborted || this.k.stopped) return Promise.reject(new Error("The engine is stopping."));
-    const key = JSON.stringify([toolId, modelId]);
-    const pending = this.pending.get(key);
-    if (pending) return pending;
-    const cached = this.cache.get(key);
-    if (!refresh && cached && Date.now() - cached.at < 300_000) return Promise.resolve(structuredClone(cached.choices));
-    const before = this.tools.get(toolId);
-    const work = (before ? before.catch(() => undefined) : Promise.resolve()).then(async () => {
-      if (this.stopping.signal.aborted) throw new Error("The engine is stopping.");
-      const lingering = this.lingering.get(toolId);
-      if (lingering) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try { await Promise.race([lingering, new Promise<void>(resolve => { timer = setTimeout(resolve, 3_000); })]); }
-        finally { clearTimeout(timer); }
-        if (this.lingering.get(toolId) === lingering) throw new Error("This tool is still stopping after its last configuration check. Try again in a moment.");
-      }
-      if (this.stopping.signal.aborted) throw new Error("The engine is stopping.");
-      const choices = await this.probe(toolId, modelId);
-      this.cache.set(key, { at: Date.now(), choices });
-      this.cache.set(JSON.stringify([toolId, choices.modelId]), { at: Date.now(), choices });
-      return structuredClone(choices);
-    }).finally(() => { this.pending.delete(key); if (this.tools.get(toolId) === work) this.tools.delete(toolId); });
-    this.pending.set(key, work); this.tools.set(toolId, work);
-    return work;
+  private readonly controller: ProfileChoiceController;
+  constructor(private readonly k: ProfileHost) {
+    this.controller = new ProfileChoiceController({
+      now: () => Date.now(), stopped: () => this.k.stopped,
+      arm: (expired, milliseconds) => { const timer = setTimeout(expired, milliseconds); return () => clearTimeout(timer); },
+      probe: (toolId, modelId, signal, onGone) => this.probe(toolId, modelId, signal, onGone),
+    });
   }
-  private async probe(toolId: string, modelId?: string): Promise<ProfileChoices> {
+  pending(): { checking: string[]; stopping: string[] } { return this.controller.activity(); }
+  stop(): Promise<void> { return this.controller.stop(); }
+  read(toolId: string, modelId?: string, refresh = false): Promise<ProfileChoices> { return this.controller.read(toolId, modelId, refresh); }
+  private async probe(toolId: string, modelId: string | undefined, signal: AbortSignal, onGone: (gone: Promise<void>) => void): Promise<ProfileChoices> {
     if (!ADAPTERS[toolId]) throw new Error("Choose an installed coding tool.");
     if (this.k.options.profileChoices) return this.k.options.profileChoices(toolId, modelId);
     const profile = this.k.s.profiles.find(profile => profile.toolId === toolId) ?? { id: "configuration", toolId, model: "Configuration", effort: "high" as const };
@@ -54,11 +33,8 @@ export class ProfileChoiceReader {
     let run: AgentRun | undefined;
     try {
       run = await AgentRun.start({ profile, cwd, env: agentEnv(process.env), probe: true, browser: false,
-        onGone: gone => {
-          this.lingering.set(toolId, gone);
-          void gone.then(() => { if (this.lingering.get(toolId) === gone) this.lingering.delete(toolId); }, () => undefined);
-        },
-        command: agentCommandFor(this.k.options, profile), signal: AbortSignal.any([this.stopping.signal, controller.signal]), startTimeoutMs: this.k.options.startTimeoutMs,
+        onGone,
+        command: agentCommandFor(this.k.options, profile), signal: AbortSignal.any([signal, controller.signal]), startTimeoutMs: this.k.options.startTimeoutMs,
         callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" } });
       return await run.profileChoices(modelId);
     } catch (error) {

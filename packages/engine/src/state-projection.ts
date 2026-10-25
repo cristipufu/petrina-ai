@@ -4,7 +4,22 @@ import type { Kernel, MTask } from "./kernel.js";
 import { settledHistoryTask } from "@petrina/storage/store";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "@petrina/orchestrator";
 
-type ProjectionHost = Pick<Kernel, "s" | "store" | "boot" | "stopped" | "activeState" | "save" | "drivers" | "settling" | "switching" | "copyCleanups" | "followsUpHeld" | "usageCoordinator" | "events" | "tracking">;
+export interface ProjectionHost {
+  s: Pick<Kernel["s"], "tasks" | "inbox" | "pool">;
+  store: Kernel["store"];
+  boot: string;
+  stopped: boolean;
+  activeState: Kernel["activeState"];
+  save: Kernel["save"];
+  drivers: Pick<Kernel["drivers"], "has">;
+  settling: Pick<Kernel["settling"], "has">;
+  switching: Pick<Kernel["switching"], "has">;
+  copyCleanups: Pick<Kernel["copyCleanups"], "has">;
+  followsUpHeld: Kernel["followsUpHeld"];
+  usageCoordinator: Pick<Kernel["usageCoordinator"], "snapshot">;
+  events?: Pick<Kernel["events"], "observe" | "baseline">;
+  tracking: Pick<Kernel["tracking"], "log">;
+}
 export class StateProjection {
   constructor(private readonly k: ProjectionHost, private readonly normalize: (task: MTask) => void) {}
   /** Explicit compatibility/debug snapshot. Production never loads all archived conversations. */

@@ -1489,11 +1489,23 @@
       }
     },
     {
-      "file": "packages/engine/test/accepted-points.test.ts",
+      "file": "packages/engine/test/contracts/guidance/accepted-points.test.ts",
       "declarations": 2,
       "assertionSites": 20,
       "baselineDigest": "50ec3d336e2ebd9a9dd61d9fc26eebb0ac7bcec76aa4ec7afdced264ba670729",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/accepted-points.test.ts",
+      "review": "Retained real Git/default-branch reachability, approved instruction incorporation, durable restart and later coordinator restoration contracts. Branch, stale base, missing base and unreadable default controls require the real repository and remain. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "guidance",
+      "splitFiles": [
+        "packages/engine/test/contracts/guidance/accepted-points.test.ts"
+      ]
     },
     {
       "file": "packages/agent-runtime/test/rules/activity/provider-formatting.test.ts",
@@ -1533,11 +1545,23 @@
       }
     },
     {
-      "file": "packages/engine/test/after.test.ts",
+      "file": "packages/engine/test/contracts/state/dependencies.test.ts",
       "declarations": 3,
       "assertionSites": 18,
       "baselineDigest": "1c00f4134a39d4ba2034fa9a107580bcd62530362a46b502a1cfcf3ba2730962",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/after.test.ts",
+      "review": "Real Engine dependency/journey admission and cancellation composition. Removed unrelated repository initialization and ACP startup; a scripted held planner remains a real public session. Explicit Engine.waitUntilReady replaces the old incidental Git startup delay. All self/cycle/missing, removed-wait and held variants retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "state",
+      "splitFiles": [
+        "packages/engine/test/contracts/state/dependencies.test.ts"
+      ]
     },
     {
       "file": "packages/agent-runtime/test/contracts/processes/stopping.test.ts",
@@ -1606,11 +1630,24 @@
       ]
     },
     {
-      "file": "packages/engine/test/analytics-read.test.ts",
+      "file": "packages/engine/test/contracts/coordination/analytics-read.test.ts",
       "declarations": 11,
       "assertionSites": 54,
       "baselineDigest": "6b4dbc72cce02502338657f80e9f82343705366d977d353b0fe66a3378d79d5e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/analytics-read.test.ts",
+      "review": "Split the bounded time/input retention class into core rules. Remaining cases exercise actual Coordination, real SQLite recorded usage, HTTP/CLI/MCP pagination, revision binding, expiry/restart and invalid references. Fixtures now close per case; CLI calls use the canonical bounded command owner. All live-reading and cursor variants retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "coordination",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/analytics-read.test.ts",
+        "packages/core/test/rules/analytics/holds.test.ts"
+      ]
     },
     {
       "file": "packages/agent-runtime/test/contracts/providers/antigravity-accounting.test.ts",
@@ -1659,11 +1696,24 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/backlog.test.ts",
+      "file": "packages/engine/test/contracts/state/backlog.test.ts",
       "declarations": 2,
       "assertionSites": 22,
       "baselineDigest": "92dbdffdfa6cab27434820641d710ef68dbe4e4c6034ec8441846f4db5610009",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/backlog.test.ts",
+      "review": "Separated backlog persistence/dispatch/admission from actual capture combination and cleanup. Both retain real Engine/SQLite/restart; state admission uses a held scripted provider, neither needs a Git repository. Lost-reply combination, image bytes and source retirement assertions remain. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "state",
+      "splitFiles": [
+        "packages/engine/test/contracts/state/backlog.test.ts",
+        "packages/engine/test/contracts/filesystem/backlog-combine.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/browser-folders.test.ts",
@@ -1844,11 +1894,24 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/checkpoint-read.test.ts",
+      "file": "packages/engine/test/contracts/coordination/checkpoint-read.test.ts",
       "declarations": 27,
       "assertionSites": 184,
       "baselineDigest": "bb46655d5689708b95bd1ce958e670982a811481cb9093bef83eead8163b7300",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/checkpoint-read.test.ts",
+      "review": "Actual coordination/evidence/receipt composition retains real SQLite and diagnostic files. The two Work-controller acceptance cases use narrowed typed effects and the actual requested schema; no incomplete full-class casts. Saved-check outcome data rules move to core with explicit adapter explanation binding. All13 version-coverage variants, role/owner/status and text-boundary controls retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "coordination",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/checkpoint-read.test.ts",
+        "packages/core/test/rules/checks/saved-outcome.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/checks-seen.test.ts",
@@ -2167,11 +2230,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/dependency-creation.test.ts",
+      "file": "packages/engine/test/contracts/coordination/dependency-creation.test.ts",
       "declarations": 5,
       "assertionSites": 47,
       "baselineDigest": "ed8b8791b76fcfa2aeabfba7f20374f5670b0a524af0578afeeb07fd04a81c70",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/dependency-creation.test.ts",
+      "review": "Real Engine dispatch/Coordination/receipt/SQLite contract, including save-before-schedule and durable lost-reply behavior. No external agent or repository is started. Unknown/self/indirect cycles, admission guards, backlog waits and archived compact membership controls retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "coordination",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/dependency-creation.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/design-notes.test.ts",
@@ -2246,11 +2321,23 @@
       "from": "packages/engine/test/env.test.ts"
     },
     {
-      "file": "packages/engine/test/environment.test.ts",
+      "file": "packages/test-support/test/contracts/environment/isolation.test.ts",
       "declarations": 2,
       "assertionSites": 16,
       "baselineDigest": "595d41c3118c610be174149eb7b7015135633ac08aef3ef32abdd58896f76378",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/environment.test.ts",
+      "review": "Moved fixture environment/Git/browser-cache isolation to its owning test-support package. Real private files, Git and binary links stay boundary controls; inherited account/Git/provider configuration removal and nested private home assertions retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "environment",
+      "splitFiles": [
+        "packages/test-support/test/contracts/environment/isolation.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/extra-container-real.test.ts",
@@ -2503,25 +2590,63 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/history-usage.test.ts",
+      "file": "packages/engine/test/contracts/history/usage.test.ts",
       "declarations": 3,
       "assertionSites": 35,
       "baselineDigest": "38f4c218959d21a23717f9b809db429c551de319d5e2efa0796c6a4dec0f3d9f",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/history-usage.test.ts",
+      "review": "Real SQLite summary batching plus real StateProjection and MemoryWorkLog parity. Replaced complete demo generation with private production-initialized state/task records and an explicit structural ProjectionHost; unrelated effects throw. All partial/missing/lost/untracked, shared-product, paging/filter/index and late-update cases retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "history",
+      "splitFiles": [
+        "packages/engine/test/contracts/history/usage.test.ts"
+      ]
     },
     {
-      "file": "packages/engine/test/history.test.ts",
+      "file": "packages/storage/test/contracts/sqlite/task-history.test.ts",
       "declarations": 21,
       "assertionSites": 209,
       "baselineDigest": "451b496306473b6b455d4fa527bfb37a64d041409f9f7b948ff41f4975262ae6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/history.test.ts",
+      "review": "Split SQLite archive migrations, batch/index/rollback and filtering into storage; Engine/API/history/capture removal stays in Engine contracts. Canonical pure historic task recipes preserve the legacy shape while using createTaskState defaults. Large503/360/501/270 datasets and trigger controls remain because they cross real SQLite batch/index boundaries. Removed unrelated Git worlds from Engine record cases; permanent product records are explicitly seeded where asserted. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "sqlite",
+      "splitFiles": [
+        "packages/storage/test/contracts/sqlite/task-history.test.ts",
+        "packages/engine/test/contracts/history/archive-api.test.ts"
+      ]
     },
     {
-      "file": "packages/engine/test/image-preview.test.ts",
+      "file": "packages/agent-runtime/test/contracts/filesystem/image-preview.test.ts",
       "declarations": 7,
       "assertionSites": 14,
       "baselineDigest": "0065792621bb1a89da3254a34482407627376c891999a181cb3a46642511985b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/image-preview.test.ts",
+      "review": "Unchanged native rooted image reader moved byte-for-byte to runtime with Engine re-export. Direct path/bytes/size/dimensions tests stay real filesystem contracts. Engine product-root selection is separate real Engine/folder composition without unrelated Git worlds. Relative/absolute/file URL, linked escape, missing/removed/switched product and completed-task variants retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "filesystem",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/filesystem/image-preview.test.ts",
+        "packages/engine/test/contracts/filesystem/image-roots.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/inbox-waits.test.ts",
@@ -2586,11 +2711,23 @@
       }
     },
     {
-      "file": "packages/engine/test/instance.test.ts",
+      "file": "packages/engine/test/contracts/desktop/instance.test.ts",
       "declarations": 8,
       "assertionSites": 44,
       "baselineDigest": "29c878fc2807afa13bb315c9b029ffb566283bd9572864cf01df16223b23afcc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/instance.test.ts",
+      "review": "Actual CLI startup/lock/discovery/key/log/parent lifetime contracts remain native Engine composition. Added case-owned direct-handle/server/lock cleanup. Native parent-crash fixture wraps the unchanged real CLI in an independent ProcessLease; Windows still launches through PowerShell outside Bun jobs. Original assertions hold lease open; one additional native control proves lease cleanup ends the Engine while its desktop parent remains alive. No unowned PID is signalled. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "desktop",
+      "splitFiles": [
+        "packages/engine/test/contracts/desktop/instance.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/instruction-reads.test.ts",
@@ -2600,11 +2737,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/journey.test.ts",
+      "file": "packages/engine/test/journeys/recording/journey.test.ts",
       "declarations": 11,
       "assertionSites": 95,
       "baselineDigest": "e679c76ad97d7e7b500c644d58225203a8bed75d87b69f2f878914684c9fc214",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/journey.test.ts",
+      "review": "Retained representative real ACP/Git/SQLite journeys for parallel seat/input/message identities, questions/answers, tool-confirmed settings, reviews/votes/fixes, disagreement, retry/cancel and old-task restart migration. These assert interactions across public transport and workflow recording rather than single business decisions. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "journeys",
+      "area": "recording",
+      "splitFiles": [
+        "packages/engine/test/journeys/recording/journey.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/learnings-update.test.ts",
@@ -2675,11 +2824,24 @@
       }
     },
     {
-      "file": "packages/engine/test/live-task-storage.test.ts",
+      "file": "packages/engine/test/contracts/state/live-task-storage.test.ts",
       "declarations": 3,
       "assertionSites": 21,
       "baselineDigest": "905b90485e1fbcf49bc7f23c61978e3213b68ad5879d9ed41905ff360433e7e8",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/live-task-storage.test.ts",
+      "review": "Real Engine/SQLite revision coalescing, final flush, dirty-row persistence and archive projection remain storage-composition contracts. Saved-author admission is a separate scheduling owner. Stream timing is still an actual asynchronous notification boundary; no agent or Git fixture is required. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "state",
+      "splitFiles": [
+        "packages/engine/test/contracts/state/live-task-storage.test.ts",
+        "packages/engine/test/contracts/scheduling/design-author.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/local-delivery-admission.test.ts",
@@ -2689,11 +2851,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/machine-records.test.ts",
+      "file": "packages/engine/test/contracts/checks/machine-records.test.ts",
       "declarations": 3,
       "assertionSites": 26,
       "baselineDigest": "3d6e8218841ec73dbf8a676a27e79f4b4df2961d5a6d0584cee4b384d28a88cf",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/machine-records.test.ts",
+      "review": "Actual check subprocesses, commit hooks, saved failures and Engine startup/reuse/stop composition retain scripted power records. The observer still refuses any actual pmset call. Both default/explicit sources, direct-run and two-Engine isolation/cancellation variants retained; existing Windows exclusions for actual POSIX hooks remain explicit. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "checks",
+      "splitFiles": [
+        "packages/engine/test/contracts/checks/machine-records.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/maintenance.test.ts",
@@ -2756,18 +2930,42 @@
       }
     },
     {
-      "file": "packages/engine/test/node-usage.test.ts",
+      "file": "packages/storage/test/contracts/sqlite/node-usage.test.ts",
       "declarations": 1,
       "assertionSites": 4,
       "baselineDigest": "49b7a1c8fef154cfaef6ea0cf75de6a7e62180c88919c7dcdec7fcce4ccc69e8",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/node-usage.test.ts",
+      "review": "Moved unchanged real WorkLog schema-upgrade and idempotent token/model replacement assertions to storage SQLite contracts. Old missing columns, reopened step/start/seat binding and repeated/final reports retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "sqlite",
+      "splitFiles": [
+        "packages/storage/test/contracts/sqlite/node-usage.test.ts"
+      ]
     },
     {
-      "file": "packages/engine/test/notes-handoff.test.ts",
+      "file": "packages/engine/test/journeys/context/notes-handoff.test.ts",
       "declarations": 1,
       "assertionSites": 26,
       "baselineDigest": "dd99954464f6c680ed4136cd19e3a9af459a61c55e92f05f2ede411eaff5765c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/notes-handoff.test.ts",
+      "review": "Real Work/Turns/Git/SQLite/context packet and exact-message composition tests fresh/continued/changed/fresh-fallback handoffs. Canonical scripted public callbacks provide commentary and structured notes; facts/sources/limits stay exact, commentary remains separate, and immutable complete packets/omitted manifests are still read from actual files. No unrelated ACP process is needed. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "journeys",
+      "area": "context",
+      "splitFiles": [
+        "packages/engine/test/journeys/context/notes-handoff.test.ts"
+      ]
     },
     {
       "file": "packages/core/test/orchestration/runtime/settlement.test.ts",
@@ -2791,11 +2989,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/phase-notes.test.ts",
+      "file": "packages/engine/test/contracts/context/phase-notes.test.ts",
       "declarations": 1,
       "assertionSites": 7,
       "baselineDigest": "71224994399a282a2c174d311b34b43b70e76df7cd5e2bc9bd3c829da15e9f41",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/phase-notes.test.ts",
+      "review": "Actual Engine note origin recording, Context formatting and durable SQLite save remain composition coverage. Removed unrelated Git repository setup and narrowed the guide dependency to its sole consumed method. Original3 downstream roles/legacy notes and phase-versus-product decision assertions retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "context",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/phase-notes.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/pickup.test.ts",
@@ -2849,11 +3059,24 @@
       }
     },
     {
-      "file": "packages/engine/test/products.test.ts",
+      "file": "packages/engine/test/contracts/products/settings.test.ts",
       "declarations": 3,
       "assertionSites": 30,
       "baselineDigest": "0004023fb88fe731248a074964737459367b4b1b470cd358263d9290a7796a61",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/products.test.ts",
+      "review": "Real HTTP product naming/path identity and durable removal remain product contracts. Removed Git from state-only unfinished-state/removal fixtures. Product rename prompt propagation is a distinct real Git/Engine journey with a released scripted planner and held next participant; no unrelated ACP startup or100ms post-shutdown sleep. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "products",
+      "splitFiles": [
+        "packages/engine/test/contracts/products/settings.test.ts",
+        "packages/engine/test/journeys/products/rename-context.test.ts"
+      ]
     },
     {
       "file": "packages/agent-runtime/test/contracts/providers/profile-choices.test.ts",
@@ -2875,18 +3098,42 @@
       }
     },
     {
-      "file": "packages/engine/test/profile-cleanup.test.ts",
+      "file": "packages/orchestrator/test/orchestration/profiles/cleanup-barrier.test.ts",
       "declarations": 1,
       "assertionSites": 3,
       "baselineDigest": "e954b033eb68cddb8345a75d0f4b849840e2d1a347ce076a5b6f991ce458af2e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/profile-cleanup.test.ts",
+      "review": "Extracted the production cache/per-tool/lingering coordinator into orchestrator with typed probe/time/deadline effects; native startup/env/settings/30s probe remains Engine. Failure cleanup barrier is tested with explicit release, not setImmediate timing or an AgentRun cast. Real adapter cache/refresh/catalog neighboring controls also pass. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "orchestration",
+      "area": "profiles",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/profiles/cleanup-barrier.test.ts"
+      ]
     },
     {
-      "file": "packages/engine/test/profiles.test.ts",
+      "file": "packages/engine/test/contracts/recovery/profiles.test.ts",
       "declarations": 1,
       "assertionSites": 5,
       "baselineDigest": "71a2cabe74ed4bf6607e42370faf91d8442f3dc475579d05398b9fe3215ff8dd",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/profiles.test.ts",
+      "review": "Real Engine durable catalog recovery and legacy profile-ID mapping stays in recovery contracts. The old definition remains available only for historic references, and repeated restarts remain idempotent. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "recovery",
+      "splitFiles": [
+        "packages/engine/test/contracts/recovery/profiles.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/prompt-records.test.ts",
@@ -2956,11 +3203,23 @@
       "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due. Complete source1583713a Mac run: 4,799 passes, 11 explicit skips, zero failures / 411,194ms at normal workers. All 344 expected files across seven workspaces independently reparsed and reconciled. Native Linux/Windows remain due."
     },
     {
-      "file": "packages/engine/test/queue.test.ts",
+      "file": "packages/engine/test/contracts/api/queue.test.ts",
       "declarations": 1,
       "assertionSites": 6,
       "baselineDigest": "b0bbe8646de0ff963da9aa5a6d9ea060f1f34b2dec74556e9361202ef9742e83",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/queue.test.ts",
+      "review": "Actual JSON dispatch against the latest queue remains an Engine API contract, including concurrent keyboard requests, held/dependency preservation and normalized priorities. Removed unrelated Git product creation; products are explicit private records. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "api",
+      "splitFiles": [
+        "packages/engine/test/contracts/api/queue.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/queued-continuation.test.ts",
@@ -3233,18 +3492,44 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/risk.test.ts",
+      "file": "packages/engine/test/journeys/delivery/risk.test.ts",
       "declarations": 3,
       "assertionSites": 15,
       "baselineDigest": "fb2d8c466d084cb160eebe9940bc5a6372815b373b21ad09f1f0a86c690755cc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/risk.test.ts",
+      "review": "Actual risk/driver/delivery/approval integration retains real Git/checks and post-approval edit commit. Provider replies use canonical ScriptedAgents rather than ACP; high-risk independent security review, both low-risk opt-in branches and changed-code reapproval assertions retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "journeys",
+      "area": "delivery",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/risk.test.ts"
+      ]
     },
     {
-      "file": "packages/engine/test/roles.test.ts",
+      "file": "packages/engine/test/rules/prompts/role-contracts.test.ts",
       "declarations": 7,
       "assertionSites": 27,
       "baselineDigest": "8f2b339f98a3930ca259e6ec297e58947671c5139a54dd12b16000f93b0785ca",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/roles.test.ts",
+      "review": "Split pure built-in/custom role contracts and schema examples from actual context assembly and durable role-ID startup migration. Replaced complete demo construction with canonical prompt task/catalog data. Both edited/default findings contexts, all acceptance/calendar samples and shipper references retained. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "rules",
+      "area": "prompts",
+      "splitFiles": [
+        "packages/engine/test/rules/prompts/role-contracts.test.ts",
+        "packages/engine/test/contracts/context/role-context.test.ts",
+        "packages/engine/test/contracts/recovery/renamed-roles.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/runtime-edge-cases.test.ts",
@@ -3553,11 +3838,23 @@
       "from": "packages/engine/test/setup.test.ts"
     },
     {
-      "file": "packages/engine/test/shared-image-history.test.ts",
+      "file": "packages/engine/test/contracts/history/shared-images.test.ts",
       "declarations": 1,
       "assertionSites": 12,
       "baselineDigest": "205fd6e32aa16d772aa4e29185edeca05365c4ee15e749d3d32f9d41fb2d4fe5",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/shared-image-history.test.ts",
+      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live \u00d7 first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "history",
+      "splitFiles": [
+        "packages/engine/test/contracts/history/shared-images.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/shipping.test.ts",
@@ -3699,11 +3996,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/state-stream.test.ts",
+      "file": "packages/engine/test/contracts/api/state-stream.test.ts",
       "declarations": 5,
       "assertionSites": 19,
       "baselineDigest": "a4a35652e0c8e7c309dcd4a2b240aa62f335f749ab3cc6a5eb0c92ffa2788fd8",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/state-stream.test.ts",
+      "review": "Real authenticated WebSocket acknowledgement/backpressure, reconnect, command reply and independent-window contracts retain actual server/Engine/SQLite. Existing220ms negative windows remain because the real120ms broadcast deadline is the subject; no test clock substitutes for that native behavior. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "api",
+      "splitFiles": [
+        "packages/engine/test/contracts/api/state-stream.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/step-assignment.test.ts",
@@ -3734,11 +4043,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/task-parity.test.ts",
+      "file": "packages/engine/test/contracts/state/simulator-parity.test.ts",
       "declarations": 2,
       "assertionSites": 8,
       "baselineDigest": "f73c03865b98c9c471b4ea4609699ebe99847a7f201bd9b8914568b715f31786",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/task-parity.test.ts",
+      "review": "Actual Engine/SQLite command composition is compared with the actual Simulator for request, idempotency, scope/validation, queue/backlog and partial reviewer assignment parity. No full demo is constructed and no provider is admitted. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "contracts",
+      "area": "state",
+      "splitFiles": [
+        "packages/engine/test/contracts/state/simulator-parity.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/terminal.test.ts",
@@ -3877,11 +4198,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/upgrade.test.ts",
+      "file": "packages/engine/test/journeys/recovery/legacy-delivery.test.ts",
       "declarations": 5,
       "assertionSites": 37,
       "baselineDigest": "b62f3efd0ff0ed17b6190dec0098d1ff0ed2d5cae318b394d11c236559bd0f87",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/upgrade.test.ts",
+      "review": "Real Git/SQLite/native GitHub peer delivery/recovery journeys retain all5 cases, restart/coordinator choices/tag duplicate behavior and unchanged-main assertions. Canonical scripted providers replace unrelated ACP preambles; five300ms quiet sleeps are replaced by explicit startup/background settlement. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "journeys",
+      "area": "recovery",
+      "splitFiles": [
+        "packages/engine/test/journeys/recovery/legacy-delivery.test.ts"
+      ]
     },
     {
       "file": "packages/storage/test/contracts/sqlite/usage-history.test.ts",
@@ -3959,11 +4292,30 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/worklog.test.ts",
+      "file": "packages/engine/test/journeys/usage/worklog.test.ts",
       "declarations": 17,
       "assertionSites": 95,
       "baselineDigest": "ef16a522dc4f608d7af4c88413a2cc2382b38b095f7e51123b0cfcdc2c50e3d5",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/worklog.test.ts",
+      "review": "Split scalar wait policy into core; stage/retry/model persistence into storage; indexed author selection into its exact production query helper; generic model-name parsing/native setting acknowledgement into runtime using its canonical SDK peer and private per-actor configuration, with no Engine workflow fixture. The shared full recorded workflow retains real ACP public messages/permissions/settings/usage and private Git/SQLite because those events and their durable attribution are the subject. One mixed parser+SQLite case intentionally becomes two owners; no original assertion/variant lost. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "validation": {
+        "artifact": "state-api-next/runtime-reconciliation.json",
+        "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
+        "independentReview": "workstreams/state-api-review/{review.md,independent-assertions.json,final-disposition.json}; production seams and actual boundary/fixture/assertion ownership reviewed. Native settings peer dependency corrected and8cases/35assertions pass."
+      },
+      "layer": "journeys",
+      "area": "usage",
+      "splitFiles": [
+        "packages/engine/test/journeys/usage/worklog.test.ts",
+        "packages/storage/test/contracts/sqlite/worklog-retries.test.ts",
+        "packages/storage/test/contracts/sqlite/stage-runs.test.ts",
+        "packages/engine/test/contracts/history/design-author.test.ts",
+        "packages/storage/test/contracts/sqlite/worklog-models.test.ts",
+        "packages/agent-runtime/test/rules/usage/long-model-names.test.ts",
+        "packages/core/test/rules/usage/wait-clock.test.ts",
+        "packages/agent-runtime/test/contracts/agents/settings-confirmation.test.ts"
+      ]
     },
     {
       "file": "packages/engine/test/rules/testing/layers.test.ts",

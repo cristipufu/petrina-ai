@@ -68,7 +68,7 @@ export class Context {
 
   constructor(
     private readonly k: Kernel,
-    private readonly guide: GuideKeeper,
+    private readonly guide: Pick<GuideKeeper, "pendingPoints">,
     private readonly currentChecks: (scope: RepositoryContext) => Promise<boolean> = async () => false,
   ) {}
 

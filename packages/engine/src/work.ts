@@ -26,7 +26,7 @@ function tooLong(value: { description?: string | undefined }): string | undefine
 
 export class Work {
   private readonly acceptanceHost: AcceptanceRoutingHost;
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context, private readonly guide: GuideKeeper, private readonly updates: Updates, private readonly learnings: Learnings, private readonly checks: ProductChecks) {
+  constructor(private readonly k: Kernel, private readonly turns: Pick<Turns, "turn">, private readonly context: Pick<Context, "sectionsFor">, private readonly guide: Pick<GuideKeeper, "proposeGuideLine">, private readonly updates: Pick<Updates, "reopen" | "fold" | "message" | "patch">, private readonly learnings: Pick<Learnings, "note">, private readonly checks: Pick<ProductChecks, "repairVersion">) {
     this.acceptanceHost = {
       role: (id, task) => k.role(id, task),
       finishStep: scope => k.finishStep(scope),

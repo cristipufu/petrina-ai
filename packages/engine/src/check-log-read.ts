@@ -1,3 +1,4 @@
+import { unreportedCheckExit as outcomeUnreported, checkCommandOutcome as outcomeOf } from "@petrina/core";
 // Verify and page the diagnostic file belonging to one recorded check.
 import type { CheckRun, Task } from "@petrina/core";
 import { constants, lstatSync } from "node:fs";
@@ -5,7 +6,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { Result } from "./coordination.js";
 import { cursor, fingerprint, position, readText } from "./evidence-read.js";
-import { CHECK_EXIT_UNREPORTED, checkLogBeginning } from "./checks.js";
+import { checkLogBeginning } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 
 export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
@@ -15,13 +16,8 @@ export const SAVED_RESULT_PREVIEW = 1000;
 // Saved-result offsets stay in string units; move preview boundaries off a surrogate pair.
 const bisectsCharacter = (text: string, at: number) => (text.codePointAt(at - 1) ?? 0) > 0xffff;
 
-/** Older runs keep the runner's unknown-exit explanation rather than a separate flag. */
-export function unreportedCheckExit(run: CheckRun): boolean {
-  const ending = run.output.trimEnd();
-  return !run.ok && [CHECK_EXIT_UNREPORTED, `${CHECK_EXIT_UNREPORTED}\n${CLEANUP_INCOMPLETE}`]
-    .some((explanation) => ending === explanation || ending.endsWith(`\n${explanation}`));
-}
-export const checkCommandOutcome = (run?: CheckRun) => !run ? "unavailable" : unreportedCheckExit(run) ? "unknown" : run.interruption || run.interrupted || run.cleanupIncomplete || run.timedOut ? "unfinished" : run.ok ? "passed" : "failed";
+export const unreportedCheckExit = (run: CheckRun): boolean => outcomeUnreported(run, CLEANUP_INCOMPLETE);
+export const checkCommandOutcome = (run?: CheckRun) => outcomeOf(run, CLEANUP_INCOMPLETE);
 
 /** The same file facts used by diagnostic continuations, without loading process output. */
 export function checkLogRevision(dataDir: string, taskId: string, paths: readonly (string | undefined)[]) {

@@ -263,9 +263,7 @@ export class Tracking {
   }
 
   private author(task: MTask, stage: MStage, round: number): { roleId: Id; profileId?: Id } {
-    // The last completed turn in this round produced the brief, including after a restart or a handover.
-    const author = this.log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
-    return { roleId: stage.roleId, ...(author ? { profileId: author.profileId } : {}) };
+    return authorFor(this.log, task, stage, round);
   }
 
   // ── Stages ─────────────────────────────────────────────────────────────
@@ -436,3 +434,10 @@ export class Tracking {
 }
 
 const retryKey = (taskId: Id, roleId: Id, plannedId: Id) => `${taskId}|${roleId}|${plannedId}`;
+
+/** Indexed history plus last completed participant, independent of the live Engine. */
+export function authorFor(log: Pick<WorkLog, "turns">, task: Pick<MTask, "id">, stage: Pick<MStage, "id" | "roleId">, round: number): { roleId: Id; profileId?: Id } {
+    // The last completed turn in this round produced the brief, including after a restart or a handover.
+    const author = log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
+    return { roleId: stage.roleId, ...(author ? { profileId: author.profileId } : {}) };
+}

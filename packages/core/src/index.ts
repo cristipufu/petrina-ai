@@ -58,3 +58,6 @@ export * from "./parallel.js";
 
 export { appendSessionLine, MAX_SESSION_LINES } from "./session-log.js";
 export type { UsageInfo } from "./usage-info.js";
+export * from "./analytics-holds.js";
+export * from "./wait-clock.js";
+export * from "./check-outcome.js";

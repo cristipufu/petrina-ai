@@ -58,7 +58,7 @@ acp.agent({ name: "native session fixture" })
     const option = configOptions.find(option => option.id === ctx.params.configId);
     if (option?.type !== "select" || typeof ctx.params.value !== "string" || !option.options.some(choice => "value" in choice && choice.value === ctx.params.value)) throw acp.RequestError.invalidParams("Fixture setting not supported");
     option.currentValue = ctx.params.value; keep();
-    return { configOptions };
+    return (plan().bareConfigAck ? {} : { configOptions }) as acp.SetSessionConfigOptionResponse;
   })
   .onRequest("session/prompt", async ctx => {
     const current = session(ctx.params.sessionId);

@@ -27,3 +27,4 @@ export { ScreenArbitration } from "./screen.js";
 
 export { UsageRecording } from "./usage-recording.js";
 export type { UsageRecordingHost } from "./usage-recording.js";
+export * from "./profile-choices.js";
