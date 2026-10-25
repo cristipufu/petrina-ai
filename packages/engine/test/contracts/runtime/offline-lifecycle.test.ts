@@ -78,7 +78,7 @@ it(`starts once with saved paused scheduling after a ${previous} pause lost its 
     try { expect(lock).toBeUndefined(); } finally { lock?.release(); }
   } finally {
     try { await client.call("engine.stop", { requestId: "cleanup", wait: true, timeoutMs: 10000 * SLOW }); }
-    finally { try { await child?.close(); } finally { try { await peer?.close(); } finally { store.close(); } } }
+    finally { try { await child?.settle(); } finally { try { await peer?.close(); } finally { store.close(); } } }
   }
 });
 }
@@ -159,7 +159,7 @@ it("distinguishes stopped, unresponsive ownership, failed startup and safe concu
       expect((await client.call("engine.start", { requestId: "startup-failed", wait: true })).outcome).toBe("failed");
       expect(launches).toBe(1);
     } finally {
-      await Promise.all(children.map(child => child.close()));
+      await Promise.all(children.map(child => child.settle()));
     }
   });
 });
