@@ -1,3 +1,4 @@
+import { SourceBackground } from "@petrina/orchestrator";
 import { executionFor, resolveSource, SourceSelections, type RepositoryContext } from "@petrina/orchestrator";
 import { productName, type TaskSource, type WorkChoice } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
@@ -5,15 +6,20 @@ import { background, sourcePr } from "@petrina/repositories/source-github";
 import type { Kernel, MTask } from "./kernel.js";
 import type { Connections } from "./connection.js";
 import { sourceQueries } from "@petrina/repositories/source-queries";
-
 import { mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { isAbsolute, resolve, dirname } from "node:path";
 
 export class Sources {
-  private readonly backgroundReads = new WeakMap<RepositoryContext["work"], { source: string; at: number }>();
+  private readonly sourceBackground: SourceBackground;
   private readonly selections: SourceSelections;
   private readonly queries;
   constructor(private readonly k: Kernel, private readonly connections: Connections) {
+    this.sourceBackground = new SourceBackground({
+      serial: (productId, read) => connections.serial(productId, read),
+      readPullRequest: (repo, number) => sourcePr(repo, number, k.options.gh),
+      background: (repo, pr) => background(repo, pr, k.options.gh),
+      checkpoint: () => k.commitNow(), now: () => Date.now(),
+    });
     this.queries = sourceQueries(k.dataDir, k.options.gh);
     this.selections = new SourceSelections({
       products: () => k.s.products,
@@ -105,30 +111,7 @@ export class Sources {
 
   confirm(task: MTask): void { this.selections.confirm(task); }
 
-  async refresh(scope: RepositoryContext, force = false): Promise<void> {
-    const { task, work: repository } = scope;
-    if (task.repositories && (repository.pr || repository.release || repository.landed)) return;
-    if (repository.source?.start.kind !== "pull-request") return;
-    return this.connections.serial(repository.productId, async () => {
-      // Prompt background may be shared briefly; fetch/delivery identity checks bypass this cache.
-      const cached = this.backgroundReads.get(repository);
-      if (!force && cached?.source === JSON.stringify(repository.source) && Date.now() - cached.at < 15_000) return;
-      await this.readBackground(scope);
-    });
-  }
-
-  private async readBackground(scope: RepositoryContext): Promise<void> {
-    const { work: repository } = scope;
-    const source = repository.source;
-    if (source?.start.kind !== "pull-request") return;
-    const pr = await sourcePr(source.product.repo, source.start.number, this.k.options.gh);
-    if (pr.headRepo.toLowerCase() !== source.start.headRepo.toLowerCase() || pr.branch !== source.start.branch) throw new Error("The pull request's working repository or branch changed. Publishing is stopped; the approved destination stays unchanged.");
-    if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. Publishing is stopped and the task's work is preserved.`);
-    const text = await background(source.product.repo, pr, this.k.options.gh);
-    repository.prBackground = { readAt: Date.now(), head: pr.head, text };
-    this.backgroundReads.set(repository, { source: JSON.stringify(source), at: repository.prBackground.readAt });
-    this.k.commitNow();
-  }
+  refresh(scope: RepositoryContext, force = false): Promise<void> { return this.sourceBackground.refresh(scope, force); }
 
   async fetch(scope: RepositoryContext, signal: AbortSignal): Promise<{ sha: string; ref: string }> {
     const { task, work: repository } = scope;

@@ -1,3 +1,4 @@
+export { currentStepAssignment } from "@petrina/core";
 // How an agent is spoken to: the opening instructions around its role's contract (roles.ts), reading its
 // result block (a stage only counts as done when the block parses and validates), and the wording for
 // restarts, hand backs and repairs.
@@ -75,19 +76,6 @@ export interface PromptContext {
    * told it may use it). Unset: every role except the Release Manager is told how to ask.
    */
   screen?: "ask" | { reason: string };
-}
-
-/** Only planned participants receive the stage's contribution; side errands keep their own job. */
-export function currentStepAssignment(task: Pick<Task, "plan" | "stageIndex">, roleId: string): { title: string; body: string }[] {
-  const stage = task.plan?.stages[task.stageIndex];
-  if (!stage || stage.kind === "gate") return [];
-  const participates = stage.kind === "review-chain"
-    ? stage.profileIds.some((_, index) => (stage.roleIds?.[index] ?? stage.roleId) === roleId)
-    : stage.roleId === roleId || (stage.kind === "converge" && (stage.reviewerRoleId ?? "design-reviewer") === roleId);
-  if (!participates) return [];
-  // Profile assignments explain selection, not task scope. Never turn those reasons or the plan's rationale into instructions.
-  const title = stage.title?.trim();
-  return [{ title: "Current step assignment", body: `${title ? `Planned step: ${title}` : "No planned step title was recorded."}\nContribute to this step in your assigned role. The full task and approved brief remain authoritative; this step does not replace their requirements or your role's duties.` }];
 }
 
 /** GitHub text is feedback to investigate, including when appended to an existing conversation. */

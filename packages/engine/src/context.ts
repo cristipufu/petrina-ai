@@ -1,13 +1,16 @@
+import { finalDesignNotes } from "@petrina/core";
 import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
-import { builderFindings, dueAnswers, exhaustedAcceptanceFailure, followingCall, hintProducts, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
+import { builderFindings, dueAnswers, exhaustedAcceptanceFailure, followingCall, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
-import type { Kernel } from "./kernel.js";
+import type { Role } from "@petrina/core";
+import type { RuntimeTask } from "@petrina/orchestrator";
+import type { RelatedCheckEvidenceHost } from "./related-check-evidence.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import { backgroundMessage } from "./messages.js";
 import { currentSourcePointers } from "@petrina/repositories/source-pointers";
@@ -46,6 +49,11 @@ export const EARLIER_REPORTS_RULE = `These are the reports earlier agents saved,
 /** What reviewers confirm or dispute: never an acceptance failure held for the delivery decision, which no review settles. */
 const reviewFindings = ({ task }: RepositoryContext) => task.findings.filter((finding) => (finding.raisedBy !== "petrina" || finding.status === "open") && !exhaustedAcceptanceFailure(task as Task, finding));
 
+export interface ContextHost extends RelatedCheckEvidenceHost {
+  readonly dataDir: string;
+  readonly s: RelatedCheckEvidenceHost["s"] & { readonly roles: readonly Role[] };
+  role(id: Id, task?: RuntimeTask): Role | undefined;
+}
 export class Context {
   private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean, member?: string) => Section[]> = {
     notes: (scope, _role, _points, _checks, member) => coordinatorNotes(scope, member),
@@ -67,7 +75,7 @@ export class Context {
   };
 
   constructor(
-    private readonly k: Kernel,
+    private readonly k: ContextHost,
     private readonly guide: Pick<GuideKeeper, "pendingPoints">,
     private readonly currentChecks: (scope: RepositoryContext) => Promise<boolean> = async () => false,
   ) {}
@@ -102,7 +110,7 @@ export class Context {
     if (pointers.length) sections.push({ title: "Previously inspected source locations (verify independently)", body: `Navigation only: this incomplete selection can steer attention. It contains no recommendations or extra requirements. Verify the current code and inspect other areas as needed; the original request and approved brief remain authoritative.\n${pointers.map((pointer) => `- ${pointer.productId}: ${pointer.path} (source version ${pointer.revision})`).join("\n")}` });
     if (role?.result === "findings") {
       // A task is never offered for its own reports. A frozen list from before that rule loses only that card; nothing replaces it.
-      const cards = review ? review.cards.filter((card) => card.id !== task.id) : openFollowUpCards(this.k.s.tasks as Task[], task as Task);
+      const cards = review ? review.cards.filter((card) => card.id !== task.id) : openFollowUpCards(this.k.s.tasks as readonly Task[], task as Task);
       // shownKey records which cards this reviewer was shown. It is not a message seat:
       // using it as one leaves the coordinator's note queued and sends it as a second turn.
       const key = shownKey ?? member ?? roleId;
@@ -134,7 +142,7 @@ export class Context {
     for (const part of ["brief", "guide-points", "report", "check-results", "findings"] as const) parts[part] = this.parts[part](scope, "code-reviewer", points, currentChecks);
     parts.report = [...(parts.report ?? []), ...evidence];
     const settled = settledReviewFindings(repositoryView(scope), this.k.s.roles);
-    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as Task[], scope.task as Task), findings: reviewFindings(scope), ...(Object.keys(settled).length ? { settled } : {}) });
+    return structuredClone({ parts, proofs: this.reviewProofs(scope), source: this.approvedSource(scope), products: this.productRows(scope), handedBack: this.handedBack(scope), cards: openFollowUpCards(this.k.s.tasks as readonly Task[], scope.task as Task), findings: reviewFindings(scope), ...(Object.keys(settled).length ? { settled } : {}) });
   }
 
   private reviewProofs(scope: RepositoryContext): Section[] {
@@ -181,19 +189,7 @@ export class Context {
    * answered since count; records that cannot show this give none.
    */
   private designNotes(scope: RepositoryContext): Section[] {
-    const { task } = scope;
-    const kind = (roleId: Id | undefined) => roleId === undefined ? undefined : this.k.role(roleId, task)?.result;
-    const last = task.journey?.findLast((step) => step.kind === "agent" && (kind(step.roleId) === "brief" || kind(step.roleId) === "objections"));
-    const raised = last && kind(last.roleId) === "objections" ? last.result?.objections : undefined;
-    if (!last || !raised || raised.some((objection) => objection.blocking)) return [];
-    const notes = task.objections.filter((objection) => objection.status === "noted" && !objection.blocking && objection.round === last.round && raised.some((entry) => entry.id === objection.id));
-    if (!notes.length) return [];
-    const step = task.plan?.stages.find((stage) => stage.id === last.stageId)?.title ?? "an earlier design step";
-    const reviewer = this.k.role(last.roleId!, task)!.name;
-    return [{
-      title: "Final design-review notes (advice only)",
-      body: `From “${step}”, round ${last.round}, by ${reviewer}: the design settled with these non-blocking points noted. They are advice only, not requirements, acceptance items or blockers. Check each one against the current code before relying on it. The approved brief, the coordinator's notes and any design call win wherever they differ. Do not add scope because of a note, and you need not answer them.${hintProducts(task).length > 1 ? " This task has several products, so some notes may concern another product." : ""}\n${notes.map((note) => `- ${note.text}`).join("\n")}`,
-    }];
+    return finalDesignNotes(scope.task, this.k.s.roles);
   }
 
   /** The design's objections; for the architect following the coordinator's call, the call and what it must answer. */

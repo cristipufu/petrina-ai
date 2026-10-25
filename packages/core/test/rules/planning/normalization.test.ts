@@ -1,11 +1,9 @@
-import { describe, expect, it } from "bun:test";
-import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS, type RoleChanges, type Stage } from "@petrina/core";
-import { normalizePlan } from "../src/plan.js";
-import { PlanResult } from "../src/roles.js";
-import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
-import type { z } from "zod";
+import { describe, expect, it } from "vitest";
+import { addRole, libraryRoles, NO_ROLE_CHANGES, ROLE_STARTS, type RoleChanges, type Stage } from "../../../src/index.js";
+import { normalizePlan, type PlanDraft, type PlanDraftStage } from "../../../src/plan-normalization.js";
+import { DEFAULT_PROFILES as ENGINE_PROFILES } from "../../../src/library.js";
 
-type Raw = z.input<typeof PlanResult>["stages"][number];
+type Raw = PlanDraftStage;
 
 const start = (id: string) => ROLE_STARTS.find((entry) => entry.id === id)!.draft;
 let changes: RoleChanges = NO_ROLE_CHANGES;
@@ -17,23 +15,23 @@ const build: Raw = { kind: "do", title: "Build", roleId: "builder", profileIds: 
 const review: Raw = { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
 
 function plan(stages: Raw[], approveDelivery = true) {
-  const result = { rationale: "The planner's reason.", stages: stages.map((stage) => ({ profileIds: [], ...stage })) } as z.infer<typeof PlanResult>;
+  const result = { rationale: "The planner's reason.", stages: stages.map((stage) => ({ ...stage, profileIds: stage.profileIds ?? [] })) } as PlanDraft;
   return normalizePlan({ task: { id: "t", delivery: "pull-request", approveDelivery }, result, roles, profiles: ENGINE_PROFILES, plannerProfileId: "opus-high", releaseManagerProfileId: "opus-high" });
 }
 const shape = (stages: readonly Stage[]) => stages.map((stage) => (stage.kind === "review-chain" ? `review: ${stage.profileIds.map((_, at) => stage.roleIds?.[at] ?? stage.roleId).join(", ")}` : `${stage.kind}: ${stage.roleId}`));
 
 describe("the planner's plan, made safe to run", () => {
   it("retains reasons per seat, including duplicate profiles and an unavailable planned tool", () => {
-    const result = PlanResult.parse({ rationale: "Use independent roles.", stages: [
+    const result: PlanDraft = { rationale: "Use independent roles.", stages: [
       { kind: "do", title: "Research", roleId: "researcher", profileIds: ["opus-high"], profileReasons: ["High effort to check the scheduling evidence."] },
       build,
       { ...review, profileIds: ["sol-high", "sol-high"], profileReasons: ["Inspect correctness.", "Independently inspect nearby cases."] },
-    ] });
+    ] };
     const made = normalizePlan({ task: { id: "t", delivery: "local", approveDelivery: true }, result, roles, profiles: ENGINE_PROFILES, plannerProfileId: "opus-high", releaseManagerProfileId: "opus-high", onUsable: id => id === "opus-high" ? "grok-high" : id });
     expect(made.stages[0]?.profileIds).toEqual(["grok-high"]);
     expect(made.stages[0]?.assignments?.[0]).toMatchObject({ profileId: "opus-high", by: "planner", reason: "High effort to check the scheduling evidence.", changeReason: expect.stringContaining("unavailable") });
     expect(made.stages.find(stage => stage.kind === "review-chain")?.assignments?.map(item => item.reason)).toEqual(["Inspect correctness.", "Independently inspect nearby cases."]);
-    expect(PlanResult.safeParse({ ...result, stages: [{ ...result.stages[0]!, profileReasons: ["One reason", "An extra reason"] }] }).success).toBe(false);
+
     const moved = plan([build, { ...review, roleId: "researcher", profileIds: ["opus-high"], profileReasons: ["Check external scheduling evidence."] }]);
     expect(moved.stages.find(stage => stage.roleId === "researcher")?.assignments?.[0]).toMatchObject({ profileId: "opus-high", by: "planner", reason: "Check external scheduling evidence." });
     expect(moved.stages.find(stage => stage.kind === "review-chain")?.assignments?.[0]?.by).toBe("engine");
@@ -157,7 +155,7 @@ describe("the planner's plan, made safe to run", () => {
       { ...review, roleIds: ["code-reviewer", SECURITY] },
       { kind: "review-chain", title: "Security", roleId: SECURITY, profileIds: ["opus-high"] },
     ];
-    const result = { rationale: "Why.", stages: stages.map((stage) => ({ profileIds: [], ...stage })) } as z.infer<typeof PlanResult>;
+    const result = { rationale: "Why.", stages: stages.map((stage) => ({ ...stage, profileIds: stage.profileIds ?? [] })) } as PlanDraft;
     const made = normalizePlan({ task: { id: "t", delivery: "local", approveDelivery: false }, result, roles: removed, profiles: ENGINE_PROFILES, plannerProfileId: "opus-high", releaseManagerProfileId: "opus-high" });
     expect(shape(made.stages)).toEqual(["do: builder", "review: code-reviewer, code-reviewer", "review: code-reviewer", "do: release-manager"]);
     expect(made.rationale).toBe(

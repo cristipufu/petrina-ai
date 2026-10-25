@@ -2,16 +2,16 @@ import { afterAll, expect, it } from "bun:test";
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { roleForTask, type JourneyStep, type Task } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { Coordination } from "../src/coordination.js";
+import { Engine } from "../../engine.js";
+import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../src/checks.js";
-import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, taskOf, tempDir, until, waitFor } from "./support.js";
+import { commandText } from "../../../src/checks.js";
+import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, taskOf, tempDir, until, waitFor } from "../../support.js";
 
 const roots: string[] = [];
+
 afterAll(() => roots.forEach(removeDir));
 
-/** A checkpoint as the coordinator inspects it, read through every page. */
 async function inspect(c: Coordination, itemId: string): Promise<{ reviewDecision: Task["reviewDecision"] | null }> {
   let page = await c.call("inbox.inspect", { itemId }), text = String(page.text);
   while (page.next) {
@@ -23,14 +23,13 @@ async function inspect(c: Coordination, itemId: string): Promise<{ reviewDecisio
 
 const COVERED = "review passed; 1 earlier important still open under your decision to continue";
 
-// The whole workflow: the coordinator's decision to continue an exhausted review must survive the next passing review.
 for (const restarts of [false, true]) it(`continues an exhausted review through a later passing security review to final testing and a separate delivery decision${restarts ? ", through restarts before and partway through that review" : ""}`, async () => {
   const root = tempDir("petrina-review-continuation-"); roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   // Restarting partway: the security reviewer holds its first turn of each conversation until the test releases it.
   // High risk: Petrina adds its own security review after the code review.
   fakes.scenario({ planner: "tester-after", risk: "high", builder: "plain", reviewer: "important", ...(restarts ? { nativeRetry: [{ role: "security reviewer", steps: [{ mark: "security-held-{session}" }, { wait: "security-release-{session}" }] }] } : {}) });
-  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
+  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] };
   let engine = new Engine(join(root, "data"), options);
   const replaced: Promise<void>[] = [];
   const restart = async () => {

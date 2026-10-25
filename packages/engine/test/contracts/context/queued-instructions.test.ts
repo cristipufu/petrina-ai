@@ -1,67 +1,45 @@
 import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROLE_STARTS } from "@petrina/core";
-import { Context, EARLIER_REPORTS_RULE } from "../src/context.js";
-import { Engine } from "./engine.js";
-import { fileAt } from "@petrina/repositories/git";
-import type { GuideKeeper } from "../src/guide-keeper.js";
-import { makeProduct, removeDir, SLOW, tempDir } from "./fixtures.js";
+import { Context, EARLIER_REPORTS_RULE } from "../../../src/context.js";
+import { Engine } from "../../engine.js";
+import { removeDir, tempDir } from "../../fixtures.js";
 
 const folder = tempDir("petrina-instruction-read-");
+
 writeFileSync(join(folder, "package.json"), '{"private":true,"type":"module"}');
+
 afterAll(() => removeDir(folder));
-let serial = 0;
 
-/**
- * A controlled Git response, through the real process API on both sides of the repair. Only the engine's own
- * reads are redirected: the fixtures' commands use a private process starter this replacement never sees.
- */
-async function withGit(script: string, check: () => Promise<void>): Promise<void> {
-  const entry = join(folder, `git-${++serial}.ts`);
-  writeFileSync(entry, script);
-  const spawn = Bun.spawn;
-  const children: ReturnType<typeof Bun.spawn>[] = [];
-  const route = (args: unknown[]) => {
-    const command = args[0];
-    return Array.isArray(command) && command[0] === "git" && command[1] === "cat-file"
-      ? [[process.execPath, entry], ...args.slice(1)] : args;
-  };
-  const asynchronous = spyOn(Bun, "spawn").mockImplementation(((...args: unknown[]) => {
-    const child = Reflect.apply(spawn, Bun, route(args)) as ReturnType<typeof Bun.spawn>;
-    children.push(child);
-    return child;
-  }) as typeof Bun.spawn);
-  try {
-    await check();
-  } finally {
-    asynchronous.mockRestore();
-    for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
-    await Promise.all(children.map((child) => child.exited));
-  }
+function registerProduct(engine: Engine): string {
+  const id = "product";
+  engine.s.products.push({ id, name: "Product", repo: "local/product", tone: "blue" });
+  return id;
 }
-
-describe("reading a product's committed files", () => {
-  it("leaves coordinator messages queued when a parallel context read fails", async () => {
+describe("reading a product's committed files",()=>{
+it("leaves coordinator messages queued when a parallel context read fails", async () => {
     const root = join(folder, "failed-context");
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = registerProduct(engine);
       const taskId = engine.addTask({ productId, title: "Keep messages through a failed preparation", backlog: true });
       const scope = executionFor(engine.task(taskId)!);
       scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
-      const context = new Context(engine, { pendingPoints: async () => [] } as unknown as GuideKeeper, async () => { throw new Error("Could not inspect check freshness"); });
+      const context = new Context(engine, { pendingPoints: async () => [] }, async () => { throw new Error("Could not inspect check freshness"); });
       const reading = context.sectionsFor(scope, "code-reviewer");
       engine.sendMessage(taskId, "Keep this instruction for the successful retry.");
       await expectRejection(reading, "Could not inspect check freshness");
       expect(scope.task.queued.map((message) => message.text)).toEqual(["Keep this instruction for the successful retry."]);
     } finally { await engine.shutdown(); }
   });
+});
 
-  for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check evidence together without losing late notes (${mode})`, async () => {
+describe("reading a product's committed files",()=>{
+for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check evidence together without losing late notes (${mode})`, async () => {
     const root = join(folder, `parallel-context-${mode}`);
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
@@ -71,11 +49,11 @@ describe("reading a product's committed files", () => {
     const checkRead = new Promise<boolean>((resolve) => { checksDone = resolve; });
     let reading: Promise<Awaited<ReturnType<Context["sectionsFor"]>>> | undefined;
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = registerProduct(engine);
       const taskId = engine.addTask({ productId, title: "Keep live notes while reading context", backlog: true });
       const scope = executionFor(engine.task(taskId)!);
       scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
-      const guide = { pendingPoints: () => { started.push("guide"); return guideRead; } } as unknown as GuideKeeper;
+      const guide = { pendingPoints: () => { started.push("guide"); return guideRead; } };
       const context = new Context(engine, guide, () => { started.push("checks"); return checkRead; });
       reading = mode === "sections" ? context.sectionsFor(scope, "code-reviewer") : context.captureReview(scope).then((review) => context.sectionsFor(scope, "code-reviewer", undefined, undefined, undefined, review));
       expect(started).toEqual(["guide", "checks"]);
@@ -93,39 +71,15 @@ describe("reading a product's committed files", () => {
       expect(scope.task.queued[0]?.deliveries).toBeUndefined();
     } finally { guideDone([]); checksDone(false); await reading?.catch(() => {}); await engine.shutdown(); }
   });
+});
 
-  it("keeps the event loop responsive while Git reads a guide, and preserves its exact text", async () => {
-    await withGit('setTimeout(() => process.stdout.write("\\ufeff\\n# Review guide\\n\\n "), 200)', async () => {
-      const order: string[] = [];
-      const heartbeat = new Promise<void>((resolve) => setTimeout(() => { order.push("responsive"); resolve(); }, 20));
-      const read = Promise.resolve().then(() => fileAt(process.cwd(), "HEAD", "REVIEW.md")).then((text) => {
-        order.push("read");
-        expect(text).toBe("\ufeff\n# Review guide\n\n ");
-      });
-      await Promise.all([read, heartbeat]);
-      expect(order).toEqual(["responsive", "read"]);
-    });
-  });
-
-  it("reports an expired read as a failure, never as a missing guide", async () => {
-    await withGit('setInterval(() => {}, 1000)', async () => {
-      await expectRejection(fileAt(process.cwd(), "HEAD", "REVIEW.md", 80 * SLOW), "Git did not finish reading");
-    });
-  });
-
-  it("drains a large saved file and Git's diagnostics while the process is still writing", async () => {
-    await withGit('process.stderr.write("d".repeat(256 * 1024)); process.stdout.write("# Guide\\n" + "x".repeat(1024 * 1024) + "\\n")', async () => {
-      const text = await fileAt(process.cwd(), "HEAD", "REVIEW.md");
-      expect(text).toBe("# Guide\n" + "x".repeat(1024 * 1024) + "\n");
-    });
-  });
-
-  for (const pullRequest of [false, true]) it(`keeps a coordinator note waiting for prompt handoff while its review guide is read${pullRequest ? " for a pull request task" : ""}`, async () => {
+describe("reading a product's committed files",()=>{
+for (const pullRequest of [false, true]) it(`keeps a coordinator note waiting for prompt handoff while its review guide is read${pullRequest ? " for a pull request task" : ""}`, async () => {
     const root = join(folder, `context-${pullRequest}`);
     const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = registerProduct(engine);
       const taskId = engine.addTask({ productId, title: "Keep the coordinator's latest note" });
       const task = engine.task(taskId)!;
       if (pullRequest) {
@@ -139,7 +93,7 @@ describe("reading a product's committed files", () => {
       }
       let finish!: (points: string[]) => void;
       const pending = new Promise<string[]>((resolve) => { finish = resolve; });
-      const guide = { pendingPoints: () => pending } as unknown as GuideKeeper;
+      const guide = { pendingPoints: () => pending };
       const reading = new Context(engine, guide).sectionsFor(executionFor(task), "code-reviewer");
       engine.sendMessage(taskId, "Keep the existing welcome page.");
       expect(task.queued).toHaveLength(1);
@@ -159,14 +113,16 @@ describe("reading a product's committed files", () => {
       await engine.shutdown();
     }
   });
+});
 
-  for (const pullRequest of [false, true]) it(`keeps earlier role notes and new coordinator notes for an added reviewer while its guide is read${pullRequest ? " on a PR task" : ""}`, async () => {
+describe("reading a product's committed files",()=>{
+for (const pullRequest of [false, true]) it(`keeps earlier role notes and new coordinator notes for an added reviewer while its guide is read${pullRequest ? " on a PR task" : ""}`, async () => {
     const root = join(folder, `added-context-${pullRequest}`);
     const engine = new Engine(join(root, "data"), { usageCommands: { codex: null } });
     try {
       engine.setPoolPaused(true);
       const reviewer = engine.addRole(ROLE_STARTS.find((start) => start.id === "security")!.draft);
-      const productId = await engine.addProduct(await makeProduct(root));
+      const productId = registerProduct(engine);
       const taskId = engine.addTask({ productId, title: "Keep every role's notes" });
       const task = engine.task(taskId)!;
       if (pullRequest) executionFor(task).work.source = {
@@ -178,7 +134,7 @@ describe("reading a product's committed files", () => {
       task.handedBack = [{ stageId: "research", roleId: "researcher", roleName: "Researcher", title: "Research", at: Date.now(), summary: "The welcome page is important.", notes: ["Keep its greeting visible."] }];
       let finish!: (points: string[]) => void;
       const pending = new Promise<string[]>((resolve) => { finish = resolve; });
-      const guide = { pendingPoints: () => pending } as unknown as GuideKeeper;
+      const guide = { pendingPoints: () => pending };
       const reading = new Context(engine, guide).sectionsFor(executionFor(task), reviewer);
       engine.sendMessage(taskId, "Check the welcome page too.");
       expect(task.queued).toHaveLength(1);

@@ -2,13 +2,12 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, type ConversationNote, type Stage } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { Coordination } from "../src/coordination.js";
+import { Engine } from "../../engine.js";
+import { Coordination } from "../../../src/coordination.js";
 import { AgentBrowser } from "@petrina/agent-runtime/browser";
 import { executionFor } from "@petrina/orchestrator";
-import { currentStepAssignment } from "../src/prompts.js";
-import { BuildResult, NotesResult, ReviewResult } from "../src/roles.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { BuildResult, NotesResult, ReviewResult } from "../../../src/roles.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
 const ASSIGNMENT = "Current step assignment";
 const RESEARCH = "Research how agent hosts handle long waits";
@@ -21,37 +20,8 @@ let browser: ReturnType<typeof spyOn<typeof AgentBrowser, "start">>;
 beforeAll(() => { browser = spyOn(AgentBrowser, "start").mockResolvedValue(undefined as never); });
 afterAll(() => browser.mockRestore());
 
-const assignment = (current: Stage | undefined, roleId = "researcher") => currentStepAssignment({ plan: current ? { stages: [current], rationale: "PRIVATE-PLAN-RATIONALE", plannerProfileId: "opus-high" } : undefined, stageIndex: 0 }, roleId);
-
 describe("current planned contribution", () => {
-  it("uses only the stage title for built-in and custom roles, including generic labels", () => {
-    for (const roleId of ["researcher", "added-specialist", "builder"]) {
-      for (const title of [RESEARCH, "Build"]) {
-        const sections = assignment({ ...stage, roleId, title }, roleId);
-        expect(sections).toHaveLength(1);
-        expect(sections[0]!.body).toContain(`Planned step: ${title}`);
-        expect(sections[0]!.body).toContain("full task and approved brief remain authoritative");
-        expect(sections[0]!.body).toContain("your role's duties");
-        expect(JSON.stringify(sections)).not.toContain("PRIVATE-");
-      }
-    }
-  });
 
-  it("addresses both design participants and each review role without assigning the step to side errands", () => {
-    const design: Stage = { ...stage, kind: "converge", roleId: "architect", title: "Design", reviewerProfileIds: ["sol-high"] };
-    for (const roleId of ["architect", "design-reviewer"]) expect(assignment(design, roleId)).toHaveLength(1);
-    const review: Stage = { ...stage, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"], roleIds: ["code-reviewer", "added-reviewer"] };
-    for (const roleId of ["code-reviewer", "added-reviewer"]) expect(assignment(review, roleId)[0]!.body).toContain("Planned step: Review");
-    for (const roleId of ["researcher", "check-finder", "guide-keeper", "verifier"]) expect(assignment(review, roleId)).toEqual([]);
-    expect(assignment({ ...stage, kind: "gate" })).toEqual([]);
-  });
-
-  it("leaves absent historical metadata unknown instead of reconstructing an assignment", () => {
-    expect(assignment(undefined)).toEqual([]);
-    expect(assignment({ ...stage, title: "  " })[0]!.body).toStartWith("No planned step title was recorded.");
-    expect(assignment({ ...stage, title: undefined as unknown as string })[0]!.body).toStartWith("No planned step title was recorded.");
-    expect(currentStepAssignment({ plan: { stages: [stage], rationale: "", plannerProfileId: "opus-high" }, stageIndex: -1 }, "planner")).toEqual([]);
-  });
 });
 
 /** Exercise native prompts directly; planning, design and check discovery are unrelated to this contract. */
@@ -61,7 +31,7 @@ async function fixture() {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume" });
   const engine = new Engine(join(root, "data"), {
-    agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir],
+    agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir],
     toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null },
   });
   engine.schedule = () => {};

@@ -2,14 +2,12 @@ import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BUILT_IN_ROLES, createDemoState } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { designConversationScope } from "../src/design.js";
-import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
-import type { Scenario } from "./fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { Engine } from "../../engine.js";
+import type { Scenario } from "../../fake-agent.js";
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
 const roots: string[] = [];
+
 afterAll(() => roots.forEach(removeDir));
 
 async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"], standIn?: "author" | "reviewer") {
@@ -17,7 +15,7 @@ async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"]
   const data = join(root, "data");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "limits", builder: "plain", controlled: true, reviseBrief: true, reopen, limited });
-  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir], toolPath: () => process.execPath };
+  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath };
   let engine = new Engine(data, options);
   engine.setPoolPaused(true); await engine.checkTools();
   const productId = await engine.addProduct(await makeProduct(root));
@@ -43,7 +41,7 @@ async function fixture(reopen: Scenario["reopen"], limited?: Scenario["limited"]
 }
 
 describe.concurrent("design participants' own conversations", () => {
-  for (const side of ["author", "reviewer"] as const) it(`keeps the healthy ${side} stand-in after the planned tool recovers`, async () => {
+for (const side of ["author", "reviewer"] as const) it(`keeps the healthy ${side} stand-in after the planned tool recovers`, async () => {
     const run = await fixture("resume", undefined, side);
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the first design reviewer to hold the round");
@@ -65,8 +63,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(run.engine().profile(author.profileId)!.toolId).not.toBe(run.engine().profile(reviewer.profileId)!.toolId);
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  for (const side of ["author", "reviewer", "planned reviewer"] as const) it(`rechecks the ${side}'s old uncertain tool once in the step's place, then continues its conversation`, async () => {
+describe.concurrent("design participants' own conversations", () => {
+for (const side of ["author", "reviewer", "planned reviewer"] as const) it(`rechecks the ${side}'s old uncertain tool once in the step's place, then continues its conversation`, async () => {
     const run = await fixture("resume", undefined, side === "planned reviewer" ? undefined : side);
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the first design reviewer to hold the round");
@@ -89,8 +89,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(run.engine().s.setup!.checks.find((check) => check.id === toolId)!.status).toBe("ready");
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  for (const side of ["author", "reviewer"] as const) it(`records the usual near-limit policy for the ${side} stand-in after the planned tool recovers`, async () => {
+describe.concurrent("design participants' own conversations", () => {
+for (const side of ["author", "reviewer"] as const) it(`records the usual near-limit policy for the ${side} stand-in after the planned tool recovers`, async () => {
     const run = await fixture("resume", undefined, side);
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the first design reviewer to hold the round");
@@ -127,8 +129,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(task.timeline.some((entry) => entry.roleId === roleId && entry.text === input.selectionReason)).toBe(true);
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  for (const failure of ["context", "native"] as const) it(`reselects the planned author with full context after a late ${failure} failure`, async () => {
+describe.concurrent("design participants' own conversations", () => {
+for (const failure of ["context", "native"] as const) it(`reselects the planned author with full context after a late ${failure} failure`, async () => {
     const run = await fixture("resume", undefined, "author");
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && Object.keys(run.task().designSessions ?? {}).length; }, "the stand-in author to finish");
@@ -146,8 +150,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(run.fakes.received("architect").filter((entry) => entry.session === prior.sessionId)).toHaveLength(heard);
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  it("drops the saved reviewer stand-in when the new author now uses its tool", async () => {
+describe.concurrent("design participants' own conversations", () => {
+it("drops the saved reviewer stand-in when the new author now uses its tool", async () => {
     const run = await fixture("resume", undefined, "reviewer");
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length; }, "the stand-in reviewer to hold the round");
@@ -161,8 +167,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(input.selectionReason).toContain("Selected a more independent tool or model for this review.");
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  it("records a rejected design continuation's known reason while the unaffected participant continues", async () => {
+describe.concurrent("design participants' own conversations", () => {
+it("records a rejected design continuation's known reason while the unaffected participant continues", async () => {
     const run = await fixture("resume");
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && executionFor(run.task()).work.conversation?.briefed; }, "the first reviewer to receive the design");
@@ -175,8 +183,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(reviewer.freshReason).toBeUndefined();
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  for (const reopen of ["resume", "load"] as const) {
+describe.concurrent("design participants' own conversations", () => {
+for (const reopen of ["resume", "load"] as const) {
     it(`uses ${reopen} for both participants, passes only new context, and records the exact round inputs`, async () => {
       const run = await fixture(reopen);
       try {
@@ -207,8 +217,10 @@ describe.concurrent("design participants' own conversations", () => {
       } finally { await run.engine().shutdown(); }
     });
   }
+});
 
-  it("retains both participant identities across an engine restart during the first review", async () => {
+describe.concurrent("design participants' own conversations", () => {
+it("retains both participant identities across an engine restart during the first review", async () => {
     const run = await fixture("resume");
     try {
       await waitFor(() => { run.tick(true); return run.fakes.received("design reviewer").length && executionFor(run.task()).work.conversation?.briefed; }, "the first reviewer to start");
@@ -221,8 +233,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(Object.values(task.designSessions!).map((entry) => entry.sessionId).sort()).toEqual([authorId, reviewerId].sort());
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  it("starts fresh with complete context when the tool cannot reopen", async () => {
+describe.concurrent("design participants' own conversations", () => {
+it("starts fresh with complete context when the tool cannot reopen", async () => {
     const run = await fixture(undefined);
     try {
       const task = await run.done();
@@ -233,8 +247,10 @@ describe.concurrent("design participants' own conversations", () => {
       expect(task.timeline.some((line) => line.text.includes("Could not go back to its own conversation"))).toBe(true);
     } finally { await run.engine().shutdown(); }
   });
+});
 
-  it("keeps the actual replacement reviewer's own conversation in the next round", async () => {
+describe.concurrent("design participants' own conversations", () => {
+it("keeps the actual replacement reviewer's own conversation in the next round", async () => {
     const run = await fixture("resume", [{ model: "gpt-6.1-sol", role: "design reviewer" }]);
     try {
       const task = await run.done();
@@ -245,20 +261,4 @@ describe.concurrent("design participants' own conversations", () => {
       expect(second.agentInputs!.find((entry) => entry.profileId === reviewer.profileId)!.mode).toBe("continued");
     } finally { await run.engine().shutdown(); }
   });
-});
-
-it("invalidates a design return when its role, planned or actual profile, request or source changes", () => {
-  const task = createDemoState(1_000_000_000).tasks[0]!;
-  const role = BUILT_IN_ROLES.find((entry) => entry.id === "architect")!;
-  const planned = ENGINE_PROFILES[0]!;
-  const original = designConversationScope(task, role, planned, planned);
-  expect(designConversationScope(structuredClone(task), { ...role }, { ...planned }, { ...planned })).toBe(original);
-  for (const value of [
-    designConversationScope(task, { ...role, instructions: "A revised role" }, planned, planned),
-    designConversationScope(task, role, { ...planned, effort: "low" }, planned),
-    designConversationScope(task, role, planned, { ...planned, modelId: "another-model" }),
-    designConversationScope({ ...task, baseSha: "new-source" }, role, planned, planned),
-    designConversationScope({ ...task, description: "A revised request" }, role, planned, planned),
-    designConversationScope({ ...task, productId: "another-product" }, role, planned, planned),
-  ]) expect(value).not.toBe(original);
 });

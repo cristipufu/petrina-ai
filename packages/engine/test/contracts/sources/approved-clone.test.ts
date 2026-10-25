@@ -3,11 +3,12 @@ import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Connections } from "../src/connection.js";
-import { Sources } from "../src/sources.js";
-import { git, makeWorld, removeDir, type World } from "./support.js";
+import { Connections } from "../../../src/connection.js";
+import { Sources } from "../../../src/sources.js";
+import { git, makeWorld, removeDir, type World } from "../../support.js";
 
 const worlds: World[] = [];
+
 afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
 
 async function fixture(name: string) {
@@ -27,7 +28,7 @@ async function fixture(name: string) {
 }
 
 describe.concurrent("approved clone recovery", () => {
-  for (const saved of [false, true]) it(`prepares a local delivery on its own branch with only origin/main${saved ? " from a saved preparation" : ""}`, async () => {
+for (const saved of [false, true]) it(`prepares a local delivery on its own branch with only origin/main${saved ? " from a saved preparation" : ""}`, async () => {
     const { world, engine, id, path, add } = await fixture(`local-preparation-${saved}`);
     try {
       const row = engine.task(id)!.workRows![0]!;
@@ -53,7 +54,10 @@ describe.concurrent("approved clone recovery", () => {
       expect(await git(path, "branch", "--list", "main")).toBe("");
     } finally { await engine.shutdown(); }
   });
-  for (const committed of [true, false]) it(`preserves a saved folder replaced by another repository ${committed ? "with" : "without"} the expected branch`, async () => {
+});
+
+describe.concurrent("approved clone recovery", () => {
+for (const committed of [true, false]) it(`preserves a saved folder replaced by another repository ${committed ? "with" : "without"} the expected branch`, async () => {
     const { engine, start, id, path, product, add } = await fixture(`replaced-${committed}`);
     let current = engine;
     try {
@@ -80,8 +84,10 @@ describe.concurrent("approved clone recovery", () => {
       else expect(existsSync(join(path, ".git", "HEAD"))).toBe(true);
     } finally { await current.shutdown(); }
   });
+});
 
-  for (const progress of ["empty", "interrupted", "complete"]) it(`resumes an approved ${progress} clone in its saved folder`, async () => {
+describe.concurrent("approved clone recovery", () => {
+for (const progress of ["empty", "interrupted", "complete"]) it(`resumes an approved ${progress} clone in its saved folder`, async () => {
     const { world, engine, id, path, product, add } = await fixture(progress);
     try {
       if (progress === "interrupted") {
@@ -98,8 +104,10 @@ describe.concurrent("approved clone recovery", () => {
       if (progress === "complete") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Preserve existing work\n");
     } finally { await engine.shutdown(); }
   });
+});
 
-  for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-approved-branch"]) it(`keeps the approved branch when the remote default changes before ${recovery}`, async () => {
+describe.concurrent("approved clone recovery", () => {
+for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-approved-branch"]) it(`keeps the approved branch when the remote default changes before ${recovery}`, async () => {
     const { world, engine, start, id, path, product, add } = await fixture(`changed-default-${recovery}`);
     let current = engine;
     try {
@@ -145,8 +153,10 @@ describe.concurrent("approved clone recovery", () => {
       if (recovery !== "new") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Do not reclone over completed work\n");
     } finally { await current.shutdown(); }
   });
+});
 
-  it("leaves an initially occupied folder untouched before ownership is saved", async () => {
+describe.concurrent("approved clone recovery", () => {
+it("leaves an initially occupied folder untouched before ownership is saved", async () => {
     const { engine, id, path, add } = await fixture("initially-occupied");
     try {
       delete engine.task(id)!.workRows![0]!.addition!.created;

@@ -2,8 +2,8 @@
 import { existsSync } from "node:fs";
 import { EVIDENCE_TASK_LIMIT } from "@petrina/core";
 import type { Section } from "./context.js";
-import type { Kernel } from "./kernel.js";
-import type { RepositoryContext } from "@petrina/orchestrator";
+import type { RepositoryContext, RuntimeTask } from "@petrina/orchestrator";
+import type { CheckEvidenceTask, Product } from "@petrina/core";
 import { checksFor, commandText } from "./checks.js";
 import * as git from "@petrina/repositories/git";
 
@@ -16,7 +16,12 @@ export { namedCheckFailures, projectCheckEvidence, assignedCheckFailures, relate
 import { deliveryMissing } from "@petrina/repositories/check-evidence";
 export { deliveryMissing } from "@petrina/repositories/check-evidence";
 
-export async function relatedCheckEvidence(k: Kernel, scope: RepositoryContext): Promise<Section[]> {
+export interface RelatedCheckEvidenceHost {
+  readonly s: { readonly tasks: readonly RuntimeTask[] };
+  productOf(scope: RepositoryContext): Product | undefined;
+  readonly store: { readonly history: { checkEvidence(productId: string): readonly CheckEvidenceTask[] } };
+}
+export async function relatedCheckEvidence(k: RelatedCheckEvidenceHost, scope: RepositoryContext): Promise<Section[]> {
   const own = assignedCheckFailures(scope);
   const product = k.productOf(scope);
   if (!own.length || !product || !scope.work.worktree) return [];

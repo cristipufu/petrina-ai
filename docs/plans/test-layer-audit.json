@@ -1777,18 +1777,47 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/builder-context.test.ts",
+      "file": "packages/engine/test/contracts/context/atomic-packets.test.ts",
       "declarations": 13,
       "assertionSites": 103,
       "baselineDigest": "89e54ba4f7c4feb771af3088cde90d5030c1e37d1832628bdc84732fcb521384",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/builder-context.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/atomic-packets.test.ts",
+        "packages/engine/test/contracts/context/continued-packets.test.ts",
+        "packages/engine/test/contracts/filesystem/context-retention.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 15,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/builder-continuity.test.ts",
+      "file": "packages/orchestrator/test/orchestration/conversations/builder-continuity.test.ts",
       "declarations": 4,
       "assertionSites": 55,
       "baselineDigest": "20c9e829cd7caec74ce84ea8ffe9743584960b05037faaa2e22d9b30b1bfec0b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/builder-continuity.test.ts",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/conversations/builder-continuity.test.ts",
+        "packages/engine/test/journeys/conversations/builder-recovery.test.ts"
+      ],
+      "layer": "orchestration",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 6,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/checks/builder-contents.test.ts",
@@ -2625,18 +2654,48 @@
       ]
     },
     {
-      "file": "packages/engine/test/design-notes.test.ts",
+      "file": "packages/engine/test/contracts/conversations/design-note-inputs.test.ts",
       "declarations": 4,
       "assertionSites": 38,
       "baselineDigest": "73b27a7324f4ce4b45553c8981dc4adb9a376750f6ca40c86f753dcde9f94de6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/design-notes.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/conversations/design-note-inputs.test.ts",
+        "packages/engine/test/contracts/context/design-advice.test.ts",
+        "packages/core/test/rules/conversations/design-advice.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 4,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/design-resume.test.ts",
+      "file": "packages/core/test/rules/conversations/design-identity.test.ts",
       "declarations": 11,
       "assertionSites": 70,
       "baselineDigest": "4d8aee823544cb089ccd4a2008be38af1b5eaca2a8087a0a355e9e5000178f3c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/design-resume.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/conversations/design-identity.test.ts",
+        "packages/engine/test/journeys/conversations/design-resume.test.ts",
+        "packages/engine/test/contracts/conversations/scope-digests.test.ts"
+      ],
+      "layer": "rules",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 17,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/drain.test.ts",
@@ -3371,11 +3430,25 @@
       ]
     },
     {
-      "file": "packages/engine/test/instruction-reads.test.ts",
+      "file": "packages/engine/test/contracts/context/queued-instructions.test.ts",
       "declarations": 7,
       "assertionSites": 27,
       "baselineDigest": "8733f2bcab0489abd01828c4f19bc199dd8cc821dc274a5ebd29dc1146d8810b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/instruction-reads.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/queued-instructions.test.ts",
+        "packages/repositories/test/contracts/git/committed-file-reads.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 10,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/journeys/recording/journey.test.ts",
@@ -3656,11 +3729,25 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/plan.test.ts",
+      "file": "packages/core/test/rules/planning/normalization.test.ts",
       "declarations": 15,
       "assertionSites": 48,
       "baselineDigest": "456b6f20dbc35829120467691550fe69dfd659890c97a344cde12ddd9706521c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/plan.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/planning/normalization.test.ts",
+        "packages/engine/test/rules/planning/profile-reasons.test.ts"
+      ],
+      "layer": "rules",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 18,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/platform/test/orchestration/processes/capabilities.test.ts",
@@ -3777,11 +3864,25 @@
       ]
     },
     {
-      "file": "packages/engine/test/prompt-records.test.ts",
+      "file": "packages/engine/test/contracts/testing/acp-prompt-records.test.ts",
       "declarations": 6,
       "assertionSites": 43,
       "baselineDigest": "381c4fb0bc380385b4126ab205376510e7dff36ba88fd4f8a032033c6ad4dd3a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/prompt-records.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/testing/acp-prompt-records.test.ts",
+        "packages/engine/test/contracts/testing/atomic-prompt-records.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 7,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/rules/agents/prompts.test.ts",
@@ -4133,31 +4234,80 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/review-context.test.ts",
+      "file": "packages/core/test/rules/conversations/review-identity.test.ts",
       "declarations": 36,
       "assertionSites": 292,
       "baselineDigest": "89063651269938edd01a9a5b2878516d9739d8d2942bf7dcd01fc5a7577bbb03",
-      "status": "pending",
+      "status": "reviewed",
       "partialAudit": {
         "moved": "High-effort verifier candidate preferences",
         "owner": "packages/core/test/rules/reviews/profiles.test.ts",
         "assertions": "All four original preference assertions retained. Added ordering, usable-set, no-ready, standby and first-profile controls. All other surrounding case bodies unchanged. Mixed native file remains pending.",
         "evidence": "verifier-selection-9651ee88/reconciliation.json"
+      },
+      "from": "packages/engine/test/review-context.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/conversations/review-identity.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/seat-replacements.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/unresolved-reproduction.test.ts",
+        "packages/engine/test/contracts/reviews/input-artifacts.test.ts",
+        "packages/engine/test/contracts/reviews/snapshot-rounds.test.ts",
+        "packages/engine/test/contracts/context/settled-findings.test.ts",
+        "packages/engine/test/contracts/reviews/detached-voters.test.ts",
+        "packages/engine/test/journeys/conversations/reviewer-inputs.test.ts",
+        "packages/engine/test/journeys/conversations/reviewer-conflicts.test.ts",
+        "packages/engine/test/contracts/conversations/scope-digests.test.ts"
+      ],
+      "layer": "rules",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 59,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
       }
     },
     {
-      "file": "packages/engine/test/review-continuation-rounds.test.ts",
+      "file": "packages/engine/test/contracts/reviews/continued-evidence.test.ts",
       "declarations": 7,
       "assertionSites": 60,
       "baselineDigest": "9538a2ab71f3f734b1828f94d383bdd73b921afe6972ab7fb410ea3faf4a3154",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-continuation-rounds.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/reviews/continued-evidence.test.ts",
+        "packages/engine/test/contracts/reviews/continued-approval.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 8,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/review-continuation.test.ts",
+      "file": "packages/engine/test/journeys/reviews/continued-delivery.test.ts",
       "declarations": 1,
       "assertionSites": 32,
       "baselineDigest": "a3ec208ab953450a552a94f57b02f35a1dfebb492eed852815654bbc18405549",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-continuation.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/reviews/continued-delivery.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 2,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/review-decision.test.ts",
@@ -4588,11 +4738,24 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/source-additions.test.ts",
+      "file": "packages/engine/test/contracts/sources/approved-clone.test.ts",
       "declarations": 5,
       "assertionSites": 34,
       "baselineDigest": "0314552afdf99910193a578caaaba0bb18d89a69caa305e72c0a623f4bf52301",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/source-additions.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/sources/approved-clone.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 13,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/context/source-visibility.test.ts",
@@ -4636,11 +4799,11 @@
       ]
     },
     {
-      "file": "packages/engine/test/sources.test.ts",
+      "file": "packages/orchestrator/test/orchestration/sources/background-cache.test.ts",
       "declarations": 38,
       "assertionSites": 293,
       "baselineDigest": "fcba224cbaa4b6450bbf831e73ae329708ea83be295fa72fa4912647590bd7fc",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "clears a mismatched link error when corrected to a number and permits approval before setup",
@@ -4688,7 +4851,29 @@
           ]
         }
       ],
-      "review": "Partial audit: five source-selection variants moved to the real source controller. Retain one complete error-correction and one complete invalid-plan recovery, plus all exact Git delivery, PR identities, restart and integration controls. Other source journeys remain pending semantic review."
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "from": "packages/engine/test/sources.test.ts",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/sources/background-cache.test.ts",
+        "packages/engine/test/journeys/sources/role-handoffs.test.ts",
+        "packages/engine/test/contracts/sources/starting-points.test.ts",
+        "packages/engine/test/contracts/sources/approval.test.ts",
+        "packages/engine/test/contracts/sources/background.test.ts",
+        "packages/engine/test/contracts/sources/source-movement.test.ts",
+        "packages/engine/test/contracts/sources/delivery-recovery.test.ts",
+        "packages/engine/test/contracts/sources/unavailable.test.ts",
+        "packages/engine/test/journeys/sources/check-recovery.test.ts",
+        "packages/engine/test/contracts/sources/cancellation.test.ts",
+        "packages/engine/test/journeys/sources/conflicts.test.ts"
+      ],
+      "layer": "orchestration",
+      "area": "context",
+      "reviewedCurrentOriginalRuntimePasses": 53,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/storage/test/contracts/sqlite/sql-log.test.ts",
@@ -4732,11 +4917,25 @@
       ]
     },
     {
-      "file": "packages/engine/test/step-assignment.test.ts",
+      "file": "packages/core/test/rules/conversations/step-assignment.test.ts",
       "declarations": 9,
       "assertionSites": 79,
       "baselineDigest": "f1f9e704494e93d59791d82666fcbfc0667a18027a20609a72ac874b0026f727",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/step-assignment.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/conversations/step-assignment.test.ts",
+        "packages/engine/test/contracts/agents/step-input.test.ts"
+      ],
+      "layer": "rules",
+      "area": "context",
+      "review": "All original cases/variants/assertions read against actual production owners. Pure plan/step/design identity stays core; profile/participant/source cache decisions use explicit portable ports. Native SHA256, prompt transmission, Git/source, proof/schema, ACP resume/copies, SQLite/restart and cleanup controls remain where asserted. Independent source/function/AST review found no actionable blocker; root replaced an unnecessary unknown-method cast with actual bound methods.",
+      "reviewedCurrentOriginalRuntimePasses": 10,
+      "validation": {
+        "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
+        "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+      }
     },
     {
       "file": "packages/storage/test/contracts/sqlite/startup.test.ts",

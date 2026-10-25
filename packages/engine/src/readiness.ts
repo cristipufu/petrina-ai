@@ -4,21 +4,11 @@
 
 import { runtimeWaitHolds, CHECK_NAMES, checkOf, slotWait, type CheckId, type Id, type ReadinessWait } from "@petrina/core";
 import type { Kernel, MTask } from "./kernel.js";
-import type { RepositoryContext } from "@petrina/orchestrator";
 import { readinessLimitMs, type ToolChecks } from "./tool-checks.js";
 
 /** Readiness alone keeps an otherwise eligible saved participant from its saved tool. */
-export interface ReadinessNeed {
-  toolId: CheckId;
-  /** The saved profile a kept place is charged to while the decision is open. */
-  profileId: Id;
-  roleId: Id;
-  /** The saved conversation's record, which keeps the first wait. */
-  saved: { readinessWait?: ReadinessWait };
-  /** What the participant says while it waits. */
-  words: string;
-  scope: RepositoryContext;
-}
+export type { SelectionReadiness as ReadinessNeed } from "@petrina/orchestrator";
+import type { SelectionReadiness as ReadinessNeed } from "@petrina/orchestrator";
 
 export class Readiness {
   /** Waits under way, one per tool and limit, so repeated selection and competing seats share them. */

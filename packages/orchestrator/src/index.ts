@@ -33,3 +33,6 @@ export * from "./check-admission.js";
 export * from "./tester-preparation.js";
 export * from "./validation-client.js";
 export * from "./validation-removal.js";
+export * from "./profile-selection.js";
+export * from "./participant-conversation.js";
+export * from "./source-background.js";

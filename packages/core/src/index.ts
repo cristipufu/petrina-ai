@@ -67,3 +67,8 @@ export * from "./check-commands.js";
 export * from "./related-check-evidence.js";
 export * from "./task-step.js";
 export * from "./release-version.js";
+export * from "./plan-normalization.js";
+export * from "./step-assignment.js";
+export * from "./conversation-scope.js";
+export * from "./design-notes.js";
+export * from "./build-rethink.js";

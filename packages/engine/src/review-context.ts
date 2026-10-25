@@ -1,3 +1,4 @@
+import { reviewConversationScope as projectReviewScope } from "@petrina/core";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -133,11 +134,6 @@ export async function reviewContextIntact(context: BuilderContext | undefined): 
   return !!context && await readFile(context.file, "utf8").then((body) => digest(body) === context.digest, () => false);
 }
 
-/** A changed patch is expected; a different role, request, profile or approved scope is a fresh review. */
-export function reviewConversationScope(task: Task, stageId: Id, seat: Id, role: Role, planned: unknown, actual: unknown): string {
-  return digest(JSON.stringify({ stageId, seat, role, planned, actual, assignment: task.plan?.stages.find((stage) => stage.id === stageId)?.title, title: task.title, request: task.description, productId: task.productId, path: task.worktree, source: task.source, port: task.portReview, updating: task.updating, products: task.repositories?.map((work) => ({ productId: work.productId, path: work.worktree, source: work.source, port: work.portReview, updating: work.updating })) }));
-}
-
 export function reviewScopeKey(scope: RepositoryContext, stageId: Id, seat: Id, role: Role, planned: unknown, actual: unknown): string {
   return reviewConversationScope(repositoryView(scope), stageId, seat, role, planned, actual);
 }
@@ -172,4 +168,9 @@ export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonl
     updates.push(`### ${work.source?.product.name ?? work.productId} (${work.productId})\nOld base: ${before}\nNew base: ${base}\n${source} gained ${commits} commit${commits === 1 ? "" : "s"}.\nExact commit under review: ${head}\nThe change was carried onto the new base without an engine conflict port.\nFiles the starting branch changed that this task also changes; read their current versions again:\n${overlap.map((file) => `- ${JSON.stringify(file)}`).join("\n") || "None."}\nRead the complete prepared comparison against ${base} and its current base review guide. ${incremental} Inspect the incoming range ${before}..${base} and its interactions wherever relevant, including beyond the files listed above. Review all code that now requires review, not only the Builder's fixes.`);
   }
   return { sections: updates.length ? [{ title: "The review base advanced since your last review", body: updates.join("\n\n") }] : [] };
+}
+
+/** Retain the established native SHA256 scope while the portable owner projects its exact fields. */
+export function reviewConversationScope(task: Task, stageId: Id, seat: Id, role: Role, planned: unknown, actual: unknown): string {
+  return projectReviewScope(task, stageId, seat, role, planned, actual, digest);
 }
