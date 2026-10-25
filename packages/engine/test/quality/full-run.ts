@@ -10,6 +10,7 @@ import { createTestRun } from "@petrina/test-support/environment";
 import { TEST_WORKSPACES } from "./workspaces.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { keepTestTimings, seedTestTimings, type TimingHintUse } from "./timings.js";
+import { SuiteCoordinator, suitePassed, type WorkspaceEvidence } from "@petrina/test-support/suite-coordinator";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -28,9 +29,9 @@ Focused runs do not replace the required full check. See docs/testing.md for oth
 const PRELIMINARY: readonly string[] = TEST_WORKSPACES.filter(workspace => workspace.phase === "quick").map(workspace => workspace.path);
 const ORDER = [...PRELIMINARY, ...WORKSPACES.filter(workspace => !PRELIMINARY.includes(workspace))];
 const suite = (workspace: string) => workspace.split("/").at(-1)!;
-type Ran = { workspace: string; code: number; ms: number; failures?: string[]; missedFailures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string; durationHints?: TimingHintUse };
+type Ran = WorkspaceEvidence & { code: number; ms: number; missedFailures?: readonly string[]; durationHints?: TimingHintUse };
 type Result = Ran | { workspace: string; notRun: string };
-const passed = (result: Result) => "code" in result && result.code === 0 && !result.error && !result.failures?.length;
+const passed = (result: Result) => "code" in result && suitePassed({ id: result.workspace, code: result.code, ms: result.ms, workspaces: [result] });
 
 const errors = conventions(await inputs(ROOT));
 if (errors.length) { console.error(errors.join("\n")); process.exit(1); }
@@ -54,22 +55,20 @@ const [head, tree] = revision.split("\n");
 const source = { head, tree, fingerprint: plan.fingerprint, clean: !(await readGit(ROOT, ["status", "--porcelain=v1", "--untracked-files=normal"])).trim() };
 const environment = { platform: process.platform, arch: process.arch, bun: Bun.version };
 console.log(`Affected-test observation: ${plan.selected.length}/${plan.total} candidates; it never changes which tests run. Order: ${PRELIMINARY.map(suite).join(" and ")}, then ${ORDER.slice(PRELIMINARY.length).map(suite).join(" and ")} only if they pass. Reports: ${relative(ROOT, folder)}`);
-const results: Result[] = [];
+const coordinator = new SuiteCoordinator(ORDER.map(workspace => ({ id: workspace, workspaces: [workspace], ...(!PRELIMINARY.includes(workspace) ? { requires: PRELIMINARY } : {}) })), { revision, fingerprint: plan.fingerprint });
+const details = new Map<string, { missedFailures?: readonly string[]; durationHints?: TimingHintUse }>();
 const timingOutputs = new Map<string, string>();
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let interrupted: number | undefined;
 let finished = false;
-const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; child?.kill(signal); };
+const controller = new AbortController();
+const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; controller.abort(); child?.kill(signal); };
 const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM", 143);
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
 const owned = createTestRun();
 try {
-  for (const workspace of ORDER) {
-    if (interrupted) break;
-    if (!PRELIMINARY.includes(workspace) && !results.filter(result => PRELIMINARY.includes(result.workspace)).every(passed)) {
-      results.push({ workspace, notRun: `${PRELIMINARY.map(suite).join(" and ")} did not all pass` });
-      continue;
-    }
+  await coordinator.run(async execution => {
+    const workspace = execution.workspaces[0]!;
     const engine = TEST_WORKSPACES.find(entry => entry.path === workspace)!.runner === "bun";
     const output = join(folder, `${suite(workspace)}.${engine ? "xml" : "json"}`);
     // Bun uses existing durations to start slow files first at its normal worker count.
@@ -81,31 +80,34 @@ try {
     const start = performance.now();
     child = Bun.spawn([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, env: owned.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     const code = await child.exited;
-    const result: Ran = { workspace, code, ms: Math.round(performance.now() - start), ...(durationHints ? { durationHints } : {}) };
+    const result: { workspace: string; failures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string } = { workspace };
+    const ms = Math.round(performance.now() - start);
+    let missedFailures: string[] | undefined;
     try {
       const parsed = testResults(readFileSync(output, "utf8"), workspace, engine ? "bun" : "vitest", ROOT);
       const { files, failures, ...counts } = parsed;
       result.failures = failures;
       result.counts = counts;
-      result.missedFailures = result.failures.filter(file => !plan.selected.includes(file));
+      missedFailures = result.failures.filter(file => !plan.selected.includes(file));
       requireFiles(parsed, expectedFiles.filter(file => file.startsWith(`${workspace}/`)));
       result.reportComplete = true;
       if (code !== 0 && !result.failures.length) result.error = "Run failed without an attributable test file; selection accuracy is unknown";
     } catch (error) { result.error = `Incomplete test evidence: ${error instanceof Error ? error.message : String(error)}`; }
     if (result.error) console.error(`${workspace}: ${result.error}`);
     else if (code === 0 && result.failures?.length) console.error(`${workspace}: structured results report failed files despite a zero exit code: ${result.failures.join(", ")}`);
-    results.push(result);
+    details.set(workspace, { ...(missedFailures ? { missedFailures } : {}), ...(durationHints ? { durationHints } : {}) });
     child = undefined;
-  }
+    return { code, ms, workspaces: [result] };
+  }, controller.signal);
   finished = true;
 } finally {
   try {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-    // Work never started is recorded as not run, never as a pass or an observation without misses.
-    for (const workspace of ORDER) if (!results.some(result => result.workspace === workspace)) results.push({ workspace, notRun: interrupted ? "the run was interrupted first" : "the runner stopped first" });
-    const complete = !interrupted && results.every(result => "code" in result && result.reportComplete);
-    const stable = fingerprint(await inputs(ROOT)) === plan.fingerprint && (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() === revision;
-    const successful = stable && complete && results.every(passed);
+    // The current native adapter runs one workspace per execution.
+    const results: Result[] = coordinator.results.map(result => "code" in result
+      ? { ...result.workspaces[0]!, code: result.code, ms: result.ms, ...details.get(result.id), ...(result.error ? { error: result.error } : {}) }
+      : { workspace: result.workspaceNames[0]!, notRun: result.notRun });
+    const { complete, stableInputs: stable, successful } = coordinator.conclusion({ fingerprint: fingerprint(await inputs(ROOT)), revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() }, interrupted !== undefined);
     writeFixtureJson(join(folder, "results.json"), { mode: "observation", scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), results }, 2);
     if (successful) {
       const updates = [...timingOutputs].map(([workspace, file]) => ({ workspace, ...keepTestTimings(ROOT, workspace, file, expectedFiles) }));

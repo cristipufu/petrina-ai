@@ -2721,6 +2721,14 @@
       "area": "workflow",
       "review": "Split owner with unchanged original case bodies; see original inventory entry and core-lifetime-reconciliation.json.",
       "validation": "core-lifetime-reconciliation.json proves all 12 original case bodies, 76 assertion sites, the canonical initializer wrapper and all 1083 runtime core identities unchanged. core-lifetime-reviewed.json: 1083 passes / 50 files / 14.25s. Workspace types and conventions pass. Complete changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/test-support/test/orchestration/testing/suite-coordinator.test.ts",
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "testing",
+      "review": "Actual portable required-suite coordinator: prerequisites, independent failures, shared workspace membership, honest report/skip counts, exact source binding, pending cancellation ownership, rejected effects, immutable observations and invalid plans. Typed value effects and controlled release events; no native process, filesystem, Engine, Git or clock.",
+      "validation": "suite-coordinator-reviewed.xml: 38 passes / 100 assertions / 7ms. suite-coordinator-native-first.xml: all 57 retained root CLI/report/timing/signal controls pass / 405 assertions / 24.75s. Workspace types and conventions pass. Native multi-package probe runs all four workspaces at normal 14-worker defaults with engine CWD; report paths are relative for engine and absolute for peers. Group adapter and complete qualification remain due."
     }
   ],
   "rust": [
