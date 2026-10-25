@@ -1885,7 +1885,8 @@
         "measurement": "review-owners-before-2026-10-24T20-25-27-272Z: twelve cases, about 0.937s summed case wall time, one observed Bun launch, stable source and no observer errors. These were already a small state-only fixture; no material full-suite speedup is claimed.",
         "after": "review-reports-native-reviewed.xml: 283 passed / 3,728 assertions / thirteen files / 56.18s; saved-owner restart/repair/archive and all eight shared-fix restart variants remain. All core/orchestrator cases, workspace types and conventions pass.",
         "full": "Complete clean b03b03a8 passes all 4,653 cases plus eleven explicit skips; every retained native repository case executes. This remains a partial semantic audit, not completed package/platform qualification."
-      }
+      },
+      "partialReview": "Two reopening/independent-finding cases split into actual portable review-controller variants and native schema/SQLite/ballot contracts, using canonical reviewRecords for saved state. Other cases remain pending; see review-layers-16bce9e0/original-cases.ts.txt and reconciliation.json."
     },
     {
       "file": "packages/engine/test/repository-context.test.ts",
@@ -2798,6 +2799,22 @@
       "area": "runtime",
       "review": "One bounded native timer contract checks deferred delivery after the current operation and microtask, cancellation before delivery, repeated cancellation and an actual current-time observation. The real timer remains native while decision permutations use the portable clock. It starts no Engine, agent, Git repository or database.",
       "validation": "screen-clock-first.xml and screen-native-neighborhood.xml: native timer control passes with five assertions, including the complete 51-case screen/review neighborhood. All workspace types and conventions pass."
+    },
+    {
+      "file": "packages/orchestrator/test/orchestration/reviews/reopening.test.ts",
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "reviews",
+      "review": "Fifteen pure controller variants preserve both original mixed tests\u2019 reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
+      "validation": "review-layers-16bce9e0/orchestrator-reviewed.json: all 228 cases / 14 files pass. All workspace types and conventions pass. reconciliation.json maps each original assertion category to its actual owner; original bodies retained. Full changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/engine/test/contracts/reviews/recording.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "reviews",
+      "review": "Eight real schema/recording/ballot contracts retain both reporter choices and all three severities, string/object confirmation normalization, independent product identities, real verdict recording and complete finding/verdict preservation across restart. Uses the canonical reviewRecords setup with private SQLite and scripted catalogs, rather than unrelated repositories or native agents. The actual portable report controller remains in the composition.",
+      "validation": "review-layers-16bce9e0/after/cases.xml: eight pass / 24 assertions / zero observed launches. native-shared-records.xml: nine retained shared-record/restart variants pass / 43 assertions. All workspace types and conventions pass. The prior two tests launched 12 Git commands; this focused observation is no whole-suite performance claim."
     }
   ],
   "rust": [

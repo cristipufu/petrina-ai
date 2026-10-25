@@ -5,9 +5,10 @@ import { checkDecisionLabel, decisionEvidence, createDemoState, draftOf, indepen
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Engine, type EngineOptions } from "./engine.js";
+import type { EngineOptions } from "./engine.js";
 import type { Scenario } from "./fake-agent.js";
 import { ScriptedAgents, scriptedResult } from "./scripted-agents.js";
+import { reviewRecords } from "./fixtures/review-records.js";
 import { answersTo, findingIds } from "./scripted-findings.js";
 import { addCopy, ensureWorktree } from "../src/git.js";
 import { Sources } from "../src/sources.js";
@@ -15,7 +16,6 @@ import type { Connections } from "../src/connection.js";
 import { Kernel, type MTask } from "../src/kernel.js";
 import { invalidateAcceptance, versionsOf } from "../src/repositories.js";
 import { beginRepair } from "@petrina/orchestrator";
-import { checkReviewEvidence } from "@petrina/core";
 import { ReviewResult } from "../src/roles.js";
 import { Coordination } from "../src/coordination.js";
 import { Fakes, coordinator, finish, git, headNow, itemOf, makeWorld, removeDir, taskOf, tempDir, until, waitFor, type World } from "./support.js";
@@ -41,19 +41,7 @@ async function setup(name: string) {
 /** Real shared-task records and restart storage, without unrelated Git, planning or agent execution. */
 async function sharedRecords() {
   const root = tempDir("petrina-review-records-"); recordRoots.push(root);
-  const start = () => new Engine(root);
-  const engine = start(); engine.setPoolPaused(true);
-  try {
-    await engine.waitUntilReady();
-    const first = "first", second = "second";
-    engine.s.products.push(...[first, second].map(id => ({ id, name: id, repo: `acme/${id}`, tone: "blue" as const })));
-    const task = engine.task(engine.addTask({ productId: first, title: "Keep the shared task records", backlog: true }))!;
-    task.repositories = [first, second].map(productId => ({ productId, delivery: "pull-request", completedStages: [] }));
-    const stage = { id: "review", kind: "review-chain" as const, title: "Review both products", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
-    task.plan = { rationale: "Only review recording is under test", plannerProfileId: "sonnet-medium", stages: [stage] };
-    task.stageIndex = 0;
-    return { engine, start, first, second, task, stage };
-  } catch (error) { await engine.shutdown(); throw error; }
+  return reviewRecords(root);
 }
 
 /**
@@ -218,123 +206,6 @@ describe.concurrent("one task across products", () => {
       await until(engine, (state) => !!itemOf(state, id, "delivery"), coordinator([]));
       expect(fakes.openings("verifier")).toHaveLength(0);
       expect(engine.getState().pool.limited?.length).toBeGreaterThan(0);
-    } finally { await engine.shutdown(); }
-  });
-
-  it("reopens dismissed reports with fresh proof while keeping classification, ownership and review history", async () => {
-    const { shop, api, start } = await setup("dismissed-proof"); const engine = start();
-    try {
-      engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const task = engine.task(engine.addTask({ productId: first, title: "Recheck a closed report", backlog: true }))!;
-      task.repositories = [first, second].map((productId) => ({ productId, delivery: "pull-request", completedStages: [] }));
-      const stage = { id: "review", kind: "review-chain" as const, title: "Review both products", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
-      task.plan = { rationale: "Review both products", plannerProfileId: "sonnet-medium", stages: [stage] };
-      task.stageIndex = 0;
-      const proof = "The current guest state fails after signing out; the signed-in control and original case pass.";
-      for (const severity of ["blocking", "suggestion", "pre-existing"] as const) for (const by of ["sol-high", "opus-high"]) {
-        task.hunt = { stageId: stage.id, round: 2, reported: {}, findings: 1 };
-        task.findings = [{ id: "dismissed", text: "The greeting is missing.", productIds: [first, second], severity, raisedBy: "opus-high", status: "dismissed", confirmedBy: ["opus-xhigh"], evidence: "The original welcome path passed.", disputes: [{ by: "sol-high", reason: "The original path works on current code.", at: 1 }], verification: { by: "sol-high", verdict: "not-a-bug", reason: "The old reproduction does not fail.", at: 1 }, votes: [{ by: "sol-high", toolId: "codex", verdict: "not-a-bug", reason: "The original path passes." }] }];
-        const before = JSON.parse(JSON.stringify(task.findings[0]!));
-        const result = ReviewResult.parse({ verdict: "fail", confirms: [{ id: "dismissed", evidence: proof }] });
-        expect(checkReviewEvidence(task.findings, result, task)).toBeUndefined();
-        await engine["reviews"]["applyReview"](executionFor(task), stage, result, by, "code-reviewer", "0");
-        expect(task.findings).toHaveLength(1);
-        const current = task.findings[0]!;
-        expect(current.status).toBe("open");
-        expect(current.severity).toBe(severity);
-        expect(current.productIds).toEqual([first, second]);
-        expect(current.evidence).toBe(proof);
-        expect(current.confirmedBy).toEqual([by]);
-        expect(current.verification).toBeUndefined();
-        expect(current.votes).toBeUndefined();
-        expect(current.disputes).toBeUndefined();
-        expect(current.earlierReviews).toHaveLength(1);
-        expect(current.earlierReviews![0]!).toEqual({ at: current.reopenedAt!, evidence: before.evidence, confirmedBy: before.confirmedBy, disputes: before.disputes, verification: before.verification, votes: before.votes });
-        task.hunt.reported = { "0": true };
-        engine["reviews"]["settleReviews"](task, stage);
-        expect(current.status).toBe("open");
-        task.hunt.reported["1"] = true;
-        engine["reviews"]["settleReviews"](task, stage);
-        expect(current.status).toBe("open");
-        const ballot = engine["reviews"]["pendingVote"](task, stage);
-        expect(ballot?.findings.map((finding) => finding.id)).toEqual(severity === "blocking" ? ["dismissed"] : undefined);
-        if (ballot) expect(ballot.voters.length).toBeGreaterThan(0);
-      }
-      // A new independently owned report cannot reuse a dismissed peer product's proof or identity.
-      task.findings = [{ id: "dismissed-api", text: "The greeting is missing.", productIds: [second], severity: "blocking", raisedBy: "opus-high", status: "dismissed", confirmedBy: [], evidence: "API's old case passed." }];
-      const independent = ReviewResult.parse({ verdict: "fail", findings: [{ text: "The GREETING is missing!", productIds: [first], severity: "important" }] });
-      expect(checkReviewEvidence(task.findings, independent, task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](executionFor(task), stage, independent, "sol-high", "code-reviewer", "0");
-      expect(task.findings).toHaveLength(2);
-      expect(task.findings[0]!.status).toBe("dismissed");
-      expect(task.findings[0]!.evidence).toBe("API's old case passed.");
-      expect(task.findings[1]!.productIds).toEqual([first]);
-      // Native checks remain closed until their actual commands say otherwise.
-      task.findings = [{ id: "native", text: "A product check failed.", productIds: [first], severity: "blocking", raisedBy: "petrina", status: "fixed", confirmedBy: [], evidence: "The actual check now passes." }];
-      const native = ReviewResult.parse({ verdict: "fail", confirms: [{ id: "native", evidence: proof }] });
-      await engine["reviews"]["applyReview"](executionFor(task), stage, native, "sol-high", "code-reviewer", "0");
-      expect(task.findings[0]!).toMatchObject({ status: "fixed", evidence: "The actual check now passes." });
-      expect(task.findings[0]!.earlierReviews).toBeUndefined();
-    } finally { await engine.shutdown(); }
-  });
-
-  it("does not reopen another product's claimed fix for independently reported equal wording", async () => {
-    const { shop, api, start } = await setup("independent-finding-proof"); const engine = start();
-    try {
-      engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      const id = engine.addTask({ productId: first, title: "Review independent product failures", backlog: true });
-      const task = engine.task(id)!;
-      task.repositories = [first, second].map((productId) => ({ productId, delivery: "pull-request", completedStages: [] }));
-      const stage = { id: "review", kind: "review-chain" as const, title: "Review both products", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: 2 };
-      task.plan = { rationale: "Review both products", plannerProfileId: "sonnet-medium", stages: [stage] };
-      task.findings = [{ id: "fixed-api", text: "The greeting is missing.", productIds: [second], evidence: "The old API guest case failed.", severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "The API guest case now passes." } }];
-      const report = { text: "The GREETING is missing!", productIds: [first], severity: "important", evidence: "The shop guest case fails on current code." };
-      const result = ReviewResult.parse({ verdict: "fail", findings: [report] });
-      expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
-      expect(task.findings).toHaveLength(2);
-      expect(task.findings.find((finding) => finding.id === "fixed-api")).toMatchObject({ status: "fixed", productIds: [second], evidence: "The old API guest case failed." });
-      const shopFinding = task.findings.find((finding) => finding.id !== "fixed-api")!;
-      expect(shopFinding).toMatchObject({ status: "open", productIds: [first], evidence: report.evidence });
-      expect(shopFinding.earlierReviews).toBeUndefined();
-      expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toBeUndefined();
-      const moment = engine.tracking.log.moments({ taskId: id, kinds: ["verdict"] }).at(-1)!;
-      expect(moment).toMatchObject({ count: 1, blocking: 1 });
-
-      // Similar prose never combines independently reported owners or invents agreement.
-      task.findings = [{ id: "open-api", text: "The greeting is missing.", productIds: [second], evidence: "The API guest case fails.", severity: "blocking", raisedBy: "earlier-reviewer", status: "open", confirmedBy: [] }];
-      expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, evidence: undefined }] }), task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](executionFor(task), stage, result, "opus-high", "code-reviewer", "0");
-      expect(task.findings).toHaveLength(2);
-      expect(task.findings[0]!.productIds).toEqual([second]);
-      expect(task.findings[1]!.productIds).toEqual([first]);
-      expect(task.findings[0]!.evidence).toBe("The API guest case fails.");
-      expect(task.findings[1]!.evidence).toBe(report.evidence);
-      expect(task.findings.every((finding) => finding.confirmedBy.length === 0)).toBe(true);
-
-      // An explicit id identifies a shared claimed fix and still needs new proof.
-      task.findings = [{ id: "shared-fixed", text: "The greeting is missing.", productIds: [second, first], evidence: "The original shared case.", severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "Both owners repaired it." } }];
-      expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", confirms: ["shared-fixed"] }), task)).toContain("shared-fixed");
-      const confirmation = ReviewResult.parse({ verdict: "fail", confirms: [{ id: "shared-fixed", evidence: report.evidence }] });
-      expect(checkReviewEvidence(task.findings, confirmation, task)).toBeUndefined();
-      await engine["reviews"]["applyReview"](executionFor(task), stage, confirmation, "opus-high", "code-reviewer", "0");
-      expect(task.findings).toHaveLength(1);
-      expect(task.findings[0]!).toMatchObject({ id: "shared-fixed", status: "open", productIds: [second, first], evidence: report.evidence });
-      expect(task.findings[0]!.earlierReviews![0]!.evidence).toBe("The original shared case.");
-
-      // A new report never erases a prior owner. Invalid new assignments stay Together.
-      for (const [prior, incoming, expected] of [[[second], undefined, []], [undefined, [first], [first]], [[second], ["not-a-product"], []], [undefined, ["not-a-product"], []]] as [string[] | undefined, string[] | undefined, string[]][]) {
-        task.findings = [{ id: "ownership-unknown", text: "The greeting is missing.", productIds: prior, severity: "blocking", raisedBy: "earlier-reviewer", status: "fixed", confirmedBy: [], answer: { fixed: true, at: 1, text: "Claimed repaired." } }];
-        const unknown = ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming }] });
-        expect(checkReviewEvidence(task.findings, ReviewResult.parse({ verdict: "fail", findings: [{ ...report, productIds: incoming, evidence: undefined }] }), task)).toBeUndefined();
-        await engine["reviews"]["applyReview"](executionFor(task), stage, unknown, "opus-high", "code-reviewer", "0");
-        expect(task.findings).toHaveLength(2);
-        expect(task.findings[0]!).toMatchObject({ id: "ownership-unknown", status: "fixed" });
-        expect(task.findings[0]!.productIds).toEqual(prior);
-        expect(task.findings[1]!).toMatchObject({ status: "open", productIds: expected, evidence: report.evidence });
-      }
     } finally { await engine.shutdown(); }
   });
 
