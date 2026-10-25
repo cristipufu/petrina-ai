@@ -1,3 +1,4 @@
+import { TurnRecovery, ModelCapacity } from "@petrina/orchestrator";
 import { opensBrowser } from "./browser-policy.js";
 import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { completeAll } from "@petrina/core";
@@ -17,7 +18,7 @@ import { agentEnv } from "@petrina/platform/process-environment";
 import { claudeSandbox, type ClaudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { SandboxUnavailable } from "@petrina/agent-runtime/sandbox-failures";
 import { browserPrompt, buildPrompt, capacityContinuePrompt, continuePrompt, currentStepAssignment, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";
-import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, sameCapacityModel, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
+import { capacityWaiting, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import { ModelAtCapacity, UsageLimited } from "@petrina/agent-runtime/usage";
 import { ADAPTERS, agentCommandFor } from "@petrina/agent-runtime/tools";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
@@ -87,11 +88,43 @@ const NO_SCREEN_HERE = "you cannot ask for the screen in this step. Finish witho
 
 export class Turns {
   readonly repositoryCopies = new Map<string, Readonly<Record<string, string>>>();
+  private readonly recovery: TurnRecovery;
   constructor(
     private readonly k: Kernel,
     private readonly tools: ToolChecks,
     private readonly sources: Sources,
-  ) {}
+  ) {
+    const capacity = new ModelCapacity({ profile: id => k.profile(id), now: () => Date.now(),
+      record: (task, roleId, profileId, error, waitMs) => k.recordModelCapacity(task, roleId, profileId, error, waitMs), words: capacityWaiting });
+    this.recovery = new TurnRecovery({
+      now: () => Date.now(),
+      catalog: { profile: id => k.profile(id), role: (id, task) => k.role(id, task),
+        choose: (request, scope, room) => k.choose(request.profileId, scope, request.roleId, room, request.reviewerKey) },
+      readiness: { hold: (task, need) => k.readiness.hold(task, need), resolveHeld: (need, signal) => k.readiness.resolveHeld(need, signal), resolve: need => k.readiness.resolve(need) },
+      admissionsClosed: task => k.taskAdmissionsClosed(task), admissionWait: task => k.taskAdmissionWait(task), sourceRefreshDue: task => k.taskSourceRefreshDue(task),
+      slotWait: (task, profile, toolId) => slotWait(k.activeState(), { ...profile, taskId: task.id, toolId }),
+      toolName: id => k.s.tools.find(tool => tool.id === id)?.name ?? id,
+      attempt: (scope, roleId, plannedId, profile, retry) => k.tracking.attempt(scope, roleId, plannedId, profile, retry),
+      owesRetry: (scope, roleId, plannedId) => k.tracking.owesRetry(scope, roleId, plannedId),
+      keepWords: (scope, roleId, profileId, reviewerKey, error) => this.keepWords(scope, roleId, profileId, reviewerKey, error),
+      waitForUsage: (task, words) => k.waitForUsage(task, words), recordLimit: (task, roleId, profileId, error) => k.recordLimit(task, roleId, profileId, error),
+      waitForScreen: task => k.waitForScreen(task), discardUnavailable: (scope, roleId, error, reviewerKey) => this.discardUnavailableParticipant(scope, roleId, error, reviewerKey),
+      beforeMainAttempt: (scope, roleId, profile) => {
+        const { task, work: repository } = scope;
+        const builder = this.k.profile(task.plan?.stages.find((stage) => this.k.role(stage.roleId, task)?.result === "build")?.profileIds[0] ?? "");
+        const builderTool = repository.builderSession?.toolId ?? builder?.toolId;
+        if (roleId === "security-reviewer" && builderTool === profile.toolId && !task.timeline.some((entry) => entry.text.startsWith("Security review on the builder's tool"))) {
+          this.k.log(scope, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
+        }
+      },
+      showReviewWork: task => k.showReviewWork(task), checkpoint: scope => k.commitNow(scope),
+    }, {
+      capacity: (error): error is ModelAtCapacity => error instanceof ModelAtCapacity,
+      usage: (error): error is UsageLimited => error instanceof UsageLimited,
+      waiting: waitingFor, usageWait: words => new WaitingForUsage(words), capacityWait: words => new WaitingForCapacity(words),
+      aborted: () => new Aborted(), sourceRefresh: () => new SourceRefreshRequired(), screenWait: () => new ScreenWait(),
+    }, capacity);
+  }
 
   /**
    * Processes stopped because a parallel member yielded the screen. The seat is free at once; copy
@@ -118,96 +151,11 @@ export class Turns {
    * is reopened when a limit ends.
    */
   async turn<T>(scope: RepositoryContext, roleId: Id, plannedId: Id, given: Given, schema: z.ZodType<T>, signal: AbortSignal, options: TurnOptions<T> = {}): Promise<T> {
-    const { task, work: repository } = scope;
+    const { task } = scope;
     if (!this.k.role(roleId, task) || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId)) || (this.k.role(roleId, task)?.result !== "plan" && !this.k.productOf(scope))) throw new Error(`Unknown role or product: ${roleId} on ${plannedId}`);
-    let stopped: { profileId: Id; error: UsageLimited | ModelAtCapacity; at: number } | undefined;
-    for (;;) {
-      if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-      // A screen request keeps the profile whose conversation asked, even if its planned tool is free again.
-      const wanted = task.screen?.roleId === roleId ? task.screen.profileId : plannedId;
-      const room = options.room ?? ((toolId: Id, profile: AgentProfile) => !slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId }));
-      const choice = this.k.choose(wanted, scope, roleId, room, options.reviewerKey)!;
-      if (choice.kind === "none" && choice.readiness && !stopped) {
-        // Only a saved participant's uncertain tool stands in the way. A step holding its place keeps it for the
-        // bounded decision and chooses again; otherwise the check starts or is joined and the task waits as usual.
-        if (!options.member && this.k.readiness.hold(task, choice.readiness)) {
-          const kept = await this.k.readiness.resolveHeld(choice.readiness, signal);
-          if (signal.aborted) throw new Aborted();
-          if (!kept) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-          if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-          continue;
-        }
-        if (!this.k.taskAdmissionsClosed(task)) void this.k.readiness.resolve(choice.readiness);
-      }
-      if (choice.kind === "none") {
-        // A full model, with nothing else to take the step, retries the same conversation. It is not a usage limit,
-        // unless the account is out as well: then the wait is that limit's.
-        if (stopped?.error instanceof ModelAtCapacity) {
-          this.prepareCapacityRetry(scope, roleId, stopped.profileId, stopped.error, options.member);
-          this.k.waitForUsage(task, choice.waiting);
-          throw waitingFor(choice.waiting);
-        }
-        // Stopped by a limit and waiting for the reset: the step's next attempt is a retry.
-        if (stopped) this.k.tracking.owesRetry(scope, roleId, plannedId);
-        this.k.waitForUsage(task, choice.waiting);
-        throw new WaitingForUsage(choice.waiting);
-      }
-      const { profile } = choice;
-      // The same model, including another effort of it, cannot take over from itself.
-      if (stopped?.error instanceof ModelAtCapacity && (stopped.profileId === profile.id || sameCapacityModel(stopped.error, profile))) {
-        this.prepareCapacityRetry(scope, roleId, stopped.profileId, stopped.error, options.member);
-        const words = this.capacityWords(scope, stopped.profileId);
-        this.k.waitForUsage(task, words);
-        throw new WaitingForCapacity(words);
-      }
-      // The tool said it was out while running something it should not have limited: the step cannot go on.
-      if (stopped?.profileId === profile.id) throw stopped.error;
-      // Every actual tool qualifies, including an internal errand before a reviewer, and a handoff
-      // to another model on the same tool. The task's old seat is the one being replaced.
-      const wait = options.room
-        ? room(profile.toolId, profile) ? undefined : `Waiting for a free ${this.k.s.tools.find((tool) => tool.id === profile.toolId)?.name ?? profile.toolId} slot`
-        : slotWait(this.k.activeState(), { ...profile, taskId: task.id, toolId: profile.toolId });
-      if (wait) {
-        if (stopped && !(stopped.error instanceof ModelAtCapacity)) this.k.tracking.owesRetry(scope, roleId, plannedId);
-        this.k.waitForUsage(task, wait);
-        throw new WaitingForUsage(wait);
-      }
-      this.k.tracking.attempt(scope, roleId, plannedId, profile, stopped !== undefined);
-      options.used?.(profile.id);
-      // Said where the coordinator will see it: a security review that could not stay off the builder's tool.
-      const builder = this.k.profile(task.plan?.stages.find((stage) => this.k.role(stage.roleId, task)?.result === "build")?.profileIds[0] ?? "");
-      const builderTool = repository.builderSession?.toolId ?? builder?.toolId;
-      if (roleId === "security-reviewer" && builderTool === profile.toolId && !task.timeline.some((entry) => entry.text.startsWith("Security review on the builder's tool"))) {
-        this.k.log(scope, "warn", `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`);
-      }
-      try {
-        return await this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" "), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;
-        if (error instanceof ModelAtCapacity) {
-          // Keep the conversation and the work. The same model gets a few short continues before anyone else takes the step.
-          // An agent that already has the screen keeps it: this is not a usage limit, and it does not give the screen up.
-          this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
-          if (this.deferCapacity(scope, roleId, profile.id, error, plannedId, options.member)) {
-            const words = this.capacityWords(scope, profile.id);
-            this.k.waitForUsage(task, words);
-            throw new WaitingForCapacity(words);
-          }
-          stopped = { profileId: profile.id, error, at: Date.now() };
-          continue;
-        }
-        if (!(error instanceof UsageLimited)) throw error;
-        this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
-        this.k.recordLimit(task, roleId, profile.id, error);
-        if (task.screen?.granted && task.screen.profileId === profile.id) {
-          this.k.tracking.owesRetry(scope, roleId, plannedId);
-          this.k.waitForScreen(task);
-          throw new ScreenWait();
-        }
-        stopped = { profileId: profile.id, error, at: Date.now() };
-      }
-    }
+    return this.recovery.main({ scope, roleId, plannedId, signal, get room() { return options.room; }, reviewerKey: options.reviewerKey, member: options.member, used: id => options.used?.(id),
+      attempt: (profile, choice) => this.attempt(scope, roleId, plannedId, profile, given, schema, signal, { ...options, selectionReason: [options.selectionReason, choice.reason].filter(Boolean).join(" "), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) }),
+    });
   }
 
   /** What an agent had said when it stopped joins the session, so the one taking over can be told. */
@@ -644,108 +592,16 @@ export class Turns {
   ): Promise<T> {
     const { task } = scope;
     if (!this.k.role(roleId, task) || !this.k.productOf(scope) || !(task.maintenance?.profile.id === plannedId || this.k.profile(plannedId))) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
-    if (signal.aborted) throw new Aborted();
-    const key = options.key ?? `${roleId}:${plannedId}`;
-    let role = task.hunt?.roles?.[key];
-    // Out of usage: a stand-in looks at the change instead, told what the first one had said. With none, the
-    // group (not this agent) makes the task wait: the others carry on, and this one is left for later.
-    let stopped: { profileId: Id; error: UsageLimited | ModelAtCapacity; at: number } | undefined;
-    // The group already reserved `seat` (the card shows it). Choosing again after that reservation sees a
-    // full pool and would start the first full stand-in instead, so the first attempt uses the reserved profile.
-    let first = true;
-    // Partners of one step share the read the group just did. A usage replacement is another attempt and reads again.
-    let refresh = options.refresh !== false;
-    for (;;) {
-      if (!first && this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-      const accepted = first && options.seat ? this.k.profile(options.seat) : undefined;
-      first = false;
-      let profile: AgentProfile;
-      // The reserved seat's words belong to its first attempt. Every later choice replaces both, even with none,
-      // so a stand-in never repeats why the first start was fresh.
-      let selectionReason = options.selectionReason;
-      let freshReason = options.freshReason;
-      let readiness = options.readiness;
-      if (accepted) profile = accepted;
-      else {
-        const choice = this.k.choose(plannedId, scope, roleId, options.room, options.reviewerKey);
-        if (!choice) throw new Error(`Unknown role or profile: ${roleId} on ${plannedId}`);
-        if (choice.kind === "none") {
-          // A member adds no place for a readiness check: the check starts or is joined, and the group waits as usual.
-          if (choice.readiness && !this.k.taskAdmissionsClosed(task)) void this.k.readiness.resolve(choice.readiness);
-          // The group waits. A full model is not a usage limit: peers finish, and this seat stays for the same profile.
-          // When the account is out as well, the wait is that limit's.
-          if (stopped?.error instanceof ModelAtCapacity) {
-            this.prepareCapacityRetry(scope, roleId, stopped.profileId, stopped.error, options.member);
-            throw waitingFor(choice.waiting);
-          }
-          // The group waits, and this agent is started again after: that attempt is a retry.
-          if (stopped) this.k.tracking.owesRetry(scope, roleId, plannedId);
-          throw new WaitingForUsage(choice.waiting);
-        }
-        profile = choice.profile;
-        selectionReason = choice.reason;
-        freshReason = choice.freshReason;
-        readiness = choice.readiness;
-      }
-      if (stopped?.error instanceof ModelAtCapacity && (stopped.profileId === profile.id || sameCapacityModel(stopped.error, profile))) {
-        this.prepareCapacityRetry(scope, roleId, stopped.profileId, stopped.error, options.member);
-        throw new WaitingForCapacity(this.capacityWords(scope, stopped.profileId));
-      }
-      // Every new choice, including after a failed cross-round reopen, must fit this member's seat.
-      if (!accepted && options.room && !options.room(profile.toolId, profile)) {
-        const tool = this.k.s.tools.find((entry) => entry.id === profile.toolId)?.name ?? profile.toolId;
-        if (stopped && !(stopped.error instanceof ModelAtCapacity)) this.k.tracking.owesRetry(scope, roleId, plannedId);
-        throw new WaitingForUsage(`Waiting for a free ${tool} slot`);
-      }
-      if (stopped && stopped.profileId === profile.id) throw stopped.error;
-      this.k.tracking.attempt(scope, roleId, plannedId, profile, stopped !== undefined);
-      if (!role) {
-        role = structuredClone(this.k.role(roleId, task)!);
-        if (task.hunt) {
-          task.hunt.roles = { ...task.hunt.roles, [key]: role };
-          this.k.commitNow(scope);
-        }
-      }
-      options.used?.(profile.id);
-      const previous = task.hunt?.work?.[key];
-      const work = {
-        ...previous,
-        attempts: previous?.attempts ?? 0,
-        clock: previous?.clock ? resumeClock(previous.clock, Date.now()) : startClock(repositoryView(scope), roleId, Date.now()),
-      };
-      delete work.waiting;
-      task.hunt!.work = { ...task.hunt!.work, [key]: work };
-      const active = [task.agent, ...(task.helpers ?? [])].find((agent) => agent?.reviewKey === key);
-      if (active) active.profileId = profile.id;
-      this.k.showReviewWork(task);
-      this.k.commitNow(scope);
-      const since = Date.now();
-      try {
-        return await this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, freshReason, readiness, member: options.member ?? key, ...(stopped ? { took: { from: this.k.named(stopped.profileId), words: this.lastWords(scope, roleId, stopped.profileId, stopped.at), ...(stopped.error instanceof ModelAtCapacity ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        if (this.discardUnavailableParticipant(scope, roleId, error, options.reviewerKey)) continue;
-        if (error instanceof ModelAtCapacity) {
-          refresh = true;
-          work.clock = pauseClock(work.clock, Date.now());
-          // This member stopped working: a peer's retry no longer says the others continue.
-          this.k.showReviewWork(task);
-          this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
-          // Peers keep working. The group waits only once this member's short retries, or its stand-in, are exhausted.
-          if (this.deferCapacity(scope, roleId, profile.id, error, plannedId, options.member)) throw new WaitingForCapacity(this.capacityWords(scope, profile.id));
-          stopped = { profileId: profile.id, error, at: since };
-          continue;
-        }
-        if (!(error instanceof UsageLimited)) throw error;
-        refresh = true;
-        // This member has stopped, even while its peers keep working. A stand-in resumes its clock.
-        work.clock = pauseClock(work.clock, Date.now());
-        this.k.showReviewWork(task);
-        this.keepWords(scope, roleId, profile.id, options.reviewerKey, error);
-        this.k.recordLimit(task, roleId, profile.id, error);
-        stopped = { profileId: profile.id, error, at: since };
-      }
-    }
+    return this.recovery.member({ scope, roleId, plannedId, signal, get room() { return options.room; }, reviewerKey: options.reviewerKey, member: options.member, used: id => options.used?.(id),
+      roomCheck: (toolId, profile) => options.room!(toolId, profile),
+      key: options.key, seat: options.seat, selectionReason: options.selectionReason, freshReason: options.freshReason, readiness: options.readiness, refresh: options.refresh,
+      attempt: (role, profile, selected) => {
+        const { key, refresh, plannedId, selectionReason, freshReason, readiness, took } = selected;
+        return this.attemptTogether(scope, role, profile, copy, given, schema, signal, { ...options, key, refresh, plannedId, selectionReason, freshReason, readiness, member: options.member ?? key,
+          ...(took ? { took: { from: this.k.named(took.profileId), words: this.lastWords(scope, roleId, took.profileId, took.at), ...(took.refusal !== undefined ? { refusal: took.refusal } : {}) } } : {}),
+        });
+      },
+    });
   }
 
   /** The latest pull-request conversation, for the agents about to share one step. A task that did not start from a pull request has nothing to read. */
@@ -1423,64 +1279,8 @@ export class Turns {
     return { stage: this.stepTitle(scope), role: role.name, done: done.slice(-MAX_DONE) };
   }
 
-  /**
-   * A full model retries the same conversation before anyone else takes the step.
-   * True while short continues remain: the caller waits and reopens this conversation.
-   * False once those continues are sent: the caller may hand the step on, or wait when a switch is not allowed.
-   */
-  private deferCapacity(scope: RepositoryContext, roleId: Id, profileId: Id, error: ModelAtCapacity, plannedId: Id, member?: string): boolean {
-    const { task } = scope;
-    const sameRetry = (entry: { roleId: Id; profileId: Id; member?: string }) => entry.roleId === roleId && entry.profileId === profileId && entry.member === member;
-    const tried = task.capacityRetries?.find(sameRetry)?.tried ?? 0;
-    const delay = capacityRetryDelay(tried, error.retryAfterMs);
-    if (delay !== undefined) {
-      const next = { toolId: error.toolId, modelId: error.modelId, profileId, roleId, tried: tried + 1, ...(member ? { member } : {}) };
-      task.capacityRetries = [...(task.capacityRetries ?? []).filter((entry) => !sameRetry(entry)), next];
-      // Set before the commit inside recordModelCapacity, so a schedule during that save cannot hand the step on.
-      // plannedId is the step's original profile, so a replacement's short retry still holds that step.
-      const pause = { toolId: error.toolId, modelId: error.modelId, profileId, roleId, plannedId, ...(member ? { member } : {}) };
-      task.capacityPaused = [...(task.capacityPaused ?? []).filter((entry) => !sameRetry(entry)), pause];
-      this.k.recordModelCapacity(task, roleId, profileId, error, delay);
-      this.prepareCapacityRetry(scope, roleId, profileId, error, member);
-      return true;
-    }
-    // The short continues are used up. Drop the hold so this choice can hand the step on, and keep the model
-    // full so it does not start the five-second delay again.
-    const paused = (task.capacityPaused ?? []).filter((entry) => !sameRetry(entry));
-    if (paused.length) task.capacityPaused = paused;
-    else delete task.capacityPaused;
-    this.k.recordModelCapacity(task, roleId, profileId, error, Math.max(MODEL_CAPACITY_WAIT_MS, error.retryAfterMs ?? 0));
-    return false;
-  }
-
-  /** Remember the full model and, when this conversation is the one that stopped, reopen it with a short continue. */
-  private prepareCapacityRetry(scope: RepositoryContext, roleId: Id, profileId: Id, error: ModelAtCapacity, member?: string): void {
-    const { task, work: repository } = scope;
-    const profile = this.k.profile(profileId);
-    const note = repository.conversation;
-    const model = profile?.modelId ?? profile?.model;
-    if (note && profile && note.roleId === roleId && note.profileId === profileId && note.toolId === profile.toolId && note.model === model) note.capacityContinue = true;
-    if (error.sessionId && profile && model) {
-      const next = { sessionId: error.sessionId, profileId, roleId, toolId: profile.toolId, model, ...(member ? { member } : {}) };
-      const others = (task.capacityResume ?? []).filter((entry) => !(entry.roleId === roleId && entry.profileId === profileId && entry.member === member));
-      task.capacityResume = [...others, next];
-    }
-  }
-
-  /** Drop the saved resumes that match. Another reviewer working beside this one keeps its own. */
   private forgetCapacityResume(task: { capacityResume?: { sessionId: string; profileId: Id; roleId: Id; toolId: Id; model: string; member?: string }[] }, match: (entry: { sessionId: string; profileId: Id; roleId: Id; member?: string }) => boolean): void {
-    const kept = (task.capacityResume ?? []).filter((entry) => !match(entry));
-    if (kept.length) task.capacityResume = kept;
-    else delete task.capacityResume;
-  }
-
-  /** What the task says while it waits to try this profile's model again. */
-  private capacityWords(scope: RepositoryContext, profileId: Id): string {
-    const { task } = scope;
-    const profile = this.k.profile(profileId);
-    const model = profile?.modelId ?? profile?.model;
-    const until = task.modelCapacity?.find((entry) => entry.until > Date.now() && entry.toolId === profile?.toolId && entry.modelId === model)?.until ?? Date.now() + MODEL_CAPACITY_WAIT_MS;
-    return capacityWaiting(until, Date.now());
+    this.recovery.capacity.forget(task, match);
   }
 
   /** The agent showed it has its instructions: from now on a restart may reopen its conversation. */

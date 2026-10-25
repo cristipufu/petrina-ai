@@ -1,3 +1,4 @@
+import { recordModelCapacity, expireModelCapacity } from "@petrina/orchestrator";
 import { conversationDigest } from "./participant-conversation.js";
 import { ProfileSelection, type ProfileSelectionResult } from "@petrina/orchestrator";
 import { UsageRecording } from "@petrina/orchestrator";
@@ -134,10 +135,7 @@ export class UsageCoordinator {
    */
   recordModelCapacity(task: MTask, roleId: Id, profileId: Id, error: ModelAtCapacity, waitMs = MODEL_CAPACITY_WAIT_MS): void {
     const now = Date.now();
-    const until = now + waitMs;
-    const next = { toolId: error.toolId, modelId: error.modelId, profileId, until };
-    const kept = (task.modelCapacity ?? []).filter((entry) => entry.until > now && !(entry.toolId === next.toolId && entry.modelId === next.modelId));
-    task.modelCapacity = [...kept, next];
+    recordModelCapacity(task, profileId, error, waitMs, now);
     this.k.log(task, "warn", `${this.k.role(roleId, task)?.name ?? roleId} on ${this.k.named(profileId)} stopped because the selected model is at capacity`, roleId, profileId);
     this.armLimitTimer();
     this.k.commitNow();
@@ -157,21 +155,7 @@ export class UsageCoordinator {
       }
     }
     for (const task of this.k.s.tasks) {
-      if (task.modelCapacity?.length) {
-        const kept = task.modelCapacity.filter((entry) => entry.until > now);
-        if (kept.length !== task.modelCapacity.length) {
-          changed = true;
-          if (kept.length) task.modelCapacity = kept;
-          else delete task.modelCapacity;
-        }
-      }
-      if (!task.capacityPaused?.length) continue;
-      const active = new Set((task.modelCapacity ?? []).map((entry) => `${entry.toolId}\0${entry.modelId}`));
-      const paused = task.capacityPaused.filter((entry) => active.has(`${entry.toolId}\0${entry.modelId}`));
-      if (paused.length === task.capacityPaused.length) continue;
-      changed = true;
-      if (paused.length) task.capacityPaused = paused;
-      else delete task.capacityPaused;
+      if (expireModelCapacity(task, now)) changed = true;
     }
     return changed;
   }

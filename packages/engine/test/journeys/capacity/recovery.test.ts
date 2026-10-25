@@ -1,6 +1,11 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { directDrivers, closeDirectDrivers, removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-runtime.js";
+import { executionFor } from "@petrina/orchestrator";
+import { rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { usageLines, type RoutineDraft, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 
@@ -10,10 +15,11 @@ import { MODEL_CAPACITY_WAIT_MS } from "../../../src/usage.js";
 import { CODEX_MODEL_CAPACITY } from "@petrina/agent-runtime/provider-interruptions";
 
 import type { NativeStep, Scenario } from "../../fake-agent.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, makeWorld, removeDir, tempDir, waitFor } from "../../support.js";
+import { Fakes, FAKE_AGENT, git, makeProduct, tempDir, waitFor } from "../../support.js";
 
 const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const fixtures = new Set<ReturnType<typeof directDrivers>>();
+afterAll(async () => { await closeDirectDrivers(fixtures); fixtures.clear(); roots.forEach(removeFixtureRoot); });
 
 const SENTENCE = CODEX_MODEL_CAPACITY;
 
@@ -46,17 +52,41 @@ function holdCapacityWaits(engine: Engine): CapacityStop[] {
 }
 
 /** One task on fake agents, delivering locally, with every tool counted as installed. */
-async function start(scenario: Scenario, options: { description?: string; before?: (engine: Engine) => void } = {}) {
+async function start(scenario: Scenario, options: { description?: string; before?: (engine: Engine) => void; focus?: "builder" | "review" } = {}) {
   const root = tempDir("petrina-capacity-");
   roots.push(root);
+  const lifetime = directDrivers(root); fixtures.add(lifetime);
+  const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
+  return setupWithCleanup(async () => {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
+  const engine = lifetime.open(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], toolPath: () => process.execPath });
   const stops = holdCapacityWaits(engine);
+  if (options.focus) engine.setPoolPaused(true);
   options.before?.(engine);
+  return lifetime.prepare(async () => {
   const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);
-  const taskId = engine.addTask({ productId, title: "Add a greeting", description: options.description ?? "[no-check]" });
+  const taskId = engine.addTask({ productId, title: "Add a greeting", description: options.description ?? "[no-check]", ...(options.focus ? { backlog: true } : {}) });
+  if (options.focus) {
+    const task = engine.task(taskId)!;
+    await localFixtureSource(engine, task);
+    const profiles = scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"];
+    task.plan = { rationale: "Focused native capacity stage; the private repository remains real", plannerProfileId: "sol-xhigh", stages: screenFixturePlan(profiles) };
+    if (scenario.planner === "grok-build") task.plan.stages[0]!.profileIds = ["grok-xhigh"];
+    task.approvePlan = false; task.approveDelivery = true;
+    task.risk = { level: "low", why: "Private greeting fixture" };
+    task.stageIndex = options.focus === "review" ? 1 : 0;
+    if (options.focus === "review") {
+      const work = executionFor(task).work, product = engine.s.products.find(product => product.id === productId)!;
+      const base = await git(product.path!, "rev-parse", "HEAD"), worktree = join(root, "capacity-work");
+      await git(product.path!, "worktree", "add", "-q", "-b", "capacity-target", worktree, base);
+      writeFileSync(join(worktree, "greeting.txt"), "Hello from the actual private review fixture\n");
+      await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Prepare the greeting under review");
+      Object.assign(work, { worktree, branch: "capacity-target", baseSha: base, base, preparation: "ready" });
+    }
+    engine.queueTask(taskId); engine.setPoolPaused(false);
+  }
   const find = () => engine.getState().tasks.find((task) => task.id === taskId) as Task;
   const answer = () => {
     for (const item of engine.getState().inbox) {
@@ -72,6 +102,9 @@ async function start(scenario: Scenario, options: { description?: string; before
       answer();
       const task = find();
       if (task.state === "failed") throw new Error(`The task failed: ${task.error}`);
+      // Focused cases stop only after a real completed review at the existing delivery decision.
+      if (options.focus) return task.state === "needs-you" && engine.s.inbox.some(item => item.taskId === taskId && item.kind === "delivery")
+        && task.journey?.some(step => step.kind === "agent" && step.roleId === "code-reviewer" && step.endedAt !== undefined) && task;
       return task.state === "done" && task;
     }, "the task to finish", TASK_MS);
   const modelOf = (session: string) => fakes.settings(session).find((line) => line.startsWith("model="))?.slice("model=".length);
@@ -79,7 +112,9 @@ async function start(scenario: Scenario, options: { description?: string; before
     const line = fakes.settings(session).find((entry) => entry.startsWith("effort=") || entry.startsWith("reasoning_effort="));
     return line?.slice(line.indexOf("=") + 1);
   };
-  return { root, engine, fakes, find, read, done, answer, modelOf, effortOf, taskId, stops };
+  return { root, engine, fakes, find, read, done, answer, modelOf, effortOf, taskId, stops, close };
+  });
+  }, close);
 }
 
 type Run = Awaited<ReturnType<typeof start>>;
@@ -220,12 +255,12 @@ describe.concurrent("a Codex model that is at capacity", () => {
           expect(next.text).toContain("I drafted the greeting before the model filled up.");
           expect(next.text).toContain("capacity-draft.txt");
         }
-      } finally { await run.engine.shutdown(); }
+      } finally { await run.close(); }
     });
   }
 
   it("waits about five minutes after the short retries when nothing else can take the step", async () => {
-    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", times: 4 }] }, { before: onlySol });
+    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", times: 4 }] }, { before: onlySol, focus: "builder" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
       const waiting = await capacityWait(run, 5 * 60_000);
@@ -250,7 +285,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(run.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume", "resume"]);
       expect(roundOf(task, "code-reviewer")).toBe(1);
       assertNotAccountLimit(run, task);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps a draft while it waits, then continues in the same conversation", async () => {
@@ -274,7 +309,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(again.startsWith("The selected model was at capacity.")).toBe(true);
       expect(again).not.toContain("# Your job");
       await run.done();
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("continues on another tool after the short retries when no other Codex model is free", async () => {
@@ -296,7 +331,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(next.text).toContain("could not continue (the selected model is at capacity)");
       expect(next.text).toContain("capacity-draft.txt");
       expect(roundOf(task, "code-reviewer")).toBe(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("recognizes Codex's overloaded stop and retries the same conversation", async () => {
@@ -318,11 +353,11 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(builders[1]!.text).not.toContain("# Your job");
       expect(roundOf(task, "code-reviewer")).toBe(1);
       assertNotAccountLimit(run, task);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("honors a provider retry delay before continuing the same conversation", async () => {
-    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", thrown: true, retryAfterMs: 45_000 }] });
+    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", thrown: true, retryAfterMs: 45_000 }] }, { focus: "builder" });
     try {
       await capacityWait(run, 45_000);
       const session = run.fakes.received("builder")[0]!.session;
@@ -335,7 +370,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(builders[1]!.text.startsWith("The selected model was at capacity.")).toBe(true);
       expect(builders[1]!.text).not.toContain("# Your job");
       assertNotAccountLimit(run, task);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("accepts a finished result that only mentions the sentence", async () => {
@@ -347,7 +382,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(live(run).modelCapacity).toBeUndefined();
       assertNotAccountLimit(run, task);
       expect(roundOf(task, "code-reviewer")).toBe(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps the other reviewer's result and does not spend a review round", async () => {
@@ -392,7 +427,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(next.text).toContain("could not continue (the selected model is at capacity)");
       expect(next.text).toContain("I drafted the greeting before the model filled up.");
       expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume"]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps the design round when the design reviewer's model is full", async () => {
@@ -417,7 +452,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(roundOf(task, "architect")).toBe(1);
       expect(roundOf(task, "code-reviewer")).toBe(1);
       assertNotAccountLimit(run, task);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("continues a replacement reviewer after the original model is free again", async () => {
@@ -429,7 +464,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
         { model: "gpt-6.1-sol", role: "code reviewer", times: 4 },
         { model: "gpt-6-astra", role: "code reviewer", times: 1, thrown: true, retryAfterMs: 10 * 60_000 },
       ],
-    });
+    }, { focus: "review" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
       await capacityWait(run, 10 * 60_000, "gpt-6-astra", 1);
@@ -452,11 +487,11 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(astra[0]!.text).toContain("could not continue (the selected model is at capacity)");
       expectShortContinues(astra.slice(1));
       expect(run.fakes.opens().filter((entry) => entry.session === astra[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps a Codex vote on another Codex model after the short retries", async () => {
-    const run = await start({ planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "verifier", times: 4 }] });
+    const run = await start({ planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "verifier", times: 4 }] }, { focus: "review" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
       const task = await run.done();
@@ -470,7 +505,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(verifiers.filter((entry) => entry.session === first.session)).toHaveLength(4);
       expectShortContinues(verifiers.filter((entry) => entry.session === first.session).slice(1));
       expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume"]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps a replacement voter's conversation and moves on to the longer wait", async () => {
@@ -484,7 +519,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
         { model: "gpt-6.1-sol", role: "verifier", times: 4 },
         { model: "gpt-6-astra", role: "verifier", times: 2 },
       ],
-    });
+    }, { focus: "review" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
       await capacityWait(run, 5_000, "gpt-6-astra", 1);
@@ -516,13 +551,13 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(new Set(astra.map((entry) => entry.session)).size).toBe(1);
       expectShortContinues(astra.slice(1));
       expect(run.fakes.opens().filter((entry) => entry.session === astra[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume"]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("waits to vote when every Codex model is full, then continues that vote", async () => {
     const run = await start({ planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "verifier", times: 4 }] }, {
       before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.modelId !== "gpt-6-astra"); },
-    });
+      focus: "review" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
       const waiting = await capacityWait(run, 5 * 60_000);
@@ -545,7 +580,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expectShortContinues(sol.slice(1));
       expect(run.fakes.opens().filter((entry) => entry.session === sol[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume", "resume"]);
       assertNotAccountLimit(run, task);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("retries the same profile when the agent already has the screen", async () => {
@@ -579,7 +614,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(run.modelOf(builders[5]!.session)).toBe("gpt-6.1-sol");
       expect(run.effortOf(builders[5]!.session)).toBe("xhigh");
       assertNotAccountLimit(run, task);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("reopens both reviewers' conversations when they fill up together", async () => {
@@ -612,7 +647,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
         expect(run.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume"]);
       }
       expect(sessions.map((session) => run.modelOf(session)).sort()).toEqual(["gpt-6-astra", "gpt-6.1-sol"]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("gives a replacement model its own short retries before another tool takes the step", async () => {
@@ -624,7 +659,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
         { model: "gpt-6.1-sol", role: "builder", times: 4 },
         { model: "gpt-6-astra", role: "builder", times: 1 },
       ],
-    });
+    }, { focus: "builder" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
       await capacityWait(run, 5_000, "gpt-6-astra");
@@ -645,7 +680,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(astra[0]!.text).toContain("could not continue (the selected model is at capacity)");
       expectShortContinues(astra.slice(1));
       expect(run.fakes.opens().filter((entry) => entry.session === astra[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("still records a real usage limit as the account running out", async () => {
@@ -656,7 +691,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(task.timeline.some((entry) => entry.text.includes("ran out of usage"))).toBe(true);
       expect(task.timeline.some((entry) => entry.text.includes("at capacity"))).toBe(false);
       expect(usageLines(run.engine.getState(), Date.now()).find((line) => line.toolId === "codex")?.tone).toBe("out");
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 });
 
@@ -683,7 +718,7 @@ describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
       expect(run.modelOf(next.session)).not.toBe("opus");
       expect(next.text).toContain("could not continue (the selected model is at capacity)");
       expect(roundOf(task, "code-reviewer")).toBe(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("retries Grok's conversation after a mid-turn overload, keeps its draft, and does not bring back a replayed reconnect", async () => {
@@ -710,13 +745,13 @@ describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
       expect(task.retrying).toBeUndefined();
       assertNotAccountLimit(run, task, "grok");
       expect(roundOf(task, "code-reviewer")).toBe(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("waits about five minutes after Grok's short retries when no other tool can take the step", async () => {
     const run = await start({ planner: "grok-build", builder: "plain", reopen: "load", capacity: [{ model: "grok-4.7", role: "builder", shape: "grok", times: 4 }] }, {
       before: (engine) => { engine.s.setup!.checks = [{ id: "claude-code", status: "logged-out" }, { id: "codex", status: "logged-out" }, { id: "grok", status: "ready" }, { id: "antigravity", status: "logged-out" }]; },
-    });
+      focus: "builder" });
     try {
       await sameModelWaits(run, SHORT_WAITS, "grok-4.7");
       const waiting = await capacityWait(run, 5 * 60_000, "grok-4.7");
@@ -734,21 +769,26 @@ describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
       expectShortContinues(builders.slice(1));
       expect(roundOf(task, "code-reviewer")).toBe(1);
       assertNotAccountLimit(run, task, "grok");
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 });
 
 describe("a scheduled run whose model is at capacity", () => {
   it("waits and retries the saved profile, and leaves the working copy unchanged", async () => {
-    const world = await makeWorld("capacity-maintenance");
-    roots.push(world.dir);
-    const fakes = new Fakes(join(world.dir, "agents"));
-    fakes.scenario({ maintenance: {}, reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "bug finder", times: 4 }] });
-    const engine = world.start({ agentCommand: (profile) => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`], toolPath: () => process.execPath });
-    const stops = holdCapacityWaits(engine);
-    engine.setPoolPaused(true);
+    const root = tempDir("petrina-capacity-maintenance-"); roots.push(root);
+    const lifetime = directDrivers(root); fixtures.add(lifetime);
+    const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
+    const { engine, fakes, stops, clone } = await setupWithCleanup(() => lifetime.prepare(async () => {
+      const fakes = new Fakes(join(root, "agents"));
+      fakes.scenario({ maintenance: {}, reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "bug finder", times: 4 }] });
+      const engine = lifetime.open(join(root, "data"), { agentCommand: (profile) => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`], toolPath: () => process.execPath });
+      const stops = holdCapacityWaits(engine);
+      engine.setPoolPaused(true);
+      const clone = await makeProduct(root);
+      return { engine, fakes, stops, clone };
+    }), close);
     try {
-      const productId = await engine.addProduct(world.clone);
+      const productId = await engine.addProduct(clone);
       engine.setProductChecks(productId, [{ name: "Tests", command: `${process.execPath} -e 'process.exit(0)'` }]);
       const draft: RoutineDraft = { name: "Focused maintenance", productId, roleId: "maintenance-bug-finder", profileId: "sol-medium", focus: "Inspect checkout behavior", zone: "UTC", schedule: { kind: "daily", time: "09:00" }, enabled: true };
       const routineId = engine.saveRoutine(draft);
@@ -786,6 +826,13 @@ describe("a scheduled run whose model is at capacity", () => {
       expect(task.maintenance?.noProductChanges).toBe(true);
       expect(engine.getState().pool.limited ?? []).toEqual([]);
       expect(task.timeline.some((line) => line.text.includes("ran out of usage"))).toBe(false);
-    } finally { await engine.shutdown(); }
+    } finally { await close(); }
   });
+});
+
+for (const failure of [undefined, new Error("Controlled native setup failure")]) it(`owns failed capacity setup even when its rejection is ${failure === undefined ? "undefined" : "an Error"}`, async () => {
+  let failedRoot: string | undefined;
+  expect(await rejectionOf(start({}, { before(engine) { failedRoot = dirname(engine.dataDir); throw failure; } }))).toBe(failure);
+  expect(failedRoot).toBeDefined();
+  expect(existsSync(failedRoot!)).toBe(false);
 });

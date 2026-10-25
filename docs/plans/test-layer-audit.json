@@ -4231,7 +4231,10 @@
       "splitFiles": [
         "packages/engine/test/journeys/capacity/recovery.test.ts",
         "packages/engine/test/rules/usage/capacity-signals.test.ts",
-        "packages/engine/test/contracts/usage/profile-selection.test.ts"
+        "packages/engine/test/contracts/usage/profile-selection.test.ts",
+        "packages/orchestrator/test/orchestration/usage/capacity-recovery.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/capacity-ballots.test.ts",
+        "packages/engine/test/contracts/agents/recovery-callbacks.test.ts"
       ],
       "layer": "journeys",
       "area": "capacity",
@@ -4239,6 +4242,22 @@
       "validation": {
         "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
         "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      },
+      "capacityRecoveryExtraction": {
+        "source": "workstreams/capacity-cost-next/handoff.json, v3patchd4e152549c491b722838d5e67796b1ea981ba6d8f9b39eec5d56d03ee33b55b5",
+        "state": "Interim actual-controller extraction/prepared-native-stage milestone; final semantic layering remains pending",
+        "oracles": "All204 original matcher ASTs, registration/deadline ASTs and8loop headers retained;23original runtime variants remain native at this milestone.",
+        "qualification": "Root74native/1631reportedexpectations,430Orchestrator cases,all9types/conventions pass on integratedv3. Independent source review closed after receiver corrections and required member-room check.",
+        "cost": {
+          "beforeTarget8Launches": 995,
+          "afterTarget8Launches": 743,
+          "beforeAll23Launches": 2546,
+          "afterAll23Launches": 2294,
+          "beforeTarget8Git": 845,
+          "afterTarget8Git": 609
+        },
+        "limits": "Focused counts only; callback-time sums overlap and full-load vs focused timing is not comparable. Original native23+newportable21 is not final consolidation.",
+        "nextPhase": "workstreams/capacity-cost-next/next-phase-owners.md"
       }
     },
     {
