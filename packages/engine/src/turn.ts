@@ -1,3 +1,4 @@
+import { opensBrowser } from "./browser-policy.js";
 import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 import { completeAll } from "@petrina/core";
 import { mkdirSync } from "node:fs";
@@ -20,7 +21,7 @@ import { capacityRetryDelay, capacityWaiting, MODEL_CAPACITY_WAIT_MS, sameCapaci
 import { ModelAtCapacity, UsageLimited } from "@petrina/agent-runtime/usage";
 import { ADAPTERS, agentCommandFor } from "@petrina/agent-runtime/tools";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
-import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
+import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "@petrina/storage/worklog";
 import { isAuthRequired } from "@petrina/agent-runtime/failures";
@@ -75,11 +76,6 @@ interface TurnOptions<T> extends ConversationOptions {
   member?: string;
   /** A parallel member replaces only its own reserved seat when it continues. */
   room?: (toolId: Id, profile: AgentProfile) => boolean;
-}
-
-/** Real agents get a browser in every role that may check pages. A scripted fake agent never opens a page, so it gets one only when its test asks. */
-export function opensBrowser(role: Role, options: Pick<EngineOptions, "agentCommand" | "browser">): boolean {
-  return mayAskScreen(role) && (options.browser ?? !options.agentCommand);
 }
 
 /** An input recorded while the opening text is being built; it joins the journey with its exact message reference. */

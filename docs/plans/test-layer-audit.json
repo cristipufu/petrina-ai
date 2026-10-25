@@ -1736,11 +1736,27 @@
       }
     },
     {
-      "file": "packages/engine/test/awake.test.ts",
+      "file": "packages/engine/test/contracts/runtime/idle-sleep.test.ts",
       "declarations": 3,
       "assertionSites": 16,
       "baselineDigest": "f3f6fd4dd9f0c9b0bcbf62f61ea3e28bd49d0cc2ee6a0f18823e392755415c48",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/awake.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/idle-sleep.test.ts",
+        "packages/platform/test/orchestration/runtime/idle-sleep.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 3,
+      "reviewedCurrentOriginalAssertionSites": 16,
+      "reviewedCurrentOriginalRuntimeCases": 3,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/state/backlog.test.ts",
@@ -1763,18 +1779,54 @@
       ]
     },
     {
-      "file": "packages/engine/test/browser-folders.test.ts",
+      "file": "packages/agent-runtime/test/contracts/browser/session-folders.test.ts",
       "declarations": 5,
       "assertionSites": 49,
       "baselineDigest": "6ebe713bd1a6dd1143d4a9cc7a1ec21da63c0a1ff3811fd09b1a522e94982e94",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/browser-folders.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/browser/session-folders.test.ts",
+        "packages/engine/test/contracts/runtime/browser-folders.test.ts",
+        "packages/engine/test/rules/runtime/browser-policy.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 5,
+      "reviewedCurrentOriginalAssertionSites": 49,
+      "reviewedCurrentOriginalRuntimeCases": 5,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/browser.test.ts",
+      "file": "packages/agent-runtime/test/contracts/browser/lifecycle.test.ts",
       "declarations": 29,
       "assertionSites": 198,
       "baselineDigest": "1e636e0c5c11996523a6768711970af77a8eeeefa31a9cecb44c863c3e799297",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/browser.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/browser/lifecycle.test.ts",
+        "packages/agent-runtime/test/contracts/browser/reaping-registry.test.ts",
+        "packages/agent-runtime/test/rules/browser/cleanup-note.test.ts",
+        "packages/engine/test/contracts/checks/browser-failure-log.test.ts",
+        "packages/engine/test/contracts/runtime/browser-startup.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 29,
+      "reviewedCurrentOriginalAssertionSites": 204,
+      "reviewedCurrentOriginalRuntimeCases": 39,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/context/atomic-packets.test.ts",
@@ -2349,11 +2401,28 @@
       ]
     },
     {
-      "file": "packages/engine/test/cleanup.test.ts",
+      "file": "packages/engine/test/contracts/cleanup/working-copies.test.ts",
       "declarations": 19,
       "assertionSites": 144,
       "baselineDigest": "e5ddd63fa90221c35b8f3f82232a13144b80d316cf419ad638e5c4a1eb7e72eb",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/cleanup.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/cleanup/working-copies.test.ts",
+        "packages/engine/test/journeys/delivery/cleanup-history.test.ts",
+        "packages/engine/test/journeys/runtime/background-cleanup.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 19,
+      "reviewedCurrentOriginalAssertionSites": 151,
+      "reviewedCurrentOriginalRuntimeCases": 27,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/agent-runtime/test/contracts/providers/codex-background.test.ts",
@@ -2698,11 +2767,26 @@
       }
     },
     {
-      "file": "packages/engine/test/drain.test.ts",
+      "file": "packages/engine/test/journeys/runtime/drain.test.ts",
       "declarations": 2,
       "assertionSites": 10,
       "baselineDigest": "4bf0c2e27b252947d7c27e891cc58327005fc44b451245875f34a3bbea6c5ef1",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/drain.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/runtime/drain.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 2,
+      "reviewedCurrentOriginalAssertionSites": 10,
+      "reviewedCurrentOriginalRuntimeCases": 2,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/edit-roles.test.ts",
@@ -2712,18 +2796,48 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/engine-fixture.test.ts",
+      "file": "packages/engine/test/contracts/testing/engine-options.test.ts",
       "declarations": 8,
       "assertionSites": 34,
       "baselineDigest": "aebc9ea3d7c56668ddbc894400d27fde5b9c1ad0d07597ea62858aaf226edb29",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/engine-fixture.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/testing/engine-options.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 8,
+      "reviewedCurrentOriginalAssertionSites": 38,
+      "reviewedCurrentOriginalRuntimeCases": 11,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/engine-process.test.ts",
+      "file": "packages/engine/test/contracts/testing/engine-process.test.ts",
       "declarations": 7,
       "assertionSites": 21,
       "baselineDigest": "1c2a7a37dc036872241ed11d9f875957487012c7c70b6d9707074ef3f3e700e7",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/engine-process.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/testing/engine-process.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 7,
+      "reviewedCurrentOriginalAssertionSites": 22,
+      "reviewedCurrentOriginalRuntimeCases": 7,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/engine.test.ts",
@@ -4001,11 +4115,27 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/quit.test.ts",
+      "file": "packages/agent-runtime/test/contracts/lifecycle/startup-stop.test.ts",
       "declarations": 4,
       "assertionSites": 26,
       "baselineDigest": "9d268768574e1800a3909aa62ca2543507b554f9f22ef0eeae1c0349b1bc97b3",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/quit.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/lifecycle/startup-stop.test.ts",
+        "packages/engine/test/journeys/runtime/shutdown.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 4,
+      "reviewedCurrentOriginalAssertionSites": 26,
+      "reviewedCurrentOriginalRuntimeCases": 10,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/journeys/readiness/saved-participants.test.ts",
@@ -4257,11 +4387,26 @@
       "from": "packages/engine/test/repository-reads.test.ts"
     },
     {
-      "file": "packages/engine/test/restart.test.ts",
+      "file": "packages/engine/test/journeys/recovery/coordinator-messages.test.ts",
       "declarations": 5,
       "assertionSites": 26,
       "baselineDigest": "ae61ed3bf52b61bbcc49734600c96b171740d8bf40a7e636fe1d9032bc8d7db2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/restart.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/recovery/coordinator-messages.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 5,
+      "reviewedCurrentOriginalAssertionSites": 26,
+      "reviewedCurrentOriginalRuntimeCases": 7,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/core/test/rules/conversations/review-identity.test.ts",
@@ -4457,109 +4602,335 @@
       }
     },
     {
-      "file": "packages/engine/test/runtime-wait-boundaries.test.ts",
+      "file": "packages/engine/test/contracts/runtime/prerequisite-boundaries.test.ts",
       "declarations": 11,
       "assertionSites": 80,
       "baselineDigest": "c90a35d74cd54a65f5db8bb02ce0dbc5f52538964f34ddfc9d1f4c5e82d919aa",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-boundaries.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/prerequisite-boundaries.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 11,
+      "reviewedCurrentOriginalAssertionSites": 80,
+      "reviewedCurrentOriginalRuntimeCases": 19,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-coordination.test.ts",
+      "file": "packages/engine/test/contracts/coordination/runtime-waits.test.ts",
       "declarations": 10,
       "assertionSites": 68,
       "baselineDigest": "0d0ba23703564119226141cb0dae5b6b61a9f502aa9f690e00349d448f1f6ca3",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-coordination.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/runtime-waits.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 10,
+      "reviewedCurrentOriginalAssertionSites": 68,
+      "reviewedCurrentOriginalRuntimeCases": 11,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-initial-copy.test.ts",
+      "file": "packages/engine/test/contracts/recovery/initial-source.test.ts",
       "declarations": 3,
       "assertionSites": 14,
       "baselineDigest": "cafe9b5cadd242d459877108d72e92bb02462b96f905c394bc4bc39d5cbb459e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-initial-copy.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/recovery/initial-source.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 3,
+      "reviewedCurrentOriginalAssertionSites": 14,
+      "reviewedCurrentOriginalRuntimeCases": 5,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-parallel-preparation.test.ts",
+      "file": "packages/engine/test/journeys/review/prerequisite-source.test.ts",
       "declarations": 3,
       "assertionSites": 58,
       "baselineDigest": "19417e8d5e9731ff5ccb682fb4b7ee253354f3450849aef1d6a605a391904c55",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-parallel-preparation.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/review/prerequisite-source.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 3,
+      "reviewedCurrentOriginalAssertionSites": 58,
+      "reviewedCurrentOriginalRuntimeCases": 7,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-partial-recovery.test.ts",
+      "file": "packages/engine/test/journeys/recovery/partial-builder.test.ts",
       "declarations": 6,
       "assertionSites": 105,
       "baselineDigest": "17786d4f926d202179b6a440fc81a5d0ecedb71c8f307b758ac3066da9d3cfbb",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-partial-recovery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/recovery/partial-builder.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 6,
+      "reviewedCurrentOriginalAssertionSites": 106,
+      "reviewedCurrentOriginalRuntimeCases": 16,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-prepared-delivery.test.ts",
+      "file": "packages/engine/test/journeys/delivery/prerequisite-candidate.test.ts",
       "declarations": 12,
       "assertionSites": 70,
       "baselineDigest": "0762521cf486657f647c8c783053def461a7ab39f88140d82c457bfebabc94f1",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-prepared-delivery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/prerequisite-candidate.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 12,
+      "reviewedCurrentOriginalAssertionSites": 81,
+      "reviewedCurrentOriginalRuntimeCases": 18,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-readiness.test.ts",
+      "file": "packages/engine/test/contracts/recovery/readiness-source.test.ts",
       "declarations": 2,
       "assertionSites": 30,
       "baselineDigest": "99baa08ca304cee5508ef48a14b819ff6581004d562ac12824ec937ec07d072f",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-readiness.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/recovery/readiness-source.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 2,
+      "reviewedCurrentOriginalAssertionSites": 30,
+      "reviewedCurrentOriginalRuntimeCases": 8,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-refresh.test.ts",
+      "file": "packages/engine/test/contracts/recovery/shared-source.test.ts",
       "declarations": 5,
       "assertionSites": 39,
       "baselineDigest": "d40c16ca7f20da493c7b4fed6e7355eced605244a042d3ebe5c36050a4d4791b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-refresh.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/recovery/shared-source.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 5,
+      "reviewedCurrentOriginalAssertionSites": 40,
+      "reviewedCurrentOriginalRuntimeCases": 6,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-release-recovery.test.ts",
+      "file": "packages/engine/test/journeys/delivery/release-recovery.test.ts",
       "declarations": 2,
       "assertionSites": 34,
       "baselineDigest": "bb8438b402e201d7e7b8a9c7da2fd887fe4afde795aa71edf0281f1d70d35a25",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-release-recovery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/release-recovery.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 2,
+      "reviewedCurrentOriginalAssertionSites": 35,
+      "reviewedCurrentOriginalRuntimeCases": 5,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-repair.test.ts",
+      "file": "packages/engine/test/journeys/recovery/repair-source.test.ts",
       "declarations": 5,
       "assertionSites": 74,
       "baselineDigest": "f98dc47352305e375fd82722c4040ec3532cede135211588f3e9a98ae29f0d65",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-repair.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/recovery/repair-source.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 5,
+      "reviewedCurrentOriginalAssertionSites": 75,
+      "reviewedCurrentOriginalRuntimeCases": 12,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-screen-cleanup.test.ts",
+      "file": "packages/engine/test/contracts/runtime/screen-group-cleanup.test.ts",
       "declarations": 2,
       "assertionSites": 15,
       "baselineDigest": "c5b67420199142e56cd13a7441817322419e513a0b24bc70384caac6e7ce560d",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-screen-cleanup.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/screen-group-cleanup.test.ts",
+        "packages/orchestrator/test/orchestration/runtime/screen-prerequisites.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 2,
+      "reviewedCurrentOriginalAssertionSites": 15,
+      "reviewedCurrentOriginalRuntimeCases": 3,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-screen-permission.test.ts",
+      "file": "packages/engine/test/contracts/coordination/screen-permissions.test.ts",
       "declarations": 3,
       "assertionSites": 31,
       "baselineDigest": "d9ef0835bd63daa4779ac722564e490a104eed0face1f4d668be163eaeaf4ada",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-screen-permission.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/screen-permissions.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 3,
+      "reviewedCurrentOriginalAssertionSites": 31,
+      "reviewedCurrentOriginalRuntimeCases": 4,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-screen.test.ts",
+      "file": "packages/engine/test/journeys/runtime/prerequisite-screen.test.ts",
       "declarations": 5,
       "assertionSites": 29,
       "baselineDigest": "6eeb47efa8c508df8c550015674c2896ffa99f7f2345021d31a371bf6988cbca",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-screen.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/runtime/prerequisite-screen.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 5,
+      "reviewedCurrentOriginalAssertionSites": 29,
+      "reviewedCurrentOriginalRuntimeCases": 6,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait-shared.test.ts",
+      "file": "packages/engine/test/journeys/delivery/shared-prerequisite.test.ts",
       "declarations": 6,
       "assertionSites": 62,
       "baselineDigest": "444c8991eea4f861862717c4a629d5494ee3942159915e7c72629cadeecfa109",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait-shared.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/shared-prerequisite.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 6,
+      "reviewedCurrentOriginalAssertionSites": 62,
+      "reviewedCurrentOriginalRuntimeCases": 6,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/runtime-wait.test.ts",
+      "file": "packages/engine/test/journeys/runtime/prerequisites.test.ts",
       "declarations": 8,
       "assertionSites": 66,
       "baselineDigest": "706673a8279b6e9a00b178802288b9dc4288a0a4950b6db9cf98721dc8829797",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-wait.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/runtime/prerequisites.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 8,
+      "reviewedCurrentOriginalAssertionSites": 66,
+      "reviewedCurrentOriginalRuntimeCases": 8,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/journeys/sandbox/managed-conversations.test.ts",
@@ -4607,19 +4978,49 @@
       }
     },
     {
-      "file": "packages/engine/test/screen-review.test.ts",
+      "file": "packages/engine/test/journeys/review/screen-copies.test.ts",
       "declarations": 14,
       "assertionSites": 111,
       "baselineDigest": "94167bb4859ebebf5e6db3838a370373fa742db3db109128e975df52bb4759e4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/screen-review.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/review/screen-copies.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 14,
+      "reviewedCurrentOriginalAssertionSites": 111,
+      "reviewedCurrentOriginalRuntimeCases": 24,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/screen.test.ts",
+      "file": "packages/engine/test/journeys/runtime/screen-sessions.test.ts",
       "declarations": 23,
       "assertionSites": 201,
       "baselineDigest": "995bedd03a1f8cf357b2baa67bddd8ac650bc160b48352d2bd683909c5e50bca",
-      "status": "pending",
-      "partialReview": "The hour-expiry decision moved to the actual portable ScreenArbitration with a controlled clock; a real native-clock contract remains. All other native case bytes and assertions are unchanged. Whole-file audit remains pending; see screen-7c6d60ae/moved-hour-case.json."
+      "status": "reviewed",
+      "partialReview": "The hour-expiry decision moved to the actual portable ScreenArbitration with a controlled clock; a real native-clock contract remains. All other native case bytes and assertions are unchanged. Whole-file audit remains pending; see screen-7c6d60ae/moved-hour-case.json.",
+      "from": "packages/engine/test/screen.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/runtime/screen-sessions.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Every original case/variant/assertion audited against actual ownership. Portable drain/idle/screen and typed process policies separate from real process/browser/Git/SQLite/restart contracts. Native shutdown actors have independent leases and no self-expiry/PID-authority fallback; browser startup retains ownership until handle and pipes close. Method receivers and concurrent wrapper corrected during review. Required fresh/resumed real Chromium contract now runs on every supported OS; supplemental opt-ins remain explicit.",
+      "reviewedCurrentOriginalRegistrations": 22,
+      "reviewedCurrentOriginalAssertionSites": 194,
+      "reviewedCurrentOriginalRuntimeCases": 26,
+      "validation": {
+        "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
+        "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/fixtures/scripted-agents.test.ts",

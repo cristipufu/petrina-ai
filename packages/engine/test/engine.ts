@@ -6,6 +6,7 @@ import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 
 /** Child fixtures reconstruct their runtime effects; JSON must never turn them into empty adapters. */
 export function writeFixtureEngineOptions(path: string, options: EngineOptions): void {
+  if (options.browserRecovery !== undefined) throw new TypeError("Browser recovery is process-local. Configure it inside the child fixture instead of serializing it.");
   if (options.files !== undefined) throw new TypeError("File effects are process-local. Configure them inside the child fixture instead of serializing them.");
   if (options.startAgentSession !== undefined) throw new TypeError("Agent sessions are process-local. Configure them inside the child fixture instead of serializing them.");
   if (options.toolProbe !== undefined) throw new TypeError("Tool probes are process-local. Configure them inside the child fixture instead of serializing them.");
@@ -25,6 +26,7 @@ export function fixtureEngineOptions(dataDir: string, options: EngineOptions = {
     containerTool: missing("container"),
     browser: false,
     ...options,
+    ...(options.browserRecovery ? { browserRecovery: (registry: string, root?: string) => options.browserRecovery!(registry, root) } : {}),
     requireAgentCommand: true,
     usageCommands: { ...Object.fromEntries(Object.keys(ADAPTERS).map(id => [id, null])), ...options.usageCommands },
     machineRecords: options.machineRecords ?? noMachineRecords,

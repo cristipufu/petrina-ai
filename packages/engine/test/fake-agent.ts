@@ -458,10 +458,10 @@ export interface AgentScript {
   /** Every builder installs packages and builds: folders the repository ignores, with a link to this shared cache. */
   installs?: { cache: string };
   /**
-   * For the task with this title, the builder starts a build in a process group of its own, which keeps writing
-   * build output for seconds and takes a moment to stop. Its process id goes to `pids`.
+   * For this task, start the caller's independently owned build actor in its own process group.
+   * The actor controls output and stopping; it must not self-expire. Its process id goes to `pids`.
    */
-  background?: { title: string; pids: string };
+  background?: { title: string; pids: string; program: string };
 }
 
 /** Installed packages and build output, the way package managers and compilers leave them. */
@@ -473,13 +473,10 @@ function installs(cwd: string, cache: string): void {
   if (!existsSync(join(cwd, "node_modules", ".cache"))) fixtureFiles.directoryLink(cache, join(cwd, "node_modules", ".cache"));
 }
 
-/** A build that writes its output every 100 ms for seconds, outlives the agent unless stopped, and writes once more as it stops. */
-function backgroundBuild(cwd: string, pids: string): void {
-  const script = `const { mkdirSync, writeFileSync } = require("node:fs"); const dir = process.env.OUT; const end = Date.now() + 8000;
-    const write = () => { mkdirSync(dir, { recursive: true }); writeFileSync(dir + "/out.bin", "x"); };
-    process.on("SIGTERM", () => setTimeout(() => { write(); process.exit(0); }, 300));
-    const tick = () => { write(); if (Date.now() < end) setTimeout(tick, 100); }; tick();`;
-  const child = spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore", env: { ...process.env, OUT: join(cwd, "target", "background") } });
+/** The fixture owns this actor's lifetime independently of the agent whose cleanup is being tested. */
+function backgroundBuild(cwd: string, pids: string, program: string): void {
+  if (!program) throw new Error("A background build fixture needs an independently owned actor program");
+  const child = spawn(process.execPath, [program], { detached: true, stdio: "ignore", env: { ...process.env, OUT: join(cwd, "target", "background") } });
   child.unref();
   if (child.pid) appendFileSync(pids, `${child.pid}\n`);
 }
@@ -1127,7 +1124,7 @@ async function answer(sessionId: string, text: string, client: acp.AgentContext)
       const setup = readScript();
       const named = /^# The task: (.+)$/m.exec(text)?.[1];
       if (setup.installs) installs(session.cwd, setup.installs.cache);
-      if (setup.background && named === setup.background.title) backgroundBuild(session.cwd, setup.background.pids);
+      if (setup.background && named === setup.background.title) backgroundBuild(session.cwd, setup.background.pids, setup.background.program);
       let allowed = true;
       if (!plan.builder) {
         const permission = (await client.request(acp.methods.client.session.requestPermission, {

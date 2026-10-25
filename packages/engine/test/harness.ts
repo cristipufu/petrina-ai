@@ -8,6 +8,7 @@ import { launch } from "../src/launch.js";
 import { fixtureEngineOptions } from "./engine.js";
 
 const [home, dir, remote] = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
+const agentProgram = process.argv.find(arg => arg.startsWith("--agent-program="))?.slice("--agent-program=".length);
 const browserTempRoot = process.argv.find((arg) => arg.startsWith("--browser-root="))?.slice("--browser-root=".length);
 await launch({
   home: home!,
@@ -15,7 +16,7 @@ await launch({
   newKey: process.argv.includes("--new-key"),
   loginShell: false,
   engine: fixtureEngineOptions(home!, {
-    agentCommand: (profile) => [process.execPath, join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`, `--record-tool=${profile.toolId}`, ...(process.argv.includes("--stubborn") ? ["--stubborn"] : [])],
+    agentCommand: (profile) => [process.execPath, agentProgram ?? join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`, `--record-tool=${profile.toolId}`, ...(process.argv.includes("--stubborn") ? ["--stubborn"] : [])],
     gh: [process.execPath, join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), remote ?? join(dir!, "github.git")],
     ...(remote ? { remote } : {}),
     ...(browserTempRoot ? { browser: true, browserTempRoot } : {}),

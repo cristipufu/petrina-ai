@@ -1,3 +1,4 @@
+import { drainRuntime, inFlightWork, keepsIdleSleep } from "@petrina/orchestrator";
 import { appendSessionLine } from "@petrina/core";
 import { CheckQueue } from "./check-queue.js";
 import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
@@ -103,6 +104,8 @@ export interface EngineOptions {
   browser?: boolean;
   /** Tests: a fixture's own parent for temporary browser folders, instead of the standard one. Startup recovery uses it too. */
   browserTempRoot?: string;
+  /** Native startup recovery; applications may supply an owned implementation of the same boundary. */
+  browserRecovery?(registry: string, root?: string): Promise<void>;
   /** Tests: a fake GitHub instead of `gh`. */
   gh?: readonly string[];
   /** Tests: native account-reader commands by tool; null disables a reader. Fake agents disable defaults. */
@@ -308,7 +311,11 @@ export abstract class Kernel {
     readonly options: EngineOptions = {},
   ) {
     this.files = options.files ?? localFiles;
-    this.startupReady = recoverBrowserTemps(join(dataDir, "browser-temp"), options.browserTempRoot).then(() => {
+    const browserRecovery = options.browserRecovery?.bind(options) ?? recoverBrowserTemps;
+    let recovering: Promise<void>;
+    try { recovering = browserRecovery(join(dataDir, "browser-temp"), options.browserTempRoot); }
+    catch (error) { recovering = Promise.reject(error); }
+    this.startupReady = recovering.then(() => {
       this.startupComplete = true;
       if (this.startupSchedulePending && !this.stopped) this.schedule();
     });
@@ -489,21 +496,24 @@ export abstract class Kernel {
   /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
   inFlight(): number {
     const agents = this.runs.size + [...this.helperRuns.values()].reduce((sum, runs) => sum + runs.size, 0);
-    return agents || [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length + this.copyCleanups.size + this.backgroundWork.size + this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length;
+    return agents || inFlightWork({ agents: 0, settling: [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length, copyCleanups: this.copyCleanups.size, background: this.backgroundWork.size, terminals: this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length });
   }
 
   /** Keep macOS awake only while this engine still owns active work or its cleanup. */
   syncIdleSleep(): void {
-    const active = !this.stopped && (
-      [...this.drivers.keys()].some(id => !this.isPausedCheck(id)) ||
-      [...this.settling.keys()].some(id => !this.isPausedCheck(id)) ||
-      this.runs.size > 0 ||
-      [...this.helperRuns.values()].some((runs) => runs.size > 0) ||
-      this.screenGroups.size > 0 ||
-      this.switching.size > 0 ||
-      this.copyCleanups.size > 0 ||
-      this.cleanupJobs.size > 0 || !!this.extraChecksActive?.()
-    );
+    if (this.stopped) { this.idleSleep.setActive(false); return; }
+    const owned = {
+      drivers: [...this.drivers.keys()].some(id => !this.isPausedCheck(id)),
+      settling: [...this.settling.keys()].some(id => !this.isPausedCheck(id)),
+      agents: this.runs.size > 0,
+      helpers: [...this.helperRuns.values()].some(runs => runs.size > 0),
+      screenGroups: this.screenGroups.size > 0,
+      switching: this.switching.size > 0,
+      copyCleanups: this.copyCleanups.size > 0,
+      cleanupJobs: this.cleanupJobs.size > 0,
+    };
+    const knownActive = keepsIdleSleep({ ...owned, stopped: this.stopped, extraChecks: false });
+    const active = knownActive || keepsIdleSleep({ ...owned, stopped: this.stopped, extraChecks: !this.stopped && !!this.extraChecksActive?.() });
     this.idleSleep.setActive(active);
   }
 
@@ -516,21 +526,11 @@ export abstract class Kernel {
    * hand back. `onWait` hears how many are left each time it changes. Returns how many were still in flight.
    */
   async drain(limitMs: number, onWait?: (left: number) => void): Promise<number> {
-    this.draining = true;
-    this.stopRequested.abort();
-    this.checkQueue.pump();
-    const started = Date.now();
-    let last = -1;
-    while (!this.stopped) {
-      const left = this.inFlight();
-      if (left !== last) {
-        onWait?.(left);
-        last = left;
-      }
-      if (left === 0 || Date.now() - started >= limitMs) return left;
-      await Bun.sleep(500);
-    }
-    return 0;
+    return drainRuntime({
+      requestStop: () => { this.draining = true; this.stopRequested.abort(); this.checkQueue.pump(); },
+      stopped: () => this.stopped,
+      inFlight: () => this.inFlight(),
+    }, { now: () => Date.now(), sleep: ms => Bun.sleep(ms) }, limitMs, onWait);
   }
 
   /** This run of the engine, to tell a restart from a pause. */

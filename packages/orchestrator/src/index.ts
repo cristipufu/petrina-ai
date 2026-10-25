@@ -36,3 +36,4 @@ export * from "./validation-removal.js";
 export * from "./profile-selection.js";
 export * from "./participant-conversation.js";
 export * from "./source-background.js";
+export { drainRuntime, inFlightWork, keepsIdleSleep, type DrainEffects, type DrainClock } from "./runtime-drain.js";
