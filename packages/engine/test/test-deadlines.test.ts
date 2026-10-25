@@ -112,7 +112,7 @@ it("${helper} is left out by the name filter", () => { throw new Error("The name
 
 it("the runner gives tests without a limit its long fallback before the caller's options, while direct Bun keeps five seconds", async () => {
   expect(FALLBACK_TIMEOUT).toBe(12 * 60_000);
-  expect(testCommand(["probe.test.ts", "--timeout", "100"])).toEqual([process.execPath, "test", "--parallel", `--timeout=${FALLBACK_TIMEOUT}`, "probe.test.ts", "--timeout", "100"]);
+  expect(testCommand(["probe.test.ts", "--timeout", "100"])).toEqual([process.execPath, "--no-env-file", "test", "--parallel", `--timeout=${FALLBACK_TIMEOUT}`, "probe.test.ts", "--timeout", "100"]);
   const helpers = ["none", "fixtures"] as const;
   const files = helpers.map(helper => probeFile(helper, "default", `
 it("${helper} runs just past five seconds", () => Bun.sleep(${PAST_DEFAULT}));

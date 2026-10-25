@@ -17,7 +17,7 @@ export const FALLBACK_TIMEOUT = 90_000 * 8;
 
 /** The fallback goes before the caller's options: Bun takes the last --timeout, and a test's own limit beats both. */
 export function testCommand(args: readonly string[]): string[] {
-  return [process.execPath, "test", "--parallel", `--timeout=${FALLBACK_TIMEOUT}`, ...args];
+  return [process.execPath, "--no-env-file", "test", "--parallel", `--timeout=${FALLBACK_TIMEOUT}`, ...args];
 }
 
 if (import.meta.main) {

@@ -1776,13 +1776,8 @@
       "from": "packages/engine/test/quality-runner.test.ts",
       "layer": "contracts",
       "area": "testing",
-      "review": "All root-runner execution contracts use the actual CLI entrypoint, private repository/environment and tiny stand-in suites. Includes early refusal before scanning, complete structured evidence, mandatory workspace ordering, false/incomplete results, source identity and signal forwarding/cleanup. Original controls retained; adds structure guards and orchestrator required-gate cases. No real product suite is recursively launched.",
-      "validation": {
-        "baselineCasesRetained": 39,
-        "newCases": 8,
-        "run": "orchestrator-final-contracts.xml: 73 passing policy/runner controls, 497 assertions, 14.48s",
-        "reviewedDigest": "d3ee237c36f29ab385710abddbf1706b16e1a6b4b2a5ebf8f9c090f79188161c"
-      }
+      "review": "Actual CLI boundary controls with one canonical owned fixture module. Three scripted Vitest report producers and four real Bun package cases exercise actual shared-pool execution, exact manifests, native failure attribution, source/revision binding, preliminary gates, interruption, duration publication and package readiness refusal. Original 54-case responsibilities are reconciled in shared-pool-c73f2646/case-reconciliation.json; redundant per-package parser variants now rely on the shared parser/controller rules with representative actual producer controls. The obsolete native-before-engine serial gate is deliberately replaced by shared native execution.",
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
     },
     {
       "file": "packages/engine/test/queue.test.ts",
@@ -2696,8 +2691,8 @@
       "status": "reviewed",
       "layer": "contracts",
       "area": "testing",
-      "review": "Private filesystem controls for atomic optional hint publication, exact retained seed/hash and invalid-cache preservation, plus a two-file actual Bun ordering contract. One worker is used only in this tiny dispatch-observation probe; required suite defaults remain unchanged.",
-      "validation": "timing-hints-reviewed.xml: all 57 native runner/timing controls pass / 405 assertions / 26.91s; workspace types and conventions pass"
+      "review": "Four native/filesystem controls retain exact shared seeds and atomic optional publication, reject invalid measurements without overwriting prior hints, preserve peer paths relative to actual execution CWD, prune unrelated packages, and prove installed Bun dispatch order. The one-worker ordering probe remains a tiny observation only; required normal workers are unchanged.",
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
     },
     {
       "file": "packages/core/test/rules/tasks/dependencies.test.ts",
@@ -2754,6 +2749,22 @@
       "area": "processes",
       "review": "Nineteen process-runner controls: actual captured nonzero completion and inherited descriptors, controlled graceful and forced interruption, unavailable interrupt capability, startup abort races, bounded missing exits, released native end records and input validation. Forced cleanup without a native identity remains explicitly unconfirmed. Existing native ownership and real CLI signal controls remain.",
       "validation": "bounded-ownership-audited.xml: 65 passes across this file and the portable coordinator, 172 assertions / 112ms. bounded-process-final.xml retains all 44 native command controls; bounded-git-audited.xml retains all three private Git controls. bounded-root-cli-audited.xml: 54 real CLI/report/source/signal controls, 389 assertions / 22.51s; bounded-root-final.xml: 34 runner/deadline/convention controls, 280 assertions / 7.81s. Workspace types and conventions pass. Full changed-batch and native Linux/Windows qualification remain due."
+    },
+    {
+      "file": "packages/engine/test/rules/testing/required-plan.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Eight data-only execution registry and preparation validation. Every registered package belongs to exactly one execution, the four native packages share the engine CWD after all three Vitest prerequisites, and custom/missing scripts, lifecycle hooks and package Bun configuration cannot be silently bypassed.",
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
+    },
+    {
+      "file": "packages/test-support/test/rules/testing/suite-results.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Seven data-only projection controls: actual execution duration/exit recorded once; exact package observations and selection misses; unstarted work has no invented outcomes; unknown exits, absent reports, contradictory success and uncertain native cleanup stay explicit. Source observations remain unchanged.",
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
     }
   ],
   "rust": [

@@ -15,16 +15,16 @@ function fixture() {
   const root = tempDir("petrina-duration-hints-"); roots.push(root);
   const workspace = "packages/engine", folder = join(root, workspace), output = join(root, "report", "engine-timings.json");
   mkdirSync(join(folder, "test"), { recursive: true }); mkdirSync(join(root, "report"));
-  return { root, workspace, folder, output, cache: join(root, ".test-results", "timings", "engine.json"), expected: [`${workspace}/test/fast.test.ts`, `${workspace}/test/slow.test.ts`] };
+  return { root, workspace, scope: { id: "native", cwd: workspace, workspaces: [workspace] }, folder, output, cache: join(root, ".test-results", "timings", "native.json"), expected: [`${workspace}/test/fast.test.ts`, `${workspace}/test/slow.test.ts`] };
 }
 
 it("starts without a cache, retains the exact seed and publishes only valid current measurements atomically", () => {
   const f = fixture();
-  expect(seedTestTimings(f.root, f.workspace, f.output, f.expected)).toEqual({ kind: "absent" });
+  expect(seedTestTimings(f.root, f.scope, f.output, f.expected)).toEqual({ kind: "absent" });
   expect(existsSync(f.output)).toBe(false);
   writeFixtureJson(f.output, { version: 1, files: { "test/fast.test.ts": 2, "test/slow.test.ts": 900, "test/deleted.test.ts": 10 } });
-  expect(keepTestTimings(f.root, f.workspace, f.output, f.expected)).toEqual({ kind: "saved", files: 2 });
-  const use = seedTestTimings(f.root, f.workspace, f.output, f.expected);
+  expect(keepTestTimings(f.root, f.scope, f.output, f.expected)).toEqual({ kind: "saved", files: 2 });
+  const use = seedTestTimings(f.root, f.scope, f.output, f.expected);
   expect(use).toMatchObject({ kind: "used", files: 2 });
   if (use.kind !== "used") throw new Error("The measured hint seed was not supplied");
   const supplied = readFileSync(f.output, "utf8"), retained = readFileSync(join(f.root, use.artifact), "utf8");
@@ -32,14 +32,23 @@ it("starts without a cache, retains the exact seed and publishes only valid curr
   expect(use.sha256).toBe(createHash("sha256").update(retained).digest("hex"));
   expect(JSON.parse(supplied)).toEqual({ version: 1, files: { "test/fast.test.ts": 2, "test/slow.test.ts": 900 } });
   writeFileSync(f.output, "{unfinished measurement");
-  expect(keepTestTimings(f.root, f.workspace, f.output, f.expected).kind).toBe("unavailable");
+  expect(keepTestTimings(f.root, f.scope, f.output, f.expected).kind).toBe("unavailable");
   expect(readFileSync(f.cache, "utf8")).toBe(retained);
 });
 
 it("ignores a malformed cache without inventing measurements or creating a seed", () => {
   const f = fixture(); mkdirSync(join(f.root, ".test-results", "timings"), { recursive: true }); writeFileSync(f.cache, "{");
-  expect(seedTestTimings(f.root, f.workspace, f.output, f.expected).kind).toBe("unusable");
+  expect(seedTestTimings(f.root, f.scope, f.output, f.expected).kind).toBe("unusable");
   expect(existsSync(f.output)).toBe(false);
+});
+
+it("retains peer durations relative to the actual shared execution folder and prunes other workspaces", () => {
+  const f = fixture(), scope = { ...f.scope, workspaces: [f.workspace, "packages/storage"] };
+  const expected = [...f.expected, "packages/storage/test/contracts/sqlite/store.test.ts", "packages/core/test/rules/task.test.ts"];
+  writeFixtureJson(f.output, { version: 1, files: { "test/fast.test.ts": 5, "../storage/test/contracts/sqlite/store.test.ts": 12, "../core/test/rules/task.test.ts": 900 } });
+  expect(keepTestTimings(f.root, scope, f.output, expected)).toEqual({ kind: "saved", files: 2 });
+  expect(seedTestTimings(f.root, scope, f.output, expected)).toMatchObject({ kind: "used", files: 2 });
+  expect(JSON.parse(readFileSync(f.output, "utf8"))).toEqual({ version: 1, files: { "test/fast.test.ts": 5, "../storage/test/contracts/sqlite/store.test.ts": 12 } });
 });
 
 it("the installed Bun executes every file and starts the measured slow file first", async () => {

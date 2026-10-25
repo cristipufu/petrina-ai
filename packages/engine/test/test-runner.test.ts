@@ -10,6 +10,16 @@ import { testTempParent } from "@petrina/test-support/temp-parent";
 const fixture = tempDir("petrina-test-runner-");
 afterAll(() => removeDir(fixture));
 
+it("does not reload account configuration from the working folder's dotenv file after filtering the environment", async () => {
+  const cwd = join(fixture, "dotenv"); mkdirSync(cwd);
+  writeFileSync(join(cwd, ".env"), "GH_TOKEN=fixture-dotenv-account\nCODEX_HOME=fixture-dotenv-settings\n");
+  const file = join(cwd, "dotenv.test.ts");
+  writeFileSync(file, `import { expect, it } from "bun:test";
+it("retains the runner's account-free environment", () => { expect(process.env.GH_TOKEN).toBeUndefined(); expect(process.env.CODEX_HOME).toBeUndefined(); });`);
+  const result = await runCommand([process.execPath, TEST_RUNNER, file], { cwd, env: testGitEnv() });
+  expect(result.code, result.stdout + result.stderr).toBe(0);
+});
+
 it("moves only macOS's default temporary parents, including equivalent spellings", () => {
   const home = join(fixture, "chosen-home");
   for (const parent of ["/tmp", "/private/tmp/", "/tmp/unused/..", "/var/folders/ab/session/T/", "/private/var/folders/ab/session/T/./"]) {
