@@ -13,7 +13,8 @@ export interface WorkspaceEvidence {
   readonly error?: string;
 }
 export interface ExecutionEvidence {
-  readonly code: number;
+  /** Null means no exit outcome was reported; never substitute a passing or guessed code. */
+  readonly code: number | null;
   /** Actual elapsed time of this execution, recorded once even when it owns several workspaces. */
   readonly ms: number;
   readonly workspaces: readonly WorkspaceEvidence[];
@@ -33,6 +34,8 @@ const validCounts = (value: SuiteCounts | undefined) => value !== undefined
 const reported = (result: WorkspaceEvidence) => result.reportComplete === true && validCounts(result.counts)
   && result.failures !== undefined
   && (result.counts!.passed > 0 || result.counts!.failed > 0 || result.failures.length > 0);
+const knownOutcome = (result: ExecutionEvidence) => result.code !== null && Number.isSafeInteger(result.code)
+  && result.code >= 0 && Number.isFinite(result.ms) && result.ms >= 0;
 
 /** A report can be complete and still fail. Neither a zero process exit nor skipped-only work proves a pass. */
 export function suitePassed(result: SuiteResult): boolean {
@@ -84,7 +87,8 @@ export class SuiteCoordinator {
         const observation = await execute(entry, signal);
         const workspaces = Object.freeze(observation.workspaces.map(work => Object.freeze({ ...work, ...(work.counts ? { counts: Object.freeze({ ...work.counts }) } : {}), ...(work.failures ? { failures: Object.freeze([...work.failures]) } : {}) })));
         const error = !sameMembers(workspaces.map(work => work.workspace), entry.workspaces) ? "Incomplete execution workspace manifest"
-          : !Number.isSafeInteger(observation.code) || observation.code < 0 || !Number.isFinite(observation.ms) || observation.ms < 0 ? "Invalid execution outcome"
+          : observation.code === null ? observation.error ?? "The execution exit was not reported"
+          : !knownOutcome(observation) ? "Invalid execution outcome"
           : observation.error;
         this.recorded.push(Object.freeze({ id: entry.id, code: observation.code, ms: observation.ms, workspaces, ...(error ? { error } : {}) }));
       }
@@ -100,7 +104,7 @@ export class SuiteCoordinator {
   conclusion(ending: SuiteSource, interrupted = false): { complete: boolean; stableInputs: boolean; successful: boolean } {
     const stableInputs = ending.revision === this.source.revision && ending.fingerprint === this.source.fingerprint;
     const complete = this.finished && !interrupted && !this.interrupted && this.recorded.length === this.plan.length
-      && this.recorded.every(result => "code" in result && sameMembers(result.workspaces.map(work => work.workspace), this.plan.find(entry => entry.id === result.id)!.workspaces) && result.workspaces.every(reported));
+      && this.recorded.every(result => "code" in result && knownOutcome(result) && sameMembers(result.workspaces.map(work => work.workspace), this.plan.find(entry => entry.id === result.id)!.workspaces) && result.workspaces.every(reported));
     return { complete, stableInputs, successful: stableInputs && complete && this.recorded.every(suitePassed) };
   }
 }

@@ -92,6 +92,13 @@ describe("test programs and the waits on them", () => {
   const found = (source: string, file = "packages/engine/test/a.test.ts") => conventions(new Map([[file, source]])).map((error) => error.slice(file.length + 1));
   const fixtures = `import { expect, it } from "bun:test"; import { git, makeWorld, runCommand } from "./fixtures.js"; import { rejectionOf } from "@petrina/test-support/rejections";\n`;
 
+  it("requires callers to own the shared interruptible process result", () => {
+    const imported = 'import { runProcess as execute } from "@petrina/test-support/run-process";\n';
+    expect(found(imported + 'execute(args, settings);')).toContainEqual(expect.stringContaining("await execute"));
+    expect(found(imported + 'await execute(args, settings);')).toEqual([]);
+    expect(found('import { runProcess as execute } from "./unrelated.js"; execute(args, settings);')).toEqual([]);
+  });
+
   it("applies Bun assertion rules to every native workspace and accepts the shared rejection helper", () => {
     for (const file of ["packages/storage/test/contracts/sqlite/calls.test.ts", "packages/test-support/test/contracts/processes/calls.test.ts", "packages/platform/test/contracts/processes/calls.test.ts"]) {
       expect(found('await expect(work()).rejects.toThrow();', file)).toEqual([expect.stringContaining("do not use Bun's promise matchers")]);

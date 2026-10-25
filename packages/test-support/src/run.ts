@@ -2,6 +2,7 @@
 // workers, so even a failing run removes fixtures, private Git helpers, the run's Git configuration
 // and fixtures' private browser folders after every worker stops.
 import { createTestRun } from "./environment.js";
+import { runProcess, SUITE_RUN_TIMEOUT_MS } from "./run-process.js";
 export { TEST_GIT_IDENTITY } from "./environment.js";
 /** Native probes invoke this same runner from arbitrary working folders. */
 export const TEST_RUNNER = import.meta.path;
@@ -21,26 +22,19 @@ export function testCommand(args: readonly string[]): string[] {
 
 if (import.meta.main) {
   const owned = createTestRun();
+  const controller = new AbortController();
+  const onInt = () => controller.abort("SIGINT"), onTerm = () => controller.abort("SIGTERM");
+  process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
   try {
-    const child = Bun.spawn(testCommand(process.argv.slice(2)), {
-      env: owned.env,
-      stdin: "inherit", stdout: "inherit", stderr: "inherit",
+    const outcome = await runProcess(testCommand(process.argv.slice(2)), {
+      env: owned.env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal: controller.signal, output: "inherit",
     });
-    let interrupted: number | undefined;
-    const onInt = () => { interrupted = 130; child.kill("SIGINT"); };
-    const onTerm = () => { interrupted = 143; child.kill("SIGTERM"); };
-    process.on("SIGINT", onInt);
-    process.on("SIGTERM", onTerm);
-    try {
-      const code = await child.exited;
-      process.exitCode = interrupted ?? code;
-    }
-    finally {
-      process.off("SIGINT", onInt);
-      process.off("SIGTERM", onTerm);
-      if (interrupted) process.exitCode = interrupted;
-    }
+    process.exitCode = outcome.kind === "interrupted" ? outcome.signal === "SIGINT" ? 130 : 143 : outcome.result.code;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = controller.signal.aborted ? controller.signal.reason === "SIGINT" ? 130 : 143 : 1;
   } finally {
+    process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
     owned.close();
   }
 }

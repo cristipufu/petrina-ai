@@ -11,6 +11,8 @@ import { TEST_WORKSPACES } from "./workspaces.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { keepTestTimings, seedTestTimings, type TimingHintUse } from "./timings.js";
 import { SuiteCoordinator, suitePassed, type WorkspaceEvidence } from "@petrina/test-support/suite-coordinator";
+import { runProcess, SUITE_RUN_TIMEOUT_MS } from "@petrina/test-support/run-process";
+import { CommandFailure } from "@petrina/test-support/commands";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -29,7 +31,7 @@ Focused runs do not replace the required full check. See docs/testing.md for oth
 const PRELIMINARY: readonly string[] = TEST_WORKSPACES.filter(workspace => workspace.phase === "quick").map(workspace => workspace.path);
 const ORDER = [...PRELIMINARY, ...WORKSPACES.filter(workspace => !PRELIMINARY.includes(workspace))];
 const suite = (workspace: string) => workspace.split("/").at(-1)!;
-type Ran = WorkspaceEvidence & { code: number; ms: number; missedFailures?: readonly string[]; durationHints?: TimingHintUse };
+type Ran = WorkspaceEvidence & { code: number | null; ms: number; missedFailures?: readonly string[]; durationHints?: TimingHintUse };
 type Result = Ran | { workspace: string; notRun: string };
 const passed = (result: Result) => "code" in result && suitePassed({ id: result.workspace, code: result.code, ms: result.ms, workspaces: [result] });
 
@@ -58,11 +60,10 @@ console.log(`Affected-test observation: ${plan.selected.length}/${plan.total} ca
 const coordinator = new SuiteCoordinator(ORDER.map(workspace => ({ id: workspace, workspaces: [workspace], ...(!PRELIMINARY.includes(workspace) ? { requires: PRELIMINARY } : {}) })), { revision, fingerprint: plan.fingerprint });
 const details = new Map<string, { missedFailures?: readonly string[]; durationHints?: TimingHintUse }>();
 const timingOutputs = new Map<string, string>();
-let child: ReturnType<typeof Bun.spawn> | undefined;
 let interrupted: number | undefined;
 let finished = false;
 const controller = new AbortController();
-const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; controller.abort(); child?.kill(signal); };
+const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; controller.abort(signal); };
 const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM", 143);
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
 const owned = createTestRun();
@@ -78,8 +79,15 @@ try {
     if (engine) timingOutputs.set(workspace, timings);
     const reporter = engine ? ["--reporter=junit", `--reporter-outfile=${output}`, `--timings=${timings}`, "--update-timings"] : ["--reporter=json", `--outputFile=${output}`];
     const start = performance.now();
-    child = Bun.spawn([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, env: owned.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-    const code = await child.exited;
+    let code: number | null = null, executionError: string | undefined;
+    try {
+      const outcome = await runProcess([process.execPath, "run", "--cwd", workspace, "test", ...reporter], { cwd: ROOT, env: owned.env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal: controller.signal, output: "inherit" });
+      code = outcome.result.code;
+    } catch (error) {
+      if (!(error instanceof CommandFailure)) throw error;
+      code = error.code ?? null;
+      executionError = error.message;
+    }
     const result: { workspace: string; failures?: string[]; counts?: Omit<TestResults, "files" | "failures">; reportComplete?: boolean; error?: string } = { workspace };
     const ms = Math.round(performance.now() - start);
     let missedFailures: string[] | undefined;
@@ -93,11 +101,11 @@ try {
       result.reportComplete = true;
       if (code !== 0 && !result.failures.length) result.error = "Run failed without an attributable test file; selection accuracy is unknown";
     } catch (error) { result.error = `Incomplete test evidence: ${error instanceof Error ? error.message : String(error)}`; }
+    if (executionError) result.error = [executionError, result.error].filter(Boolean).join("\n");
     if (result.error) console.error(`${workspace}: ${result.error}`);
     else if (code === 0 && result.failures?.length) console.error(`${workspace}: structured results report failed files despite a zero exit code: ${result.failures.join(", ")}`);
     details.set(workspace, { ...(missedFailures ? { missedFailures } : {}), ...(durationHints ? { durationHints } : {}) });
-    child = undefined;
-    return { code, ms, workspaces: [result] };
+    return { code, ms, workspaces: [result], ...(executionError ? { error: executionError } : {}) };
   }, controller.signal);
   finished = true;
 } finally {
@@ -130,6 +138,7 @@ function outcome(result: Result): string {
   const time = `${(result.ms / 1000).toFixed(1)}s`;
   const files = result.failures?.length ? `; failing files: ${result.failures.slice(0, 5).join(", ")}${result.failures.length > 5 ? ` and ${result.failures.length - 5} more` : ""}` : "";
   if (passed(result)) return `passed in ${time}`;
+  if (result.code === null) return `incomplete after ${time}: its exit was not reported${files}`;
   if (result.code !== 0) return `failed after ${time}${files || "; no failing test file could be attributed"}`;
   return `incomplete after ${time}: ${result.error ? "its structured results were unavailable" : "it exited successfully but its structured results report failures"}${files}`;
 }

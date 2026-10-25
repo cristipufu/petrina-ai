@@ -2728,8 +2728,8 @@
       "status": "reviewed",
       "layer": "orchestration",
       "area": "testing",
-      "review": "Actual portable required-suite coordinator: prerequisites, independent failures, shared workspace membership, honest report/skip counts, exact source binding, pending cancellation ownership, rejected effects, immutable observations and invalid plans. Typed value effects and controlled release events; no native process, filesystem, Engine, Git or clock.",
-      "validation": "suite-coordinator-reviewed.xml: 38 passes / 100 assertions / 7ms. suite-coordinator-native-first.xml: all 57 retained root CLI/report/timing/signal controls pass / 405 assertions / 24.75s. Workspace types and conventions pass. Native multi-package probe runs all four workspaces at normal 14-worker defaults with engine CWD; report paths are relative for engine and absolute for peers. Group adapter and complete qualification remain due."
+      "review": "Actual portable required-suite coordinator: prerequisites, independent failures, shared workspace membership, honest report/skip counts, exact source binding, pending cancellation ownership, rejected effects, immutable observations and invalid plans. Unknown exits preserve native failure explanations, and invalid outcomes remain partial. Typed value effects and controlled release events; no native process, filesystem, Engine, Git or clock.",
+      "validation": "bounded-ownership-audited.xml: 46 portable coordinator cases plus 19 lifecycle boundary cases pass; 172 assertions / 112ms combined. All 88 real root/runner/deadline/convention controls pass in bounded-root-cli-audited.xml and bounded-root-final.xml. Workspace types and conventions pass. Native group adapter and complete changed-batch qualification remain due."
     },
     {
       "file": "packages/test-support/test/rules/testing/execution-results.test.ts",
@@ -2746,6 +2746,14 @@
       "area": "testing",
       "review": "Two actual normal-worker Bun executions over four private package folders, with one explicit inner skip and an actual storage-case failure control. Asserts engine CWD, no inherited account token, all file outcomes, global/per-package counts and precise failure ownership. Uses the canonical bounded runner and isolated environment.",
       "validation": "suite-results-native-first.xml: all 81 native/guard controls pass / 551 assertions / 23.31s, including both actual shared Bun success/failure controls. Native Linux/Windows and complete changed-batch qualification remain due."
+    },
+    {
+      "file": "packages/test-support/test/contracts/processes/run-process.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "processes",
+      "review": "Nineteen process-runner controls: actual captured nonzero completion and inherited descriptors, controlled graceful and forced interruption, unavailable interrupt capability, startup abort races, bounded missing exits, released native end records and input validation. Forced cleanup without a native identity remains explicitly unconfirmed. Existing native ownership and real CLI signal controls remain.",
+      "validation": "bounded-ownership-audited.xml: 65 passes across this file and the portable coordinator, 172 assertions / 112ms. bounded-process-final.xml retains all 44 native command controls; bounded-git-audited.xml retains all three private Git controls. bounded-root-cli-audited.xml: 54 real CLI/report/source/signal controls, 389 assertions / 22.51s; bounded-root-final.xml: 34 runner/deadline/convention controls, 280 assertions / 7.81s. Workspace types and conventions pass. Full changed-batch and native Linux/Windows qualification remain due."
     }
   ],
   "rust": [

@@ -47,6 +47,7 @@ const invalid: [string, (e: ExecutionEvidence) => ExecutionEvidence][] = [
   ["nonzero exit without a failed case", e => ({ ...e, code: 1 })],
   ["cleanup unconfirmed", e => ({ ...e, error: "The native owner could not confirm cleanup" })],
   ["negative exit", e => ({ ...e, code: -1 })],
+  ["unreported exit", e => ({ ...e, code: null })],
   ["invalid duration", e => ({ ...e, ms: Number.NaN })],
 ];
 for (const [name, change] of invalid) it(`refuses ${name} despite otherwise passing prerequisites`, async () => {
@@ -54,6 +55,24 @@ for (const [name, change] of invalid) it(`refuses ${name} despite otherwise pass
   expect(seen).toEqual(["core", "desktop"]);
   expect(suitePassed(coordinator.results[0]!)).toBe(false);
   expect(conclusion.successful).toBe(false);
+});
+
+it("retains an unreported exit as unknown even beside complete passing case reports", async () => {
+  const { coordinator, conclusion } = await run((execution, evidence) => execution.id === "native" ? { ...evidence, code: null } : evidence);
+  expect(coordinator.results[2]).toMatchObject({ code: null, error: "The execution exit was not reported" });
+  expect(conclusion).toEqual({ complete: false, stableInputs: true, successful: false });
+});
+
+it("preserves the native failure explanation when no exit was reported", async () => {
+  const { coordinator, conclusion } = await run((execution, evidence) => execution.id === "native" ? { ...evidence, code: null, error: "Deadline expired; owned cleanup was unconfirmed" } : evidence);
+  expect(coordinator.results[2]).toMatchObject({ code: null, error: "Deadline expired; owned cleanup was unconfirmed" });
+  expect(conclusion).toEqual({ complete: false, stableInputs: true, successful: false });
+});
+
+for (const outcome of [{ code: -1, ms: 10 }, { code: Number.NaN, ms: 10 }, { code: 0.5, ms: 10 }, { code: 0, ms: Number.NaN }, { code: 0, ms: -1 }]) it(`keeps an invalid final outcome partial: ${JSON.stringify(outcome)}`, async () => {
+  const { coordinator, conclusion } = await run((execution, evidence) => execution.id === "native" ? { ...evidence, ...outcome } : evidence);
+  expect(coordinator.results[2]).toMatchObject({ error: "Invalid execution outcome" });
+  expect(conclusion).toEqual({ complete: false, stableInputs: true, successful: false });
 });
 
 it("keeps a genuine shared failure complete and attributable to its actual workspace", async () => {

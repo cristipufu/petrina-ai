@@ -19,8 +19,9 @@ export const CLEANUP_MS = 5_000;
 /** The parts of a started program the runner uses. Runner tests pass private stand-ins through `start`. */
 export interface Started {
   readonly pid?: number;
-  readonly stdout: ReadableStream<Uint8Array>;
-  readonly stderr: ReadableStream<Uint8Array>;
+  /** Absent when output goes directly to the caller's descriptors; there is no owned pipe to drain. */
+  readonly stdout?: ReadableStream<Uint8Array>;
+  readonly stderr?: ReadableStream<Uint8Array>;
   readonly exited: Promise<number>;
   /**
    * The runtime's own record of the exit: null until it collects the program, which frees its number. A stand-in
@@ -28,16 +29,28 @@ export interface Started {
    */
   readonly exitCode?: number | null;
   readonly signalCode: string | null;
+  /** Offered only where the native owner supports a graceful signal; absence requires tree cleanup. */
+  interrupt?(signal: "SIGINT" | "SIGTERM"): void;
   kill(signal?: NodeJS.Signals): void;
 }
-export type Start = (argv: string[], options: { cwd?: string; env: NodeJS.ProcessEnv; stdin: "ignore" | Blob; detached: boolean }) => Started;
+export type Start = (argv: string[], options: { cwd?: string; env: NodeJS.ProcessEnv; stdin: "ignore" | Blob; detached: boolean; output?: "capture" | "inherit" }) => Started;
 
 // A private reference: a test that replaces Bun.spawn or node's child_process to watch or redirect its own
 // commands never intercepts repository preparation, another test's programs or their cleanup.
 const spawn = Bun.spawn.bind(Bun);
 const execute = execFile.bind(undefined);
 const host = createProcessHost(process.platform, (command, args, options, done) => execute(command, [...args], options, error => done(error)));
-const start: Start = (argv, options) => spawn(argv, { ...options, stdout: "pipe", stderr: "pipe", windowsHide: true }) as unknown as Started;
+/** The canonical native starter, also used by the runner that forwards a graceful interrupt. */
+export const startCommand: Start = (argv, { output = "capture", ...options }) => {
+  const child = spawn(argv, { ...options, stdout: output === "inherit" ? "inherit" : "pipe", stderr: output === "inherit" ? "inherit" : "pipe", windowsHide: true });
+  return {
+    pid: child.pid, exited: child.exited,
+    ...(output === "capture" ? { stdout: child.stdout as ReadableStream<Uint8Array>, stderr: child.stderr as ReadableStream<Uint8Array> } : {}),
+    get exitCode() { return child.exitCode; }, get signalCode() { return child.signalCode as string | null; },
+    ...(host.groups ? { interrupt: (signal: "SIGINT" | "SIGTERM") => child.kill(signal) } : {}),
+    kill: signal => child.kill(signal),
+  };
+};
 
 /**
  * A cleanup helper's output, or undefined unless it exits 0 with its output complete within `ms`. Its own timer
@@ -71,12 +84,14 @@ export interface CommandOptions {
   timeoutMs?: number;
   /** Stops the command and everything it started; the command fails. */
   signal?: AbortSignal;
-  /** Runner tests only: a private stand-in for the started program. */
+  /** A private starter for lifecycle adapters and their contract tests. */
   start?: Start;
   /** Runner tests only: a private stand-in for the system's process list. */
   processList?: ProcessListRead;
   /** Observe decoded output while the command runs. Callbacks stay synchronous. */
   onOutput?: (text: string, stream: "stdout" | "stderr") => undefined;
+  /** Capture and observe output, or inherit the caller's descriptors without buffering. Default: capture. */
+  output?: "capture" | "inherit";
 }
 
 export interface CommandResult {
@@ -119,21 +134,23 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
   const what = argv.join(" ");
   // A timer outside this range fires at once or never: neither is a deadline.
   if (!(timeoutMs > 0 && timeoutMs <= 2_147_483_647)) return Promise.reject(new RangeError(`${what} needs a deadline between 1 and 2147483647 ms, not ${timeoutMs}`));
+  if (options.output !== undefined && options.output !== "capture" && options.output !== "inherit") return Promise.reject(new RangeError(`${what} needs capture or inherit output`));
+  if (options.output === "inherit" && options.onOutput) return Promise.reject(new RangeError(`${what} needs captured output for an output observer`));
   if (options.signal?.aborted) return Promise.reject(new CommandFailure(`${what} was cancelled before it started, in ${where}`, "cancelled"));
   const windows = !host.groups;
   let child: Started;
   try {
-    child = (options.start ?? start)([...argv], { ...(options.cwd ? { cwd: options.cwd } : {}), env: options.env ?? process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), detached: host.ownedSpawn.detached });
+    child = (options.start ?? startCommand)([...argv], { ...(options.cwd ? { cwd: options.cwd } : {}), env: options.env ?? process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), detached: host.ownedSpawn.detached, ...(options.output ? { output: options.output } : {}) });
   } catch (error) {
     return Promise.reject(new CommandFailure(`${what} could not start in ${where}: ${messageOf(error)}`, "start"));
   }
   return new Promise<CommandResult>((resolve, reject) => {
-    const output = ["", ""], closed = [false, false];
+    const output = ["", ""], streams = [child.stdout, child.stderr], closed = streams.map(stream => stream === undefined);
     let exit: number | undefined;
     // The runtime gave up on the program's exit: it no longer tracks it, so its number may be free.
     let untracked = false;
     let settled = false;
-    const readers = [child.stdout, child.stderr].map((stream) => stream.getReader());
+    const readers = streams.flatMap((stream, index) => stream ? [{ reader: stream.getReader(), index }] : []);
     const settle = () => {
       settled = true;
       clearTimeout(timer);
@@ -149,11 +166,13 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
       settle();
       const open = ["output", "error output"].filter((_, index) => !closed[index]);
       const seen = exit !== undefined ? `It exited with ${exit}${open.length ? `, but its ${open.join(" and ")} stayed open` : ""}.`
-        : open.length ? "Its exit was never reported." : "Its output closed, but its exit was never reported.";
+        : open.length || !readers.length ? "Its exit was never reported." : "Its output closed, but its exit was never reported.";
       // The output is still read while cleanup runs: its end shows that whatever held it has gone too. Whether the
       // exit was reported is read live: it can arrive meanwhile.
-      void stopOwned(child, () => exit !== undefined || untracked, outputEnded, windows, options.processList ?? readProcesses).then((cleanup) => {
-        for (const reader of readers) void reader.cancel().catch(() => undefined);
+      // The native end record can arrive without the promise notification. It releases
+      // ownership of the program number; it does not establish a successful outcome.
+      void stopOwned(child, () => exit !== undefined || untracked || child.exitCode != null || child.signalCode != null, outputEnded, windows, options.processList ?? readProcesses).then((cleanup) => {
+        for (const { reader } of readers) void reader.cancel().catch(() => undefined);
         const stopped = cleanup === "confirmed" ? "Everything found that it started has stopped." : "Some of what it started may still be running.";
         const partial = [output[0], output[1]].filter(Boolean).join("\n");
         reject(new CommandFailure(`${what} ${detail}, in ${where}. ${seen} ${stopped}${partial ? `\n${partial}` : ""}`, reason, output[0], output[1], cleanup, exit, child.signalCode ?? undefined));
@@ -165,7 +184,8 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
     options.signal?.addEventListener("abort", cancel, { once: true });
     let ended = () => {};
     const outputEnded = new Promise<void>((resolve) => { ended = resolve; });
-    readers.forEach((reader, index) => {
+    if (closed.every(Boolean)) ended();
+    readers.forEach(({ reader, index }) => {
       const decoder = new TextDecoder();
       void (async () => {
         const append = (text: string) => {
@@ -335,10 +355,14 @@ async function stopUnix(child: Started, reported: () => boolean, read: ProcessLi
  */
 async function stopWindows(child: Started, reported: () => boolean, end: number): Promise<Cleanup> {
   const pid = child.pid;
-  if (pid === undefined || reported()) return "unconfirmed";
+  if (reported()) return "unconfirmed";
+  if (pid === undefined) {
+    try { child.kill("SIGKILL"); } catch { /* Already gone. */ }
+    return "unconfirmed";
+  }
   const killed = await host.stopTree?.(pid, Math.max(100, Math.min(2_500 * SLOW, (end - Date.now()) / 2))) ?? false;
   // The handle stops the program itself even when taskkill failed or ran out of time.
-  try { child.kill("SIGKILL"); } catch { /* Already gone. */ }
+  if (!reported()) try { child.kill("SIGKILL"); } catch { /* Already gone. */ }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const exited = await Promise.race([child.exited.then(() => true, () => false), new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, end - Date.now())); })]);
   clearTimeout(timer);
