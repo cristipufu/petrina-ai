@@ -1,5 +1,5 @@
 import { checkOutcome, checkOutcomeLabel, finalDesignNotes } from "@petrina/core";
-import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
+import { productRows, repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
@@ -156,12 +156,7 @@ export class Context {
   }
 
   private productRows(scope: RepositoryContext): ReviewInput["products"] {
-    return scope.task.repositories?.map((work) => ({
-      productId: work.productId,
-      beforeCopy: `${work.source ? workSummary(work.source) : work.productId}\nProduct id: ${work.productId}; copy: `,
-      copy: work.worktree ?? "preparing",
-      afterCopy: `; base version: ${work.baseSha ?? "not prepared"}; last completed review: ${work.reviewedSha ?? "none; inspect the full change"}\nBuilder report: ${work.report?.summary ?? "not yet built"}. Checks: ${work.checks?.results.map((run) => `${run.name}: ${run.ok ? "passed" : "failed"}`).join(", ") || "Not run"}\nReview guide: use this product’s REVIEW.md at its saved base version.`,
-    }));
+    return productRows(scope.task);
   }
 
   private handedBack(scope: RepositoryContext): Section[] {
