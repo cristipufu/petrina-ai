@@ -1,3 +1,5 @@
+import { isGitCaller } from "./git-callers.js";
+
 export interface CaseCost {
   id: string; file: string; name: string; wallMs?: number; outcome?: string;
   runner: "bun" | "vitest";
@@ -18,6 +20,7 @@ export class ResourceSummary {
   private readonly exits = new Set<string>();
   private readonly programs = new Map<string, number>();
   private readonly git = new Map<string, number>();
+  private readonly gitCallers = new Map<string, { launches: number; operations: Map<string, number> }>();
   private readonly ended = new Set<string>();
   private truncated = false;
   private unattributed = 0;
@@ -53,7 +56,16 @@ export class ResourceSummary {
       if (cost) cost.launches++; else this.unattributed++;
       const program = typeof row.program === "string" ? row.program : "unknown";
       this.programs.set(program, (this.programs.get(program) ?? 0) + 1);
-      if (program === "git") { const operation = typeof row.operation === "string" ? row.operation : "unknown"; this.git.set(operation, (this.git.get(operation) ?? 0) + 1); }
+      if (program === "git") {
+        const operation = typeof row.operation === "string" ? row.operation : "unknown";
+        this.git.set(operation, (this.git.get(operation) ?? 0) + 1);
+        if (isGitCaller(row.caller)) {
+          const caller = this.gitCallers.get(row.caller) ?? { launches: 0, operations: new Map<string, number>() };
+          caller.launches++;
+          caller.operations.set(operation, (caller.operations.get(operation) ?? 0) + 1);
+          this.gitCallers.set(row.caller, caller);
+        }
+      }
     }
     if (row.kind === "exit" && typeof row.id === "string" && !this.exits.has(row.id)) {
       this.exits.add(row.id);
@@ -91,6 +103,10 @@ export class ResourceSummary {
       truncated: this.truncated,
       programs: Object.fromEntries([...this.programs].sort((a, b) => b[1] - a[1])),
       gitOperations: Object.fromEntries([...this.git].sort((a, b) => b[1] - a[1])),
+      gitLaunchesWithCaller: [...this.gitCallers.values()].reduce((sum, caller) => sum + caller.launches, 0),
+      gitLaunchesWithoutCaller: (this.programs.get("git") ?? 0) - [...this.gitCallers.values()].reduce((sum, caller) => sum + caller.launches, 0),
+      topGitCallers: [...this.gitCallers].sort(([a, x], [b, y]) => y.launches - x.launches || a.localeCompare(b)).slice(0, limit)
+        .map(([caller, value]) => ({ caller, launches: value.launches, operations: Object.fromEntries(value.operations) })),
       topByDuration: top(cost => cost.wallMs), topByLaunches: top(cost => cost.runner === "bun" ? cost.launches : undefined),
       topByObservedChildCpu: top(cost => cost.observedChildCpuUs), topByLargestObservedChildRss: top(cost => cost.largestObservedChildRssBytes),
       topByReportedHeap: top(cost => cost.reportedHeapBytes),

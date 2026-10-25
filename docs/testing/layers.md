@@ -1,6 +1,6 @@
 # Test ownership and layers
 
-This is the target structure for the test-foundation revamp. Migration is in progress; a test is not qualified merely because it has moved folders. The [implementation tracker](../plans/test-foundation.md) records completed audits and remaining work. [Testing Petrina](../testing.md) owns commands, provisioning and platform instructions.
+These layers define behavior ownership. Reviewing owners and assertions and qualifying resource cost are separate milestones; moving folders does not establish either one. The [implementation tracker](../plans/test-foundation.md) records completed audits and remaining work. [Testing Petrina](../testing.md) owns commands, provisioning and platform instructions.
 
 ## Choose the behavior before the fixture
 
@@ -96,7 +96,7 @@ DOM setup uses plain stubs for unsupported behavior that a case does not inspect
 2. Assign its layer and subsystem. Split files and cases that contain independent responsibilities. Keep an interaction together when separating it would remove the behavior under test.
 3. Remove unrelated setup and replace irrelevant effects through the production contract. Preserve success, failure, recovery and nearby input variants. Replace an assertion only when its new form proves the same or a stronger outcome; record that decision in the audit.
 4. Ensure a meaningful boundary or journey control still covers the integration that smaller tests no longer execute. Preserve real Git, SQLite, process and transport coverage where their behavior matters.
-5. Run the migrated cases and their neighboring contract controls. Reconcile the original and new case/variant inventory, inspect assertions and measure resource cost. A faster result is not evidence of equivalent coverage.
+5. Run the migrated cases and their neighboring contract controls. Reconcile the original and new case/variant inventory and inspect assertions. For expensive cases, trace subprocesses to their actual callers and justify each retained native effect against an oracle. Record before/after launch counts and durations, then qualify the normal parallel suite. Scripted provider responses alone do not remove Git, storage or workspace work. A faster result is not evidence of equivalent coverage.
 6. Review the change and fix findings before marking that area audited. Repeat the complete normal-parallel suite after coherent batches; retain original failure evidence.
 
 The migration inventory includes every test file and its declared cases, parameterized variants, setup/teardown, assertions and native resources. Generated inventory is discovery, not a completed semantic audit. A file with mixed layers stays pending until its cases have been separated and checked. Do not automatically label all existing Engine tests as journeys.

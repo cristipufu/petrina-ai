@@ -50,7 +50,7 @@ async function report(folder: string): Promise<void> {
     ...(!measured(run?.rootUsage?.maxRssBytes) ? ["Root child driver memory counter was not recorded."] : []),
   ];
   const summary = { formatVersion: 2, kind: "resource-diagnostic", deliveryEligible: false, source: optional("source.json"), run, unavailableMetrics, missingFileObservations,
-    coverage: expected ? "compared with required file manifest; uninstrumented descendants remain unmeasured" : "no required file manifest; observation coverage is unverified",
+    coverage: expected ? "compared with recorded file manifest; uninstrumented descendants remain unmeasured" : "no recorded file manifest; observation coverage is unverified",
     eventFiles: files.length, invalidLines, vitestCases, ...metrics };
   writeFixtureJson(join(folder, "summary.json"), summary, 2);
   console.log(`Resource report: ${folder}\nObserved launch calls: ${summary.observedLaunchCalls}; reported child PIDs: ${summary.callsWithReportedChildPid}; unattributed: ${summary.unattributedLaunches}. Observed cases: ${summary.observedCases} (${vitestCases} Vitest).`);
@@ -137,6 +137,7 @@ if (args.length) {
     let rootUsage: unknown;
     try { rootUsage = resourceUsageRecord(child?.resourceUsage()); } catch { /* An unavailable counter remains absent. */ }
     writeFixtureJson(join(folder, "run.json"), { kind: "resource-diagnostic", deliveryEligible: false, command: "bun run test", workers: "unchanged defaults", code, failure, ms: performance.now() - began,
+      instrumentation: { gitCallers: process.env.PETRINA_TEST_RESOURCE_GIT_CALLERS === "1" },
       environment: { platform: process.platform, arch: process.arch, bun: Bun.version, logicalCpus: cpus().length }, rootUsage, observerErrors, outputTruncated: [...outputTruncated], afterExitProcesses,
       sampling: { intervalMs: 1_000, samples, errors, ...(samples ? { peakAggregateRssBytes: peakRssBytes, peakObservedProcessEntries: peakProcesses, peakRollingCpuPercent } : {}),
         limits: "One-second samples miss short-lived children. Present process entries include zombies. RSS sums shared pages. ps CPU is rolling; Windows exposes cumulative CPU instead. Processes are associated by observed parent/birth identities; same-second PID reuse between samples can be indistinguishable." } }, 2);

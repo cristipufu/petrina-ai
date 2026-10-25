@@ -5,10 +5,14 @@ import { basename, join } from "node:path";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { resourceUsageRecord } from "./usage.js";
+import { fileURLToPath } from "node:url";
+import { gitCaller } from "./git-callers.js";
 
 export interface ResourceCase { id: string; file: string; name: string }
 export const context = new AsyncLocalStorage<ResourceCase>();
 const output = process.env.PETRINA_TEST_RESOURCE_DIR;
+const traceGit = process.env.PETRINA_TEST_RESOURCE_GIT_CALLERS === "1";
+const sourceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const instance = crypto.randomUUID();
 const file = output ? join(output, `events-${process.pid}-${instance}.jsonl`) : undefined;
 let queue: string[] = [], bytes = 0, queuedBytes = 0, failed = false, ending = false, sequence = 0, starting = false;
@@ -50,7 +54,9 @@ function commandOf(command: unknown): { program: string; operation?: string } {
   return { program, ...(program === "git" ? { operation: gitOperation(argv) } : {}) };
 }
 function begin(command: unknown, api: string) {
-  return { id: `${process.pid}-${instance}-${++sequence}`, ...commandOf(command), api, case: context.getStore(), began: performance.now() };
+  const named = commandOf(command);
+  const caller = traceGit && named.program === "git" ? gitCaller(new Error().stack, sourceRoot) : undefined;
+  return { id: `${process.pid}-${instance}-${++sequence}`, ...named, ...(caller ? { caller } : {}), api, case: context.getStore(), began: performance.now() };
 }
 function launched(info: ReturnType<typeof begin>, child?: number): void {
   const { began: _began, ...value } = info;

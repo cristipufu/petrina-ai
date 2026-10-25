@@ -1,7 +1,7 @@
 {
   "version": 1,
   "baseline": "797354daa5a5555078c827c6a8da5b45d7ddd19f",
-  "scope": "Every tracked TypeScript test file; Rust host contract tests are tracked separately below. Generated counts are discovery, not semantic review.",
+  "scope": "Every original tracked TypeScript test file; Rust host contract tests are tracked separately below. Reviewed records establish original behavior/owner/assertion audit, not completed resource-cost qualification. Generated counts are discovery, not semantic review.",
   "files": [
     {
       "file": "apps/desktop/test/presentation/keyboard/task-actions.test.tsx",
@@ -7310,5 +7310,18 @@
       "preservation": "All5037 previous case/outcome identities retained;34addedpassingcontrols explicitly named. Counts do not replace the per-case assertion audits.",
       "limits": "NativeLinux/Windows, new resource measurement, remaining49originals, check environment and delivery-gate work pending."
     }
+  },
+  "resourceAudit": {
+    "status": "in progress",
+    "source": "1d8c8e90cf4aab8856f69c0ef71c967d3cb23cf4",
+    "report": ".test-results/resources/2026-10-25T18-08-07-116Z-471b771c/summary.json",
+    "remainingMeasuredProblem": "100352 Git launches; all-file semantic audit did not complete native cost reduction",
+    "exitCriteria": [
+      "Trace every top20 expensive case to actual fixture/production callers",
+      "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",
+      "Retained boundary/journey machinery has an explicit oracle needing that integration",
+      "Retain original assertions/variants and necessary native composition controls",
+      "Compare targeted operation counts and source-bound full normal-worker resource results before declaring cost work complete"
+    ]
   }
 }
