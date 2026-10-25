@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { testTempParent as tempParentPolicy } from "./temp-parent-policy.js";
 
 /** Where the runner keeps fixtures' private browser folders: test run folders can be too long for browser sockets. */
 export const TEST_BROWSERS = "PETRINA_TEST_BROWSERS";
@@ -10,13 +10,7 @@ export function shortTempParent(platform = process.platform, fallback = tmpdir()
   return platform === "win32" ? fallback : "/tmp";
 }
 
-/** Avoid macOS's crowded default parents without moving a caller's chosen test folder. */
+/** Supply this machine's path observations to the explicit spelling policy. */
 export function testTempParent(parent: string, platform = process.platform, home = homedir(), canonicalize: (path: string) => string = realpathSync): string {
-  if (platform !== "darwin") return parent;
-  let canonical = parent;
-  try { canonical = canonicalize(parent); }
-  catch { /* A missing custom parent still belongs to the caller. */ }
-  const normal = posix.resolve(canonical).replace(/^\/private\//, "/");
-  if (normal === "/tmp" || /^\/var\/folders\/[^/]+\/[^/]+\/T$/.test(normal)) return join(home, ".petrina", "test-tmp");
-  return parent;
+  return tempParentPolicy(parent, platform, home, canonicalize);
 }

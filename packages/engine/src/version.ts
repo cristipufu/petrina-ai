@@ -1,6 +1,7 @@
 // Release versions: the next one, what a product's main version files say, and setting it in them. Pure functions.
 
-export type Bump = "patch" | "minor" | "major";
+export { type Bump, parseVersion, nextVersion } from "@petrina/core";
+import { parseVersion } from "@petrina/core";
 
 /** The files a release's version change may touch, at any depth (a monorepo's packages have their own). What may change in them is checked line by line. */
 const VERSION_FILES = new Set(["package.json", "package-lock.json", "Cargo.toml", "Cargo.lock", "pyproject.toml", "tauri.conf.json", "VERSION", "version.txt"]);
@@ -12,7 +13,6 @@ const VERSION_FILES = new Set(["package.json", "package-lock.json", "Cargo.toml"
  */
 export const MAIN_VERSION_FILES: readonly string[] = ["package.json", "Cargo.toml", "tauri.conf.json", "src-tauri/tauri.conf.json"];
 
-const SEMVER = /^(v?)(\d+)\.(\d+)\.(\d+)$/;
 
 export function isVersionFile(path: string): boolean {
   return VERSION_FILES.has(path.split("/").at(-1) ?? "");
@@ -74,23 +74,6 @@ function cleared(doc: Record<string, unknown>, keys: readonly (readonly string[]
     if (parent && typeof parent === "object" && key.at(-1)! in parent) (parent as Record<string, unknown>)[key.at(-1)!] = "";
   }
   return copy;
-}
-
-/** A release tag or version number Petrina can count up from, e.g. v1.2.3 or 1.2.3. */
-export function parseVersion(text: string): { prefix: string; version: string; parts: [number, number, number] } | undefined {
-  const match = SEMVER.exec(text.trim());
-  if (!match) return undefined;
-  const parts: [number, number, number] = [Number(match[2]), Number(match[3]), Number(match[4])];
-  return { prefix: match[1]!, version: parts.join("."), parts };
-}
-
-/** The next release after `latest`, keeping its tag style. */
-export function nextVersion(latest: string, bump: Bump): { version: string; tag: string } | undefined {
-  const parsed = parseVersion(latest);
-  if (!parsed) return undefined;
-  const [major, minor, patch] = parsed.parts;
-  const version = bump === "major" ? `${major + 1}.0.0` : bump === "minor" ? `${major}.${minor + 1}.0` : `${major}.${minor}.${patch + 1}`;
-  return { version, tag: `${parsed.prefix}${version}` };
 }
 
 /**

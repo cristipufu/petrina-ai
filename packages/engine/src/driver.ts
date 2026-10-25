@@ -1,3 +1,4 @@
+import { testerCheckKey } from "@petrina/orchestrator";
 import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
@@ -43,12 +44,7 @@ export class Driver {
   ) {}
 
   private testerCheckKey(task: MTask): string {
-    const scopes = scopesFor(task);
-    // Evidence belongs to every approved owner, independent of the visible active product.
-    const evidence = scopes.map(({ work }) => [work.productId, work.baseSha, work.checks?.at, work.checks?.current]);
-    const productIds = new Set(scopes.map(({ work }) => work.productId));
-    return JSON.stringify([stepKey(task), task.handChanges, evidence,
-      this.k.s.products.filter((product) => productIds.has(product.id)).map((product) => [product.id, product.checks])]);
+    return testerCheckKey(task, this.k.s.products);
   }
 
   private testerNeedsChecks(task: MTask): boolean {

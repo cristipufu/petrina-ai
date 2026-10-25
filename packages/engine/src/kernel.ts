@@ -186,12 +186,8 @@ export class ToolProblem extends Error {
 /** Not installed or not logged in: a tool Petrina does not start. */
 export const notReady = (status: CheckStatus) => status === "not-installed" || status === "logged-out";
 
-/** A conversation belongs to this stage, round and position, including a fix round. */
-export function stepKey(task: MTask): string {
-  if (task.stageIndex < 0) return "plan";
-  const stage = task.plan?.stages[task.stageIndex];
-  return `${stage?.id ?? task.stageIndex} round ${stage ? (task.rounds[stage.id] ?? 1) : 1} position ${task.sub}${task.fixing ? " fixing" : ""}`;
-}
+export { stepKey } from "@petrina/core";
+import { stepKey } from "@petrina/core";
 
 /** First run's record. An install that already has products or tasks never sees first run. */
 function setupOf(loaded: State | undefined): DeepMutable<NonNullable<State["setup"]>> {

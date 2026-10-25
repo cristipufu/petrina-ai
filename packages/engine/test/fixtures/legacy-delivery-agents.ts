@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
 import { acceptanceAgents } from "./acceptance-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
@@ -5,7 +7,11 @@ import type { World } from "../support.js";
 
 /** Shipping/recovery runs real Git/SQLite/GitHub peers; provider transport is not the subject. */
 export function legacyDeliveryAgents(world: World) {
-  const replies = acceptanceAgents();
+  const replies = acceptanceAgents({ beforeReply(prompt) {
+    const title = /^# The task: (.+)$/m.exec(prompt.text)?.[1];
+    if (prompt.result === "build" && world.script().ownFiles && title)
+      writeFileSync(join(prompt.cwd, `${title.toLowerCase().replace(/\W+/g, "-")}.txt`), `${title}\n`);
+  } });
   const agents = new ScriptedAgents((prompt, signal) => {
     if (["build", "findings", "votes"].includes(prompt.result)) return replies.respond(prompt, signal);
     if (prompt.result === "plan") return scriptedResult({ rationale: "Build, review and deliver the requested change.", stages: [

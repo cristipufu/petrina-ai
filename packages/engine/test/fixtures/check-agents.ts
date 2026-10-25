@@ -22,7 +22,7 @@ export function checkAgents() {
   const beforeReply = (prompt: ScriptedPrompt, signal: AbortSignal) =>
     script.controlled && prompt.turn === 1 ? releases.wait(prompt.sessionId, signal) : undefined;
   const replies = acceptanceAgents({ beforeReply });
-  const agents = new ScriptedAgents(async (prompt, signal) => {
+  const respond = async (prompt: ScriptedPrompt, signal: AbortSignal) => {
     const configured = script;
     if (["build", "checks", "findings", "votes"].includes(prompt.result)) return replies.respond(prompt, signal);
     await beforeReply(prompt, signal);
@@ -42,7 +42,8 @@ export function checkAgents() {
       case "guide": return scriptedResult({ missed: true, line: "Every greeting also shows on the welcome page.", why: "The reviewers checked the greeting only where it was added." });
       default: throw new Error(`Unexpected participant in the check fixture: ${prompt.result}`);
     }
-  });
+  };
+  const agents = new ScriptedAgents(respond);
   const start: StartAgentSession = (options, role) => {
     if (options.reopen) return Promise.reject(new ReopenFailed("This check scenario starts fresh conversations"));
     return agents.start(options, role);
@@ -51,6 +52,7 @@ export function checkAgents() {
     .map(prompt => ({ ...prompt, role: label(prompt), session: prompt.sessionId }));
   return {
     start,
+    respond,
     release: (sessionId: string) => releases.release(sessionId),
     received,
     prompts: (role: string) => received(role).map(prompt => prompt.text),

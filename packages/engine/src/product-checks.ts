@@ -1,3 +1,4 @@
+import { acquireCheckPlace } from "@petrina/orchestrator";
 import { executionFor, scopesFor, taskView, type RepositoryContext } from "@petrina/orchestrator";
 import { acceptanceVersion } from "./repositories.js";
 import { beginRepair } from "@petrina/orchestrator";
@@ -119,11 +120,6 @@ export class ProductChecks {
     const { task } = scope;
     if (signal.aborted || this.k.stopped) throw new Aborted();
     if (runtimeWaitHolds(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-    // A task's prerequisite wait leaves the shared line; a pool pause retains its FIFO place.
-    // Stop listening at handoff so an already-admitted batch can finish normally.
-    const prerequisite = new AbortController();
-    const admissionSignal = AbortSignal.any([signal, prerequisite.signal]);
-    const unsubscribe = this.k.subscribe(() => { if (runtimeWaitHolds(task)) prerequisite.abort(); });
     let waitingForPool = false;
     const resume = (words: string) => {
       const wasPaused = waitingForPool && task.state === "waiting";
@@ -140,32 +136,19 @@ export class ProductChecks {
         if (task.state !== "waiting" || task.statusLine !== closed) this.k.waitForUsage(task, closed);
       } else resume(this.k.extraCheckBlocker?.() ?? "Waiting to run the checks: another task's run comes first");
     };
-    let waited = false;
     this.k.waitingChecks.set(task.id, (this.k.waitingChecks.get(task.id) ?? 0) + 1);
     try {
-      for (;;) {
-        const finished = await this.k.checkQueue.acquire(admissionSignal, false, order, onWait);
-        waited ||= finished.waited;
-        // Cancellation can arrive after handoff but before this continuation gets its turn.
-        if (signal.aborted || this.k.stopped) {
-          finished();
-          throw new Aborted();
-        }
-        if (!this.k.taskAdmissionsClosed(task)) {
-          if (waitingForPool) resume("Preparing the product's checks");
-          return Object.assign(finished, { waited });
-        }
-        finished();
-        if (runtimeWaitHolds(task) || this.k.draining) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-        // A pause during handoff returns capacity, then waits at the same FIFO position.
-        // No command started, so the original pending evidence remains the same attempt.
-        waited = true;
-      }
-    } catch (error) {
-      if (prerequisite.signal.aborted && !signal.aborted && !this.k.stopped) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-      throw error;
+      return await acquireCheckPlace(this.k.checkQueue, signal, order, {
+        stopped: () => this.k.stopped,
+        prerequisite: () => runtimeWaitHolds(task),
+        closed: () => this.k.taskAdmissionsClosed(task),
+        draining: () => this.k.draining,
+        reason: () => this.k.taskAdmissionWait(task),
+        subscribe: changed => this.k.subscribe(changed),
+        onWait,
+        admitted: () => { if (waitingForPool) resume("Preparing the product's checks"); },
+      });
     } finally {
-      unsubscribe();
       const left = this.k.waitingChecks.get(task.id)! - 1;
       if (left) this.k.waitingChecks.set(task.id, left);
       else this.k.waitingChecks.delete(task.id);

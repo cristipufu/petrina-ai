@@ -32,7 +32,7 @@ Portable controllers are being extracted into `@petrina/orchestrator`, which dep
 | Agent-runtime activity formatters; engine `check-log-read.ts`, `evidence-read.ts` | Pure public descriptions with provider metadata composed at the native boundary, verified diagnostic-file reading and bounded evidence pages |
 | `roles.ts`, `context.ts`, `prompts.ts` | Role contracts, what each role is shown, and the prompt around them |
 | `input-manifest.ts`, `exact-input.ts` | Pure input-section identities/occurrences, and separately the native persistence and reading of exact messages |
-| `product-checks.ts`, `checks.ts`, `check-queue.ts` | The product's checks, check-start preparation and the shared check line |
+| Engine `product-checks.ts`; orchestrator check queue/admission; repositories check runner/discovery | The host records product checks and task waits; portable controllers own FIFO/cancellation/preparation decisions; repository adapters execute and observe actual commands |
 | `guide-keeper.ts`, `points.ts` | The review guide, and the files of points it shares with the learnings |
 | `learnings.ts`, `accepted-points.ts` | Lessons offered at delivery, written to AGENTS.md, and accepted instructions retired from the pending queue once incorporated |
 | `update.ts` | One commit per task, put on top of the latest main before the delivery check and before shipping |
@@ -42,7 +42,7 @@ Portable controllers are being extracted into `@petrina/orchestrator`, which dep
 | `usage-coordinator.ts` | Account-reader registry, reports, limit timers and profile/stand-in choice |
 | `take-over.ts`, `terminal.ts` | Take over in the terminal |
 | Repositories `git.ts`, `github.ts` | Local Git plumbing and worktree cleanup; repository-pinned GitHub CLI operations through the same command runner |
-| Platform `process-host.ts`, `process-tree.ts` | Native process-group capability, owned spawn options and bounded Windows tree termination; process observations and shared bounded inspection. Callers retain ownership decisions and cleanup policy |
+| Platform `process-host.ts`, `process-tree.ts`, `process-group-read.ts` | Native process-group capability, owned spawn options and bounded Windows tree termination; process observations and shared bounded inspection. Platform parsers return semantic process states and opaque birth identities; callers retain ownership decisions and cleanup policy |
 | Platform `file-operations.ts` | Portable picture-copy and owned-tree removal effects; callers validate paths and own retention/retry decisions. Hosts and fixtures can supply a private implementation without changing shared filesystem functions |
 | `state-projection.ts` | Lean live snapshots, indexed history access, bounded archive cache and task revision/persistence bookkeeping |
 | Storage `store.ts`, `sql-log.ts` | SQLite state/history persistence and optional execution diagnostics; see [SQL logging](state-and-usage.md#optional-sql-execution-log) |

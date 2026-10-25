@@ -1,0 +1,110 @@
+import { describe as originalDescribe } from "bun:test";
+import { resolve as testFixturePath } from "node:path";
+const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
+
+import { afterAll, expect, it } from "bun:test";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { journeyProblems, slotUses, type Task } from "@petrina/core";
+import { Engine } from "../../engine.js";
+
+
+import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+
+const roots: string[] = [];
+afterAll(() => roots.forEach(removeDir));
+
+
+originalDescribe("tasks' checks take turns on one machine", () => {
+it("runs one task's checks while the other waits its turn, and both get through", async () => {
+    const root = tempDir("petrina-check-turns-");
+    roots.push(root);
+    const fakes = new Fakes(join(root, "fake"));
+    fakes.scenario({ checks: "slow" });
+    const hold = join(root, "hold-check");
+    const runs = join(root, "check-runs");
+    const check = join(root, "check.ts");
+    const script = join(fakes.dir, "agents.json");
+    writeFileSync(hold, "");
+    // Hold the first check until another task really waits, however far apart their agents finish.
+    // The shared lock also makes an overlapping run fail instead of silently passing the fixture.
+    writeFileSync(check, `import { appendFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+const lock = ${JSON.stringify(join(root, "checking"))};
+mkdirSync(lock);
+try {
+  appendFileSync(${JSON.stringify(runs)}, process.cwd() + "\\n");
+  while (existsSync(${JSON.stringify(hold)})) await Bun.sleep(20);
+} finally { rmSync(lock, { recursive: true }); }
+`);
+    writeFileSync(script, JSON.stringify({ checks: [{ name: "Held check", argv: [process.execPath, check], why: "Waits until the other task is in line" }] }));
+    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir, `--script=${script}`] });
+    // Admission reserves the slot before Git/environment preparation starts the actual command.
+    // Exercise that gap deliberately instead of relying on how quickly this machine starts checks.
+    let startFirst!: () => void;
+    const firstStart = new Promise<void>((resolve) => { startFirst = resolve; });
+    const runAll = engine["checks"]["runAll"].bind(engine["checks"]);
+    let first = true;
+    engine["checks"]["runAll"] = async (...args) => {
+      if (first) { first = false; await firstStart; }
+      return runAll(...args);
+    };
+    let waitedBeforeStart = false;
+    let occupiedDuringChecks: number | undefined;
+    let waitingStep: { taskId: string; stepId: string; startedAt: number; evidence: NonNullable<Task["journey"]>[number]; running: { name: string; startedAt?: number } } | undefined;
+    const unsubscribe = engine.subscribe(() => {
+      const state = engine.activeState();
+      const task = state.tasks.find((task) => task.statusLine === "Waiting to run the checks: another task's run comes first");
+      if (!task || waitingStep) return;
+      // A place is reserved before the diagnostic log opens and start is reported.
+      // Compare the running check with its queued peer only after that report.
+      const running = state.tasks.flatMap((entry) => entry.journey?.at(-1)?.productChecks ?? []).find((check) => check.result === "running");
+      if (!running) {
+        waitedBeforeStart = true;
+        startFirst();
+        return;
+      }
+      const step = task.journey!.at(-1)!;
+      // Snapshot the evidence and assert after the run. An assertion thrown by an update listener
+      // would abort the check and replace its pending evidence with "stopped" during cleanup.
+      occupiedDuringChecks = slotUses(state).length;
+      waitingStep = { taskId: task.id, stepId: step.id, startedAt: step.startedAt, evidence: JSON.parse(JSON.stringify(step)) as typeof step, running: { ...running } };
+    });
+    try {
+      const productId = await engine.addProduct(await makeProduct(root));
+      const ids = [engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" }), engine.addTask({ productId, title: "Add a farewell", description: "[no-check]" })];
+      await waitFor(() => {
+        const state = engine.getState();
+        for (const item of state.inbox) {
+          if (item.kind === "plan") engine.approve(item.id);
+          else if (item.kind === "permission") engine.allow(item.id, "once");
+          else if (item.kind === "question") engine.answer(item.id, item.options?.[0] ?? "Yes");
+        }
+        // The progress event can precede process startup. Wait for the check's own marker as well
+        // before releasing it, so the lock still proves the two commands never overlap.
+        if (waitingStep && existsSync(runs)) rmSync(hold, { force: true });
+        const tasks = ids.map((id) => state.tasks.find((entry) => entry.id === id) as Task | undefined);
+        if (tasks.some((task) => task?.state === "failed")) throw new Error("a task failed");
+        return ids.every((id) => state.inbox.some((item) => item.taskId === id && item.kind === "delivery"));
+      }, "both delivery checks", 90_000);
+      expect(waitedBeforeStart).toBe(true);
+      expect(occupiedDuringChecks).toBe(0);
+      expect(waitingStep).toBeDefined();
+      expect(waitingStep!.evidence).toMatchObject({ kind: "petrina", work: "checks" });
+      expect(waitingStep!.evidence.endedAt).toBeUndefined();
+      expect(waitingStep!.evidence.productChecks).toEqual([expect.objectContaining({ name: "Held check", result: "pending" })]);
+      expect(waitingStep!.running.name).toBe("Held check");
+      expect(waitingStep!.running.startedAt).toBeNumber();
+      const task = engine.getState().tasks.find((task) => task.id === waitingStep!.taskId)!;
+      expect(task.journey!.find((step) => step.id === waitingStep!.stepId)).toMatchObject({ startedAt: waitingStep!.startedAt, end: "done", outcome: "The check passes" });
+      for (const task of engine.getState().tasks) expect(journeyProblems(task)).toEqual([]);
+      const checked = new Set(readFileSync(runs, "utf8").trim().split("\n").map((path) => realpathSync.native(path)));
+      const copies = new Set(ids.map((id) => realpathSync.native(engine.getState().tasks.find((task) => task.id === id)!.worktree!)));
+      expect(checked).toEqual(copies);
+    } finally {
+      unsubscribe();
+      startFirst();
+      rmSync(hold, { force: true });
+      await engine.shutdown();
+    }
+  });
+});

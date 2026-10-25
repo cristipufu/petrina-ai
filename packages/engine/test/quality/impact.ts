@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { builtinModules } from "node:module";
 import { sourceFacts } from "./source.js";
 import { sourceCandidates } from "./source-paths.js";
 import { isSource, isTest, WORKSPACES, workspaceOf } from "./test-paths.js";
 export { isSource, isTest, WORKSPACES, workspaceOf } from "./test-paths.js";
 
-const builtins = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
+export interface ImpactIdentity { bun: string; platform: string; arch: string; ci: string; browser: string }
+export interface ImpactRuntime { identity: ImpactIdentity; builtinModules: readonly string[] }
 export interface CoverageMap { version: 1; fingerprint: string; tests: Record<string, string[]> }
 export interface ImpactPlan {
   mode: "observation";
@@ -18,16 +18,17 @@ export interface ImpactPlan {
 }
 
 /** The complete current input set, not timestamps or a previously inferred dependency cache. */
-export function fingerprint(files: ReadonlyMap<string, string>): string {
-  const hash = createHash("sha256").update(JSON.stringify({ schema: 1, bun: Bun.version, platform: process.platform, arch: process.arch, ci: process.env.CI ?? "", browser: process.env.PETRINA_BROWSER_CHECK ?? "" }));
+export function fingerprint(files: ReadonlyMap<string, string>, identity: ImpactIdentity): string {
+  const hash = createHash("sha256").update(JSON.stringify({ schema: 1, bun: identity.bun, platform: identity.platform, arch: identity.arch, ci: identity.ci, browser: identity.browser }));
   for (const [path, body] of [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) hash.update(JSON.stringify([path, body]));
   return hash.digest("hex");
 }
 
-export function impactPlan(files: ReadonlyMap<string, string>, changes: readonly string[], coverage?: CoverageMap): ImpactPlan {
+export function impactPlan(files: ReadonlyMap<string, string>, changes: readonly string[], runtime: ImpactRuntime, coverage?: CoverageMap): ImpactPlan {
   const tests = [...files.keys()].filter(isTest).sort();
   const changed = [...new Set(changes)].sort();
-  const digest = fingerprint(files);
+  const digest = fingerprint(files, runtime.identity);
+  const builtins = new Set(runtime.builtinModules.flatMap(name => [name, `node:${name}`]));
   const selected = new Set<string>();
   const reasons = new Set<string>();
   const reverse = new Map<string, Set<string>>();

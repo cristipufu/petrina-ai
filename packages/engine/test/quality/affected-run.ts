@@ -1,3 +1,4 @@
+import { impactRuntime } from "./impact-runtime.js";
 // Repository-specific early feedback. Only the complete configured suite can authorize delivery.
 import { mkdirSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -23,11 +24,11 @@ if (errors.length) { console.error(errors.join("\n")); process.exit(1); }
 let plan: Awaited<ReturnType<typeof observe>> | ReturnType<typeof impactPlan>;
 try { plan = await observe(ROOT, args[1] ?? process.env.PETRINA_TEST_BASE, recordedCoverage(ROOT)); }
 catch (error) {
-  plan = impactPlan(await inputs(ROOT), ["unknown-base"]);
+  plan = impactPlan(await inputs(ROOT), ["unknown-base"], impactRuntime());
   plan.reasons.push(error instanceof Error ? error.message : String(error));
 }
 const manifest = await inputs(ROOT);
-if (fingerprint(manifest) !== plan.fingerprint) throw new Error("Test inputs changed while preparing affected feedback; no suites started");
+if (fingerprint(manifest, impactRuntime().identity) !== plan.fingerprint) throw new Error("Test inputs changed while preparing affected feedback; no suites started");
 const expectedFiles = [...manifest.keys()].filter(isTest).sort();
 const requested = [...plan.selected];
 plan = { ...plan, selected: feedbackFiles(requested, expectedFiles) };
@@ -57,7 +58,7 @@ try {
 } finally {
   try {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-    const final = { revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim(), fingerprint: fingerprint(await inputs(ROOT)) };
+    const final = { revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim(), fingerprint: fingerprint(await inputs(ROOT), impactRuntime().identity) };
     const conclusion = coordinator?.conclusion(final, interrupted !== undefined);
     const records = suiteRecords(coordinator?.results ?? [], plan.selected);
     const stableInputs = final.revision === revision && final.fingerprint === plan.fingerprint;

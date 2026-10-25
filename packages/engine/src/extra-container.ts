@@ -1,3 +1,4 @@
+import { ValidationClientCleanup, confirmContainerRemoval } from "@petrina/orchestrator";
 import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,11 +6,10 @@ import { existsSync } from "node:fs";
 import type { ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import * as git from "@petrina/repositories/git";
-import { processList } from "@petrina/platform/process-tree";
+import { readProcessGroupMembers } from "@petrina/platform/process-group-read";
 
 export const OWNER_LABEL = "app.petrina.validation-owner";
 export const RUN_LABEL = "app.petrina.validation-run";
-type ClientProcess = { pid: number; group: number; state: string; command: string; started?: string };
 
 /** Only the CLI gets the local service configuration. None of the host environment enters the container. */
 export function containerEnv(discovery = false): NodeJS.ProcessEnv {
@@ -34,9 +34,12 @@ export function containerCommand(argv: readonly string[], timeout: number, disco
 }
 
 export class ExtraContainer {
-  /** Advice only: identities observed beside a verified live leader, never restored from saved numbers. */
-  private readonly knownClients = new Map<string, Map<number, ClientProcess>>();
-  constructor(private readonly k: Kernel) {}
+  private readonly clients = new ValidationClientCleanup({
+    groups: process.platform !== "win32",
+    read: () => readProcessGroupMembers(this.timeout),
+    killGroup: group => { process.kill(-group, "SIGKILL"); },
+  });
+  constructor(private readonly k: Pick<Kernel, "options" | "dataDir" | "files">) {}
   private get timeout(): number { return this.k.options.containerCommandTimeoutMs ?? 4_000; }
   private tool(): readonly string[] {
     if (this.k.options.containerTool) return this.k.options.containerTool;
@@ -98,75 +101,13 @@ export class ExtraContainer {
     return names;
   }
 
-  /** --rm may still be removing a stopped container. Admit reads for one service allowance;
-   * each admitted read retains its normal allowance, even near the end of that window. */
-  private async removed(record: ExtraValidation): Promise<boolean> {
-    const deadline = Date.now() + this.timeout;
-    for (;;) {
-      if (Date.now() >= deadline) return false;
-      try { if (!(await this.labelled(record)).length) return true; }
-      catch (error) { if (Date.now() >= deadline) return false; throw error; }
-      const left = deadline - Date.now();
-      if (left <= 0) return false;
-      await Bun.sleep(Math.min(50, left));
-    }
+  /** --rm may still be removing a stopped container; each admitted read keeps its normal allowance. */
+  private removed(record: ExtraValidation): Promise<boolean> {
+    return confirmContainerRemoval(() => this.labelled(record), this.timeout, { now: Date.now, sleep: ms => Bun.sleep(ms) });
   }
 
-  /** Verify the exact random name in the client's command before signalling its process group. */
-  private async stopClient(record: ExtraValidation): Promise<boolean> {
-    if (process.platform === "win32") return false; // This bounded mode currently needs Unix process groups.
-    const read = () => processList(["-A", "-o", "pid=,pgid=,stat=,lstart=,command="], this.timeout, undefined, { ...process.env, LC_ALL: "C" });
-    const list = await read();
-    if (list === undefined) {
-      record.cleanupDetail = "Petrina could not inspect the local client programs. Restore process-list access so Petrina can confirm they stopped.";
-      return false;
-    }
-    const parse = (list: string): ClientProcess[] => list.split("\n").flatMap(line => {
-      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)(?:\s+(.*))?$/);
-      if (!match) return [];
-      const identity = match[4]?.match(/^(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})(?:\s+(.+))?$/);
-      return [{ pid: Number(match[1]), group: Number(match[2]), state: match[3]!, command: identity ? identity[2] ?? "" : match[4] ?? "",
-        ...(identity ? { started: identity[1]!.replace(/\s+/g, " ") } : {}) }];
-    });
-    const isClient = (row: ClientProcess) => row.command.includes(`--name ${record.containerName} `) && row.command.includes(`${RUN_LABEL}=${record.id} `);
-    const remember = (rows: ClientProcess[]) => {
-      const groups = new Set(rows.filter(row => row.pid === row.group && !row.state.startsWith("Z") && isClient(row)).map(row => row.group));
-      if (!groups.size) return;
-      const known = this.knownClients.get(record.id) ?? new Map<number, ClientProcess>();
-      for (const row of rows) if (groups.has(row.group) && row.started && row.command) known.set(row.pid, row);
-      this.knownClients.set(record.id, known);
-    };
-    const rows = parse(list);
-    const clients = rows.filter(isClient);
-    remember(rows);
-    for (const client of clients) {
-      if (client.pid !== client.group) return false;
-      try { process.kill(-client.group, "SIGKILL"); } catch { /* Confirm below, with current identity before any stop advice. */ }
-    }
-    const knownGroups = [...(this.knownClients.get(record.id)?.values() ?? [])].map(row => row.group);
-    const groups = new Set([...(record.clientPid ? [record.clientPid] : []), ...clients.map(row => row.group), ...knownGroups]);
-    // A saved group number alone proves no ownership: it may have been reused while Petrina was down.
-    const after = await read();
-    const observed = after === undefined ? undefined : parse(after);
-    if (observed) {
-      remember(observed);
-      for (const row of observed.filter(isClient)) groups.add(row.group);
-    }
-    const live = observed?.filter(row => groups.has(row.group) && !row.state.startsWith("Z"));
-    const verified = new Set(live?.filter(row => row.pid === row.group && isClient(row)).map(row => row.group));
-    const known = (row: ClientProcess) => {
-      const previous = this.knownClients.get(record.id)?.get(row.pid);
-      return row.started !== undefined && row.started === previous?.started && row.group === previous.group && row.command === previous.command;
-    };
-    if (!live || live.length) record.cleanupDetail = live?.length
-      ? live.every(row => verified.has(row.group))
-        ? `Petrina's verified local client for extra validation “${record.name}” and its helpers are still running. Stop that named client and its helpers; Petrina will confirm cleanup before releasing checks.`
-        : live.every(row => verified.has(row.group) || known(row))
-          ? `Petrina's verified local helpers (${live.map(row => row.pid).join(", ")}) for extra validation “${record.name}” are still running. Stop those owned programs; Petrina will confirm cleanup before releasing checks.`
-        : "Petrina cannot verify whether programs using the saved client process group belong to this run; they may be unrelated. Do not stop programs based on the saved number. Checks stay held until their absence can be confirmed. Save your work and restart this computer if the uncertainty persists; Petrina will retry confirmation."
-      : "Petrina could not inspect the local client programs. Restore process-list access so Petrina can confirm they stopped.";
-    if (live?.length === 0) this.knownClients.delete(record.id);
-    return live !== undefined && live.length === 0;
+  private stopClient(record: ExtraValidation): Promise<boolean> {
+    return this.clients.stop(record);
   }
 
   async cleanup(record: ExtraValidation): Promise<boolean> {

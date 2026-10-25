@@ -1454,18 +1454,46 @@
       ]
     },
     {
-      "file": "packages/engine/test/acceptance-gap.test.ts",
+      "file": "packages/engine/test/journeys/acceptance/required-gaps.test.ts",
       "declarations": 13,
       "assertionSites": 171,
       "baselineDigest": "6c2aed7c44945a5699c42a1c55e3a7ec1a6bc4e7d3b4f37859aa2e529a12ea7b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/acceptance-gap.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/acceptance/required-gaps.test.ts",
+        "packages/engine/test/contracts/delivery/acceptance-description.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "acceptance",
+      "review": "Real private Git delivery plus Engine recording/checkpoints/restarts retained. Unrelated ACP transport replaced by canonical acceptanceAgents; native limit replacement/pause controls retain transport when classification is asserted. Pull-request checklist wording separated from full worktree/agent journey. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "built-in/custom/task-owned checks roles",
+        "checklist present/absent",
+        "repaired/planned 3 combinations",
+        "shared ownership including unknown product",
+        "6 saved publishing entry routes",
+        "unfinished push approved/unapproved",
+        "limit replacement + restart",
+        "pause in turn and decision",
+        "proof and gap share approval",
+        "changed/unchanged final tree"
+      ],
+      "reviewedOriginalRuntimePasses": 25,
+      "currentRuntimePasses": 25,
+      "reviewedOriginalAssertionSites": 171,
+      "currentAssertionSites": 171,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/acceptance-repair-reviews.test.ts",
+      "file": "packages/engine/test/journeys/acceptance/repair-reviews.test.ts",
       "declarations": 9,
       "assertionSites": 142,
       "baselineDigest": "b81e1ac2cd1b1812c222a8da36a5baeb8cb9b95ff79475eeb936d8b993fe3370",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "keeps used-up acceptance failures open for one decision after every owed review, at an added delivery check",
@@ -1478,15 +1506,32 @@
           "review": "The removed variant repeated the complete nonmixed failure sequence solely with a missing initial gate. Its gate insertion position, unchanged allowances, review-before-decision route, exact milestone text, proofDeliveryGate identity and checkpoint are tested on the actual extracted controller; native report/context/restart/delivery guarantees remain in the two retained richer journeys."
         }
       ],
-      "review": "Partial audit: one composite exhausted-acceptance variant split between the actual routing owner and retained planned/mixed-evidence journeys. All fifteen retained case bodies/assertions reconcile after replacing provider transport with typed scripted responses; actual Git/SQLite, context packets, restart, findings and delivery stay real. Private Driver admission overrides and the remaining multi-owner layer split still require review.",
+      "review": "Existing scripted acceptanceAgents already removes ACP. Keep real shared Git, actual independent seats/input packets and durable route/decision integration; no fake workflow controller. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
       "validation": {
-        "retainedRuntimeCases": 15,
-        "nativeAndScriptedCaseBodiesMatch": true,
-        "journeyRun": "acceptance-scripted-reviewed.xml (19 cases including 4 fixture controls, 268 assertions, 38.42s)",
-        "priorSameFifteenNativeTransportCases": "acceptance-migrated-journeys.xml (15 cases, 246 assertions, 54.86s)",
-        "fixtureControls": "acceptance-fixture-contracts.xml (9 cases including shared sessions, 51 assertions, 81ms)",
-        "reconciliation": "acceptance-journey-reconciliation.json"
-      }
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      },
+      "from": "packages/engine/test/acceptance-repair-reviews.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/acceptance/repair-reviews.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "acceptance",
+      "variants": [
+        "gate/custom 3 combinations",
+        "gate true/false with mixed evidence",
+        "spent returns planned failure/added mixed",
+        "confirm-what-shown reviewer",
+        "fresh/continued Builder",
+        "restart/retry early route",
+        "legacy repaired/unrepaired mark",
+        "checks failure before repair test",
+        "final repair after review"
+      ],
+      "reviewedOriginalRuntimePasses": 15,
+      "currentRuntimePasses": 15,
+      "reviewedOriginalAssertionSites": 142,
+      "currentAssertionSites": 142
     },
     {
       "file": "packages/engine/test/contracts/guidance/accepted-points.test.ts",
@@ -1744,11 +1789,34 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/builder-return.test.ts",
+      "file": "packages/engine/test/contracts/checks/builder-contents.test.ts",
       "declarations": 1,
       "assertionSites": 11,
       "baselineDigest": "055fdc2d3fe55864f82f6cd297347b0d31cb7ab1d88efaa4a86cd36b57ccc7d6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/builder-return.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/checks/builder-contents.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "checks",
+      "review": "Real Git contentTree/staging/status, Work result recording retained; replace incomplete controller casts with consumed method Picks and fail-on-unexpected typed effects. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "committed,false",
+        "empty-commit,false",
+        "uncommitted,false",
+        "existing,false",
+        "empty-commit,true",
+        "committed,true"
+      ],
+      "reviewedOriginalRuntimePasses": 6,
+      "currentRuntimePasses": 6,
+      "reviewedOriginalAssertionSites": 11,
+      "currentAssertionSites": 11,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/journeys/capacity/parallel-rejoin.test.ts",
@@ -1801,18 +1869,56 @@
       }
     },
     {
-      "file": "packages/engine/test/check-decisions.test.ts",
+      "file": "packages/engine/test/contracts/coordination/check-decisions.test.ts",
       "declarations": 2,
       "assertionSites": 30,
       "baselineDigest": "3f72374a4d202920ddfad52db1c7367cf380f0715fbd5561ef5ee2e2dbee1fc2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-decisions.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/check-decisions.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "No Git/provider needed: actual Engine/Coordination/SQLite atomic decisions and receipt replay/restart are the subject. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "interrupted false/true x shared false/true",
+        "ordinary pass"
+      ],
+      "reviewedOriginalRuntimePasses": 5,
+      "currentRuntimePasses": 5,
+      "reviewedOriginalAssertionSites": 30,
+      "currentAssertionSites": 30,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/check-discovery-admission.test.ts",
+      "file": "packages/engine/test/contracts/checks/discovery-admission.test.ts",
       "declarations": 2,
       "assertionSites": 21,
       "baselineDigest": "2fc04c44a2f239bfaa4a65ee98119ed574a468cdfb3d7e57b0c458bde1580f80",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-discovery-admission.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/checks/discovery-admission.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "checks",
+      "review": "Keep actual Git moving base, real check command and queue recapture/journey attempts; scripted discovery remains a deliberate controlled side effect. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "waitsAgain false/true",
+        "conflict/approval"
+      ],
+      "reviewedOriginalRuntimePasses": 4,
+      "currentRuntimePasses": 4,
+      "reviewedOriginalAssertionSites": 22,
+      "currentAssertionSites": 22,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/checks/nested-environment.test.ts",
@@ -1834,11 +1940,11 @@
       "from": "packages/engine/test/check-env.test.ts"
     },
     {
-      "file": "packages/engine/test/check-failures.test.ts",
+      "file": "packages/engine/test/journeys/checks/failure-evidence.test.ts",
       "declarations": 27,
       "assertionSites": 338,
       "baselineDigest": "f3d287ee4f1e15ad0acf38b3cfd62e555c9f33ac0aa0de5b07aa316883dec5ea",
-      "status": "pending",
+      "status": "reviewed",
       "partialAudit": {
         "scope": "Default and edited Builder prompt wording only",
         "owners": [
@@ -1856,42 +1962,192 @@
           "packages/engine/test/contracts/workflow/planner-checkpoint.test.ts"
         ],
         "validation": "check-workflows-4a6dd436/reconciliation.json: all 26 declarations, 331 assertion sites, 34 runtime case identities and 424 runtime assertions retained. The actual check program is byte identical. Final measured run launches 5306 direct Git / 5463 unique Git starts, 75 Bun and one process scan, with all starts settled, three file-end records and no observer errors; prior was 5387 / 5538 Git, 399 Bun and 324 process scans. Focused times 7.63s versus 14.76s; no whole-suite improvement or aggregate memory claim. Earlier incomplete/error observations are retained."
+      },
+      "from": "packages/engine/test/check-failures.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/checks/failure-evidence.test.ts",
+        "packages/engine/test/journeys/checks/hook-freshness.test.ts",
+        "packages/engine/test/journeys/checks/repair-episodes.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "checks",
+      "review": "Existing checkWorkflow uses canonical scripted agents. Keep real Git/hooks/check processes/durable records where asserted, separate evidence, native-hook freshness and failure-episode journeys by responsibility. No duplicated bookkeeping. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "current failure and static skip",
+        "pause reviewer",
+        "pass reused through acceptance/review/delivery",
+        "failed work skips acceptance",
+        "final failure after earlier acceptance",
+        "unchanged repairs/restart/genuine fix",
+        "legacy exhausted review round",
+        "changed definitions",
+        "forced rerun gate",
+        "cancel/restart",
+        "main moves",
+        "message/hook changes",
+        "pre-commit/commit-msg x opaque/retry/location/legacy pass/legacy fail/old-suite controls",
+        "port repair returns available/exhausted",
+        "later independent episodes",
+        "pending numbered review",
+        "episode count restart",
+        "legacy spent reset",
+        "environment claim unsupported",
+        "explicit retry sequence"
+      ],
+      "reviewedOriginalRuntimePasses": 32,
+      "currentRuntimePasses": 32,
+      "reviewedOriginalAssertionSites": 318,
+      "currentAssertionSites": 318,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
       }
     },
     {
-      "file": "packages/engine/test/check-inputs.test.ts",
+      "file": "packages/engine/test/contracts/checks/input-freshness.test.ts",
       "declarations": 3,
       "assertionSites": 13,
       "baselineDigest": "cc84300ac24ab00206c301833d4d88cd76d7b2ae5e9992988eac86b8e39e2883",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-inputs.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/checks/input-freshness.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "checks",
+      "review": "Real process/release and Git definitions remain subject; progress waits observe owning check operation. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "explicit hook command distinct",
+        "held pass becomes new failed definition",
+        "3 continually changing input limit"
+      ],
+      "reviewedOriginalRuntimePasses": 3,
+      "currentRuntimePasses": 3,
+      "reviewedOriginalAssertionSites": 13,
+      "currentAssertionSites": 13,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/check-interruption.test.ts",
+      "file": "packages/platform/test/rules/power/intervals.test.ts",
       "declarations": 8,
       "assertionSites": 28,
       "baselineDigest": "6e8a5216486a94c796dbdc481a1f5724be5fb383b6583a4f63e9c54c69147e18",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-interruption.test.ts",
+      "splitFiles": [
+        "packages/platform/test/rules/power/intervals.test.ts",
+        "packages/platform/test/orchestration/power/records.test.ts",
+        "packages/platform/test/contracts/power/power-log.test.ts"
+      ],
+      "layer": "rules",
+      "area": "power",
+      "review": "Separate timestamp interval parsing, caller-owned source/abort policy and actual native execFile cancellation; keep native 30s allowance and exact signal behavior. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "native reader success/unavailable/platform/preabort",
+        "actual execFile cancellation after output",
+        "source failed/threw/late abort/preabort",
+        "3 actual overlap intervals",
+        "missing/reversed/gap/timeout no inference"
+      ],
+      "reviewedOriginalRuntimePasses": 10,
+      "currentRuntimePasses": 10,
+      "reviewedOriginalAssertionSites": 28,
+      "currentAssertionSites": 28,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/check-outcomes.test.ts",
+      "file": "packages/engine/test/contracts/checks/outcome-recording.test.ts",
       "declarations": 2,
       "assertionSites": 37,
       "baselineDigest": "3337383b9d4e0ba0b1b994c8ec02ee5b892b416c6e1aaf0d0b62c42f73b318b6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-outcomes.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/checks/outcome-recording.test.ts",
+        "packages/engine/test/contracts/recovery/check-evidence.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "checks",
+      "review": "Actual Engine/SQLite recording and reuse/recovery; injected evidence snapshot is appropriate; keep originals and routing counts, do not substitute saved-failure algorithm. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "failed/interrupted/mixed/passed",
+        "drain/stop/restart/shutdown during held source"
+      ],
+      "reviewedOriginalRuntimePasses": 8,
+      "currentRuntimePasses": 8,
+      "reviewedOriginalAssertionSites": 37,
+      "currentAssertionSites": 37,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/check-queue.test.ts",
+      "file": "packages/orchestrator/test/orchestration/checks/queue.test.ts",
       "declarations": 3,
       "assertionSites": 24,
       "baselineDigest": "d990bfc5275a7ee1c2ab2e39295655ad664c151b79abb72f39c7041ab417ba0c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-queue.test.ts",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/checks/queue.test.ts"
+      ],
+      "layer": "orchestration",
+      "area": "checks",
+      "review": "Exact existing portable queue policy; bind injected error factories, no Engine/usage imports in lower layer. Preserve FIFO/order, idempotent release, cancellation and durable extra owner semantics. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "finishWhilePaused false/true x limit1/2 x extra false/true",
+        "heldCleanup false/true draining",
+        "cancel paused"
+      ],
+      "reviewedOriginalRuntimePasses": 11,
+      "currentRuntimePasses": 11,
+      "reviewedOriginalAssertionSites": 24,
+      "currentAssertionSites": 24,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/check-turns.test.ts",
+      "file": "packages/orchestrator/test/orchestration/checks/admission.test.ts",
       "declarations": 7,
       "assertionSites": 42,
       "baselineDigest": "eea9064cbdee7a3bcf0865b0b54fbee3800a5ea89babcf1c1c605414fa486aa0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/check-turns.test.ts",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/checks/admission.test.ts",
+        "packages/engine/test/journeys/checks/shared-capacity.test.ts",
+        "packages/engine/test/contracts/checks/preparation-admission.test.ts",
+        "packages/orchestrator/test/orchestration/checks/tester-preparation.test.ts"
+      ],
+      "layer": "orchestration",
+      "area": "checks",
+      "review": "Move queue/admission rule through real extracted controller; retain actual task/Git/check-command shared-capacity journey. Driver lane admission uses no unrelated product Git when only eligibility is asserted; exact key is pure explicit input. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "limit1/2 queue handoff",
+        "pre/queued/late cancellation",
+        "pause/drain reserved handoff",
+        "two actual task commands with exclusive lock",
+        "prep while model slots occupied",
+        "planner while prep lane full",
+        "active repo-independent key"
+      ],
+      "reviewedOriginalRuntimePasses": 9,
+      "currentRuntimePasses": 10,
+      "reviewedOriginalAssertionSites": 42,
+      "currentAssertionSites": 48,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/coordination/checkpoint-read.test.ts",
@@ -1914,18 +2170,83 @@
       ]
     },
     {
-      "file": "packages/engine/test/checks-seen.test.ts",
+      "file": "packages/engine/test/journeys/checks/discovery-cache.test.ts",
       "declarations": 1,
       "assertionSites": 2,
       "baselineDigest": "07a850ec7a4163034cc8bb301955616dc960156a82d1429027c051cff5ebc3aa",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/checks-seen.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/checks/discovery-cache.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "checks",
+      "review": "Keep two real bases and actual cached discoveries through fixes; provider replies become canonical scripts, no transport assertion. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "older-base task after newer task discovery"
+      ],
+      "reviewedOriginalRuntimePasses": 1,
+      "currentRuntimePasses": 1,
+      "reviewedOriginalAssertionSites": 2,
+      "currentAssertionSites": 2,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/checks.test.ts",
+      "file": "packages/repositories/test/contracts/checks/execution.test.ts",
       "declarations": 25,
       "assertionSites": 169,
       "baselineDigest": "0daaa67092ba2e7aad364f9e1a8c0938f3a3c6c21190f773fe5623ed32404a9e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/checks.test.ts",
+      "splitFiles": [
+        "packages/repositories/test/contracts/checks/execution.test.ts",
+        "packages/repositories/test/contracts/checks/output.test.ts",
+        "packages/repositories/test/contracts/checks/process-cleanup.test.ts",
+        "packages/repositories/test/contracts/checks/discovery.test.ts",
+        "packages/core/test/rules/checks/command-arguments.test.ts",
+        "packages/engine/test/journeys/checks/configured-checks.test.ts",
+        "packages/engine/test/contracts/checks/incomplete-cleanup.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "checks",
+      "review": "Split pure command policy, repository-file discovery, actual runner/output/process contracts and Engine recording integration. Native timing/transport ownership coverage remains native, preserve all assertions and original skip guards; use canonical owned leases for failure-path cleanup if feasible. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "log replaced pathname identity",
+        "live progress",
+        "static-first skipping",
+        "multi-stack discovery",
+        "typed command/no shell",
+        "fingerprint",
+        "pass/fail/missing",
+        "3 launch-registration modes",
+        "exit0/7 before spawn returns",
+        "abort/evidence abort",
+        "real deadline",
+        "large diagnostics/repeated logs",
+        "log write failure",
+        "abort/timeout detached descendants",
+        "unavailable list recovers/cannot-read",
+        "24 fast failures",
+        "bounded flood",
+        "group-held pipe",
+        "cancel stops pending",
+        "serial build lock",
+        "configured pass/fail",
+        "cancel check/hook incomplete cleanup",
+        "closed output alive then timeout",
+        "actual defunct lost-exit"
+      ],
+      "reviewedOriginalRuntimePasses": 32,
+      "currentRuntimePasses": 32,
+      "reviewedOriginalAssertionSites": 169,
+      "currentAssertionSites": 169,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/usage/claude-history.test.ts",
@@ -2090,11 +2411,36 @@
       ]
     },
     {
-      "file": "packages/engine/test/coordination-check-progress.test.ts",
+      "file": "packages/engine/test/contracts/coordination/check-progress.test.ts",
       "declarations": 8,
       "assertionSites": 90,
       "baselineDigest": "29d5095cbd108a6d6b227ec084400e10401820183c715e6a2d6b0ab1f1871457",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-check-progress.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/check-progress.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Keep actual check subprocess, Git identities and server-side focused evidence composition. No agents start; canonical private data/Engine already right boundary. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "first failure/hook exact versions",
+        "multi-attempt progress/full log restart/pagination",
+        "latest-attempt reuse",
+        "stopped peers",
+        "zero configured and reused",
+        "zero command preserves working changes",
+        "resume with zero checks",
+        "same-definition resumed latest attempt"
+      ],
+      "reviewedOriginalRuntimePasses": 8,
+      "currentRuntimePasses": 8,
+      "reviewedOriginalAssertionSites": 90,
+      "currentAssertionSites": 90,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/coordination-cli.test.ts",
@@ -2340,67 +2686,292 @@
       ]
     },
     {
-      "file": "packages/engine/test/extra-container-real.test.ts",
+      "file": "packages/engine/test/contracts/containers/native-service.test.ts",
       "declarations": 3,
       "assertionSites": 21,
       "baselineDigest": "47f297a6b36043662b7196e907b852e6d717a94fc3efcc915e62b5027c064c44",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-container-real.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/containers/native-service.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "containers",
+      "review": "Explicit opt-in real local container ownership contract. Preserve original skips/prerequisites and Linux container shell fixture; not part ordinary fake-service queue tests. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "read-only standalone Git copy including different uid",
+        "cancel/timeout actual workload",
+        "abrupt Engine stop/private proxy config"
+      ],
+      "reviewedOriginalRuntimePasses": 0,
+      "currentRuntimePasses": 0,
+      "reviewedOriginalAssertionSites": 24,
+      "currentAssertionSites": 24,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-pauses.test.ts",
+      "file": "packages/engine/test/contracts/validation/pool-pause.test.ts",
       "declarations": 7,
       "assertionSites": 86,
       "baselineDigest": "8dc6001e86bea214497a61c7570e74afdd76f1a3beff2ba2bfeaee35227dffc3",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-pauses.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/validation/pool-pause.test.ts",
+        "packages/engine/test/contracts/coordination/validation-waits.test.ts",
+        "packages/engine/test/contracts/recovery/validation-shutdown.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "validation",
+      "review": "Separate real durable queue/status/awake interaction, actual server-client long wait/cancellation and native active-session shutdown accounting. Keep exact long-wait deadline because ordinary cutoff is the regression. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "extra false/true x before-release/during-pause/during-handoff",
+        "3 prep phases awake state",
+        "coordinator pause completion",
+        "direct drain/coordinator restart",
+        "real client cutoff11500ms",
+        "client/MCP queued/running cancellation",
+        "ordinary live turn with extra none/queued/running"
+      ],
+      "reviewedOriginalRuntimePasses": 17,
+      "currentRuntimePasses": 17,
+      "reviewedOriginalAssertionSites": 86,
+      "currentAssertionSites": 86,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-persistence.test.ts",
+      "file": "packages/engine/test/contracts/validation/ownership-persistence.test.ts",
       "declarations": 10,
       "assertionSites": 176,
       "baselineDigest": "50944d121c7e816a3ce99d626714185c572bf65395db31f61d2c4c5d8a6a070b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-persistence.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/validation/ownership-persistence.test.ts",
+        "packages/engine/test/contracts/validation/save-failures.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "validation",
+      "review": "Real SQLite saves/faults/restarts and container service lifecycle remain subject. Split admission/replay ownership from save failure matrices; no fake transactions. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "limit1/2 ordinary-extra FIFO",
+        "limit1/2 two extra FIFO",
+        "caller cancellation/idempotence/log",
+        "client death held cleanup",
+        "3 prelaunch save phases",
+        "12 phase/failure/recovery combinations",
+        "3 launched save failures x2recoveries",
+        "periodic save failure/shutdown drain",
+        "completion/preparation/cancelled-preparation settlement",
+        "two held cleanup blockers"
+      ],
+      "reviewedOriginalRuntimePasses": 32,
+      "currentRuntimePasses": 32,
+      "reviewedOriginalAssertionSites": 176,
+      "currentAssertionSites": 176,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-prerequisites.test.ts",
+      "file": "packages/engine/test/contracts/validation/prerequisite-admission.test.ts",
       "declarations": 8,
       "assertionSites": 108,
       "baselineDigest": "54178e1364ca92a8bf8e1c0fd28204592ca827e77ea0d606ffcd469f231ce325",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-prerequisites.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/validation/prerequisite-admission.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "validation",
+      "review": "Real Engine state scheduling/persistence + fake service; some cases require actual Git saved-version and GitHub local protocol peer. Preserve exact task/snapshot binding and lifecycle order; no new scheduler. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "inspection/copy/log x pause/stop/restart",
+        "submission/queued hold",
+        "failed queue reentry save",
+        "scheduled landing restartfalse/true",
+        "actual prerequisite driver delivery",
+        "PR monitor observes merge",
+        "queued/handoff/inspection/copy/log/running runtime wait",
+        "heldcleanupfalse/true cancellation"
+      ],
+      "reviewedOriginalRuntimePasses": 24,
+      "currentRuntimePasses": 24,
+      "reviewedOriginalAssertionSites": 108,
+      "currentAssertionSites": 108,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-processes.test.ts",
+      "file": "packages/orchestrator/test/orchestration/validation/client-ownership.test.ts",
       "declarations": 8,
       "assertionSites": 49,
       "baselineDigest": "a8cd6c10cac1401fce1d9faa3da9c5d7907b79a13534fac9b6b81315b667b3d1",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-processes.test.ts",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/validation/client-ownership.test.ts",
+        "packages/orchestrator/test/orchestration/validation/removal-budget.test.ts",
+        "packages/engine/test/contracts/validation/process-cleanup.test.ts",
+        "packages/platform/test/rules/processes/group-identities.test.ts"
+      ],
+      "layer": "orchestration",
+      "area": "validation",
+      "review": "Identity/advice and budget algorithms consume explicit read/signal/time ports, so11identity+3budget variants need no Engine/Git/fake Docker. Keep actual native surviving child and service cancellation/removal contracts. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "saved number/verified client/surviving helper/unknown command",
+        "same helper/changed start/changed command/new member/missing start/new observer",
+        "final lookup identifies without saved pid",
+        "surviving local child observedfalse/true",
+        "slow removal/short-window/unresponsive",
+        "stalledfalse/true service removal",
+        "time limit",
+        "queued/running cancel"
+      ],
+      "reviewedOriginalRuntimePasses": 20,
+      "currentRuntimePasses": 24,
+      "reviewedOriginalAssertionSites": 49,
+      "currentAssertionSites": 56,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-records.test.ts",
+      "file": "packages/engine/test/contracts/validation/atomic-records.test.ts",
       "declarations": 7,
       "assertionSites": 85,
       "baselineDigest": "171c7562714353886a085b060df8e2b3772b7d694cc102cb94301e6776f740ef",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-records.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/validation/atomic-records.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "validation",
+      "review": "Actual SQLite/filesystem atomic ownership and Engine restart is the subject. Keep real native crash actors when loss-between-transactions is asserted; use canonical owned process cleanup. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "interrupted service publication",
+        "savefailfalse/true submission/replay",
+        "queued/finished listener failures",
+        "3 queued cancellation recovery modes",
+        "5 live/archive-cache/shutdown settlement routes",
+        "2products late merge",
+        "live/archive x inside/checkpoint/finished killed checkpoints"
+      ],
+      "reviewedOriginalRuntimePasses": 20,
+      "currentRuntimePasses": 20,
+      "reviewedOriginalAssertionSites": 85,
+      "currentAssertionSites": 85,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-recovery.test.ts",
+      "file": "packages/engine/test/contracts/recovery/extra-validation.test.ts",
       "declarations": 9,
       "assertionSites": 87,
       "baselineDigest": "062d97e92b2f6ad33403f21c24212b448316a0e8c67882ead16d28018715b40f",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-recovery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/recovery/extra-validation.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "recovery",
+      "review": "Real persistence/recovery/owned client/snapshot boundaries. Existing FileFaults appropriate. Do not collapse stopped/incomplete/unavailable; preserve emergency cleanup despite failed observation. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "queued exact version excludes edits",
+        "saved output/no output/no log/interrupted observer crash",
+        "4force-stopped preparation phases",
+        "heldcopyfalse/true never-started",
+        "successful held result",
+        "draining queued",
+        "cancel during prep",
+        "cancel+stop",
+        "copy-removal fault restart"
+      ],
+      "reviewedOriginalRuntimePasses": 16,
+      "currentRuntimePasses": 16,
+      "reviewedOriginalAssertionSites": 87,
+      "currentAssertionSites": 87,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validation-restoration.test.ts",
+      "file": "packages/engine/test/contracts/validation/restoration.test.ts",
       "declarations": 9,
       "assertionSites": 90,
       "baselineDigest": "1eb33b43a5264e8270fc9846f51b3be945124077347b1b9585ae581d2dbf4a07",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validation-restoration.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/validation/restoration.test.ts",
+        "packages/engine/test/contracts/delivery/saved-release-version.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "validation",
+      "review": "Separate startup/recovery/capacity from actual release-version rollback/saved snapshot consistency; preserve real Git and native process identity controls. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "stop/restart started drain",
+        "limit1/2 x preparation/passed startup serialization",
+        "unrelated saved process",
+        "added extra-only admission",
+        "checkpoint resume/restart",
+        "9restored release routes",
+        "queued release snapshot preserved",
+        "live evidence pending",
+        "owner before log exists"
+      ],
+      "reviewedOriginalRuntimePasses": 21,
+      "currentRuntimePasses": 21,
+      "reviewedOriginalAssertionSites": 90,
+      "currentAssertionSites": 90,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/extra-validations.test.ts",
+      "file": "packages/engine/test/contracts/coordination/extra-validation-requests.test.ts",
       "declarations": 4,
       "assertionSites": 23,
       "baselineDigest": "628d1808b2092c10a0c476d93cce1ebf9615924d5759185c66b8bffbe201b717",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/extra-validations.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/extra-validation-requests.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Actual public Coordination request validation/replay and durable registration; not a pure duplicate validator; canonical fake service explicit. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "queue positions/invalid task states/no version",
+        "pass/fail isolated from ordinary evidence",
+        "8 invalid argument controls/local missing image/offline",
+        "Windows unsupported ownership"
+      ],
+      "reviewedOriginalRuntimePasses": 3,
+      "currentRuntimePasses": 3,
+      "reviewedOriginalAssertionSites": 23,
+      "currentAssertionSites": 23,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/fake-gh.test.ts",
@@ -3278,11 +3849,44 @@
       }
     },
     {
-      "file": "packages/engine/test/related-check-evidence.test.ts",
+      "file": "packages/core/test/rules/checks/related-evidence.test.ts",
       "declarations": 13,
       "assertionSites": 106,
       "baselineDigest": "f6e124298ebf7082bb8a9b1cb75d5ba0f979e0a670e12cc60df1766b89587fef",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/related-check-evidence.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/checks/related-evidence.test.ts",
+        "packages/storage/test/contracts/history/check-evidence.test.ts",
+        "packages/repositories/test/contracts/checks/delivery-history.test.ts",
+        "packages/engine/test/contracts/checks/related-evidence.test.ts"
+      ],
+      "layer": "rules",
+      "area": "checks",
+      "review": "Core owns actual bounded matching/projection, storage owns real product-scoped SQLite reads, repositories own actual delivery absence query. Engine keeps recording/context composition; private data replaces unrelated demo. No cross-task private prose exposed. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "runner formatting/timing/digits/files",
+        "summary tail no borrowed file",
+        "dedup bounded names",
+        "j5/j3 identity match",
+        "interrupt exclusion",
+        "product/command/list/name mismatch matrix",
+        "snapshot-bound pass/review",
+        "uncertain/reused/unfinished/superseded/state matrix",
+        "active/delivered caps",
+        "24row focused history",
+        "real prepared history vs originals/short labels",
+        "repair answer/current-tree binding",
+        "3compact Builder-only leads/blind peers/cat-file/delivery proof"
+      ],
+      "reviewedOriginalRuntimePasses": 13,
+      "currentRuntimePasses": 13,
+      "reviewedOriginalAssertionSites": 106,
+      "currentAssertionSites": 106,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/repair-conversation.test.ts",
@@ -4069,11 +4673,30 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/test-deadlines.test.ts",
+      "file": "packages/engine/test/contracts/testing/deadlines.test.ts",
       "declarations": 2,
       "assertionSites": 8,
       "baselineDigest": "409d3217a0080300c279238aaf7b5d0cd8e5a13fcb3fd64e93fe3d30d6d46cba",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/test-deadlines.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/testing/deadlines.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "testing",
+      "review": "Real Bun/test-runner compatibility is the subject, including helper imports. Keep elapsed waits and normal worker config; consolidate only process ownership/report reading, not actual deadlines. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "runner Engine/root/direct Bun Engine/root with explicit limits and helper variants",
+        "runner fallback720000/direct native5000 plus own short50ms"
+      ],
+      "reviewedOriginalRuntimePasses": 2,
+      "currentRuntimePasses": 2,
+      "reviewedOriginalAssertionSites": 8,
+      "currentAssertionSites": 8,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/test-support/test/contracts/repositories/git-environment.test.ts",
@@ -4094,11 +4717,43 @@
       "from": "packages/engine/test/test-git-env.test.ts"
     },
     {
-      "file": "packages/engine/test/test-quality.test.ts",
+      "file": "packages/engine/test/rules/testing/impact.test.ts",
       "declarations": 15,
       "assertionSites": 75,
       "baselineDigest": "67003945d60aa0b30492a621d213703c141d6c234f7543908e9d874569537c5c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/test-quality.test.ts",
+      "splitFiles": [
+        "packages/engine/test/rules/testing/impact.test.ts",
+        "packages/engine/test/rules/testing/conventions.test.ts"
+      ],
+      "layer": "rules",
+      "area": "testing",
+      "review": "Pure values/AST/source maps, no Engine/fs/native dependencies except path value operations. Preserve limitations/failure controls; tooling source reserved to parent. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "transitive cycles/order",
+        "6conservative full-selection fallbacks",
+        "unknown imports",
+        "exact coverage fingerprint",
+        "TS/TSX AST/prose",
+        "fixture aliases/nesting",
+        "native promise assertion guard",
+        "shutdown ownership",
+        "completeAll binding",
+        "sync subprocess guards",
+        "lost-await/aliases/wrappers/callbacks",
+        "allowed/unsupported analyses",
+        "structured JSON/XML report attribution",
+        "executed LCOV only"
+      ],
+      "reviewedOriginalRuntimePasses": 23,
+      "currentRuntimePasses": 24,
+      "reviewedOriginalAssertionSites": 74,
+      "currentAssertionSites": 76,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/test-support/test/rules/testing/results.test.ts",
@@ -4119,18 +4774,67 @@
       }
     },
     {
-      "file": "packages/engine/test/test-runner.test.ts",
+      "file": "packages/test-support/test/rules/testing/temporary-parent.test.ts",
       "declarations": 7,
       "assertionSites": 51,
       "baselineDigest": "e75bcb7a6060807be80f534ee9863606ead6025cca79073e7da1b98ead9be0ab",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/test-runner.test.ts",
+      "splitFiles": [
+        "packages/test-support/test/rules/testing/temporary-parent.test.ts",
+        "packages/engine/test/contracts/testing/runner-isolation.test.ts"
+      ],
+      "layer": "rules",
+      "area": "testing",
+      "review": "Move only pure parent-path transformation data to test-support rules; real runner imports Engine fixture/support intentionally and remain app composition contracts. Preserve actual private settings/resources and failure cleanup. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "dotenv account stripping",
+        "macOS default-parent spelling pure matrix",
+        "native symlink",
+        "native Mac getconf/default/custom/absent6parents",
+        "pass/fail cleanup",
+        "private Git identity/repository override",
+        "2concurrent runners/private SQLite/repo/browser",
+        "SIGINT/SIGTERM actual worker stop"
+      ],
+      "reviewedOriginalRuntimePasses": 10,
+      "currentRuntimePasses": 10,
+      "reviewedOriginalAssertionSites": 48,
+      "currentAssertionSites": 48,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/tester.test.ts",
+      "file": "packages/engine/test/journeys/acceptance/tester-evidence.test.ts",
       "declarations": 5,
       "assertionSites": 71,
       "baselineDigest": "dd164ea508ebc4c043ec6e1c1f6a4a0a653f28de66127f87821931bfdbd47e68",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/tester.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/acceptance/tester-evidence.test.ts",
+        "packages/engine/test/contracts/acceptance/read-only-restoration.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "acceptance",
+      "review": "Separate read-only native Git restoration from actual workflow input/version binding. Canonical scripted acceptance replies where parsing/usage native behavior not asserted; retain native format repair/limit classification controls. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "missing report2prompts1session",
+        "blocked/noevidence",
+        "changedfalse/true failure bounds",
+        "editable tester then final read-only CRLF",
+        "native replacementhandofffalse/true final test"
+      ],
+      "reviewedOriginalRuntimePasses": 8,
+      "currentRuntimePasses": 8,
+      "reviewedOriginalAssertionSites": 71,
+      "currentAssertionSites": 71,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/journeys/progress/step-records.test.ts",
@@ -4271,18 +4975,62 @@
       }
     },
     {
-      "file": "packages/engine/test/verification-context.test.ts",
+      "file": "packages/engine/test/contracts/context/verification-evidence.test.ts",
       "declarations": 1,
       "assertionSites": 9,
       "baselineDigest": "0202931f24d4cde1ab9c8c7bd6854efe1470438e85727da09993058f00910a91",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/verification-context.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/verification-evidence.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "Real filesystem immutability/content identities, private canonical task recipe instead of full demo; assertions unchanged. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "parallel4same immutable packet",
+        "changed/unknown tree distinction",
+        "later report never overwrites earlier",
+        "corruption refusal"
+      ],
+      "reviewedOriginalRuntimePasses": 1,
+      "currentRuntimePasses": 1,
+      "reviewedOriginalAssertionSites": 9,
+      "currentAssertionSites": 9,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
-      "file": "packages/engine/test/versions.test.ts",
+      "file": "packages/core/test/rules/delivery/release-version.test.ts",
       "declarations": 20,
       "assertionSites": 115,
       "baselineDigest": "ca130e5d586272178a27af25ad986ca5e951ecc7df7caab62c6099d90325e7ac",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/versions.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/delivery/release-version.test.ts",
+        "packages/engine/test/contracts/formats/version-files.test.ts",
+        "packages/engine/test/journeys/delivery/release-versions.test.ts"
+      ],
+      "layer": "rules",
+      "area": "delivery",
+      "review": "Split pure numeric policy from actual Bun TOML format contract and real Git/GitHub delivery behavior. Replace unrelated native coding agents with explicit scripted replies but retain native Git/remote service. Never fake publishing state. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "variants": [
+        "numeric tags/bump style",
+        "JSON/TOML declaration validity/legal Cargo encodings",
+        "15real delivery scenarios main files/locks/first-version/disagreements/remote invisibility/tag collision/remote movement/reprep/local/PR",
+        "version-only semantic validation/anti-smuggling"
+      ],
+      "reviewedOriginalRuntimePasses": 20,
+      "currentRuntimePasses": 20,
+      "reviewedOriginalAssertionSites": 115,
+      "currentAssertionSites": 115,
+      "validation": {
+        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/workflow-events.test.ts",

@@ -1,3 +1,4 @@
+import { impactRuntime } from "./impact-runtime.js";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -40,7 +41,7 @@ export async function observe(root: string, base = "origin/main", coverage?: Cov
     ...(await readGit(root, ["diff", "--name-only", "-z", "--no-renames", resolved, "--"])).split("\0"),
     ...(await readGit(root, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0"),
   ].filter(Boolean);
-  return { ...impactPlan(files, changes, coverage), base: resolved, head };
+  return { ...impactPlan(files, changes, impactRuntime(), coverage), base: resolved, head };
 }
 
 export function recordedCoverage(root: string): CoverageMap | undefined {

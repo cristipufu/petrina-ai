@@ -1,3 +1,4 @@
+import { impactRuntime } from "./impact-runtime.js";
 // Every required workspace must run and pass. Vitest workspaces run first; all Bun packages
 // then share one normal native worker pool. Selection is observed, never used to omit tests.
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -37,12 +38,12 @@ let plan: Awaited<ReturnType<typeof observe>> | ReturnType<typeof impactPlan>;
 try { plan = await observe(ROOT, process.env.PETRINA_TEST_BASE, recordedCoverage(ROOT)); }
 catch (error) {
   const files = await inputs(ROOT);
-  plan = impactPlan(files, ["unknown-base"]);
+  plan = impactPlan(files, ["unknown-base"], impactRuntime());
   plan.reasons.push(error instanceof Error ? error.message : String(error));
 }
 writeFileSync(join(folder, "impact.json"), JSON.stringify(plan, null, 2));
 const manifest = await inputs(ROOT);
-if (fingerprint(manifest) !== plan.fingerprint) throw new Error("Test inputs changed while preparing the run; no suites started");
+if (fingerprint(manifest, impactRuntime().identity) !== plan.fingerprint) throw new Error("Test inputs changed while preparing the run; no suites started");
 const expectedFiles = [...manifest.keys()].filter(isTest).sort();
 writeFileSync(join(folder, "files.json"), JSON.stringify(expectedFiles, null, 2));
 const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim();
@@ -86,7 +87,7 @@ try {
     const records = suiteRecords(coordinator.results, plan.selected);
     const executions = records.executions.map(execution => ({ ...execution, ...details.get(execution.id) }));
     const results = records.results;
-    const { complete, stableInputs: stable, successful } = coordinator.conclusion({ fingerprint: fingerprint(await inputs(ROOT)), revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() }, interrupted !== undefined);
+    const { complete, stableInputs: stable, successful } = coordinator.conclusion({ fingerprint: fingerprint(await inputs(ROOT), impactRuntime().identity), revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() }, interrupted !== undefined);
     writeFixtureJson(join(folder, "results.json"), { mode: resources ? "resource-diagnostic" : "observation", ...(resources ? { deliveryEligible: false } : {}), scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), executions, results }, 2);
     if (successful && !resources) {
       const updates = timingOutput ? [{ executionId: NATIVE_SCOPE.id, ...keepTestTimings(ROOT, NATIVE_SCOPE, timingOutput, expectedFiles) }] : [];
