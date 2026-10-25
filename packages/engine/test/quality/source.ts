@@ -1,4 +1,5 @@
 import { parse } from "@babel/parser";
+import { childPrograms, type ChildProgram } from "./child-programs.js";
 
 type Node = { type: string; [key: string]: unknown };
 const node = (value: unknown): value is Node => !!value && typeof value === "object" && typeof (value as Node).type === "string";
@@ -21,6 +22,8 @@ export interface SourceFacts {
   asyncCallbacks: number[];
   /** Direct resource access, including Bun's global APIs, for lower-layer dependency checks. */
   effectAccess: { line: number; name: string }[];
+  /** Statically resolved executable/script positions at native child launch APIs. */
+  childPrograms: ChildProgram[];
 }
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
@@ -39,8 +42,9 @@ const CALLS = new Set(["CallExpression", "OptionalCallExpression"]);
 
 /** Parse syntax rather than searching prose, comments or template strings for code. Never executes a module. */
 export function sourceFacts(source: string, filename: string): SourceFacts {
-  const facts: SourceFacts = { imports: [], fullModuleMocks: [], invalidModuleMocks: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [] };
+  const facts: SourceFacts = { imports: [], fullModuleMocks: [], invalidModuleMocks: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [], childPrograms: [] };
   const ast = parse(source, { sourceType: "unambiguous", sourceFilename: filename, plugins: filename.endsWith("x") ? ["typescript", "jsx"] : ["typescript"], attachComment: false });
+  facts.childPrograms = childPrograms(ast.program as unknown as Node, filename);
   const mocks = moduleMocks(ast.program as unknown as Node);
   facts.fullModuleMocks = mocks.full; facts.invalidModuleMocks = mocks.invalid;
   const testNames = new Set(["it", "test", "describe"]);

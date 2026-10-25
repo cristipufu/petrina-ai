@@ -48,6 +48,20 @@ export function layerBoundaries(files: ReadonlyMap<string, string>): string[] {
   }));
 }
 
+/** Native test packages own their protocol/process peers; application workflow fixtures stay above them. */
+export function childFixtureBoundaries(file: string, programs: ReturnType<typeof sourceFacts>["childPrograms"], files: ReadonlyMap<string, string>): string[] {
+  const owner = workspaceOf(file);
+  if (!owner || owner === "packages/engine" || !file.startsWith(`${owner}/test/`)) return [];
+  const errors: string[] = [];
+  for (const program of programs) {
+    const target = sourceCandidates("repository.ts", `./${program.path}`).find(candidate => files.has(candidate));
+    const other = target && workspaceOf(target);
+    if (target && isSource(target) && other && other !== owner && target.startsWith(`${other}/test/`))
+      errors.push(`${file}:${program.line}: child fixture ${target} belongs to ${other}; use an owned protocol peer or public @petrina/test-support`);
+  }
+  return [...new Set(errors)].sort();
+}
+
 /** Enforce production direction too, including untested files and type-only back references. */
 export function packageBoundaries(files: ReadonlyMap<string, string>): string[] {
   const pure = new Set(["packages/core", "packages/orchestrator"]);

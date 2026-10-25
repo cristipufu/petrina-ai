@@ -1,7 +1,7 @@
 import { isSource, isTest } from "./test-paths.js";
 import { sourceFacts } from "./source.js";
 import { sourceCandidates } from "./source-paths.js";
-import { layerBoundaries, packageBoundaries } from "./layers.js";
+import { childFixtureBoundaries, layerBoundaries, packageBoundaries } from "./layers.js";
 import { TEST_WORKSPACES } from "./workspaces.js";
 
 export function conventions(files: ReadonlyMap<string, string>): string[] {
@@ -24,6 +24,7 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
       if (entry.runtime && fromProduction(entry.path, "checks") && entry.names.some(name => ["runChecks", "*", "default"].includes(name))) errors.push(`${file}: import runChecks from test/fixtures, which never reads this Mac's power log`);
     }
     if (native) for (const line of facts.promiseMatchers) errors.push(`${file}:${line}: await rejectionOf/expectRejection or the ordinary Promise before asserting; do not use Bun's promise matchers`);
+    if (native) errors.push(...childFixtureBoundaries(file, facts.childPrograms, files));
     for (const line of facts.blockingCalls) errors.push(`${file}:${line}: run test programs with runCommand or git from @petrina/test-support/commands; a synchronous child call holds the whole test worker until its exit is reported`);
     if (native) for (const { line, name } of facts.unfinished) errors.push(`${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`);
     if (native) for (const line of facts.asyncCallbacks) errors.push(`${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`);
