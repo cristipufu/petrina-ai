@@ -1755,7 +1755,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -1799,7 +1800,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -1825,7 +1827,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -1847,7 +1850,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -1868,7 +1872,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2421,7 +2426,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2574,7 +2580,8 @@
       "currentAssertionSites": 44,
       "validation": {
         "artifact": "workstreams/root-fixture-cli/reconciliation.json; workstreams/root-fixture-cli-review/",
-        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending."
+        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2741,7 +2748,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2763,7 +2771,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2785,7 +2794,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2814,7 +2824,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -2836,7 +2847,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -3204,7 +3216,8 @@
       "currentAssertionSites": 13,
       "validation": {
         "artifact": "workstreams/root-fixture-cli/reconciliation.json; workstreams/root-fixture-cli-review/",
-        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending."
+        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -3303,7 +3316,8 @@
       "currentAssertionSites": 46,
       "validation": {
         "artifact": "workstreams/root-fixture-cli/reconciliation.json; workstreams/root-fixture-cli-review/",
-        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending."
+        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -3325,7 +3339,8 @@
       "validation": {
         "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
         "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
-        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -3496,7 +3511,8 @@
       "validation": {
         "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
         "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
-        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -3591,7 +3607,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -3890,7 +3907,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4025,7 +4043,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4134,7 +4153,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4274,7 +4294,8 @@
       "validation": {
         "artifact": "workstreams/shared-repositories-next/handoff.json; workstreams/shared-repositories-review/",
         "preservation": "119 current-original runtime names and 725 matcher sites across both originals retained; ten new controls separate. All baseline metadata and earlier migrated-case records retained.",
-        "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending."
+        "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending.",
+        "fullQualification": "97f02a67"
       },
       "partialReview": "Two reopening/independent-finding cases split into actual portable review-controller variants and native schema/SQLite/ballot contracts, using canonical reviewRecords for saved state. Other cases remain pending; see review-layers-16bce9e0/original-cases.ts.txt and reconciliation.json.",
       "from": "packages/engine/test/repositories.test.ts",
@@ -4353,7 +4374,8 @@
       "validation": {
         "artifact": "workstreams/shared-repositories-next/handoff.json; workstreams/shared-repositories-review/",
         "preservation": "119 current-original runtime names and 725 matcher sites across both originals retained; ten new controls separate. All baseline metadata and earlier migrated-case records retained.",
-        "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending."
+        "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4405,7 +4427,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4440,7 +4463,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4461,7 +4485,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4481,7 +4506,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4598,7 +4624,8 @@
       "validation": {
         "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
         "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
-        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4620,7 +4647,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4642,7 +4670,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4664,7 +4693,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4686,7 +4716,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4708,7 +4739,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4730,7 +4762,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4752,7 +4785,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4774,7 +4808,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4796,7 +4831,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4818,7 +4854,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4841,7 +4878,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4863,7 +4901,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4885,7 +4924,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4907,7 +4947,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4929,7 +4970,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -4996,7 +5038,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -5019,7 +5062,8 @@
       "validation": {
         "artifact": "workstreams/runtime-boundaries-next/handoff.json; workstreams/runtime-boundaries-review/",
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
-        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending."
+        "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -5082,7 +5126,8 @@
       "validation": {
         "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
         "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
-        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -5221,7 +5266,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -5339,7 +5385,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -5401,7 +5448,8 @@
       "validation": {
         "artifact": "workstreams/source-context-next/handoff.json; workstreams/source-context-review/",
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
-        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending."
+        "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
+        "fullQualification": "97f02a67"
       }
     },
     {
@@ -6486,6 +6534,24 @@
       "platform": "macOS arm64 /Bun 1.4.2",
       "result": "5,026 pass /11 explicit skips /0 fail; 575 exact files; 307,643 ms",
       "artifact": "full-8f7e2893/manifest-verification.json"
+    },
+    "97f02a67": {
+      "source": "97f02a6740078a9c105c2a835fbf65cecda98557",
+      "tree": "44c9d69c1cead7c157962334a70f512aee370869",
+      "fingerprint": "95ba301d7a10a6045cff86be615b1e7d8470afd9e57851f256a6982c6f026fe3",
+      "report": ".test-results/2026-10-25T14-07-45-834Z-6cad0158/results.json",
+      "passed": 5060,
+      "skipped": 11,
+      "failed": 0,
+      "ms": 258644,
+      "files": 658,
+      "workspaces": 9,
+      "executions": 4,
+      "nativeWorkers": 14,
+      "environment": "macOS arm64; Bun1.4.2",
+      "independentEvidence": "full-97f02a67/manifest-verification.json; full-97f02a67/case-count-reconciliation.json",
+      "preservation": "All5037 previous case/outcome identities retained;34addedpassingcontrols explicitly named. Counts do not replace the per-case assertion audits.",
+      "limits": "NativeLinux/Windows, new resource measurement, remaining49originals, check environment and delivery-gate work pending."
     }
   }
 }
