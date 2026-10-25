@@ -1,3 +1,4 @@
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -19,7 +20,7 @@ it("records compact frozen evidence for three fresh reviewers after a real confl
       await f.advanceMain(undefined, true);
       const port = join(f.root, "hold-compact-port");
       writeFileSync(port, "");
-      writeFileSync(join(f.root, "script.json"), JSON.stringify({ hold: { title: "Bring the work up to date first", file: port } }));
+      writeFixtureJson(join(f.root, "script.json"), { hold: { title: "Bring the work up to date first", file: port } });
       rmSync(f.hold);
       await waitFor(() => { f.tick(); return existsSync(`${port}.reached`); }, "the compact-history conflict port");
       expect(f.task().reviewSessions).toBeUndefined();
@@ -77,7 +78,7 @@ it("records compact frozen evidence for three fresh reviewers after a real confl
         }) };
       }) };
       console.log(`History characters actual conflict/restart/replacement: openings by attempt ${sizes.join(", ")}; serialized journey round ${JSON.stringify(previous).length} -> ${JSON.stringify(round).length}; complete reference available. Tokens, cost and time unmeasured.`);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -164,7 +165,7 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
       const voters = new Set(f.fakes.received("verifier").map((entry) => entry.session));
       expect(voters.size).toBeGreaterThan(0);
       expect(f.fakes.opens().filter((entry) => voters.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -182,13 +183,13 @@ for (const single of [false, true]) it(`omits unchanged closed findings from the
         expect(input.sections.map((section) => section.body).join("\n")).not.toContain(earlier.text);
         expect(input.sections.some((section) => section.title.startsWith("New or changed finding records"))).toBe(true);
       }
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 for (const reopen of ["resume", "load"] as const) for (const single of [false, true]) it(`continues ${single ? "one reviewer" : "each parallel reviewer"} with ${reopen}, while voters stay fresh`, async () => {
-    const f = await run(reopen, { single });
+    const f = await run(reopen, { single, browser: true });
     try {
       const task = await f.done();
       const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer" && step.endedAt);
@@ -217,7 +218,7 @@ for (const reopen of ["resume", "load"] as const) for (const single of [false, t
       expect(Object.values(task.reviewSessions ?? {}).flatMap(seats => Object.values(seats).map(seat => seat.sessionId)).sort()).toEqual([...sessions].sort());
       const copy = JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${[...sessions][0]}.json`), "utf8")).cwd as string;
       if (!single) expect(existsSync(copy)).toBe(false);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -235,7 +236,7 @@ it("keeps a queued reviewer blind to a faster peer, including after an engine re
       expect(firstRound.agentInputs!.every((input) => !input.sections.some((section) => section.title === "Findings so far (confirm or dispute by id)"))).toBe(true);
       expect(f.fakes.received("code reviewer").filter((entry) => entry.text.includes("This is review round 2")).every((entry) => entry.text.includes("Findings so far"))).toBe(true);
       expect(task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!.agentInputs!.every((input) => input.mode === "continued")).toBe(true);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -263,7 +264,7 @@ it("starts fresh with complete inputs when the harness cannot reopen a reviewer"
       expect((await c.call("journey.review-input", { taskId: task.id, nodeId: second.id })).outcome).toBe("changed");
       renameSync(second.reviewInput!.file, `${second.reviewInput!.file}.missing`);
       expect((await c.call("journey.review-input", { taskId: task.id, nodeId: second.id })).outcome).toBe("unavailable");
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -308,6 +309,6 @@ for (const changed of ["context", "absent context", "profile", "source", "bases"
         else if (changed === "native session") expect(input.freshReason).toContain("could not reopen the conversation");
         else expect(input.freshReason).toBe(changed === "profile" ? reason : `its ${reason}`);
       }
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });

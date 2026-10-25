@@ -32,7 +32,7 @@ it("records a passed round against its saved snapshot, and omits unknown version
       beginAgentStep(f.task, "code-reviewer", "sol-high", Date.now(), f.engine.s.roles, undefined, f.scope.work);
       await f.engine["reviews"].runReview(f.task, stage, signal);
       expect(f.task.journey!.at(-1)!.checkReviews).toBeUndefined();
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -61,7 +61,7 @@ it("gives queued voters complete reproduction evidence without current peer ball
       await reviews["vote"](f.task, { findings: f.task.findings, seats, voters: stage.profileIds }, signal);
       expect(bodies).toHaveLength(2);
       for (const body of bodies) { expect(body).toContain("Exact reproduction"); expect(body).toContain(f.task.findings[0]!.evidence!); expect(body).not.toContain("CURRENT-PEER-BALLOT"); }
-    } finally { together.mockRestore(); turn.mockRestore(); await f.engine.shutdown(); }
+    } finally { together.mockRestore(); turn.mockRestore(); await f.shutdown(); }
   });
 });
 
@@ -106,7 +106,7 @@ it("records only what a takeover still owes, and its step still expects every pl
       expect(expected).toEqual([["verifier:opus-high", "verifier:grok-high"]]);
       expect(named).toEqual([["verifier:opus-high", "vote-opus-high", "opus-high"]]);
       expect(status).toBe("1 fresh agent voting on 2 important findings");
-    } finally { together.mockRestore(); turn.mockRestore(); await f.engine.shutdown(); }
+    } finally { together.mockRestore(); turn.mockRestore(); await f.shutdown(); }
   });
 });
 
@@ -123,6 +123,6 @@ it("counts only the findings a third answer was given in its live status", async
     try {
       await f.reviews["vote"](f.task, { findings: f.task.findings, seats: [third], voters: ["opus-high"], phase: [third], third: true, panel: f.task.hunt.panel }, signal);
       expect(status).toBe("1 fresh agent giving a third answer on 1 important finding");
-    } finally { together.mockRestore(); await f.engine.shutdown(); }
+    } finally { together.mockRestore(); await f.shutdown(); }
   });
 });

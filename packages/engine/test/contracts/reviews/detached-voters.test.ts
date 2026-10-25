@@ -49,7 +49,7 @@ it("gives each third place, a replaced one included, its own portable copy and r
       expect(x!.votes).toHaveLength(3);
       expect(y!.votes).toHaveLength(3);
       expect(hunt.panel.seats.map((seat) => seat.key)).toEqual(["sol-high", "grok-high", "third:opus-high", "third:sol-high"]);
-    } finally { turn.mockRestore(); await f.engine.shutdown(); }
+    } finally { turn.mockRestore(); await f.shutdown(); }
   });
 });
 
@@ -89,7 +89,7 @@ it("brings a third place stopped by a full model back into the copy it made, whi
       expect(f.task.findings[0]!.votes!.at(-1)).toMatchObject({ by: "opus-high", toolId: "claude-code", verdict: "real", ballot: { seat: "third:opus-high" } });
       expect(existsSync(folder)).toBe(false);
       expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
-    } finally { turn.mockRestore(); await f.engine.shutdown(); }
+    } finally { turn.mockRestore(); await f.shutdown(); }
   });
 });
 
@@ -133,6 +133,6 @@ it("gives a verifier its own copy when a screen wait saved before the folder rul
       expect(f.task.findings[0]!.votes!.map((vote) => [vote.by, vote.ballot?.seat])).toEqual([["_46", "_46"], ["F", "F"]]);
       expect(existsSync(folder)).toBe(false);
       expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
-    } finally { continued.mockRestore(); fresh.mockRestore(); await f.engine.shutdown(); }
+    } finally { continued.mockRestore(); fresh.mockRestore(); await f.shutdown(); }
   });
 });

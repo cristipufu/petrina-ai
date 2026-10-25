@@ -36,7 +36,7 @@ it("prepares only port comparisons and keeps lockfile evidence out of the inline
         expect(readFileSync(locks.file, "utf8")).toContain("NESTED-PORT-LOCKFILE");
         expect(run.mock.calls.some(([args]) => args.includes(`${f.base}...${head}`))).toBe(false);
       } finally { run.mockRestore(); }
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -50,7 +50,7 @@ for (const empty of ["old", "new", "both"]) it(`prepares a port whose ${empty} c
       const body = readFileSync(input.artifacts![0]!.file, "utf8");
       expect(body).toContain("No commits in this range.");
       if (empty !== "both") expect(body).toContain("+FIRST-CHANGE");
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -73,7 +73,7 @@ it("keeps earlier facts frozen while delivering new coordinator notes, including
       expect(frozen.findings[0]!.confirmedBy).toEqual([]);
       expect(ref.heads.p).toBe(f.first);
       expect(text).not.toContain("+FIRST-CHANGE");
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -100,7 +100,7 @@ it("prepares exact full and incremental comparisons with the base guide, indepen
       writeFileSync(join(f.repo, "REVIEW.md"), "MUTATED-WORKTREE-GUIDE");
       expect(readFileSync(JSON.parse(file), "utf8")).toBe(body);
       expect(JSON.stringify(repositoryView(f.scope))).not.toContain("+FIX-ONLY");
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -126,7 +126,7 @@ it("keeps lockfile patches separate, with paths in the statistics and the comple
       const delta = readFileSync(ordinary.find((artifact) => artifact.file.endsWith(".incremental.md"))!.file, "utf8");
       expect(delta).toContain("+FIX-ONLY"); expect(delta).not.toContain("+FIRST-CHANGE");
       expect(input.material!.body).toContain("never excluded from review scope");
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -151,7 +151,7 @@ it("prepares each shared product's own base guide and comparison, and rejects a 
         writeFileSync(artifact.file, original);
       }
       expect(await readReviewInput(ref)).toEqual(snapshot);
-    } finally { await a.engine.shutdown(); await b.engine.shutdown(); }
+    } finally { await a.shutdown(); await b.shutdown(); }
   });
 });
 
@@ -175,5 +175,5 @@ it("checks each seat's remembered bases, including missing, unchanged, forward, 
     expect((await reviewBaseUpdates(f.scope, { p: unrelated }, heads)).reason).toContain("replaced or diverged");
     f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt"] };
     expect((await reviewBaseUpdates(f.scope, bases, heads)).reason).toContain("conflict port review");
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.shutdown(); }
 });

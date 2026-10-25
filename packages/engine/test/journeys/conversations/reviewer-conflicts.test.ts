@@ -1,3 +1,4 @@
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
@@ -23,7 +24,7 @@ for (const { between, shared, single } of [{}, { between: "pause" }, { between: 
         // Held in the Builder's port: the conversations are already dropped and no reviewer has been admitted.
         const port = join(f.root, "hold-port");
         writeFileSync(port, "");
-        writeFileSync(join(f.root, "script.json"), JSON.stringify({ hold: { title: "Bring the work up to date first", file: port } }));
+        writeFixtureJson(join(f.root, "script.json"), { hold: { title: "Bring the work up to date first", file: port } });
         rmSync(f.hold);
         await waitFor(() => { f.tick(); return existsSync(`${port}.reached`); }, "the held conflict port");
         expect(f.task().reviewSessions).toBeUndefined();
@@ -55,7 +56,7 @@ for (const { between, shared, single } of [{}, { between: "pause" }, { between: 
         expect(event.summary).toContain(`fresh conversation (${why})`);
       }
       expect(task.reviewFreshReasons).toBeUndefined();
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -72,7 +73,7 @@ it("stops before reopening reviewers when main replaces the saved base history",
       const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
       expect(sessions.size).toBe(2);
       expect(f.fakes.opens().filter((entry) => sessions.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -87,7 +88,7 @@ it("returns failed checks on updated code to the Builder before spending another
       expect(executionFor(task).work.checks!.results.some((run) => !run.ok)).toBe(true);
       expect(task.findings.some((finding) => finding.status === "open" && finding.text.startsWith("Check failed"))).toBe(true);
       expect(task.timeline.some((entry) => entry.text.includes("before review"))).toBe(true);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -102,7 +103,7 @@ it("resumes the actual usage replacement in its own reviewer seat", async () => 
       expect(inputs[1]!.find((input) => input.profileId === replacement.profileId)!.mode).toBe("continued");
       const id = f.fakes.received("code reviewer").find((entry) => f.fakes.settings(entry.session).some((setting) => setting.startsWith("model=grok")))!.session;
       expect(f.fakes.opens().filter((entry) => entry.session === id).map((entry) => entry.how)).toEqual(["new", "resume"]);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
 
@@ -122,6 +123,6 @@ it("continues a shared-product review with its own detached map and both prepare
       }
       const inputs = rounds[1]!.agentInputs!;
       expect(inputs.every((input) => input.sections.find((section) => section.title === "Prepared review material")!.body.match(/\(reference /g)?.length === 4)).toBe(true);
-    } finally { await f.engine().shutdown(); }
+    } finally { await f.shutdown(); }
   });
 });
