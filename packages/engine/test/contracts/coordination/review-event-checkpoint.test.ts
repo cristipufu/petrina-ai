@@ -1,0 +1,42 @@
+import { afterAll, expect, it } from "bun:test";
+import { saveExactMessage } from "../../../src/exact-input.js";
+import { createWorkflowEventFixtures, all } from "../../fixtures/workflow-event-native.js";
+
+const { fixture, close } = createWorkflowEventFixtures();
+afterAll(close);
+
+it("takes a compact review event to its matching checkpoint and original seat evidence", async () => {
+  const { e, c, home, events } = fixture();
+  const taskId = e.addTask({ productId: "product", title: "Reports stay open" });
+  const task = e.task(taskId)!;
+  const exact = await saveExactMessage(home, taskId, "The original review instructions");
+  task.journey = [{ id: "review", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", stageId: "review-stage", round: 1, sub: 0, startedAt: 1, agentInputs: [{ at: 1, roleId: "code-reviewer", profileId: "opus-high", taskTitle: task.title, sections: [], mode: "fresh", exact }] }];
+  e.commit(task);
+  task.findings = [{ id: "old", text: "Earlier problem", severity: "pre-existing", status: "open", raisedBy: "opus-high", confirmedBy: [], tracking: { taskId: "follow-up" } }, { id: "nit", text: "A small improvement", severity: "suggestion", status: "open", raisedBy: "opus-high", confirmedBy: [] }];
+  task.journey[0]!.result = { findings: structuredClone(task.findings) };
+  task.journey[0]!.agentResults = [{ at: 2, roleId: "code-reviewer", profileId: "opus-high", inputIndex: 0, value: { findings: [], verdict: "pass" }, findings: structuredClone(task.findings) }];
+  task.journey[0]!.endedAt = 2;
+  e.commit(task);
+  const review = all(await events({ taskIds: [taskId], from: "oldest", kinds: ["review.finished"], timeoutMs: 0 }))[0]!;
+  expect(review.reportCounts).toEqual({ opening: { total: 0, open: { total: 0, important: 0, nits: 0, preExisting: 0 }, fixed: 0, dismissed: 0, unverified: 0 }, closing: { total: 2, open: { total: 2, important: 0, nits: 1, preExisting: 1 }, fixed: 0, dismissed: 0, unverified: 0 } });
+  expect(review.refs!.currentRequests).toEqual({ taskId });
+  expect((await c.call("inbox.list", { taskId })).items).toHaveLength(0); // A finished review need not be waiting for a decision.
+  const { findingCopies: _copies, ...resultRef } = (review.refs!.results as Record<string, unknown>[])[0]!;
+  expect(JSON.parse(String((await c.call("journey.result", resultRef)).text)).verdict).toBe("pass");
+  expect((await c.call("journey.input", (review.refs!.inputs as Record<string, unknown>[])[0]!)).text).toBe("The original review instructions");
+  task.journey.push({ id: "checkpoint", kind: "you", waitsFor: "delivery", startedAt: 3, round: 1, sub: 0, trigger: { after: "review", reason: "Review finished" } });
+  e.s.inbox.push({ id: "delivery-request", taskId, kind: "delivery", title: "Inspect the delivery", at: 3, blocking: false });
+  e.commit(task);
+  const request = all(await events({ taskIds: [taskId], from: "oldest", kinds: ["coordinator.request"], timeoutMs: 0 }))[0]!;
+  expect(request.refs!.request).toEqual({ itemId: "delivery-request" });
+  const checkpoint = await c.call("inbox.inspect", request.refs!.request as Record<string, unknown>);
+  const view = JSON.parse(String(checkpoint.text));
+  expect(view.supportingReview.nodeId).toBe(review.nodeId);
+  expect(view.findings.counts.open).toEqual({ total: 2, important: 0, nits: 1, preExisting: 1 });
+  task.findings[0]!.status = "fixed";
+  const report = (review.reports as any[]).find((report) => report.id === "old");
+  const historical = await c.call("journey.finding", report.evidence.read);
+  expect(JSON.parse(String(historical.text)).status).toBe("open");
+  const current = await c.call("task.read", { taskId, section: "findings", findingId: "old" });
+  expect(JSON.parse(String(current.text)).status).toBe("fixed");
+});

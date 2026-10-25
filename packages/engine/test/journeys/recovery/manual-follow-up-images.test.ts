@@ -1,0 +1,50 @@
+import { afterAll, expect, it } from "bun:test";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { Coordination } from "../../../src/coordination.js";
+import { createFollowUpFixtures, cards, failedAssignment } from "../../fixtures/follow-up-native.js";
+
+const { open, reopen, close, shutdown } = createFollowUpFixtures();
+afterAll(close);
+
+for (const reason of ["unavailable", "no-choice"] as const) it(`finishes the existing ${reason} assignment by hand without crediting another target`, async () => {
+  const world = await open();
+  let release = () => {};
+  try {
+    const { engine } = world;
+    const saved = await failedAssignment(world, reason);
+    release = saved.release;
+    const { source, automaticId, manualId, key } = saved;
+    const c = new Coordination(engine);
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ reason: "pictures", retry: true });
+    expect(engine.task(automaticId)!.followUp!.reports.map(report => report.findingId)).toEqual(["old"]);
+    expect(engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toEqual([]);
+    expect(engine.s.followUpPending).toEqual([{ keys: [key], cardId: automaticId }]);
+    const before = structuredClone([source.findings, engine.task(automaticId), engine.task(manualId), engine.s.followUpPending]);
+    const checks = world.prompts.length;
+    const args = { taskId: source.id, findingId: "old", targetTaskId: manualId, requestId: `pending-${reason}` };
+    const result = await c.call("task.track-finding", args);
+    expect(result.outcome).toBe("invalid");
+    expect(result.message).toContain("another task");
+    expect(await c.call("task.track-finding", args)).toEqual(result);
+    expect([source.findings, engine.task(automaticId), engine.task(manualId), engine.s.followUpPending]).toEqual(before);
+    expect(world.prompts).toHaveLength(checks);
+    expect((await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: `complete-${reason}` })).outcome).toBe("completed");
+    expect(engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(engine.task(manualId)!.followUp).toBeUndefined();
+    const images = engine.task(automaticId)!.session.flatMap(line => line.images ?? []);
+    expect(images).toHaveLength(1);
+    expect(readdirSync(join(engine.dataDir, "captures", automaticId))).toHaveLength(1);
+    expect((await c.call("task.track-finding", { taskId: source.id, findingId: "old", targetTaskId: automaticId, requestId: `finished-${reason}` })).outcome).toBe("completed");
+    await engine["followUps"].beforeRemoval(source);
+    release();
+    await engine["cleanup"].removeCaptures(source.id);
+    expect(existsSync(join(engine.dataDir, "captures", source.id))).toBe(false);
+    expect(existsSync(join(engine.dataDir, "captures", automaticId, `${images[0]!.id}.png`))).toBe(true);
+    await reopen(world);
+    await world.engine["followUps"].catchUp();
+    expect(world.engine.task(source.id)!.findings[0]!.tracking).toEqual({ taskId: automaticId });
+    expect(cards(world.engine).filter(task => task.followUp!.reports.some(report => report.taskId === source.id && report.findingId === "old")).map(task => task.id)).toEqual([automaticId]);
+    expect(world.engine.task(automaticId)!.session.flatMap(line => line.images ?? [])).toHaveLength(1);
+  } finally { release(); await shutdown(world.engine); }
+});
