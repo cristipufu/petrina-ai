@@ -10,7 +10,7 @@ import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import { backgroundMessage } from "./messages.js";
-import { currentSourcePointers } from "./source-pointers.js";
+import { currentSourcePointers } from "@petrina/repositories/source-pointers";
 import type { ReviewInput } from "./review-context.js";
 import * as git from "@petrina/repositories/git";
 import { verificationContext } from "./verification-context.js";

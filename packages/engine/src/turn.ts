@@ -12,7 +12,7 @@ import type { z } from "zod";
 import { AgentRun, type RunCallbacks } from "@petrina/agent-runtime/acp-run";
 import { ReopenFailed, type NativeRetryReport, type PermissionInfo, type TurnResult, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentMessage, type ToolActivityEvent } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
-import { agentEnv } from "./env.js";
+import { agentEnv } from "@petrina/platform/process-environment";
 import { claudeSandbox, type ClaudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { SandboxUnavailable } from "@petrina/agent-runtime/sandbox-failures";
 import { browserPrompt, buildPrompt, capacityContinuePrompt, continuePrompt, currentStepAssignment, EARLIER_ATTEMPT, OWN_COPY, ownCopy, formatHandBack, formatReviewTakeOver, formatStepNotes, formatTakeOver, formatWhereYouWere, HANDED_BACK, handBackPrompt, lastWords, MAX_DONE, parseResult, proseOf, pullRequestBackground, repairPrompt, restartPrompt, TOOK_OVER, WHERE_YOU_WERE, type WhereYouWere, mayAskScreen, screenPrompt, WHERE_YOU_WERE_SCREEN } from "./prompts.js";

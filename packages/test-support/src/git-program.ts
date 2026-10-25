@@ -11,6 +11,13 @@ export interface GitProgram {
 
 const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
+/** A Git-invoked script, using the shell supplied by Git on Windows as well as Unix. */
+export function writeGitProgram(file: string, body: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+}
+
 /** Git for Windows supplies the same shell boundary; native paths there also accept forward slashes. */
 export function plantedGitProgram(folder: string, name: string): GitProgram {
   const marks = join(folder, "marks"), marker = join(marks, name), script = join(folder, `${name}.ts`);
@@ -22,9 +29,7 @@ export function plantedGitProgram(folder: string, name: string): GitProgram {
     marks: () => readdirSync(marks).sort(),
     clear: () => rmSync(marker, { force: true }),
     writeHook(file) {
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `#!/bin/sh\nexec ${command} "$@"\n`);
-      chmodSync(file, 0o755);
+      writeGitProgram(file, `exec ${command} "$@"`);
     },
   };
 }

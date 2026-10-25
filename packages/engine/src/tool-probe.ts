@@ -3,8 +3,9 @@ import { join } from "node:path";
 import type { AgentProfile, CheckId } from "@petrina/core";
 import type { ToolProbe, ToolProbeRequest, ToolProbeResult } from "@petrina/orchestrator";
 import type { Kernel } from "./kernel.js";
-import { agentEnv } from "./env.js";
-import { checkGh, checkGit, checkNode, type Which } from "./setup.js";
+import { agentEnv } from "@petrina/platform/process-environment";
+import { checkNode } from "./setup.js";
+import { checkGh, checkGit, type Which } from "@petrina/repositories/tool-readiness";
 import { checkAgentTool } from "@petrina/agent-runtime/probe";
 import { ADAPTERS, agentCommandFor, findProgram } from "@petrina/agent-runtime/tools";
 

@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProfileChoices } from "@petrina/core";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
-import { agentEnv } from "./env.js";
+import { agentEnv } from "@petrina/platform/process-environment";
 import type { Kernel } from "./kernel.js";
 import { ADAPTERS, agentCommandFor } from "@petrina/agent-runtime/tools";
 

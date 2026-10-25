@@ -8,9 +8,10 @@
 import { randomBytes } from "node:crypto";
 import { writeSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { Engine, type EngineOptions } from "./engine.js";
-import { loginShellPath, mergePath } from "./env.js";
+import { loginShellPath } from "@petrina/platform/login-shell";
+import { mergePath } from "@petrina/platform/environment-values";
 import { answers, claimFolder, type Connection, FolderLock, previousToken, readConnection, removeConnection, writeConnection } from "./instance.js";
 import { OutputLog } from "./log.js";
 import { serve } from "./server.js";
@@ -196,7 +197,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
   try {
     if (app && options.loginShell !== false) {
       const path = await loginShellPath();
-      if (path) process.env.PATH = mergePath(path, process.env.PATH);
+      if (path) process.env.PATH = mergePath(path, process.env.PATH, delimiter);
     }
     engine = new Engine(home, { ...options.engine, admissionsClosed: true });
     await engine.waitUntilReady();

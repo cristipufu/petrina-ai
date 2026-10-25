@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ActiveAgent, State, Task, TaskUsage } from "@petrina/core";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { Engine } from "./engine.js";
-import { agentEnv } from "../src/env.js";
+import { agentEnv } from "@petrina/platform/process-environment";
 import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { ADAPTERS, ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "./fake-agent.js";

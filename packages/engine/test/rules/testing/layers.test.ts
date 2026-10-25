@@ -118,3 +118,150 @@ it("follows package subpaths and rejects test-support imports from any shipped s
       .toEqual([expect.stringContaining("production code cannot depend on test support")]);
   }
 });
+
+const viewFile = "apps/desktop/test/presentation/tasks/client.test.tsx";
+const viewSource = (mock: string, extra: [string, string][] = [], imports = "import { vi } from 'vitest';") => new Map([
+  [viewFile, `${imports}\n${mock}\nimport { View } from '../../../src/View';`],
+  ["apps/desktop/src/View.tsx", "import { client } from './engine'; export const View = () => client;"],
+  ["apps/desktop/src/engine.ts", "import { readFile } from 'node:fs/promises'; export const client = readFile;"],
+  ...extra,
+]);
+
+it("follows presentation replacements by resolved module identity while still inspecting the view", () => {
+  for (const [imported, call] of [
+    ["import { vi } from 'vitest';", "vi"],
+    ["import { vitest } from 'vitest';", "vitest"],
+    ["import { vitest as vi } from 'vitest';", "vi"],
+  ]) {
+    const files = viewSource(`${call}.mock('../../../src/./engine.js', () => ({ client: {} }));`, [], imported);
+    expect(layerBoundaries(files)).toEqual([]);
+    files.set("apps/desktop/src/View.tsx", "import { client } from './engine'; fetch('https://example.test');");
+    expect(layerBoundaries(files)).toEqual([expect.stringContaining("accesses fetch")]);
+  }
+});
+
+it("distinguishes explicit export keys and member names from real factory value references", () => {
+  for (const body of [
+    "const state = {}; vi.mock('../../../src/engine', () => ({ client: { getState: () => state } }));",
+    "const state = { client: {} }; vi.mock('../../../src/engine', () => ({ client: state.client }));",
+    "const state = { client: {} }; vi.mock('../../../src/engine', () => ({ client: state?.client }));",
+    "const state = {}; vi.mock('../../../src/engine', () => ({ client() { return state; } }));",
+  ]) {
+    const files = viewSource(`import { client } from '../../../src/engine'; ${body}`);
+    expect(layerBoundaries(files)).toEqual([]);
+  }
+  for (const factory of [
+    "() => ({ client })",
+    "() => ({ client: client })",
+    "() => ({ client: { getState: () => client } })",
+    "() => ({ client: { getState: () => state[client] } })",
+    "() => ({ client: { getState: () => state?.[client] } })",
+  ]) {
+    const files = viewSource(`import { client } from '../../../src/engine'; const state = {}; vi.mock('../../../src/engine', ${factory});`);
+    expect(layerBoundaries(files)).toEqual([expect.stringContaining("imports node:fs/promises")]);
+  }
+});
+
+it("admits explicit block replacements, getters, private proxies and asynchronous exported callbacks", () => {
+  const files = viewSource(`vi.mock('../../../src/engine', () => {
+    class Unavailable extends Error {}
+    const commands = { async askBrowser() { return []; } };
+    return { get desktop() { return false; }, client: new Proxy({}, { get(_target, key) { return commands[key]; } }), Unavailable };
+  });`);
+  expect(layerBoundaries(files)).toEqual([]);
+});
+
+it("allows proven external host replacements without turning unknown external modules into pure dependencies", () => {
+  const files = viewSource("vi.mock('../../../src/engine', () => ({ client: {} })); vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false }));");
+  files.set("apps/desktop/src/View.tsx", "import { isTauri } from '@tauri-apps/api/core'; export const View = isTauri;");
+  expect(layerBoundaries(files)).toEqual([]);
+  files.set("apps/desktop/src/View.tsx", "import { invoke } from '@tauri-apps/api/event'; export const View = invoke;");
+  expect(layerBoundaries(files)).toEqual([expect.stringContaining("unreviewed external")]);
+});
+
+it("never trusts fake, type-only, shadowed or changed Vitest bindings as presentation boundaries", () => {
+  for (const [imports, replacement] of [
+    ["const vi = { mock() {} };", "vi.mock('../../../src/engine', () => ({ client: {} }));"],
+    ["import type { vi } from 'vitest';", "vi.mock('../../../src/engine', () => ({ client: {} }));"],
+    ["import { vi } from './local-test-double';", "vi.mock('../../../src/engine', () => ({ client: {} }));"],
+    ["import { vi } from 'vitest';", "function unused(vi) { vi.mock('../../../src/engine', () => ({ client: {} })); }"],
+    ["import { vi as replace } from 'vitest';", "replace.mock('../../../src/engine', () => ({ client: {} }));"],
+    ["import * as testApi from 'vitest';", "testApi.vi.mock('../../../src/engine', () => ({ client: {} }));"],
+    ["import { vi } from 'vitest';", "vi.mock = fake; vi.mock('../../../src/engine', () => ({ client: {} }));"],
+  ] as const) {
+    expect(layerBoundaries(viewSource(replacement, [], imports)).some(error => error.includes("node:fs/promises"))).toBe(true);
+  }
+});
+
+it("rejects partial, async, original-module, computed and indirect replacement factories", () => {
+  for (const replacement of [
+    "vi.mock('../../../src/engine', async () => ({ client: {} }));",
+    "vi.mock('../../../src/engine', () => ({ ...actual, client: {} }));",
+    "vi.mock('../../../src/engine', (importOriginal) => ({ client: importOriginal() }));",
+    "vi.mock('../../../src/engine', () => ({ client: vi.importActual('../../../src/engine') }));",
+    "vi.mock('../../../src/engine', () => ({ client: vi['importActual']('../../../src/engine') }));",
+    "const original = vi.importActual; vi.mock('../../../src/engine', () => ({ client: original() }));",
+    "vi.mock('../../../src/engine', () => ({ [exportName]: {} }));",
+    "vi.mock(moduleName, () => ({ client: {} }));",
+    "vi['mock']('../../../src/engine', () => ({ client: {} }));",
+    "vi.mock('../../../src/engine', factory);",
+    "vi.mock('../../../src/engine', () => ({ client: {} })); vi.unmock('../../../src/engine');",
+    "vi.mock('../../../src/engine', () => ({ client: {} })); vi.doUnmock('../../../src/engine');",
+    "vi.mock('../../../src/engine', () => ({ client: {} })); vi.doMock('../../../src/engine', () => actual);",
+    "vi.mock('../../../src/engine', () => { if (condition) return actual; return { client: {} }; });",
+  ]) {
+    const errors = layerBoundaries(viewSource(replacement));
+    expect(errors.some(error => error.includes("unsupported presentation replacement"))).toBe(true);
+    expect(errors.some(error => error.includes("node:fs/promises"))).toBe(true);
+  }
+});
+
+it("continues to inspect replacement factories and their helper dependencies for native effects", () => {
+  expect(layerBoundaries(viewSource("vi.mock('../../../src/engine', () => ({ client: () => Bun.spawn(['agent']) }));")))
+    .toEqual([expect.stringContaining("accesses Bun.spawn")]);
+  const helpers = viewSource("vi.mock('../../../src/engine', () => ({ client: stub })); import { stub } from './stub';", [
+    ["apps/desktop/test/presentation/tasks/stub.ts", "import { readFile } from 'node:fs/promises'; export const stub = readFile;"],
+  ]);
+  expect(layerBoundaries(helpers)).toEqual([expect.stringContaining("imports node:fs/promises")]);
+  helpers.set("apps/desktop/test/presentation/tasks/stub.ts", "import { client } from '../../../src/engine'; export const stub = client;");
+  expect(layerBoundaries(helpers)).toEqual([expect.stringContaining("imports node:fs/promises")]);
+  helpers.set(viewFile, "import { vi } from 'vitest'; import { stub } from './stub'; const commands = stub; vi.mock('../../../src/engine', () => ({ client: commands })); import { View } from '../../../src/View';");
+  expect(layerBoundaries(helpers)).toEqual([expect.stringContaining("imports node:fs/promises")]);
+  helpers.set(viewFile, "import { vi } from 'vitest'; import { stub } from './stub'; let commands; function setup() { commands = stub; } vi.mock('../../../src/engine', () => ({ client: commands })); import { View } from '../../../src/View';");
+  expect(layerBoundaries(helpers)).toEqual([expect.stringContaining("imports node:fs/promises")]);
+  const unmock = viewSource("vi.mock('../../../src/engine', () => ({ client: {} })); import './stub';", [
+    ["apps/desktop/test/presentation/tasks/stub.ts", "import { vi } from 'vitest'; vi.unmock('../../../src/engine');"],
+  ]);
+  expect(layerBoundaries(unmock)).toEqual([expect.stringContaining("unsupported presentation replacement")]);
+  const required = viewSource("vi.mock('../../../src/engine', () => ({ client: require('../../../src/engine') }));");
+  expect(layerBoundaries(required)).toEqual([expect.stringContaining("imports node:fs/promises")]);
+  const direct = viewSource("vi.mock('node:fs', () => ({ readFile() {} })); const fs = require('node:fs'); vi.mock('../../../src/engine', () => ({ client: {} }));");
+  expect(layerBoundaries(direct)).toEqual([expect.stringContaining("imports node:fs")]);
+});
+
+it("does not apply presentation replacements to rule, controller or production package boundaries", () => {
+  for (const layer of ["rules", "orchestration"]) {
+    const file = `apps/desktop/test/${layer}/tasks/client.test.tsx`;
+    const files = new Map([[file, "import { vi } from 'vitest'; vi.mock('node:fs', () => ({})); import 'node:fs';"]]);
+    expect(layerBoundaries(files)).toEqual([expect.stringContaining("imports node:fs")]);
+  }
+  expect(packageBoundaries(new Map([["packages/core/src/model.ts", "import { vi } from 'vitest'; vi.mock('node:fs', () => ({})); import 'node:fs';"]])))
+    .toEqual([expect.stringContaining("imports node:fs")]);
+});
+
+it("treats only real presentation stylesheets as assets, retaining pure and unresolved-import guards", () => {
+  const files = viewSource("vi.mock('../../../src/engine', () => ({ client: {} }));", [["apps/desktop/src/view.css", ":root { color: red; }"]]);
+  files.set("apps/desktop/src/View.tsx", "import './view.css'; import '@xyflow/react/dist/base.css'; export const View = () => null;");
+  expect(layerBoundaries(files)).toEqual([]);
+  files.delete("apps/desktop/src/view.css");
+  expect(layerBoundaries(files)).toEqual([expect.stringContaining("stylesheets need a real presentation asset")]);
+  files.set("apps/desktop/src/View.tsx", "import 'some-network-library/pretend.css';");
+  expect(layerBoundaries(files)).toEqual([expect.stringContaining("stylesheets need a real presentation asset")]);
+  for (const layer of ["rules", "orchestration"]) {
+    const file = `apps/desktop/test/${layer}/tasks/client.test.tsx`;
+    expect(layerBoundaries(new Map([[file, "import '../../../src/view.css';"], ["apps/desktop/src/view.css", "body {}"]])))
+      .toEqual([expect.stringContaining("stylesheets need a real presentation asset")]);
+  }
+  expect(packageBoundaries(new Map([["packages/core/src/model.ts", "import './view.css';"], ["packages/core/src/view.css", "body {}"]])))
+    .toEqual([expect.stringContaining("stylesheets need a real presentation asset")]);
+});

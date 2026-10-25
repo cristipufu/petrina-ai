@@ -8,6 +8,7 @@ type TestLayer = typeof TEST_LAYERS[number];
 export const TEST_LAYER_INVENTORY = "docs/plans/test-layer-audit.json";
 const EFFECTS = /^(?:node:)?(?:fs(?:\/.*)?|child_process|net|http(?:2|s)?|dgram|dns(?:\/.*)?|worker_threads|cluster|process|os)$|^bun(?::sqlite)?$|^(?:@playwright\/|playwright(?:\/|$))/;
 const PURE_IMPORTS = new Set(["bun:test", "vitest", "@babel/parser", "saxes", "zod", "path", "path/posix", "path/win32", "url", "buffer", "crypto", "util", "util/types", "assert", "assert/strict", "events", "async_hooks", "string_decoder"]);
+const UI_CSS_ASSETS = new Set(["@xyflow/react/dist/base.css", "@xyflow/react/dist/style.css"]);
 const UI_IMPORTS = /^(?:react(?:\/|$)|react-dom(?:\/|$)|lucide-react$|@xyflow\/react$|react-markdown$|remark-gfm$)/;
 
 export function testLayer(file: string): { layer: TestLayer; area: string } | undefined {
@@ -96,21 +97,44 @@ function dependencyBoundaries(files: ReadonlyMap<string, string>, roots: readonl
   const errors: string[] = [];
   const facts = new Map<string, ReturnType<typeof sourceFacts>>();
   for (const { file, label } of roots) {
-    const seen = new Set<string>(), todo = [file];
+    const replaced = new Set<string>(), externalReplacements = new Set<string>();
+    if (label === "presentation") {
+      try {
+        let parsed = facts.get(file);
+        if (!parsed) { parsed = sourceFacts(files.get(file)!, file); facts.set(file, parsed); }
+        for (const replacement of parsed.fullModuleMocks) {
+          const candidates = sourceCandidates(file, replacement.path);
+          const target = candidates.find(candidate => files.has(candidate));
+          if (target) replaced.add(target);
+          else if (candidates.length) errors.push(`${file}: unresolved full presentation replacement ${replacement.path}`);
+          else externalReplacements.add(replacement.path);
+        }
+      } catch { /* The traversal reports syntax and dependency failures below. */ }
+    }
+    const seen = new Set<string>(), todo = [{ path: file, unmocked: false }];
     while (todo.length) {
-      const next = todo.pop()!;
-      if (seen.has(next)) continue;
-      seen.add(next);
+      const { path: next, unmocked } = todo.pop()!;
+      const identity = `${next}:${unmocked}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
       try {
         let parsed = facts.get(next);
         if (!parsed) { parsed = sourceFacts(files.get(next)!, next); facts.set(next, parsed); }
         if (parsed.uncertain) errors.push(`${file}: ${label} dependency ${next} has a computed runtime import; use an explicit pure dependency or effect contract`);
+        if (label === "presentation") for (const invalid of parsed.invalidModuleMocks) errors.push(`${file}: unsupported presentation replacement at ${next}:${invalid.line}: ${invalid.reason}`);
         for (const access of parsed.effectAccess) errors.push(`${file}: ${label} dependency ${next}:${access.line} accesses ${access.name}; use an injected effect or test the native boundary in contracts`);
         for (const entry of parsed.imports.filter(entry => entry.runtime)) {
-          if (EFFECTS.test(entry.path)) errors.push(`${file}: ${label} dependency ${next} imports ${entry.path}; real I/O belongs in contracts or journeys`);
           const candidates = sourceCandidates(next, entry.path);
           const target = candidates.find(candidate => files.has(candidate));
-          if (target && isSource(target)) todo.push(target);
+          const actual = unmocked || entry.unmocked === true;
+          if (label === "presentation" && !actual && (target ? replaced.has(target) : externalReplacements.has(entry.path))) continue;
+          if (entry.path.endsWith(".css")) {
+            if (label === "presentation" && (target || UI_CSS_ASSETS.has(entry.path))) continue;
+            errors.push(`${file}: ${label} dependency ${next} imports ${entry.path}; stylesheets need a real presentation asset or browser contract`);
+            continue;
+          }
+          if (EFFECTS.test(entry.path)) errors.push(`${file}: ${label} dependency ${next} imports ${entry.path}; real I/O belongs in contracts or journeys`);
+          if (target && isSource(target)) todo.push({ path: target, unmocked: actual });
           else if (candidates.length && !target) errors.push(`${file}: unresolved ${label} dependency ${entry.path} in ${next}`);
           else if (!target && !EFFECTS.test(entry.path) && !PURE_IMPORTS.has(entry.path.replace(/^node:/, "")) && !(label === "presentation" && UI_IMPORTS.test(entry.path))) errors.push(`${file}: unreviewed external ${label} dependency ${entry.path} in ${next}; keep native adapters outside this layer`);
         }

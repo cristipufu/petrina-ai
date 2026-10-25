@@ -5,7 +5,7 @@ import { notReady, stepKey, type Kernel, type MTask, type MState, type EngineOpt
 import { contractFor, freshBuilderRethink } from "./roles.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { UsageReader } from "@petrina/agent-runtime/usage-reader";
-import { agentEnv } from "./env.js";
+import { agentEnv } from "@petrina/platform/process-environment";
 import { participantConversation } from "./participant-conversation.js";
 import { join } from "node:path";
 import { CAPACITY_RETRY_DELAYS_MS, capacityWaiting, MODEL_CAPACITY_WAIT_MS } from "./usage.js";

@@ -11,13 +11,13 @@ import { Coordination } from "../src/coordination.js";
 import * as gitOps from "@petrina/repositories/git";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 import { FixtureTrace } from "./fixture-trace.js";
-import { SetupSteps } from "./setup-steps.js";
+import { createSetupSteps } from "@petrina/test-support/setup-steps";
 import { completeAll } from "@petrina/core";
 
 const roots: string[] = [];
 const traces = new Map<string, FixtureTrace>();
 const observations: { mockRestore(): void }[] = [];
-const setup = new SetupSteps(), setupLifetime = new AbortController();
+const setup = createSetupSteps(), setupLifetime = new AbortController();
 const engines = new Set<Engine>();
 afterAll(async () => {
   setupLifetime.abort();

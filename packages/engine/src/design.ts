@@ -12,7 +12,7 @@ import { BriefResult, ObjectionsResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
-import { checkSourceHints } from "./source-pointers.js";
+import { checkSourceHints } from "./source-hints.js";
 
 export class Design {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}

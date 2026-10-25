@@ -14,7 +14,7 @@ import { agentCommandFor } from "@petrina/agent-runtime/tools";
 import type { Kernel, MTask } from "./kernel.js";
 import { parseResult } from "./prompts.js";
 import { extraSlot, limitOf } from "@petrina/core";
-import { agentEnv } from "./env.js";
+import { agentEnv } from "@petrina/platform/process-environment";
 import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 
 const MatchBody = z.object({

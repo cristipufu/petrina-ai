@@ -4,277 +4,748 @@
   "scope": "Every tracked TypeScript test file; Rust host contract tests are tracked separately below. Generated counts are discovery, not semantic review.",
   "files": [
     {
-      "file": "apps/desktop/test/actions-and-slots.test.tsx",
+      "file": "apps/desktop/test/presentation/keyboard/task-actions.test.tsx",
       "declarations": 3,
       "assertionSites": 21,
       "baselineDigest": "c069ddc815984f04a65f7f09df7308d7fde0310eeb253799aa5567070030095e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/actions-and-slots.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/keyboard/task-actions.test.tsx",
+        "apps/desktop/test/presentation/agents/slots.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 3 runtime cases/variants and 21 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Controller decisions are separate from rendered seats. Uses one production-created task and private catalogs.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "keyboard"
     },
     {
-      "file": "apps/desktop/test/analytics.test.tsx",
+      "file": "apps/desktop/test/presentation/analytics/figures.test.tsx",
       "declarations": 10,
       "assertionSites": 64,
       "baselineDigest": "3a60cfb0598bfd56f3274f755a62696c8ed32bce1a13942ebe8fe127e4dc58e6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/analytics.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/analytics/figures.test.tsx",
+        "apps/desktop/test/presentation/analytics/demo-analytics.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 10 runtime cases/variants and 64 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Standalone figure/chart tests create only a DOM root with explicit points/amounts; page controls retain actual demo usage aggregation.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "analytics"
     },
     {
-      "file": "apps/desktop/test/backlog-ui.test.tsx",
+      "file": "apps/desktop/test/presentation/tasks/backlog.test.tsx",
       "declarations": 9,
       "assertionSites": 62,
       "baselineDigest": "d643f92530c5810ec80d46253de4d3a22e47995cef281af6c3295ebfa3ceb80e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/backlog-ui.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/tasks/backlog.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 9 runtime cases/variants and 62 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Removed full workflow generation that was immediately discarded; private catalogs feed real simulated application commands.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "tasks"
     },
     {
-      "file": "apps/desktop/test/connection.test.tsx",
+      "file": "apps/desktop/test/presentation/connection/recovery-screen.test.tsx",
       "declarations": 2,
       "assertionSites": 7,
       "baselineDigest": "af2e21810d3e0dd6cad7cf71cda99c0fb14e426cf3048def93e569de17b18dc4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/connection.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/connection/recovery-screen.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 2 runtime cases/variants and 7 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Startup presentation receives a private empty catalog through an explicit controlled client.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "connection"
     },
     {
-      "file": "apps/desktop/test/dependencies.test.tsx",
+      "file": "apps/desktop/test/presentation/tasks/dependency-outcomes.test.tsx",
       "declarations": 15,
       "assertionSites": 79,
       "baselineDigest": "84cb0f7b9106d510db23b635bebe57dd4f944496ea7683a2c1616059d684df28",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/dependencies.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/tasks/dependency-outcomes.test.tsx",
+        "apps/desktop/test/presentation/forms/task-prerequisites.test.tsx",
+        "apps/desktop/test/presentation/tasks/dependency-editor.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 17 runtime cases/variants and 79 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Outcome formatting no longer starts Simulator/DOM; editor and creation paths use empty private catalog state. Original failure/retry/focus variants retained.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "tasks"
     },
     {
-      "file": "apps/desktop/test/drafts.test.tsx",
+      "file": "apps/desktop/test/presentation/conversations/drafts.test.tsx",
       "declarations": 1,
       "assertionSites": 7,
       "baselineDigest": "f92b52af8d69a0a87b2cba78a69d6ed5de24cd4d098302982954524d17a2bcdd",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/drafts.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/conversations/drafts.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 1 runtime cases/variants and 7 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "conversations"
     },
     {
-      "file": "apps/desktop/test/editors.test.tsx",
+      "file": "apps/desktop/test/presentation/forms/task-editor.test.tsx",
       "declarations": 3,
       "assertionSites": 11,
       "baselineDigest": "1861e7a7aa69685452a2b4e1273cc8ce1bb4125233a2220d238dccaadf7ed6d4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/editors.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/forms/task-editor.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 3 runtime cases/variants and 11 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "forms"
     },
     {
-      "file": "apps/desktop/test/engine-client.test.tsx",
+      "file": "apps/desktop/test/contracts/local-api/engine-client.test.tsx",
       "declarations": 11,
       "assertionSites": 55,
       "baselineDigest": "d7bf454f8e7fc8d7ef32b1d638ff93a415529b42eca29b103fb758af9fbb8700",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/engine-client.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/contracts/local-api/engine-client.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 11 runtime cases/variants and 56 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Actual EngineClient uses scripted WebSocket/fetch and controlled timers as before, with one explicit state task instead of the complete demo.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "contracts",
+      "area": "local-api"
     },
     {
-      "file": "apps/desktop/test/first-run.test.tsx",
+      "file": "apps/desktop/test/presentation/setup/first-run.test.tsx",
       "declarations": 8,
       "assertionSites": 43,
       "baselineDigest": "93639fafcf21639ec3e5d951fcf416bf7684ac14c59b6e8156968a6fe7c94ca5",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/first-run.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/setup/first-run.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 19 runtime cases/variants and 43 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "setup"
     },
     {
-      "file": "apps/desktop/test/header.test.tsx",
+      "file": "apps/desktop/test/presentation/navigation/responsive-header.test.tsx",
       "declarations": 2,
       "assertionSites": 25,
       "baselineDigest": "c464974686af8eb2f595700d533e96d0ff93168499535d722a620bcf6c2db20a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/header.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/navigation/responsive-header.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 3 runtime cases/variants and 25 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "navigation"
     },
     {
-      "file": "apps/desktop/test/history.test.tsx",
+      "file": "apps/desktop/test/presentation/history/history.test.tsx",
       "declarations": 14,
       "assertionSites": 108,
       "baselineDigest": "e57495074fd30aaf8f629b14047b6fff878fc758bfab552f7fbf5b1673b9b7b2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/history.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/history/history.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 17 runtime cases/variants and 108 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. 55 private archived records use one production-created task and a single recorded architect step. Each selectedProducts/workChoice matches its productId, preserving exact six-row search expectations.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "history"
     },
     {
-      "file": "apps/desktop/test/journey.test.tsx",
+      "file": "apps/desktop/test/presentation/journey/accessible-list.test.tsx",
       "declarations": 50,
       "assertionSites": 318,
       "baselineDigest": "ea2d984d8510852aa5b6f4ac8a3de30b08ecdde221332cfe26dadbb6f185914c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/journey.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/journey/accessible-list.test.tsx",
+        "apps/desktop/test/presentation/journey/waits.test.tsx",
+        "apps/desktop/test/presentation/journey/review-results.test.tsx",
+        "apps/desktop/test/presentation/journey/agent-inputs.test.tsx",
+        "apps/desktop/test/presentation/journey/acceptance.test.tsx",
+        "apps/desktop/test/presentation/journey/checks.test.tsx",
+        "apps/desktop/test/presentation/journey/navigation.test.tsx",
+        "apps/desktop/test/rules/tasks/delivery-text.test.tsx",
+        "apps/desktop/test/rules/journey/layout.test.tsx",
+        "apps/desktop/test/contracts/browser/styles/reduced-motion.test.tsx",
+        "apps/desktop/test/presentation/journey/start-words.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 90 runtime cases/variants and 318 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Split geometry and delivery rules from DOM. Geometry uses a representative explicit 24-node flow; delivery uses an explicit merged PR. Accessible/rendered flow scenarios retain real demo histories where exact conversation, round and focus interactions are under test. Real stylesheet/computed-browser paint assertions belong to focused browser/style contracts.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "journey"
     },
     {
-      "file": "apps/desktop/test/keyboard.test.tsx",
+      "file": "apps/desktop/test/presentation/keyboard/analytics.test.tsx",
       "declarations": 41,
       "assertionSites": 222,
       "baselineDigest": "95332cbe57703a4e9d843f44d6dcd11deae0b08a15837c5699ee4e6f176820d6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/keyboard.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/keyboard/analytics.test.tsx",
+        "apps/desktop/test/presentation/keyboard/board.test.tsx",
+        "apps/desktop/test/presentation/keyboard/inbox.test.tsx",
+        "apps/desktop/test/presentation/keyboard/palette.test.tsx",
+        "apps/desktop/test/presentation/keyboard/editors.test.tsx",
+        "apps/desktop/test/contracts/browser/styles/overlays.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 53 runtime cases/variants and 222 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Five coherent UI interaction owners preserve every input/modifier/width/direction variant and real demo insertion/answer behavior. Actual CSS filesystem/paint assertions have a separate browser contract owner; task-action policy is presentation, not engine orchestration.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "keyboard"
     },
     {
-      "file": "apps/desktop/test/limit-history.test.tsx",
+      "file": "apps/desktop/test/presentation/analytics/limit-history.test.tsx",
       "declarations": 11,
       "assertionSites": 73,
       "baselineDigest": "92aa70d2e643953e8586a4facbc01a323d119c874433bf1b0a339fad302695dd",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/limit-history.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/analytics/limit-history.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 12 runtime cases/variants and 73 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "analytics"
     },
     {
-      "file": "apps/desktop/test/message-delivery.test.tsx",
+      "file": "apps/desktop/test/presentation/conversations/message-delivery.test.tsx",
       "declarations": 5,
       "assertionSites": 18,
       "baselineDigest": "caf46ee74763ba7a57e2e09188e5aa23c745a70b3c161c610bd2827646eeacf2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/message-delivery.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/conversations/message-delivery.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 5 runtime cases/variants and 18 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Two explicit tasks distinguish working and waiting-on-you agents; controlled client mocks reset between cases.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "conversations"
     },
     {
-      "file": "apps/desktop/test/message-images.test.tsx",
+      "file": "apps/desktop/test/presentation/conversations/markdown.test.tsx",
       "declarations": 11,
       "assertionSites": 55,
       "baselineDigest": "94a15f36440ddac0afb85315c2fe88bfb5d3d0bdcf0edede4b5aa7f05ef9dd58",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/message-images.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/conversations/markdown.test.tsx",
+        "apps/desktop/test/presentation/conversations/image-previews.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 11 runtime cases/variants and 55 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Explicit preview client replaces partial import of the real engine singleton. Markdown and preview lifecycle are separate owners. Assertions and every viewport/failure/cancellation variant unchanged.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "conversations"
     },
     {
-      "file": "apps/desktop/test/notice-count.test.tsx",
+      "file": "apps/desktop/test/presentation/notifications/badge-count.test.tsx",
       "declarations": 1,
       "assertionSites": 4,
       "baselineDigest": "96f15ccb68647a041b0e80acf3df97728bb6b02b3d343eb1a44ae203d561a18d",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/notice-count.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/notifications/badge-count.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 2 runtime cases/variants and 4 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private one-task state replaces unrelated complete demo.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "notifications"
     },
     {
-      "file": "apps/desktop/test/notify.test.ts",
+      "file": "apps/desktop/test/rules/notifications/words.test.ts",
       "declarations": 32,
       "assertionSites": 95,
       "baselineDigest": "19bb5629efaf5583d890912e77706238234f017fcca85d8a6c6bebcab66d74a4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/notify.test.ts",
+      "splitFiles": [
+        "apps/desktop/test/rules/notifications/words.test.ts",
+        "apps/desktop/test/rules/notifications/jump.test.ts",
+        "apps/desktop/test/orchestration/notifications/inbox-watch.test.ts",
+        "apps/desktop/test/orchestration/notifications/notifier.test.ts",
+        "apps/desktop/test/contracts/browser/notification-settings.test.ts"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 37 runtime cases/variants and 95 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private named records replace demo workflows. Words and jump policy run in Node; Notifier owns an explicit clock and uses a microtask for host completion, with no arbitrary 0ms elapsed wait. Browser settings stay at the actual storage boundary.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "rules",
+      "area": "notifications"
     },
     {
-      "file": "apps/desktop/test/plan.test.tsx",
+      "file": "apps/desktop/test/presentation/tasks/plan.test.tsx",
       "declarations": 3,
       "assertionSites": 20,
       "baselineDigest": "aca0043f4122262eb6fc98fd942d326aea18afdd8591bc94d760a6ce28af78ab",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/plan.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/tasks/plan.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 5 runtime cases/variants and 20 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private task plan/catalog replaces full demo; actual simulated planning interaction explicitly enables its pool.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "tasks"
     },
     {
-      "file": "apps/desktop/test/product-settings.test.tsx",
+      "file": "apps/desktop/test/presentation/forms/product-editor.test.tsx",
       "declarations": 3,
       "assertionSites": 16,
       "baselineDigest": "4bf11df8ae71ffc3c223769aaefc7cab04ab81664fa13af898a602450bb95289",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/product-settings.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/forms/product-editor.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 3 runtime cases/variants and 16 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private empty catalog state replaces erased complete demo; original dirty/save/remove behaviors remain.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "forms"
     },
     {
-      "file": "apps/desktop/test/profiles.test.tsx",
+      "file": "apps/desktop/test/presentation/forms/profiles.test.tsx",
       "declarations": 5,
       "assertionSites": 21,
       "baselineDigest": "1d2dd97b9bdd45acd28ad71c7f7f181e4bb1e4ab34073c485c93cf4ae2f6cb97",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/profiles.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/forms/profiles.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 5 runtime cases/variants and 21 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private catalogs replace erased complete demo; scoped choice spies now restore on teardown.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "forms"
     },
     {
-      "file": "apps/desktop/test/repositories.test.tsx",
+      "file": "apps/desktop/test/presentation/inbox/shared-delivery.test.tsx",
       "declarations": 14,
       "assertionSites": 56,
       "baselineDigest": "bfa37184b09904ca5f12794037a5d11da918fa52583605fc4422d42a9a551dfb",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/repositories.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/inbox/shared-delivery.test.tsx",
+        "apps/desktop/test/presentation/tasks/product-starts.test.tsx",
+        "apps/desktop/test/presentation/history/shared-delivery.test.tsx",
+        "apps/desktop/test/presentation/forms/shared-products.test.tsx",
+        "apps/desktop/test/presentation/reviews/shared-products.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 19 runtime cases/variants and 56 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Mixed learning, starting-point, shared-review, History and form cases have separate presentation owners with explicit private tasks.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "inbox"
     },
     {
-      "file": "apps/desktop/test/review.test.tsx",
+      "file": "apps/desktop/test/presentation/reviews/progress.test.tsx",
       "declarations": 22,
       "assertionSites": 95,
       "baselineDigest": "2bb225b464b6507104ca26ea43589ceeed42e99d51201728b4985125ed9aec5c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/review.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/reviews/progress.test.tsx",
+        "apps/desktop/test/presentation/reviews/votes.test.tsx",
+        "apps/desktop/test/presentation/reviews/demo-reports.test.tsx",
+        "apps/desktop/test/presentation/reviews/acceptance.test.tsx",
+        "apps/desktop/test/presentation/reviews/check-cleanup.test.tsx",
+        "apps/desktop/test/presentation/tasks/shared-lessons.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 72 runtime cases/variants and 95 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private one-task state/evidence replaces unrelated demo for synthetic progress/vote/acceptance controls. Shipped demo voter names and follow-up report contracts remain demo-backed.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "reviews"
     },
     {
-      "file": "apps/desktop/test/reviewRound.test.ts",
+      "file": "apps/desktop/test/rules/reviews/rounds.test.ts",
       "declarations": 9,
       "assertionSites": 47,
       "baselineDigest": "2ad3cbba05f41b5c77dc8cee49bb45cb8b15f24868e97e02c47a19950e79468d",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/reviewRound.test.ts",
+      "splitFiles": [
+        "apps/desktop/test/rules/reviews/rounds.test.ts",
+        "apps/desktop/test/contracts/demo/review-round.test.ts"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 9 runtime cases/variants and 47 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Pure recorded-round rules separated from the actual generated demo split-vote control.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "rules",
+      "area": "reviews"
     },
     {
-      "file": "apps/desktop/test/roles.test.tsx",
+      "file": "apps/desktop/test/presentation/forms/roles.test.tsx",
       "declarations": 8,
       "assertionSites": 57,
       "baselineDigest": "19eb0f9f68a646a4973d2e750911560d6551e032c0fb9420ba62e392c822665d",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/roles.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/forms/roles.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 25 runtime cases/variants and 57 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Same production role/profile catalogs, without generating and discarding demo workflows.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "forms"
     },
     {
-      "file": "apps/desktop/test/routes.test.tsx",
+      "file": "apps/desktop/test/rules/navigation/routes.test.tsx",
       "declarations": 19,
       "assertionSites": 88,
       "baselineDigest": "0baa8b930b80c7a4fb4475b9f4b53a9c928b3d510cbb89b368ee8dac2ac8ce64",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/routes.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/rules/navigation/routes.test.tsx",
+        "apps/desktop/test/presentation/navigation/routes.test.tsx",
+        "apps/desktop/test/contracts/browser/route-defaults.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 19 runtime cases/variants and 88 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Pure URL transforms run without a DOM. The case intentionally using routeHref default window.location belongs to a browser contract; rendered navigation remains separate. Root review refinement: pure codec extracted to src/route-codec.ts with explicit search input; original browser wrapper and hook API retained unchanged.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "rules",
+      "area": "navigation"
     },
     {
-      "file": "apps/desktop/test/routines.test.tsx",
+      "file": "apps/desktop/test/presentation/routines/editor.test.tsx",
       "declarations": 5,
       "assertionSites": 35,
       "baselineDigest": "6069163d88940fe91d7e9749403d94540913d69124caecd14189f1123a99a394",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/routines.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/routines/editor.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 5 runtime cases/variants and 35 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private role/profile/product catalogs replace erased demo; explicit scheduler clock and existing Simulator commands remain.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "routines"
     },
     {
-      "file": "apps/desktop/test/runtime-wait.test.tsx",
+      "file": "apps/desktop/test/presentation/tasks/runtime-wait.test.tsx",
       "declarations": 5,
       "assertionSites": 27,
       "baselineDigest": "febeadf79d022d26b011761dc96df1002413729505f4adae27e6d47c7d7f8432",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/runtime-wait.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/tasks/runtime-wait.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 5 runtime cases/variants and 27 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private tasks and a complete History summary replace unrelated demo. The wait UI receives honest saved dependency evidence.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "tasks"
     },
     {
-      "file": "apps/desktop/test/screen.test.tsx",
+      "file": "apps/desktop/test/presentation/screen/permissions.test.tsx",
       "declarations": 7,
       "assertionSites": 49,
       "baselineDigest": "456b8fc23b42d81cb58444c8d2fb12d2d9c198b2e1ad6b8833a582f2a8a20504",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/screen.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/screen/permissions.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 7 runtime cases/variants and 49 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "screen"
     },
     {
-      "file": "apps/desktop/test/session-images.test.tsx",
+      "file": "apps/desktop/test/presentation/conversations/saved-images.test.tsx",
       "declarations": 8,
       "assertionSites": 35,
       "baselineDigest": "be4d53602c9dfaaf3ee238561996470e86e7bd1f73e263516741d32a20c90493",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/session-images.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/conversations/saved-images.test.tsx",
+        "apps/desktop/test/presentation/journey/conversation-images.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 9 runtime cases/variants and 35 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Saved-image controls use one explicit task; selected-Journey image behavior retains its actual recorded flow.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "conversations"
     },
     {
-      "file": "apps/desktop/test/session-products.test.tsx",
+      "file": "apps/desktop/test/presentation/conversations/products.test.tsx",
       "declarations": 2,
       "assertionSites": 11,
       "baselineDigest": "0b727ad4449c8f2ef7cf73546a3afe34161db355ebf72e4c296bc070ef227053",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/session-products.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/conversations/products.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 4 runtime cases/variants and 11 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private single task and catalog replace unrelated workflow generation; both session/step variants preserved.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "conversations"
     },
     {
-      "file": "apps/desktop/test/step-usage.test.tsx",
+      "file": "apps/desktop/test/presentation/journey/usage.test.tsx",
       "declarations": 9,
       "assertionSites": 33,
       "baselineDigest": "a126ffd417623435db0dc62163019eab7a1f98c8a08d3e0c41b24ac0deccb58e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/step-usage.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/journey/usage.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 12 runtime cases/variants and 33 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. One explicit recorded build step supplies the selected node. All pending/unknown/multiple-model/start/retired-role variants preserved.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "journey"
     },
     {
-      "file": "apps/desktop/test/summary.test.tsx",
+      "file": "apps/desktop/test/presentation/tasks/demo-summaries.test.tsx",
       "declarations": 12,
       "assertionSites": 42,
       "baselineDigest": "736c1ed562a3448114371ac3e4e29229987a180d36f26a59286b1de453dea374",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/summary.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/tasks/demo-summaries.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 12 runtime cases/variants and 42 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "tasks"
     },
     {
-      "file": "apps/desktop/test/takeover.test.tsx",
+      "file": "apps/desktop/test/presentation/conversations/takeover.test.tsx",
       "declarations": 1,
       "assertionSites": 3,
       "baselineDigest": "1d7f275bd1d7a355237dde6d1d7fe89bf5a3da72f84514a8726953100d27e0f6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/takeover.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/conversations/takeover.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 3 runtime cases/variants and 3 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. One explicit production-created task replaces full demo; all effective/original permission variants preserved.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "conversations"
     },
     {
-      "file": "apps/desktop/test/task-details.test.tsx",
+      "file": "apps/desktop/test/presentation/tasks/detail-loader.test.tsx",
       "declarations": 5,
       "assertionSites": 29,
       "baselineDigest": "be17b020307ca97a8b8d8625db0b19c1ac879c9d799eb19e41d7904e92904363",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/task-details.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/tasks/detail-loader.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 5 runtime cases/variants and 29 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private one-task response and fake timers retain revision, serialization, failure and task-switch controls.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "tasks"
     },
     {
-      "file": "apps/desktop/test/theme.test.ts",
+      "file": "apps/desktop/test/rules/theme/catalog.test.ts",
       "declarations": 6,
       "assertionSites": 49,
       "baselineDigest": "de57ebbc7390cf3d3716cecdf27d1957eb8d420c617cdb29640314f7053b8714",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/theme.test.ts",
+      "splitFiles": [
+        "apps/desktop/test/rules/theme/catalog.test.ts",
+        "apps/desktop/test/contracts/browser/theme-preferences.test.ts",
+        "apps/desktop/test/contracts/browser/styles/contrast.test.ts"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 6 runtime cases/variants and 49 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Pure catalog/contrast rules separated from real browser preferences and actual stylesheet/computed-paint controls. Real stylesheet/computed-browser paint assertions belong to focused browser/style contracts.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "rules",
+      "area": "theme"
     },
     {
-      "file": "apps/desktop/test/tools.test.tsx",
+      "file": "apps/desktop/test/presentation/agents/tools.test.tsx",
       "declarations": 2,
       "assertionSites": 10,
       "baselineDigest": "521fed1374158bebcfb1c360c8c41e842d91e7b2c7b5a1485c949d5e906c64c0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/tools.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/agents/tools.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 2 runtime cases/variants and 10 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Existing fixture is already scoped to the rendered behavior and retains its original case bodies.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "agents"
     },
     {
-      "file": "apps/desktop/test/usage-refresh.test.tsx",
+      "file": "apps/desktop/test/presentation/analytics/usage-refresh.test.tsx",
       "declarations": 2,
       "assertionSites": 9,
       "baselineDigest": "cfbe6f06c92b87591562f01f8938c38ec29fd179f2a9410b7e1cccd775f18033",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/usage-refresh.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/analytics/usage-refresh.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 2 runtime cases/variants and 9 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Private empty catalogs with explicit client replies and clock ticks replace unrelated workflows.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "analytics"
     },
     {
-      "file": "apps/desktop/test/usage.test.tsx",
+      "file": "apps/desktop/test/presentation/analytics/usage-limits.test.tsx",
       "declarations": 16,
       "assertionSites": 56,
       "baselineDigest": "96ae644757aba3fbc0678f235bb56d109f363b2d3bb21144b37385c421f47a15",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "apps/desktop/test/usage.test.tsx",
+      "splitFiles": [
+        "apps/desktop/test/presentation/analytics/usage-limits.test.tsx",
+        "apps/desktop/test/presentation/analytics/usage-summary.test.tsx",
+        "apps/desktop/test/presentation/analytics/demo-usage.test.tsx",
+        "apps/desktop/test/presentation/analytics/usage-details.test.tsx"
+      ],
+      "review": "Read all original assertions, variant loops and setup/teardown. 20 runtime cases/variants and 56 in-case assertion ASTs retained exactly; no case identity or assertion was removed/reworded. Explicit allowance reports replace full demo except the named demo allowance contract. Grok is added only once to the test catalog, removing baseline duplicate-key warnings.",
+      "validation": {
+        "artifact": "desktop-next/reconciliation.json",
+        "qualification": "All 554 desktop cases passed, 81 owners, 12.465s at normal workers; desktop typecheck passes. Integrated conventions and full qualification remain parent-owned."
+      },
+      "layer": "presentation",
+      "area": "analytics"
     },
     {
       "file": "packages/core/test/rules/acceptance/evidence.test.ts",
@@ -1249,11 +1720,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/check-env.test.ts",
+      "file": "packages/engine/test/contracts/checks/nested-environment.test.ts",
       "declarations": 2,
       "assertionSites": 4,
       "baselineDigest": "a346bdd243fb8b26b7b578b6b74128ba199085b7937cc704597d2e91cad609d3",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/engine/test/contracts/checks/nested-environment.test.ts",
+        "packages/test-support/test/contracts/repositories/check-inheritance.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "checks",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/check-env.test.ts"
     },
     {
       "file": "packages/engine/test/check-failures.test.ts",
@@ -1660,11 +2143,27 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/env.test.ts",
+      "file": "packages/agent-runtime/test/contracts/providers/safety-modes.test.ts",
       "declarations": 11,
       "assertionSites": 37,
       "baselineDigest": "29dce5134d1dd646afc01b0689317e23cc17d86a7f6768f32d7f05bdfbc6df7f",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/providers/safety-modes.test.ts",
+        "packages/platform/test/rules/environment/credentials.test.ts",
+        "packages/engine/test/contracts/environment/credentials.test.ts",
+        "packages/platform/test/rules/environment/path-values.test.ts",
+        "packages/platform/test/contracts/environment/login-shell.test.ts",
+        "packages/engine/test/contracts/environment/background.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "providers",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/env.test.ts"
     },
     {
       "file": "packages/engine/test/environment.test.ts",
@@ -2370,11 +2869,22 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/repo-orientation.test.ts",
+      "file": "packages/repositories/test/contracts/navigation/committed.test.ts",
       "declarations": 1,
       "assertionSites": 5,
       "baselineDigest": "f7bb154f24b2346d8a29a7f2a647f73a569be57dbf45b06d1ab4f281e9e3e906",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/repositories/test/contracts/navigation/committed.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "navigation",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/repo-orientation.test.ts"
     },
     {
       "file": "packages/engine/test/report-images.test.ts",
@@ -2789,25 +3299,71 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/setup-commands.test.ts",
+      "file": "packages/engine/test/contracts/setup/command-readiness.test.ts",
       "declarations": 7,
       "assertionSites": 54,
       "baselineDigest": "1d7dbd5d5d1fb84f327e4311a055c806d7b499133381a3ec28fde5dd6c608dc7",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/engine/test/contracts/setup/command-readiness.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "setup",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/setup-commands.test.ts"
     },
     {
-      "file": "packages/engine/test/setup-steps.test.ts",
+      "file": "packages/test-support/test/contracts/runtime/setup-poll.test.ts",
       "declarations": 4,
       "assertionSites": 19,
       "baselineDigest": "9a6e78bfbb7b6faeeaaf74f3413060f478faadeeb894f136fdf21c0db7cd811e",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/test-support/test/contracts/runtime/setup-poll.test.ts",
+        "packages/test-support/test/orchestration/runtime/setup-admission.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/setup-steps.test.ts"
     },
     {
-      "file": "packages/engine/test/setup.test.ts",
+      "file": "packages/agent-runtime/test/contracts/providers/readiness-diagnostics.test.ts",
       "declarations": 30,
       "assertionSites": 181,
       "baselineDigest": "733381cffcf6c0f3c345c5ef56abd53797a182aff3c89a2cd2ea75e9da0fe2bf",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/providers/readiness-diagnostics.test.ts",
+        "packages/engine/test/contracts/setup/readiness.test.ts",
+        "packages/agent-runtime/test/contracts/providers/readiness-login.test.ts",
+        "packages/repositories/test/contracts/discovery/github-readiness.test.ts",
+        "packages/repositories/test/contracts/discovery/clones.test.ts",
+        "packages/repositories/test/rules/discovery/config.test.ts",
+        "packages/engine/test/contracts/setup/products.test.ts",
+        "packages/repositories/test/rules/discovery/pasted.test.ts",
+        "packages/repositories/test/contracts/discovery/pasted-defaults.test.ts",
+        "packages/engine/test/contracts/setup/first-run.test.ts",
+        "packages/engine/test/contracts/agents/readiness-selection.test.ts",
+        "packages/engine/test/journeys/agents/readiness-routing.test.ts",
+        "packages/engine/test/journeys/delivery/login-recovery.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "providers",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/setup.test.ts"
     },
     {
       "file": "packages/engine/test/shared-image-history.test.ts",
@@ -2838,11 +3394,24 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/source-pointers.test.ts",
+      "file": "packages/engine/test/contracts/context/source-visibility.test.ts",
       "declarations": 6,
       "assertionSites": 61,
       "baselineDigest": "e06ca75327914ddf77f9d42094316ef1e5648f067ad727d7f9258fa0459953ce",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/source-visibility.test.ts",
+        "packages/engine/test/rules/sources/hints.test.ts",
+        "packages/engine/test/contracts/context/source-handoffs.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/source-pointers.test.ts"
     },
     {
       "file": "packages/engine/test/contracts/sources/validation.test.ts",
@@ -2999,11 +3568,22 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/test-git-env.test.ts",
+      "file": "packages/test-support/test/contracts/repositories/git-environment.test.ts",
       "declarations": 1,
       "assertionSites": 1,
       "baselineDigest": "0408176865aa440b22bfb365f3379b267b34f340f1e0b502c55a0c825a5b3f1c",
-      "status": "pending"
+      "status": "reviewed",
+      "splitFiles": [
+        "packages/test-support/test/contracts/repositories/git-environment.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "repositories",
+      "review": "Complete semantic ownership audit: explicit environment/path values, real native CLI/credential/Git/filesystem/process contracts, and genuine Engine setup/context journeys separated. 67 original runtime cases retained; one existing native-default assertion has its own case. All 362 in-case and six helper assertions retained with documented fixture-expression equivalences. Prepared leased process before deadline measurement; ambient Git environment lives in an owned child; rule fixtures avoid demo workflows.",
+      "validation": {
+        "artifact": "workstreams/repository-fixtures-next/owner-audit.json",
+        "focused": "68 pass / 535 expectations / 20.43s at 14 workers; correction neighborhood 12 pass / 51 expectations / 4.14s; types/conventions and independent review pass. Combined full/platform qualification due."
+      },
+      "from": "packages/engine/test/test-git-env.test.ts"
     },
     {
       "file": "packages/engine/test/test-quality.test.ts",

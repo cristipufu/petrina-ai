@@ -9,8 +9,8 @@ import { Kernel, type MTask, PLANNER_PROFILE, RISK_WORD, RELEASE_MANAGER_PROFILE
 import { normalizePlan } from "./plan.js";
 import type { Sources } from "./sources.js";
 import type { Turns } from "./turn.js";
-import { RepoOrientation } from "./repo-orientation.js";
-import { checkSourceHints } from "./source-pointers.js";
+import { RepoOrientation } from "@petrina/repositories/navigation";
+import { checkSourceHints } from "./source-hints.js";
 
 export class Planning {
   private readonly orientation = new RepoOrientation();

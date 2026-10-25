@@ -6,7 +6,10 @@ const text = (value: unknown): string | undefined => node(value) && value.type =
 const name = (value: unknown): string | undefined => node(value) && value.type === "Identifier" ? value.name as string : undefined;
 
 export interface SourceFacts {
-  imports: { path: string; names: string[]; runtime: boolean }[];
+  imports: { path: string; names: string[]; runtime: boolean; unmocked?: true }[];
+  /** Literal synchronous full replacements, applied only by the presentation dependency guard. */
+  fullModuleMocks: { path: string; line: number }[];
+  invalidModuleMocks: { line: number; reason: string }[];
   uncertain: boolean;
   promiseMatchers: number[];
   exclusiveTests: number[];
@@ -36,8 +39,10 @@ const CALLS = new Set(["CallExpression", "OptionalCallExpression"]);
 
 /** Parse syntax rather than searching prose, comments or template strings for code. Never executes a module. */
 export function sourceFacts(source: string, filename: string): SourceFacts {
-  const facts: SourceFacts = { imports: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [] };
+  const facts: SourceFacts = { imports: [], fullModuleMocks: [], invalidModuleMocks: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [] };
   const ast = parse(source, { sourceType: "unambiguous", sourceFilename: filename, plugins: filename.endsWith("x") ? ["typescript", "jsx"] : ["typescript"], attachComment: false });
+  const mocks = moduleMocks(ast.program as unknown as Node);
+  facts.fullModuleMocks = mocks.full; facts.invalidModuleMocks = mocks.invalid;
   const testNames = new Set(["it", "test", "describe"]);
   for (const statement of ast.program.body) if (statement.type === "ImportDeclaration" && ["bun:test", "vitest"].includes(statement.source.value)) {
     for (const specifier of statement.specifiers) if (specifier.type === "ImportSpecifier" && testNames.has(specifier.imported.type === "Identifier" ? specifier.imported.name : specifier.imported.value)) testNames.add(specifier.local.name);
@@ -52,8 +57,9 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     const parts = accessPath(value);
     return parts[0] === "globalThis" ? parts.slice(1) : parts;
   };
-  function visit(value: unknown): void {
+  function visit(value: unknown, factory = false): void {
     if (!node(value)) return;
+    factory ||= mocks.factories.has(value);
     if (value.type === "ImportDeclaration" && /^(?:(?:node:)?child_process|bun)$/.test(text(value.source) ?? "")) {
       for (const specifier of value.specifiers as Node[]) if (specifier.type === "ImportSpecifier" && BLOCKING.has(name(specifier.imported) ?? text(specifier.imported) ?? "")) facts.blockingCalls.push(line(specifier));
     }
@@ -67,7 +73,7 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
       const path = text(value.source);
       const specifiers = Array.isArray(value.specifiers) ? value.specifiers.filter(specifier => node(specifier) && specifier.importKind !== "type" && specifier.exportKind !== "type") : [];
       const names = value.type === "ExportAllDeclaration" ? ["*"] : specifiers.flatMap(specifier => node(specifier) ? [name(specifier.imported) ?? (specifier.type === "ExportSpecifier" ? name(specifier.local) : undefined) ?? (specifier.type === "ImportNamespaceSpecifier" ? "*" : "default")] : []);
-      if (path) facts.imports.push({ path, names, runtime: value.importKind !== "type" && value.exportKind !== "type" && (!Array.isArray(value.specifiers) || !value.specifiers.length || !!specifiers.length) });
+      if (path) facts.imports.push({ path, names, runtime: value.importKind !== "type" && value.exportKind !== "type" && (!Array.isArray(value.specifiers) || !value.specifiers.length || !!specifiers.length), ...(mocks.dependencies.has(value) ? { unmocked: true as const } : {}) });
     }
     if (value.type === "TSImportType") {
       const path = text(value.source);
@@ -75,7 +81,12 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     }
     if (value.type === "ImportExpression" || (value.type === "CallExpression" && (name(value.callee) === "require" || (node(value.callee) && value.callee.type === "Import")))) {
       const path = text(value.type === "ImportExpression" ? value.source : (value.arguments as unknown[])?.[0]);
-      if (path) facts.imports.push({ path, names: ["*"], runtime: true });
+      if (path) facts.imports.push({ path, names: ["*"], runtime: true, ...(factory || name(value.callee) === "require" ? { unmocked: true as const } : {}) });
+      else facts.uncertain = true;
+    }
+    if (value.type === "CallExpression" && node(value.callee) && value.callee.type === "MemberExpression" && mocks.actual(value.callee)) {
+      const path = text((value.arguments as unknown[])[0]);
+      if (path) facts.imports.push({ path, names: ["*"], runtime: true, unmocked: true });
       else facts.uncertain = true;
     }
     if (value.type === "MemberExpression" || value.type === "OptionalMemberExpression") {
@@ -89,13 +100,142 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     }
     if (["CallExpression", "NewExpression"].includes(value.type) && ["fetch", "WebSocket", "Worker", "EventSource", "XMLHttpRequest"].includes(name(value.callee) ?? "")) facts.effectAccess.push({ line: line(value), name: name(value.callee)! });
     for (const child of Object.values(value)) {
-      if (Array.isArray(child)) child.forEach(visit);
-      else if (node(child)) visit(child);
+      if (Array.isArray(child)) child.forEach(entry => visit(entry, factory));
+      else if (node(child)) visit(child, factory);
     }
   }
   visit(ast);
   unfinishedWork(ast.program as unknown as Node, facts);
   return facts;
+}
+
+/** Only a real, top-level Vitest call with a complete explicit factory can replace an edge. */
+function moduleMocks(program: Node) {
+  const bindings = new Set<string>(), namespaces = new Set<string>();
+  const full: { path: string; line: number }[] = [], invalid: { line: number; reason: string }[] = [];
+  const factories = new Set<Node>();
+  const line = (value: Node) => (value.loc as { start: { line: number } }).start.line;
+  for (const statement of program.body as Node[]) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type" || text(statement.source) !== "vitest") continue;
+    for (const specifier of statement.specifiers as Node[]) {
+      if (specifier.type === "ImportNamespaceSpecifier") namespaces.add(name(specifier.local)!);
+      if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type" && ["vi", "vitest"].includes(name(specifier.imported) ?? text(specifier.imported) ?? "")) bindings.add(name(specifier.local)!);
+    }
+  }
+  const member = (value: unknown): string | undefined => node(value) && value.type === "MemberExpression" && !value.computed ? name(value.property) : undefined;
+  const api = (value: unknown): boolean => bindings.has(name(value) ?? "") || node(value) && value.type === "MemberExpression"
+    && namespaces.has(name(value.object) ?? "") && ["vi", "vitest"].includes(member(value) ?? "");
+  const staticMember = (value: Node) => value.computed ? text(value.property) : name(value.property);
+  const actual = (value: Node): boolean => ["importActual", "importOriginal"].includes(staticMember(value) ?? "") && api(value.object);
+  const walk = (value: unknown, see: (value: Node) => void): void => {
+    if (!node(value)) return;
+    see(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "loc") continue;
+      if (Array.isArray(child)) child.forEach(entry => walk(entry, see));
+      else if (node(child)) walk(child, see);
+    }
+  };
+  let altered = false, originalAccess = false;
+  walk(program, value => {
+    if (value.type === "MemberExpression" && api(value.object) && (actual(value) || value.computed || ["unmock", "doUnmock", "doMock"].includes(member(value) ?? ""))) {
+      originalAccess = true;
+      invalid.push({ line: line(value), reason: "original-module, unmock or computed Vitest access is not a full presentation replacement" });
+    }
+    if (["AssignmentExpression", "UpdateExpression"].includes(value.type)) {
+      const target = value.left ?? value.argument;
+      if (node(target) && target.type === "MemberExpression" && api(target.object) && (target.computed || member(target) === "mock")) altered = true;
+    }
+  });
+  for (const statement of program.body as Node[]) {
+    if (statement.type !== "ExpressionStatement" || !node(statement.expression)) continue;
+    const call = statement.expression;
+    if (call.type !== "CallExpression" || !node(call.callee) || call.callee.type !== "MemberExpression" || !api(call.callee.object)) continue;
+    if (call.callee.computed) {
+      if (staticMember(call.callee) === "mock") invalid.push({ line: line(call), reason: "use a direct Vitest mock call, not a computed replacement" });
+      continue;
+    }
+    if (member(call.callee) !== "mock") continue;
+    // Vitest hoists only direct calls named vi.mock/vitest.mock. An alias/namespace
+    // can be the real API yet still execute after the view's static imports.
+    if (!["vi", "vitest"].includes(name(call.callee.object) ?? "")) {
+      invalid.push({ line: line(call), reason: "use a directly imported vi.mock or vitest.mock so the replacement precedes imports" });
+      continue;
+    }
+    const [path, factory] = call.arguments as unknown[];
+    const fail = (reason: string) => invalid.push({ line: line(call), reason });
+    if (altered) { fail("the Vitest mock binding is changed in this file"); continue; }
+    if (originalAccess) { fail("original-module or computed Vitest access prevents a proven full replacement"); continue; }
+    if (text(path) === undefined) { fail("use a literal module path for a full presentation replacement"); continue; }
+    if (!node(factory) || !["ArrowFunctionExpression", "FunctionExpression"].includes(factory.type) || (call.arguments as unknown[]).length !== 2) { fail("use an explicit full replacement factory"); continue; }
+    factories.add(factory);
+    if (factory.async || (factory.params as unknown[]).length) { fail("the replacement factory must be synchronous and cannot load an original module"); continue; }
+    let partial = false;
+    walk(factory, value => {
+      if (value.type === "ImportExpression" || value.type === "CallExpression" && (name(value.callee) === "importOriginal" || node(value.callee) && ["importActual", "importOriginal"].includes(member(value.callee) ?? ""))) partial = true;
+    });
+    if (partial) { fail("partial or original-module replacements are not presentation boundaries"); continue; }
+    const object = (value: unknown): boolean => node(value) && value.type === "ObjectExpression"
+      && (value.properties as Node[]).every(property => ["ObjectProperty", "ObjectMethod"].includes(property.type) && !property.computed);
+    let returnsObject = object(factory.body);
+    if (node(factory.body) && factory.body.type === "BlockStatement") {
+      const statements = factory.body.body as Node[];
+      returnsObject = statements.at(-1)?.type === "ReturnStatement" && object(statements.at(-1)?.argument);
+      // Nested exported functions may return arbitrary values; every factory return must be explicit.
+      const inspect = (value: unknown): void => {
+        if (!node(value) || FUNCTIONS.has(value.type)) return;
+        if (value.type === "ReturnStatement" && !object(value.argument)) returnsObject = false;
+        for (const [key, child] of Object.entries(value)) {
+          if (key === "loc") continue;
+          if (Array.isArray(child)) child.forEach(inspect);
+          else if (node(child)) inspect(child);
+        }
+      };
+      inspect(factory.body);
+    }
+    if (!returnsObject) { fail("return a complete object with explicit export names; spreads and computed replacements are unsupported"); continue; }
+    full.push({ path: text(path)!, line: line(call) });
+  }
+  // A factory can close over a local value assembled elsewhere. Follow its imported helpers
+  // without applying the replacement again: a fake cannot obtain native I/O through itself.
+  const references = (value: Node) => {
+    const names = new Set<string>();
+    const inspect = (entry: Node): void => {
+      if (entry.type === "Identifier") names.add(name(entry)!);
+      for (const [key, child] of Object.entries(entry)) {
+        // Export/member names are syntax, not captured bindings. Shorthand values
+        // and computed keys still visit their actual expression references.
+        if (key === "loc" || !entry.computed && (
+          key === "property" && ["MemberExpression", "OptionalMemberExpression"].includes(entry.type)
+          || key === "key" && ["ObjectProperty", "ObjectMethod", "ClassProperty", "ClassMethod", "ClassPrivateProperty", "ClassPrivateMethod"].includes(entry.type)
+        )) continue;
+        if (Array.isArray(child)) for (const item of child) { if (node(item)) inspect(item); }
+        else if (node(child)) inspect(child);
+      }
+    };
+    inspect(value);
+    return names;
+  };
+  const locals = new Map<string, Node[]>(), dependencies = new Set<Node>();
+  const bind = (pattern: unknown, value: Node): void => {
+    if (!node(pattern)) return;
+    if (pattern.type === "Identifier") locals.set(name(pattern)!, [...(locals.get(name(pattern)!) ?? []), value]);
+    else if (pattern.type === "ObjectPattern") for (const property of pattern.properties as Node[]) bind(property.type === "RestElement" ? property.argument : property.value, value);
+    else if (pattern.type === "ArrayPattern") for (const element of pattern.elements as unknown[]) bind(element, value);
+    else if (pattern.type === "RestElement") bind(pattern.argument, value);
+    else if (pattern.type === "AssignmentPattern") bind(pattern.left, value);
+  };
+  walk(program, value => {
+    if (value.type === "VariableDeclarator" && node(value.init)) bind(value.id, value.init);
+    if (["FunctionDeclaration", "ClassDeclaration"].includes(value.type)) bind(value.id, value);
+    if (value.type === "AssignmentExpression" && node(value.right)) bind(value.left, value.right);
+  });
+  const needed = new Set([...factories].flatMap(factory => [...references(factory)])), pending = [...needed];
+  while (pending.length) for (const value of locals.get(pending.pop()!) ?? []) for (const dependency of references(value)) {
+    if (!needed.has(dependency)) { needed.add(dependency); pending.push(dependency); }
+  }
+  for (const statement of program.body as Node[]) if (statement.type === "ImportDeclaration" && (statement.specifiers as Node[]).some(specifier => needed.has(name(specifier.local)!))) dependencies.add(statement);
+  return { full, invalid, factories, actual, dependencies };
 }
 
 /**

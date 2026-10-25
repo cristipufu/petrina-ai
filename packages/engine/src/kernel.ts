@@ -18,7 +18,7 @@ import { IdleSleepAssertion } from "./awake.js";
 import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
 import type { AgentSession, StartAgentSession, ToolProbe } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
-import type { DeveloperToolsResult, Which } from "./setup.js";
+import type { DeveloperToolsResult, Which } from "@petrina/repositories/tool-readiness";
 import type { MachineRecords } from "./check-interruption.js";
 import { Store } from "@petrina/storage/store";
 import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";

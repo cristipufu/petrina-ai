@@ -7,11 +7,11 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
 import { coordinator, finish, git, gitWith, itemOf, makeWorld, removeDir, REPO, remoteRef, runGit, taskOf, until, type World } from "./support.js";
-import { SetupSteps } from "./setup-steps.js";
+import { createSetupSteps } from "@petrina/test-support/setup-steps";
 import { completeAll } from "@petrina/core";
 
 const worlds: World[] = [];
-const setup = new SetupSteps(), setupLifetime = new AbortController();
+const setup = createSetupSteps(), setupLifetime = new AbortController();
 const engines = new Set<ReturnType<World["start"]>>();
 const start = (world: World) => setup.run(() => {
   const engine = world.start();

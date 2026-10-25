@@ -16,7 +16,7 @@ import { runMcp } from "./mcp.js";
 import { installAntigravity } from "@petrina/agent-runtime/antigravity-runtime";
 import { checkAgentTool } from "@petrina/agent-runtime/probe";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
-import { agentEnv } from "./env.js";
+import { agentEnv } from "@petrina/platform/process-environment";
 import { mkdir } from "node:fs/promises";
 import type { EngineClient } from "./engine-client.js";
 
