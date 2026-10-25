@@ -1,3 +1,4 @@
+import { appendSessionLine } from "@petrina/core";
 import { CheckQueue } from "./check-queue.js";
 import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
 import { StateProjection } from "./state-projection.js";
@@ -79,13 +80,7 @@ export function renameRoles(state: MState): void {
 
 export const TONES: readonly Tone[] = ["blue", "green", "orange", "violet", "pink", "teal", "indigo", "purple", "amber", "slate"];
 
-export const MAX_SESSION_LINES = 800;
-
-/** An older line may go once this agent has said something newer. Its latest words stay, so a report is still there when its pictures are saved. */
-function newerWords(session: MTask["session"], index: number, line: MTask["session"][number]): boolean {
-  if (line.from !== "agent") return true;
-  return session.some((other, later) => later > index && other.from === "agent" && other.roleId === line.roleId && other.profileId === line.profileId && other.productId === line.productId);
-}
+export { MAX_SESSION_LINES } from "@petrina/core";
 
 export const MAX_TIMELINE = 400;
 
@@ -1192,14 +1187,7 @@ export abstract class Kernel {
     const last = task.session.at(-1);
     if (from === "activity" && !toolInvocationId && last?.from === "activity" && last.text === text) return;
     const step = stepTag(task);
-    task.session.push({ ...(task.repositories ? { productId: repository.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(toolInvocationId ? { toolInvocationId } : {}), ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) });
-    while (task.session.length > MAX_SESSION_LINES) {
-      // Keep the newest line, saved pictures, a report whose pictures are still being checked,
-      // and the latest words from each agent. Another update must not drop a report before its pictures are attached.
-      const index = task.session.findIndex((line, index) => index < task.session.length - 1 && !line.images?.length && !this.pendingReportIds.has(line.id) && newerWords(task.session, index, line));
-      if (index < 0) break;
-      task.session.splice(index, 1);
-    }
+    appendSessionLine(task.session, { ...(task.repositories ? { productId: repository.productId } : {}), id: this.id(task.id), at: Date.now(), from, text, ...(toolInvocationId ? { toolInvocationId } : {}), ...(roleId ? { roleId } : {}), ...(profileId ? { profileId } : {}), ...(step ? { step } : {}) }, this.pendingReportIds);
   }
 
   /** A participant's words name its start on their step, found as its result and message receipts find theirs, so places sharing a role and profile stay apart. */

@@ -9,7 +9,7 @@ export type NativeStep =
   | { mark: string }
   | { permission: string }
   | { fail: { code: number; message: string; data?: unknown } };
-export interface NativePrompt { steps: NativeStep[]; reply?: string; late?: NativeStep[]; meta?: Record<string, unknown> }
+export interface NativePrompt { steps: NativeStep[]; reply?: string; late?: NativeStep[]; meta?: Record<string, unknown>; stopReason?: acp.StopReason; usage?: NonNullable<acp.PromptResponse["usage"]> }
 export interface ProtocolHistory { history: acp.SessionNotification["update"][]; notices: { method: string; params: Record<string, unknown> }[] }
 
 /** Native protocol primitives only: the peer owns no task, workflow role or repository. */

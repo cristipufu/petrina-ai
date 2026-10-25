@@ -1496,18 +1496,41 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/activity.test.ts",
+      "file": "packages/agent-runtime/test/rules/activity/provider-formatting.test.ts",
       "declarations": 10,
       "assertionSites": 45,
       "baselineDigest": "457bc6e9a306abf3c34cee6a75e613c6b1b66523bdc1b5b30ba21ec8e0e2c12b",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/activity.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/rules/activity/provider-formatting.test.ts"
+      ],
+      "layer": "rules",
+      "area": "activity",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/adapter-contract.test.ts",
+      "file": "packages/agent-runtime/test/contracts/providers/adapter-sessions.test.ts",
       "declarations": 1,
       "assertionSites": 12,
       "baselineDigest": "408d0a976c1fe741bff9e299082809f85af92ed09d1d7f61e775c8e232d0f069",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/adapter-contract.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/providers/adapter-sessions.test.ts",
+        "packages/engine/test/contracts/usage/adapter-readers.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "providers",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/after.test.ts",
@@ -1590,11 +1613,11 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/antigravity.test.ts",
+      "file": "packages/agent-runtime/test/contracts/providers/antigravity-accounting.test.ts",
       "declarations": 13,
       "assertionSites": 55,
       "baselineDigest": "13316a69af7cbe17673f7699b414f8c57c9758dccf3a372f95e13bad91652b37",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "reads real cached session reports and counts only the resumed turn's input and cache once",
@@ -1615,7 +1638,18 @@
           "assertionsUnchanged": true
         }
       ],
-      "review": "Partial semantic audit: Pure account parsing moved. Remaining actual ACP sessions, provider probe and Engine refresh composition still share workflow fake; migrate native cases after defining protocol-only peer capabilities needed by each."
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "from": "packages/engine/test/antigravity.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/providers/antigravity-accounting.test.ts",
+        "packages/engine/test/contracts/usage/antigravity-reader.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "providers",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/awake.test.ts",
@@ -1667,11 +1701,22 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/capacity-rejoin.test.ts",
+      "file": "packages/engine/test/journeys/capacity/parallel-rejoin.test.ts",
       "declarations": 11,
       "assertionSites": 146,
       "baselineDigest": "a4dd320bdb170e97841a3da7ff468c1e9e643b886466e30faf9568a85e56061c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/capacity-rejoin.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/capacity/parallel-rejoin.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "capacity",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/agent-runtime/test/contracts/browser/captures.test.ts",
@@ -1820,18 +1865,43 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/claude-allowances.test.ts",
+      "file": "packages/engine/test/contracts/usage/claude-history.test.ts",
       "declarations": 15,
       "assertionSites": 99,
       "baselineDigest": "ca69994572ad102c92cfc89bad3b778fbdff845310f61959e4a96d3a00bf44c0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/claude-allowances.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/usage/claude-history.test.ts",
+        "packages/agent-runtime/test/rules/providers/claude-allowances.test.ts",
+        "packages/orchestrator/test/orchestration/usage/claude-allowances.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "usage",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/claude-refusal.test.ts",
+      "file": "packages/engine/test/contracts/usage/claude-refusal-refresh.test.ts",
       "declarations": 4,
       "assertionSites": 23,
       "baselineDigest": "0e419c067625d01be18d3aa1a1eae81cb931f6d6454b84f20d60215476d14520",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/claude-refusal.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/usage/claude-refusal-refresh.test.ts",
+        "packages/agent-runtime/test/contracts/providers/claude-refusals.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "usage",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/agent-runtime/test/rules/providers/claude-account.test.ts",
@@ -1875,11 +1945,11 @@
       "from": "packages/engine/test/codex-background.test.ts"
     },
     {
-      "file": "packages/engine/test/codex-usage.test.ts",
+      "file": "packages/engine/test/journeys/usage/codex-admission.test.ts",
       "declarations": 5,
       "assertionSites": 22,
       "baselineDigest": "eeb5ec6666326f0cbdc083bc9949f2c730eb1ad26e6d6bb106fdcae51b20c429",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "forces an app-server that reports usage but ignores its normal stop",
@@ -1906,7 +1976,17 @@
           "assertionsUnchanged": true
         }
       ],
-      "review": "Partial semantic audit: One complete Engine startup/usage admission journey retained; native protocol/parsing cases moved."
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "from": "packages/engine/test/codex-usage.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/usage/codex-admission.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "usage",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/test-support/test/contracts/processes/commands.test.ts",
@@ -2364,11 +2444,11 @@
       ]
     },
     {
-      "file": "packages/engine/test/grok-usage.test.ts",
+      "file": "packages/agent-runtime/test/rules/providers/grok-accounting.test.ts",
       "declarations": 9,
       "assertionSites": 33,
       "baselineDigest": "f47a8885cb277953595a00502cfddea549aa09b679b73ed51f395aa84d8c2aad",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "keeps the resolved model's tokens and agent time on the same Analytics row",
@@ -2401,7 +2481,19 @@
           "assertionsUnchanged": true
         }
       ],
-      "review": "Partial semantic audit: Native reader + pure parser + SQLite-row case moved. Registry mapping, real workflow fake ACP prompt and Engine refresh/history remain to split."
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "from": "packages/engine/test/grok-usage.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/rules/providers/grok-accounting.test.ts",
+        "packages/agent-runtime/test/contracts/providers/grok-accounting.test.ts",
+        "packages/engine/test/contracts/usage/grok-reader.test.ts"
+      ],
+      "layer": "rules",
+      "area": "providers",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/guide.test.ts",
@@ -2529,33 +2621,58 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/limit-readings.test.ts",
+      "file": "packages/engine/test/contracts/usage/readings.test.ts",
       "declarations": 2,
       "assertionSites": 10,
       "baselineDigest": "53e083e26038c8298d01f365bf94d86a513a971981048031222bcb3f39f96f1a",
-      "status": "pending"
-    },
-    {
-      "file": "packages/engine/test/limits.test.ts",
-      "declarations": 4,
-      "assertionSites": 30,
-      "baselineDigest": "ba55df1be08331deb0f5b24fc37337313445c69bdeee78e8de2142860428a11f",
-      "status": "pending",
-      "review": "Partial: all five cases retain identical assertions/callback ASTs after mapping typed scripted-session selectors. The cross-stage cap journey still exercises actual Engine/Git/SQLite, nine tasks, two tools, design convergence and 27 reviewers; provider transport now uses ScriptedAgents with abortable releases. Immediate admission still needs a smaller owning controller and the file remains pending its layer split.",
+      "status": "reviewed",
+      "from": "packages/engine/test/limit-readings.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/usage/readings.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "usage",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
       "validation": {
-        "caseBodiesPreserved": 5,
-        "nativeAgentProcesses": "none in the observed diagnostic; the sole Bun launch belongs to the test runner",
-        "run": "slot-scripted-reviewed.xml (82 neighboring cases, 2305 assertions, 13.46s)",
-        "assertionReconciliation": "slot-assertion-reconciliation.json",
-        "resourceObservation": "scripted-slots-2026-10-24T16-53-31-401Z/summary.json"
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
       }
     },
     {
-      "file": "packages/engine/test/live-messages.test.ts",
+      "file": "packages/engine/test/journeys/usage/admission-slots.test.ts",
+      "declarations": 4,
+      "assertionSites": 30,
+      "baselineDigest": "ba55df1be08331deb0f5b24fc37337313445c69bdeee78e8de2142860428a11f",
+      "status": "reviewed",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      },
+      "from": "packages/engine/test/limits.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/usage/admission-slots.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "usage"
+    },
+    {
+      "file": "packages/engine/test/journeys/progress/public-messages.test.ts",
       "declarations": 1,
       "assertionSites": 6,
       "baselineDigest": "e7fa7fb751802bc363d46c5284986a4038eca247801c3fe36a767ac8e696f3e4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/live-messages.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/progress/public-messages.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "progress",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/live-task-storage.test.ts",
@@ -2601,18 +2718,42 @@
       "from": "packages/engine/test/managed-launch.test.ts"
     },
     {
-      "file": "packages/engine/test/model-capacity.test.ts",
+      "file": "packages/engine/test/journeys/capacity/recovery.test.ts",
       "declarations": 28,
       "assertionSites": 250,
       "baselineDigest": "d00c354aed54208d6af616a92008cd07c35721a48a3384a1e4a38c7aeca65956",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/model-capacity.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/capacity/recovery.test.ts",
+        "packages/engine/test/rules/usage/capacity-signals.test.ts",
+        "packages/engine/test/contracts/usage/profile-selection.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "capacity",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/native-retry.test.ts",
+      "file": "packages/engine/test/journeys/progress/native-retry.test.ts",
       "declarations": 4,
       "assertionSites": 49,
       "baselineDigest": "cbe85f89e6759b7d22fcfa1c55c2a93f2907da4fb937a0152ebd3c3f8f4dce1a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/native-retry.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/progress/native-retry.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "progress",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/node-usage.test.ts",
@@ -2715,11 +2856,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/profile-choices.test.ts",
+      "file": "packages/agent-runtime/test/contracts/providers/profile-choices.test.ts",
       "declarations": 3,
       "assertionSites": 15,
       "baselineDigest": "ccb41f5e1ec050e38e86a2d65d257c91a6c5e7ae8874fa2868f70d36156df954",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/profile-choices.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/providers/profile-choices.test.ts",
+        "packages/engine/test/contracts/usage/profile-catalog.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "providers",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/profile-cleanup.test.ts",
@@ -2824,11 +2977,22 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/readiness-recheck.test.ts",
+      "file": "packages/engine/test/journeys/readiness/saved-participants.test.ts",
       "declarations": 21,
       "assertionSites": 203,
       "baselineDigest": "4d09838f9d2129362bb58cd663df56372ff4af3f6bb99157a1c63488dadfe2dc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/readiness-recheck.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/readiness/saved-participants.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "readiness",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/recovery.test.ts",
@@ -3195,11 +3359,11 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/sandbox.test.ts",
+      "file": "packages/engine/test/journeys/sandbox/managed-conversations.test.ts",
       "declarations": 14,
       "assertionSites": 72,
       "baselineDigest": "11ea512e056dc80627ff7bdd97829ef41a366fdb29a1ff872e255b901dce9100",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "required, every command reviewed by Auto mode, with Claude Code's own escape hatch kept",
@@ -3226,7 +3390,18 @@
           "assertionsUnchanged": true
         }
       ],
-      "review": "Partial semantic audit: Four config/failure sites moved. Actual session settings plus whole workflow sandbox selection/recovery cases remain to split; preserve Engine composition cases."
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "from": "packages/engine/test/sandbox.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/sandbox/managed-conversations.test.ts",
+        "packages/agent-runtime/test/contracts/providers/sandbox-sessions.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "sandbox",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/screen-review.test.ts",
@@ -3292,11 +3467,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/session-cap.test.ts",
+      "file": "packages/core/test/rules/session/log-retention.test.ts",
       "declarations": 2,
       "assertionSites": 11,
       "baselineDigest": "c1a1032820cea0bc50a74d67bb44ae775cd1c49808ae20ab4726023b95989535",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/session-cap.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/session/log-retention.test.ts",
+        "packages/engine/test/contracts/progress/session-routing.test.ts"
+      ],
+      "layer": "rules",
+      "area": "session",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/setup/command-readiness.test.ts",
@@ -3625,11 +3812,23 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/todo.test.ts",
+      "file": "packages/engine/test/journeys/progress/step-records.test.ts",
       "declarations": 6,
       "assertionSites": 50,
       "baselineDigest": "d34dc00a667fa218f036157cf8a3a999134441375b3d7b005cf3233594fcb85a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/todo.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/progress/step-records.test.ts",
+        "packages/engine/test/journeys/usage/unresolved-delivery.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "progress",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/rules/activity/recording.test.ts",
@@ -3653,11 +3852,22 @@
       }
     },
     {
-      "file": "packages/engine/test/tool-updates.test.ts",
+      "file": "packages/agent-runtime/test/contracts/activity/tool-updates.test.ts",
       "declarations": 1,
       "assertionSites": 15,
       "baselineDigest": "171e28fc184a88daab27280fa692f0e89e03faaf1c90c7b49832d2de5fe11a01",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/tool-updates.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/activity/tool-updates.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "activity",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/update.test.ts",
@@ -3706,11 +3916,26 @@
       }
     },
     {
-      "file": "packages/engine/test/usage.test.ts",
+      "file": "packages/engine/test/journeys/usage/handoffs.test.ts",
       "declarations": 35,
       "assertionSites": 252,
       "baselineDigest": "fbce4638a22999e2d4828863761ef4a1cb8f06761e3b2603d40f7514d0abfee5",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/usage.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/usage/handoffs.test.ts",
+        "packages/engine/test/journeys/usage/live-readings.test.ts",
+        "packages/engine/test/journeys/usage/attribution.test.ts",
+        "packages/agent-runtime/test/rules/providers/refusals.test.ts",
+        "packages/engine/test/rules/usage/failure-reason.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "usage",
+      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "validation": {
+        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
+        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/verification-context.test.ts",

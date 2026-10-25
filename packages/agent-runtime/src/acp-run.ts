@@ -1,3 +1,4 @@
+import { genericTurnReport } from "./turn-report.js";
 // One agent session over ACP: start the tool's adapter, open a session in the task's
 // worktree (or reopen an earlier one), pin model, effort and mode, then send turns and report
 // what happens. It also reads back what the tool says the session runs on, and what each turn used.
@@ -7,7 +8,7 @@ import { processHost } from "@petrina/platform/process-host";
 import { ReopenFailed, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type AgentInputReceipt, type PermissionInfo, type NativeRetryReport, type SessionSettings, type TurnNotes, type TurnResult, type RetryCause } from "@petrina/orchestrator";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { inFamily, type ProfileChoices, type AgentProfile, type TokenCounts, type TurnReport } from "@petrina/core";
+import { inFamily, type ProfileChoices, type AgentProfile, type TurnReport } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
 import { SandboxUnavailable, sandboxFailure } from "./sandbox-failures.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
@@ -61,43 +62,10 @@ export function settingsOf(options: readonly ConfigOption[], ids: { model: strin
   return { ...(modelValue ? { model: modelValue } : {}), ...(name ? { modelName: name } : {}), ...(effortValue ? { effort: effortValue } : {}) };
 }
 
-const count = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
-
-function defined(counts: TokenCounts): TokenCounts {
-  return Object.fromEntries(Object.entries(counts).filter(([, value]) => value !== undefined)) as TokenCounts;
-}
-
-/**
- * The token figures a prompt response carries: ACP's `usage` (the main figure) and the
- * per-model rows both adapters attach under `_meta.quota.model_usage`. The dollar figure
- * Claude Code sends is never read.
- */
+/** Native composition selects each provider's parser; generic ACP counts stay pure. */
 export function reportOf(response: unknown, toolId?: string): TurnReport | undefined {
   const adapter = toolId ? ADAPTERS[toolId] : undefined;
-  if (adapter?.parseTurnReport) return adapter.parseTurnReport(response);
-  if (!response || typeof response !== "object") return undefined;
-  const { usage, _meta } = response as { usage?: Record<string, unknown> | null; _meta?: { quota?: { model_usage?: unknown } } | null };
-  const report: { main?: TokenCounts; models?: { model: string; counts: TokenCounts }[] } = {};
-  if (usage && typeof usage === "object") {
-    report.main = defined({ input: count(usage.inputTokens), cacheRead: count(usage.cachedReadTokens), cacheWrite: count(usage.cachedWriteTokens), output: count(usage.outputTokens), reasoning: count(usage.thoughtTokens), total: count(usage.totalTokens) });
-  }
-  const rows = _meta?.quota?.model_usage;
-  if (Array.isArray(rows)) {
-    report.models = rows.flatMap((row) => {
-      const { model, token_count: tokens } = (row ?? {}) as { model?: unknown; token_count?: Record<string, unknown> };
-      if (typeof model !== "string" || !model.trim() || !tokens || typeof tokens !== "object") return [];
-      const counts = defined({
-        input: count(tokens.inputTokens),
-        cacheRead: count(tokens.cachedInputTokens),
-        cacheWrite: count(tokens.cachedWriteTokens ?? tokens.cacheWriteInputTokens),
-        output: count(tokens.outputTokens),
-        reasoning: count(tokens.reasoningOutputTokens),
-        total: count(tokens.totalTokens),
-      });
-      return [{ model, counts }];
-    });
-  }
-  return report.main || report.models?.length ? report : undefined;
+  return adapter?.parseTurnReport ? adapter.parseTurnReport(response) : genericTurnReport(response);
 }
 
 /** "Model rerouted from X to Y (reason)" or "Switched from X to Y (reason)": the model Codex moved to. */

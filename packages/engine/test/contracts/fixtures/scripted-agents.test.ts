@@ -95,3 +95,35 @@ describe.concurrent("scripted workflow sessions", () => {
     expect(agents.received("build")).toHaveLength(0);
   });
 });
+
+it("passes typed reports, turn notes and public progress through the real session contract", async () => {
+  const activity: string[] = [], messages: string[] = [], plans: string[] = [], retries: unknown[] = [];
+  const notes = { changed: { model: "reported-model" }, rerouted: true, helpers: 2, modelSeen: "reported-model" };
+  const report = { main: { input: 12, output: 3, total: 15 } };
+  const agents = new ScriptedAgents((prompt, _signal, callbacks) => {
+    if (prompt.turn === 2) throw new Error("Explicit subsequent failure");
+    callbacks.onActivity("Checking the current behavior");
+    callbacks.onMessage?.({ id: 1, text: "Public progress" });
+    callbacks.onPlanStep("Checking nearby cases");
+    callbacks.onRetrying?.({ toolId: prompt.toolId, profileId: prompt.profileId, sessionId: prompt.sessionId, cause: "network" });
+    callbacks.onRetrying?.(undefined);
+    return { text: "Recorded reply", report, streamed: true, ...notes };
+  });
+  const launch = options();
+  launch.callbacks = { ...launch.callbacks, onActivity: text => activity.push(text), onMessage: message => messages.push(message.text),
+    onPlanStep: text => plans.push(text), onRetrying: retry => retries.push(retry),
+  };
+  const session = await agents.start(launch, role);
+  try {
+    expect(await session.prompt("first")).toEqual({ text: "Recorded reply", stopReason: "end_turn", report, streamed: true, ...notes });
+    expect(activity).toEqual(["Checking the current behavior"]);
+    expect(messages).toEqual(["Public progress"]);
+    expect(plans).toEqual(["Checking nearby cases"]);
+    expect(retries).toEqual([{ toolId: launch.profile.toolId, profileId: launch.profile.id, sessionId: session.sessionId, cause: "network" }, undefined]);
+    expect(session.lastTurn).toEqual(notes);
+    notes.changed.model = "mutated fixture value";
+    expect(session.lastTurn?.changed.model).toBe("reported-model");
+    expect(String(await rejectionOf(session.prompt("second")))).toContain("Explicit subsequent failure");
+    expect(session.lastTurn).toEqual({ changed: {}, rerouted: false, helpers: 0 });
+  } finally { await session.stop(); }
+});

@@ -1,4 +1,4 @@
-import type { LimitFailure } from "./tool-adapter.js";
+export interface LimitFailure { kind: "usage" | "rate" | "spend"; retryAfter?: number; reason?: string; independent?: true }
 
 /** Codex `codexErrorInfo` values that mean the account or the session cannot continue. From codex-acp `STRING_CODEX_ERROR_CATEGORIES`. */
 const CODEX_OUT = new Set(["usageLimitExceeded", "rateLimitExceeded", "sessionBudgetExceeded"]);

@@ -1,3 +1,5 @@
+import type { LimitFailure } from "./provider-limits.js";
+export type { LimitFailure } from "./provider-limits.js";
 import type { AgentProfile, TurnReport } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
 import type { UsageInfo } from "./failures.js";
@@ -7,7 +9,6 @@ export interface AccountReading {
   reports: UsageInfo[];
   tokens?: { total: number; input: number; output: number; reasoning: number; cached?: number };
 }
-export interface LimitFailure { kind: "usage" | "rate" | "spend"; retryAfter?: number; reason?: string; independent?: true }
 export interface ReaderOptions {
   command: readonly string[];
   cwd: string;

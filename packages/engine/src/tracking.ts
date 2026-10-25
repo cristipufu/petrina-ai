@@ -1,3 +1,5 @@
+import { failureReason } from "./failure-reason.js";
+export { failureReason } from "./failure-reason.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 // The work log's bookkeeping: one entry for every agent turn and every notable moment (a stage starting and
@@ -9,8 +11,6 @@ import { randomUUID } from "node:crypto";
 import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
 import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
 import type { Kernel, MStage, MTask } from "./kernel.js";
-import { ModelAtCapacity, UsageLimited } from "@petrina/agent-runtime/failures";
-import { WaitingForCapacity, WaitingForUsage } from "./usage.js";
 import { WaitClock, WorkLog } from "@petrina/storage/worklog";
 
 /** A stage that started and hasn't ended: kept in the work log, mirrored here. */
@@ -436,15 +436,3 @@ export class Tracking {
 }
 
 const retryKey = (taskId: Id, roleId: Id, plannedId: Id) => `${taskId}|${roleId}|${plannedId}`;
-
-/** A failure in plain words: a usage limit, the agent stopping, an unusable result, or something else. A limit the tool's code named counts as one whatever its words. */
-export function failureReason(error: unknown): "limit" | "agent-stopped" | "unusable" | "other" {
-  // A full model waits and retries. It is not the account running out, even though the wait is a kind of WaitingForUsage.
-  if (error instanceof WaitingForCapacity || error instanceof ModelAtCapacity) return "other";
-  if (error instanceof UsageLimited || error instanceof WaitingForUsage) return "limit";
-  const message = error instanceof Error ? error.message : String(error);
-  if (/usage limit|rate limit|spend limit|extra usage|limit reached|quota|too many requests|\b429\b/i.test(message)) return "limit";
-  if (/usable result/i.test(message)) return "unusable";
-  if (/stopped \(exit|agent stopped|stopped \(signal/i.test(message)) return "agent-stopped";
-  return "other";
-}

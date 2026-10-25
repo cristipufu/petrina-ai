@@ -1,5 +1,5 @@
 import type { Role } from "@petrina/core";
-import { ReopenFailed, type AgentSession, type AgentSessionOptions, type StartAgentSession, type TurnResult } from "@petrina/orchestrator";
+import { ReopenFailed, type AgentSession, type AgentSessionOptions, type AgentSessionCallbacks, type StartAgentSession, type TurnResult, type TurnNotes } from "@petrina/orchestrator";
 
 export interface ScriptedPrompt {
   readonly sessionId: string;
@@ -12,6 +12,10 @@ export interface ScriptedPrompt {
   readonly text: string;
   readonly turn: number;
 }
+
+export type ScriptedReply = Pick<TurnResult, "text"> & Partial<Omit<TurnResult, "text">>;
+type Reply = string | ScriptedReply;
+type Respond = (prompt: ScriptedPrompt, signal: AbortSignal, callbacks: AgentSessionCallbacks) => Reply | Promise<Reply>;
 
 export function scriptedResult(value: unknown): string {
   return `\`\`\`petrina\n${JSON.stringify(value)}\n\`\`\``;
@@ -27,7 +31,7 @@ export class ScriptedAgents {
   private readonly sessions = new Map<string, { roleId: string; toolId: string; model: string; turns: number }>();
   private readonly prompts: ScriptedPrompt[] = [];
 
-  constructor(private readonly respond: (prompt: ScriptedPrompt, signal: AbortSignal) => string | Promise<string>) {}
+  constructor(private readonly respond: Respond) {}
 
   received(result?: Role["result"]): readonly ScriptedPrompt[] {
     return this.prompts.filter(prompt => result === undefined || prompt.result === result).map(prompt => ({ ...prompt }));
@@ -57,7 +61,8 @@ class ScriptedSession implements AgentSession {
   readonly reopened?: "resume";
   readonly liveInput = false;
   private readonly stopped = new AbortController();
-  private pending?: Promise<string>;
+  private pending?: Promise<Reply>;
+  private notes: TurnNotes = { changed: {}, rerouted: false, helpers: 0 };
   prompting = false;
   onPromptStarted?: () => void;
   private readonly abort = () => this.close();
@@ -65,30 +70,35 @@ class ScriptedSession implements AgentSession {
 
   constructor(private readonly options: AgentSessionOptions, readonly sessionId: string, reopened: boolean,
     private readonly record: (text: string) => ScriptedPrompt,
-    private readonly respond: (prompt: ScriptedPrompt, signal: AbortSignal) => string | Promise<string>) {
+    private readonly respond: Respond) {
     if (reopened) this.reopened = "resume";
     this.confirmed = { model: options.profile.modelId ?? options.profile.model, effort: options.profile.effort };
     options.signal.addEventListener("abort", this.abort, { once: true });
   }
 
   get settings() { return { ...this.confirmed }; }
-  get lastTurn() { return { changed: {}, rerouted: false, helpers: 0 }; }
+  get lastTurn() { return structuredClone(this.notes); }
 
   async prompt(text: string): Promise<TurnResult> {
     if (this.stopped.signal.aborted) throw new Error("The scripted session stopped");
     if (this.prompting) throw new Error("The scripted session already has a turn");
     this.prompting = true;
+    this.notes = { changed: {}, rerouted: false, helpers: 0 };
     try {
       this.onPromptStarted?.();
       if (this.stopped.signal.aborted) throw new Error("The scripted session stopped");
       const work = Promise.resolve().then(() => {
         if (this.stopped.signal.aborted) throw new Error("The scripted session stopped");
-        return this.respond(this.record(text), this.stopped.signal);
+        return this.respond(this.record(text), this.stopped.signal, this.options.callbacks);
       });
       this.pending = work;
       const reply = await work;
       if (this.stopped.signal.aborted) throw new Error("The scripted session stopped");
-      return { ...this.lastTurn, text: reply, stopReason: "end_turn" };
+      const result = typeof reply === "string" ? { text: reply } : reply;
+      this.notes = structuredClone({ changed: result.changed ?? {}, rerouted: result.rerouted ?? false, helpers: result.helpers ?? 0,
+        ...(result.modelSeen !== undefined ? { modelSeen: result.modelSeen } : {}),
+      });
+      return { ...result, ...this.lastTurn, stopReason: result.stopReason ?? "end_turn" };
     } finally { this.pending = undefined; this.prompting = false; }
   }
 

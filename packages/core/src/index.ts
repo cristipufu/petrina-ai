@@ -55,3 +55,6 @@ export * from "./review-evidence.js";
 export * from "./related-check-contract.js";
 
 export * from "./parallel.js";
+
+export { appendSessionLine, MAX_SESSION_LINES } from "./session-log.js";
+export type { UsageInfo } from "./usage-info.js";

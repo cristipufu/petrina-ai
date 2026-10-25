@@ -46,3 +46,9 @@ export function grokReports(response: unknown): UsageInfo[] {
   const kind = period?.type === "USAGE_PERIOD_TYPE_WEEKLY" ? "seven_day" : period?.type === "USAGE_PERIOD_TYPE_MONTHLY" ? "monthly" : "limit";
   return [{ toolId: "grok", kind, utilization: percent / 100, status: percent >= 100 ? "rejected" : percent >= 90 ? "allowed_warning" : "allowed", ...(Number.isFinite(end) ? { resetsAt: end } : {}) }];
 }
+
+/** Grok's ACP tool metadata, interpreted before provider-neutral activity formatting. */
+export function grokToolMetadata(meta: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined {
+  const value = meta["x.ai/tool"];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}

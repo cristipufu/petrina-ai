@@ -1,3 +1,4 @@
+import { grokToolMetadata } from "./grok-report.js";
 import { createRequire } from "node:module";
 import type { AgentProfile, Tool } from "@petrina/core";
 import type { ToolAdapter } from "./tool-adapter.js";
@@ -76,10 +77,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     parseLimitError: grokLimit,
     interruptions: grokInterruptions,
     parseTurnReport: grokTurnReport,
-    toolMetadata: meta => {
-      const value = meta["x.ai/tool"];
-      return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-    },
+    toolMetadata: grokToolMetadata,
     usageReader: { command: () => ADAPTERS.grok!.command!, create: options => new GrokUsage(options) },
     terminalArgs: ({ session, model, effort }) => ["--resume", session, "--model", model, "--effort", effort],
     id: "grok",

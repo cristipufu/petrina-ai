@@ -1,7 +1,7 @@
 import { kindWords, UNKNOWN_LIMIT_MS, type AgentProfile } from "@petrina/core";
 import { UsageLimited, type UsageInfo } from "./failures.js";
 import { commonLimit } from "./provider-limits.js";
-import type { ToolAdapter } from "./tool-adapter.js";
+import type { LimitFailure } from "./provider-limits.js";
 
 /** "try again at 5:42 PM", or Claude's "resets 8:10pm": the next time the clock shows that. */
 export function clockTime(text: string, now: number): number | undefined {
@@ -20,7 +20,7 @@ export function clockTime(text: string, now: number): number | undefined {
 }
 
 /** Native composition supplies provider metadata; parsing itself needs no registry, process or account. */
-export function createLimitParsing(adapter: (toolId: string) => Pick<ToolAdapter, "name" | "parseLimitError"> | undefined) {
+export function createLimitParsing(adapter: (toolId: string) => { name: string; parseLimitError?: (data: Record<string, unknown>, message: string) => LimitFailure | null | undefined } | undefined) {
   /** The error for a turn that ended while the tool's latest report said it was out. */
   function limitFromReport(profile: AgentProfile, info: UsageInfo, now: number, source: "report" | "refusal" = "report"): UsageLimited {
     const tool = adapter(profile.toolId)?.name ?? profile.toolId;

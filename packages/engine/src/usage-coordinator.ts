@@ -1,5 +1,6 @@
+import { UsageRecording } from "@petrina/orchestrator";
 // Account reports, limit wakeups and profile/stand-in selection.
-import { chooseWithRoom, claudeWindow, seatRemaining, currentReport, headroom, kindWords, limitOf, nearLimit, nextExpiry, readinessGate, readinessOutcome, uncertain, UNKNOWN_LIMIT_MS, untilWords, usableAgentTools, withLimit, withReport, type Choice, type CheckId, type Id, type AgentProfile, type ReadinessRecheck, type ReadinessWait, type Task, type UsageReport } from "@petrina/core";
+import { chooseWithRoom, seatRemaining, headroom, limitOf, nearLimit, nextExpiry, readinessGate, readinessOutcome, uncertain, untilWords, usableAgentTools, withLimit, type Choice, type CheckId, type Id, type AgentProfile, type ReadinessRecheck, type ReadinessWait, type Task } from "@petrina/core";
 import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 import { notReady, stepKey, type Kernel, type MTask, type MState, type EngineOptions } from "./kernel.js";
 import { contractFor, freshBuilderRethink } from "./roles.js";
@@ -19,7 +20,12 @@ export class UsageCoordinator {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly legacyReviewerTools = new WeakMap<MTask, { key: string; tools: Id[] }>();
   readonly readers = new Map<Id, UsageReader>();
-  constructor(private readonly k: UsageHost) {}
+  private readonly recording: UsageRecording;
+  constructor(private readonly k: UsageHost) {
+    this.recording = new UsageRecording({ pool: () => this.k.s.pool,
+      record: report => this.k.tracking.usageReported(report), toolName: toolId => this.toolName(toolId), wake: () => this.k.schedule(),
+    });
+  }
 
   startReaders(dataDir: string, options: EngineOptions): void {
     for (const adapter of Object.values(ADAPTERS)) {
@@ -323,98 +329,16 @@ export class UsageCoordinator {
    * count comes from outside any turn).
    */
   recordUsage(info: UsageInfo): void {
-    if (info.toolId === "claude-code") this.reconcileClaude([info], Date.now());
-    else this.noteUsage(info, Date.now());
+    this.recording.record(info, Date.now());
     if (info.toolId === "claude-code" || info.status === "rejected" && !info.overage) this.armLimitTimer();
     this.k.commit();
   }
 
-  /** A successful complete account snapshot replaces quotas and blocks from the previous subscription. */
+  /** A successful complete account snapshot reconciles only observations actually returned by the account. */
   recordAccountUsage(toolId: Id, reports: readonly UsageInfo[]): void {
-    // Empty or mismatched data cannot establish that an old restriction ended.
-    if (!reports.length || reports.some(report => report.toolId !== toolId)) return;
-    if (toolId === "claude-code") {
-      // A partial native response establishes only its reported windows.
-      const complete = reports.some(report => report.claudeAccountComplete);
-      this.reconcileClaude(reports, Date.now(), complete);
-      this.armLimitTimer();
-      this.k.commit();
-      return;
-    }
-    const previous = (this.k.s.pool.usage ?? []).filter(report => report.toolId === toolId);
-    this.k.s.pool.usage = (this.k.s.pool.usage ?? []).filter(report => report.toolId !== toolId);
-    // Only retire blocks created by the reports being replaced (same scope and report time).
-    // A turn-only refusal can have its own cooldown despite an available account balance.
-    this.k.s.pool.limited = (this.k.s.pool.limited ?? []).filter(limit => limit.toolId !== toolId || limit.source === "refusal" || limit.retry || !previous.some(report =>
-      report.status === "rejected" && !report.overage && report.at === limit.at && (report.model ?? "") === (limit.model ?? "")));
-    const now = Date.now();
-    for (const report of reports) this.noteUsage(report, now);
+    if (!this.recording.account(toolId, reports, Date.now())) return;
     this.armLimitTimer();
     this.k.commit();
-  }
-
-  private noteUsage(info: UsageInfo, now: number): void {
-    const report = { ...info, at: now };
-    this.k.s.pool.usage = withReport(this.k.s.pool.usage, report) as MState["pool"]["usage"];
-    this.k.tracking.usageReported(report);
-    this.restrictUsage(report, now);
-  }
-
-  /** Reconcile Claude's alternative allowances before any shared scheduling or Analytics reading. */
-  private reconcileClaude(infos: readonly UsageInfo[], now: number, complete = false): void {
-    const pool = this.k.s.pool;
-    const before = pool.limited ?? [];
-    const previous = (pool.usage ?? []).filter(report => report.toolId === "claude-code");
-    const previousWindows = previous.map(report => claudeWindow(report));
-    // Retire only report-derived blocks. Old saved state has no source, so require its exact
-    // report time, scope and reason; a real refusal has an independent lifetime.
-    // The old failed-turn path stamped synthetic extra-usage blocks later than their notice.
-    // This exact reason came only from that obsolete mapping, including its former migration.
-    pool.limited = (pool.limited ?? []).filter(limit => limit.toolId !== "claude-code" || limit.reason !== "Claude Code's extra usage limit")
-      .filter(limit => limit.toolId !== "claude-code" || limit.source === "refusal" || limit.retry || !(limit.source === "report" || previous.some(report =>
-      report.status === "rejected" && !report.overage && report.at === limit.at && (report.model ?? "") === (limit.model ?? "") && limit.reason === `Claude Code's ${kindWords(report.kind, report.windowMinutes, report.name)} limit`)))
-      .map(limit => limit.toolId === "claude-code" && limit.source === undefined ? { ...limit, source: "refusal" as const } : limit);
-    pool.usage = (pool.usage ?? []).filter(report => report.toolId !== "claude-code" || !complete && report.kind !== "overage")
-      .reduce<UsageReport[]>((reports, report) => withReport(reports, report.toolId === "claude-code" ? claudeWindow(report) : report), []);
-    for (const raw of infos) {
-      const info = claudeWindow(raw);
-      if (info.claudeOverage) {
-        if (info.claudeOverage === "unavailable") {
-          for (const report of pool.usage) {
-            if (report.toolId !== "claude-code" || report.status !== "rejected" || !report.overage || !currentReport(report, now)) continue;
-            report.overage = false;
-            this.k.tracking.usageReported({ ...report, at: now });
-          }
-        }
-        continue;
-      }
-      const older = previousWindows.findLast(report => report.kind === info.kind && (report.model ?? "") === (info.model ?? "") && currentReport(report, now));
-      // Account resets include milliseconds; live notices can truncate them to whole seconds.
-      // Match that precision difference only: two distinct precise resets still start a new reading.
-      const priorReset = older?.resetsAt, reset = info.resetsAt;
-      const sameReset = reset === undefined || priorReset === reset || priorReset !== undefined
-        && Number.isFinite(priorReset) && Number.isFinite(reset)
-        && (priorReset % 1000 === 0 || reset % 1000 === 0) && Math.floor(priorReset / 1000) === Math.floor(reset / 1000);
-      const sameWindow = older?.status === info.status && sameReset;
-      const report = { ...(sameWindow ? older : {}), ...info, at: now };
-      if (sameWindow && priorReset !== undefined && reset !== undefined && priorReset % 1000 !== 0 && reset % 1000 === 0) report.resetsAt = priorReset;
-      delete report.claudeAccountComplete;
-      pool.usage = withReport(pool.usage, report);
-      this.k.tracking.usageReported(report);
-    }
-    // Rebuild from the windows still current, using their original report times for unknown
-    // resets. Paid-only notices cannot extend a cooldown or hold included quota past its reset.
-    for (const report of pool.usage) if (report.toolId === "claude-code" && currentReport(report, now)) this.restrictUsage(report, now);
-    if (before.some(limit => limit.toolId === "claude-code" && limit.until > now && !(pool.limited ?? []).some(next => next.toolId === limit.toolId && (next.model ?? "") === (limit.model ?? "") && next.until > now))) this.k.schedule();
-  }
-
-  private restrictUsage(info: UsageReport, now: number): void {
-    // Not when the tool goes on with usage paid beyond the plan: the window is spent, the usage line says so, and
-    // the balancer prefers tools with room, but the agents keep working.
-    if (info.status === "rejected" && !info.overage) {
-      const until = info.resetsAt && info.resetsAt > now ? info.resetsAt : (info.toolId === "claude-code" ? info.at : now) + UNKNOWN_LIMIT_MS;
-      this.k.s.pool.limited = withLimit(this.k.s.pool.limited, { toolId: info.toolId, source: "report", ...(info.model ? { model: info.model } : {}), until, reason: `${this.toolName(info.toolId)}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, at: info.at }) as MState["pool"]["limited"];
-    }
   }
 
   /**

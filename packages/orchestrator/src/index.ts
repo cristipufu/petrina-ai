@@ -24,3 +24,6 @@ export type { ReviewProofHost, ReviewProofProposal } from "./ports/review-proof.
 export { checkProofRequests, recordReviewProofs } from "./review-proof.js";
 export type { ScreenClock, ScreenGroup, ScreenHost, ScreenRuntimeState } from "./ports/screen.js";
 export { ScreenArbitration } from "./screen.js";
+
+export { UsageRecording } from "./usage-recording.js";
+export type { UsageRecordingHost } from "./usage-recording.js";

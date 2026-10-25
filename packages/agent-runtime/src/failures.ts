@@ -1,15 +1,7 @@
-import type { UsageReport } from "@petrina/core";
+export type { UsageInfo } from "@petrina/core";
 
 /** Public refusal prefix reported by a full model, distinct from account usage. */
 export const CAPACITY_WAIT = "The selected model is at capacity";
-
-/** One report from a tool, before the engine stamps it with the time. */
-export type UsageInfo = Omit<UsageReport, "at"> & {
-  /** Claude's separate paid allowance, not a subscription window. Consumed before storing pool readings. */
-  claudeOverage?: "available" | "unavailable";
-  /** Both shared windows and a valid explicit model list establish a complete account reading. */
-  claudeAccountComplete?: true;
-};
 
 /** A turn ended on a usage refusal. `until` is a reset, or a cooldown before retrying. */
 export class UsageLimited extends Error {
