@@ -127,6 +127,10 @@ export interface AgentWorkflowHost {
   /** Re-enters the application scheduler, including its other owned queues. */
   schedule(): void;
   idleChanged(): void;
+  /** At completion handoff, register finalization before releasing its task-keyed owner; return the original result. */
+  trackWork(work: Promise<void>): Promise<void>;
+  /** Diagnostic only: finalization must not reclassify a newer run or a delivered/cancelled task. */
+  reportDriverError(taskId: Id, error: unknown): void;
 }
 
 export interface AgentAdmissionDependencies {

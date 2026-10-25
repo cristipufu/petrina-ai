@@ -56,6 +56,8 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
   const { agents, release } = slotAgents(cwd => { writes.push(cwd); });
   const ownership: AgentOwnership = { drivers: new Map(), settling: new Map(), pendingAdmissions: new Map(), groups: new Map() };
   const listeners = new Set<() => void>();
+  const background = new Set<Promise<void>>(), trackedWork: Promise<void>[] = [];
+  const driverErrors: { taskId: Id; error: unknown }[] = [];
   const sessions = new Set<AgentSession>(), savedSessions = new Map<string, string>();
   const questions = new Map<Id, { task: RuntimeTask; resolve(answer: string): void }>();
   const authors = new Map<string, { toolId: Id; modelRan: string }>();
@@ -99,6 +101,13 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
     failed: (id, error) => { const current = task(id)!; releaseAgentForDecision(current); current.state = "failed"; current.error = error instanceof Error ? error.message : String(error); failures.push(error); changed(); },
     beginStage: scope => { observations.push({ kind: "stage", taskId: scope.task.id, stageId: scope.task.plan?.stages[scope.task.stageIndex]?.id }); },
     tidy: () => {}, schedule: () => workflow.schedule(), idleChanged: () => {},
+    trackWork(work) {
+      trackedWork.push(work);
+      const tracked = work.then(() => { background.delete(tracked); }, () => { background.delete(tracked); });
+      background.add(tracked);
+      return work;
+    },
+    reportDriverError: (taskId, error) => { driverErrors.push({ taskId, error }); },
   };
   const failures: unknown[] = [];
   const groupHost: ParallelAdmissionHost = {
@@ -242,13 +251,13 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
     restoreRepositoryState(task); state.tasks.push(task); return task.id;
   });
   const progress: ProgressClock = { now: clock.now, slow: () => 1, arm: (expired, ms) => clock.after(ms, () => { expired(); return undefined; }), sleep: async ms => { clock.advance(ms); await Promise.resolve(); } };
-  return { workflow, ownership, agents, release, ids, snapshot, subscribe, phases, observations, writes, failures, clock, errors, catalog, state, task, host, groupHost, readiness,
+  return { workflow, ownership, agents, release, ids, snapshot, subscribe, phases, observations, writes, failures, background, trackedWork, driverErrors, clock, errors, catalog, state, task, host, groupHost, readiness,
     waitFor: <T>(check: () => T | undefined | false | Promise<T | undefined | false>, what: string, ms = 30_000, during?: PromiseLike<unknown>) => waitForProgress(check, what, ms, { during }, progress),
     answer(id: Id, answer: string) { const waiting = questions.get(id) ?? unexpected("answer to an unregistered question"); state.inbox = state.inbox.filter(item => item.id !== id); resumeAgentAfterReply(waiting.task, state.inbox.some(item => item.taskId === waiting.task.id && item.blocking), clock.now()); changed(); waiting.resolve(answer); questions.delete(id); },
     allow(_id: Id, _how: "once") { unexpected("permission approval"); },
     async close() {
       stopped = true; for (const controller of ownership.drivers.values()) controller.abort();
-      const results = await Promise.allSettled([...ownership.settling.values(), ...[...sessions].map(session => session.stop())]);
+      const results = await Promise.allSettled([...ownership.settling.values(), ...background, ...[...sessions].map(session => session.stop())]);
       const failed = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
       listeners.clear();
       if (failed.length) throw new AggregateError(failed, "Portable admission ownership did not settle");

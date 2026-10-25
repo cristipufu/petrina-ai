@@ -300,19 +300,33 @@ export class AgentWorkflow {
 
   /** `resume`: the agent already has its seat (a hand back), so its step carries on whatever the pool is doing. */
   startDriver(taskId: Id, resume = false): void {
-    const done = this.drive(taskId, resume);
-    this.ownership.settling.set(taskId, done);
-    this.host.idleChanged();
-    void done.finally(() => {
-      if (this.ownership.settling.get(taskId) === done) {
-        this.ownership.settling.delete(taskId);
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    const completed = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+    this.ownership.settling.set(taskId, completed);
+    // Observe the original result without replacing it, including if finalizer registration fails.
+    void completed.then(undefined, () => undefined);
+    const finish = (failures: unknown[]): void => {
+      // Live drivers stay task-keyed: a quiet paused check is deliberately excluded from a pool drain.
+      // Transfer ownership before releasing that reservation or running any finalization callback.
+      let tracked = false;
+      try { this.host.trackWork(completed); tracked = true; }
+      catch (error) { failures.push(error); }
+      const release = () => { if (this.ownership.settling.get(taskId) === completed) this.ownership.settling.delete(taskId); };
+      if (tracked) release();
+      // Without background ownership, keep our own reservation until all callbacks have returned.
+      for (const effect of [() => this.host.tidy(taskId), () => this.host.schedule(), () => this.host.idleChanged()]) {
+        try { effect(); } catch (error) { failures.push(error); }
       }
-      // Delivered or cancelled: now that nothing uses the working copy, it can go.
-      this.host.tidy(taskId);
-      // A resumed task waits for file handling; newly landed prerequisites also release extra checks.
-      this.host.schedule();
-      this.host.idleChanged();
-    });
+      if (!tracked) release();
+      if (!failures.length) { resolve(); return; }
+      let failure = failures.length === 1 ? failures[0] : new AggregateError(failures, `Could not finish task ${taskId}`);
+      try { this.host.reportDriverError(taskId, failure); }
+      catch (error) { failure = new AggregateError([...failures, error], `Could not finish task ${taskId}`); }
+      reject(failure);
+    };
+    // Both reactions settle without throwing; there is no unowned rejecting finally/then derivative.
+    void this.drive(taskId, resume).then(() => finish([]), error => finish([error]));
+    this.host.idleChanged();
   }
 
   private async drive(taskId: Id, resume = false): Promise<void> {

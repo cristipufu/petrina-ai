@@ -63,6 +63,7 @@ export class Driver {
       syncScreen: () => k.syncScreen(), syncDeliveryTurns: () => shipping.syncDeliveryTurns(), waitingForDelivery: task => shipping.waitingForTurn(task), expireLimits: () => { k.expireLimits(); }, armLimitTimer: () => k.armLimitTimer(),
       changed: () => k.commit(), checkpoint: task => k.commitNow(task), note: (task, tone, text) => k.log(task, tone, text), gate: (task, kind) => k.gate(task, kind), failed: (id, error) => k.fail(id, error), beginStage: scope => k.tracking.beginStage(scope),
       tidy: id => k.tidy(id), schedule: () => k.schedule(), idleChanged: () => k.syncIdleSleep(),
+      trackWork: work => k.trackWork(work), reportDriverError: (id, error) => { console.error(`Could not finish task ${id}:`, error); },
     }, {
       ...shared, plannerProfileId: PLANNER_PROFILE,
       checkPreparation: { claim: id => checks.claimPreparation(id), release: id => checks.releasePreparation(id) },
