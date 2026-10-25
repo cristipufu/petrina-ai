@@ -27,7 +27,7 @@ export function sharedAgents(dir: string) {
   mkdirSync(dir, { recursive: true });
   let script: SharedScript = { planner: "short", builder: "plain", reopen: "resume" }, repairs = 0;
   const names = new Map<string, string>(), roleIds = new Map<string, string>();
-  const agents = new ScriptedAgents(async (prompt, signal) => {
+  const respond: ConstructorParameters<typeof ScriptedAgents>[0] = async (prompt, signal) => {
     const plan = script, { result, cwd, text } = prompt;
     if (plan.controlled && prompt.turn === 1) await waitFor(() => {
       if (signal.aborted) throw new Error("The shared provider reply stopped before it was released");
@@ -82,7 +82,8 @@ export function sharedAgents(dir: string) {
         return done({ summary: "Notes from the copywriter.", notes: ["A note from the copywriter"] });
       default: throw new Error(`Unexpected participant in the shared repository recipe: ${result}`);
     }
-  });
+  };
+  const agents = new ScriptedAgents(respond);
   const start: StartAgentSession = (options, role) => {
     names.set(role.id, role.name.toLowerCase());
     roleIds.set(role.name.toLowerCase(), role.id);
@@ -91,7 +92,7 @@ export function sharedAgents(dir: string) {
     return agents.start(options, role);
   };
   const received = (role?: string) => agents.received().map(prompt => ({ role: names.get(prompt.roleId)!, session: prompt.sessionId, text: prompt.text, turn: prompt.turn })).filter(entry => !role || entry.role === role);
-  return { dir, start, agents,
+  return { dir, start, agents, respond,
     scenario(next: SharedScript) {
       const supported = new Set(["planner", "builder", "reopen", "affectedProducts", "worksOn", "risk", "reviewer", "reviewRounds", "unassignedFinding", "fixes", "architect", "controlled"]);
       for (const key of Object.keys(next)) if (!supported.has(key)) throw new Error(`Unsupported shared provider option: ${key}`);

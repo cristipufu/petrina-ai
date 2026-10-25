@@ -1,3 +1,4 @@
+import { quoteGitShellWord as quote } from "@petrina/test-support/git-program";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createProcessLease } from "@petrina/test-support/process-lease";
@@ -6,7 +7,6 @@ import { launchPlan, writeLauncher, type Platform } from "../../src/terminal.js"
 import { tempDir } from "@petrina/test-support/fixtures";
 import { SESSION } from "./terminal-input.js";
 
-const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 export interface TerminalCopy {
   readonly result: Promise<CommandResult>;
   readonly exited: Promise<number>;

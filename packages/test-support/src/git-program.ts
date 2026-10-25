@@ -1,3 +1,5 @@
+import { quoteGitShellWord } from "./git-shell-word.js";
+export { quoteGitShellWord } from "./git-shell-word.js";
 import { chmodSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -9,11 +11,10 @@ export interface GitProgram {
   writeHook(file: string): void;
 }
 
-const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
 /** Format literal arguments for Git's shell boundary; native Windows paths accept forward slashes. */
 export function gitCommand(argv: readonly (string | { path: string })[]): string {
-  return argv.map(word => quote(typeof word === "string" ? word : word.path.replaceAll("\\", "/"))).join(" ");
+  return argv.map(word => quoteGitShellWord(typeof word === "string" ? word : word.path.replaceAll("\\", "/"))).join(" ");
 }
 
 /** A Git-invoked script, using the shell supplied by Git on Windows as well as Unix. */

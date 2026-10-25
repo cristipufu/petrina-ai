@@ -1,12 +1,12 @@
+import { ReviewRoundCompletion } from "@petrina/orchestrator";
 import { createVerifierBallots } from "./verifier-host.js";
 import { executionFor, scopesFor, repositoryView, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "./repositories.js";
-import { beginRepair } from "@petrina/orchestrator";
 import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { checkReviewEvidence, reopenFinding, runtimeWaitHolds, coveredByDecision, endAgentStep, exhaustedAcceptanceFailure, findingCount, inBallot, JOURNEY_WORDS as W, noteRoundEnd, openStep, passedOpenWords, pickStarts, portReviewerIndex, reviewBlocking, reviewDecisionFor, reviewRoundEnd, reviewerAt, seatAnswered, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Id, type ReadinessRecheck, type Role, type Stage, type Task } from "@petrina/core";
+import { checkReviewEvidence, reopenFinding, runtimeWaitHolds, endAgentStep, exhaustedAcceptanceFailure, findingCount, inBallot, JOURNEY_WORDS as W, openStep, pickStarts, portReviewerIndex, reviewerAt, seatAnswered, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Id, type ReadinessRecheck, type Role, type Stage, type Task } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -33,6 +33,7 @@ type SeatSelection = { selectionReason?: string; freshReason?: string; readiness
 export class Reviews {
   private readonly ballots: VerifierBallots;
   private readonly reports: ReviewReports;
+  private readonly rounds: ReviewRoundCompletion;
   private readonly inputs = new WeakMap<MTask, { digest: string; input: ReviewInput }>();
   constructor(
     private readonly k: Kernel,
@@ -48,6 +49,18 @@ export class Reviews {
       verdict: (...args) => k.tracking.verdict(...args), note: (...args) => k.log(...args),
     });
     this.ballots = createVerifierBallots(k);
+    this.rounds = new ReviewRoundCompletion({
+      role: (id, task) => k.role(id, task), roles: () => k.s.roles,
+      incrementalReview: id => { const role = k.role(id); return role && contractFor(role).incrementalReview; },
+      ownChanges: task => this.ownChanges(task),
+      anchor: async ({ work }, observation) => observation.incremental
+        ? git.commitVersion(work.worktree!) : { tree: await git.treeOf(work.worktree!) },
+      reviewEnd: (task, round, result) => k.tracking.reviewEnd(task, round, result),
+      releaseInput: task => this.releaseRoundInput(task),
+      note: (task, tone, text) => k.log(task, tone, text),
+      commitNow: task => k.commitNow(task), changed: () => k.commit(),
+      openDeliveryDecision: task => k.gate(task, "delivery"), now: () => Date.now(),
+    });
   }
 
   /** Bring review checks onto their current source and reconcile Petrina's own findings. */
@@ -792,83 +805,6 @@ export class Reviews {
    * the round's last box (its reviewers', or its voters') says.
    */
   private async closeReviewRound(task: MTask, stage: MStage, round: number, outcome: string, reviewedVersions?: Readonly<Record<Id, string>>): Promise<"continue" | "stop"> {
-    const scope = executionFor(task);
-    // Acceptance failures held for the delivery decision neither send the work back nor count toward the round.
-    const open = reviewBlocking(task as unknown as Task);
-    // The coordinator's decision to continue still covers its findings only on the task's own change it was made on.
-    const continued = task.reviewDecision?.accepted && task.reviewDecision.covers?.length;
-    let changes = continued ? await this.ownChanges(task) : undefined;
-    const covered = changes ? coveredByDecision(task as unknown as Task, changes) : new Set<Id>();
-    const end = reviewRoundEnd(task as unknown as Task, stage as Stage, round, this.k.s.roles, covered);
-    // A decision raised below records the change it is made on, read before anything else moves.
-    if (end.kind === "used up" || (end.kind === "send back" && task.repositories)) changes ??= await this.ownChanges(task);
-    noteRoundEnd(task, stage.id, open.length);
-    // A port review is one round: whatever it found, the rounds after it are ordinary ones.
-    const port = scope.work.portReview !== undefined;
-    const role = this.k.role(stage.roleId);
-    const incremental = role && contractFor(role).incrementalReview;
-    delete scope.work.portReview;
-    // Resolve each owner once. An incremental round records the HEAD and its tree
-    // together; security rounds keep their code-review anchors unchanged.
-    const scopes = scopesFor(task);
-    const anchors = await Promise.all(scopes.map(async ({ work }) => {
-      if (!work.worktree) return {};
-      if (incremental) return git.commitVersion(work.worktree);
-      return task.repositories && end.kind === "passed" ? { tree: await git.treeOf(work.worktree) } : {};
-    }));
-    for (const [index, { work }] of scopes.entries()) {
-      const anchor = anchors[index]!;
-      if (end.kind === "passed") {
-        if (work.worktree && (task.repositories || incremental)) work.reviewedTree = anchor.tree;
-        const step = openStep(task);
-        const reviewed = reviewedVersions?.[work.productId];
-        if (step && reviewed) step.checkReviews = [...(step.checkReviews ?? []), { productId: work.productId, tree: reviewed, at: Date.now(), stageId: stage.id, round }];
-      } else if (work === scope.work) delete work.reviewedTree;
-      if (incremental) {
-        if (anchor.head) work.reviewedSha = anchor.head;
-        else delete work.reviewedSha;
-      }
-    }
-    this.k.tracking.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
-    const pendingProofs = task.proofRequests?.filter(request => request.status !== "proved" && request.status !== "already-current").length ?? 0;
-    const passed = [W.reviewPassed, ...(end.kind === "passed" && end.covered ? [W.coveredOpen(end.covered)] : []), ...(pendingProofs ? [`${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing`] : [])].join("; ");
-    const reason = end.kind === "send back" ? { reason: W.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: W.stillOpen(end.open), tone: "back" as const } : { reason: passed };
-    endAgentStep(task, { outcome, ...reason }, Date.now());
-    if (end.kind === "send back") {
-      task.rounds[stage.id] = round + 1;
-      if (task.repositories) {
-        if (beginRepair(this.k, task, "review", task.stageIndex, { covered })) return "continue";
-        this.releaseRoundInput(task);
-        // Continue through any remaining acceptance stage after the decision, before delivery approval.
-        const delivery = task.plan!.stages.findIndex((entry, index) => index > task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
-        if (delivery < 0) throw new Error("The plan has no delivery check after review");
-        task.stageIndex += 1;
-        task.sub = 0;
-        this.k.log(task, "warn", "No builder can take the remaining findings, so the decision goes to you");
-        task.reviewDecision = reviewDecisionFor(task, stage.id, round, Date.now(), changes!);
-        this.k.gate(task, "delivery");
-        return "stop";
-      }
-      task.stageIndex = end.builder;
-      task.sub = 0;
-      task.fixing = true;
-      this.k.log(task, "warn", `Sent back to the builder: ${findingCount(open)}`);
-      this.k.commit();
-      return "continue";
-    }
-    this.releaseRoundInput(task);
-    task.stageIndex += 1;
-    task.sub = 0;
-    if (end.kind === "used up") {
-      this.k.log(task, "warn", `Review rounds used up: ${findingCount(open)} still open`);
-      // With blocking findings left, the coordinator always looks before anything ships.
-      task.reviewDecision = reviewDecisionFor(task, stage.id, round, Date.now(), changes!);
-      this.k.gate(task, "delivery");
-      return "stop";
-    } else {
-      this.k.log(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings.filter((finding) => !exhaustedAcceptanceFailure(task as unknown as Task, finding)), covered)}`);
-    }
-    this.k.commit();
-    return "continue";
+    return this.rounds.finish(task, stage, round, outcome, reviewedVersions);
   }
 }

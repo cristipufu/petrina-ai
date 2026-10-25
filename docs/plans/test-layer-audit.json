@@ -3609,11 +3609,11 @@
       }
     },
     {
-      "file": "packages/engine/test/independence.test.ts",
+      "file": "packages/engine/test/contracts/reviews/reopened-outcome.test.ts",
       "declarations": 32,
       "assertionSites": 224,
       "baselineDigest": "d3611aaa1f826e0091ca18084c207f39aaba06a5afe1b26405012949a1cd4f4c",
-      "status": "pending",
+      "status": "reviewed",
       "baselineDeclarations": 36,
       "baselineAssertionSites": 243,
       "baselineRuntimeCases": 49,
@@ -3655,13 +3655,27 @@
           "assertions": "Actual native quota/readiness composition selects two independent tools at allowed utilization 0%, 30% and 95%. The retained four-tool real-session admission journey now also uses 95% Grok usage, retaining all nine original actual admission assertions."
         }
       ],
-      "review": "Partial semantic audit: five decision-only runtime variants now use the actual extracted ballot controller and core round-routing rule, with seven smaller variants including reversed order. All 32 retained declarations and their assertion bodies are unchanged (verifier-policy-case-reconciliation.json). The remaining 44 native cases still need complete ownership, fixture and resource audit; this mixed original file remains pending. Subsequent selection composition audit moves one quota-only journey to three native adapter variants; the retained real fresh-pair admission control now also has near-limit usage. Other surrounding case bodies remain unchanged; verifier-selection-9651ee88/reconciliation.json records the exact exception. Forty-three native cases remain pending full semantic audit.",
+      "review": "Actual Ballots/ProfileSelection/round controller owns six eligibility/panel policy variants. Native companion cases retain fresh seats, one-per-tool admission, actual usage stops, partial/corrected messages, conflict ports and durable ballot recovery. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
       "validation": {
-        "artifact": "verifier-policy-case-reconciliation.json",
-        "native": "verifier-policy-native.xml",
-        "controller": "verifier-policy-orchestrator.json",
-        "measurement": "verifier-policy-before-2026-10-24T20-00-37-894Z/summary.json: five executed cases, 442 direct launches (365 Git, 39 Bun, 38 process inspections), no observer errors and stable inputs. New controller cases have no native effects under the transitive layer guard; framework startup is not zero. This is not a whole-suite speed claim."
-      }
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      },
+      "from": "packages/engine/test/independence.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/reviews/reopened-outcome.test.ts",
+        "packages/engine/test/journeys/reviews/independent-handoffs.test.ts",
+        "packages/engine/test/contracts/storage/legacy-review-seats.test.ts",
+        "packages/engine/test/contracts/agents/port-review-conversations.test.ts",
+        "packages/orchestrator/test/orchestration/profiles/reviewer-readiness.test.ts",
+        "packages/engine/test/contracts/agents/verifier-panel-admission.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/panel-workflow-permutations.test.ts",
+        "packages/engine/test/contracts/storage/verifier-vote-recovery.test.ts",
+        "packages/engine/test/contracts/agents/voter-cancellation.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "reviews"
     },
     {
       "file": "packages/engine/test/contracts/desktop/instance.test.ts",
@@ -3950,11 +3964,31 @@
       }
     },
     {
-      "file": "packages/engine/test/participant-conversation.test.ts",
+      "file": "packages/engine/test/contracts/repositories/held-review-cleanup.test.ts",
       "declarations": 11,
       "assertionSites": 101,
       "baselineDigest": "2d3b8141938e29060c99c09531db8ff1d140e6eb026af1fd1d3207e2249b8320",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/participant-conversation.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/repositories/held-review-cleanup.test.ts",
+        "packages/engine/test/contracts/agents/seat-start-fallback.test.ts",
+        "packages/engine/test/contracts/agents/reviewer-seat-continuity.test.ts",
+        "packages/engine/test/contracts/agents/reviewer-seat-invalidation.test.ts",
+        "packages/orchestrator/test/orchestration/profiles/saved-review-readiness.test.ts",
+        "packages/engine/test/contracts/agents/saved-seat-availability.test.ts",
+        "packages/engine/test/contracts/agents/reviewer-reopen-cap.test.ts",
+        "packages/engine/test/contracts/repositories/conflict-seat-reasons.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "repositories",
+      "review": "One selection-only readiness case uses actual ProfileSelection+participant scope identity. Remaining actual new/resume/reopen failure/native conversation deletion/ancestry/context/cap/reason interactions retain native peers and real private Git; trace actor cleanup preserved. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/context/phase-notes.test.ts",
@@ -4159,12 +4193,39 @@
       "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
     },
     {
-      "file": "packages/engine/test/proof-requests.test.ts",
+      "file": "packages/engine/test/contracts/acceptance/acceptance-restoration.test.ts",
       "declarations": 45,
       "assertionSites": 514,
       "baselineDigest": "60958e66e674cad152d1aa84b8c29a2615bc6ecf8a1213c940364816a70c8a58",
-      "status": "pending",
-      "partialReview": "Six real acceptance/Git-restoration variants reuse canonical acceptanceAgents with explicit caller-owned work, preserving all 156 assertions. All other seventy case bytes and the private workspace fixture body are unchanged. Native Tester/line-ending journey remains. Whole-file semantic migration pending; see acceptance-fixture-0a70f683/review.json and assertion-reconciliation.json."
+      "status": "reviewed",
+      "partialReview": "Six real acceptance/Git-restoration variants reuse canonical acceptanceAgents with explicit caller-owned work, preserving all 156 assertions. All other seventy case bytes and the private workspace fixture body are unchanged. Native Tester/line-ending journey remains. Whole-file semantic migration pending; see acceptance-fixture-0a70f683/review.json and assertion-reconciliation.json.",
+      "from": "packages/engine/test/proof-requests.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/acceptance/acceptance-restoration.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/report-settlement.test.ts",
+        "packages/engine/test/contracts/agents/paused-acceptance-restoration.test.ts",
+        "packages/engine/test/journeys/recovery/acceptance-restoration.test.ts",
+        "packages/engine/test/contracts/agents/takeover-acceptance-restoration.test.ts",
+        "packages/engine/test/contracts/repositories/acceptance-restored-files.test.ts",
+        "packages/engine/test/contracts/acceptance/version-bound-proof.test.ts",
+        "packages/engine/test/contracts/acceptance/unavailable-proof.test.ts",
+        "packages/engine/test/contracts/acceptance/proof-repair-routing.test.ts",
+        "packages/engine/test/contracts/agents/proof-answer-recovery.test.ts",
+        "packages/engine/test/contracts/acceptance/shared-proof-versions.test.ts",
+        "packages/engine/test/contracts/delivery/proof-publishing.test.ts",
+        "packages/engine/test/contracts/acceptance/reopened-proof-evidence.test.ts",
+        "packages/engine/test/contracts/acceptance/proof-run-versions.test.ts",
+        "packages/engine/test/contracts/coordination/publishing-proof-return.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "acceptance",
+      "review": "Version/cleanup/proof interactions use actual Work/Driver/Git/SQLite and private process/container peers. Invalidated-result policy now invokes actual AcceptanceResults+routeAcceptance without Engine; native restoration, source movement, resumed sessions, take-over, publication and exact snapshot evidence remain. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
       "file": "packages/agent-runtime/test/rules/providers/interruptions.test.ts",
@@ -4347,11 +4408,24 @@
       }
     },
     {
-      "file": "packages/engine/test/repair-conversation.test.ts",
+      "file": "packages/engine/test/contracts/agents/repair-conversation.test.ts",
       "declarations": 1,
       "assertionSites": 16,
       "baselineDigest": "55c83e251df8cc987ba8b12ef4c2277c2a6fe70137d456d088d21d679958b2ec",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/repair-conversation.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/agents/repair-conversation.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "agents",
+      "review": "Actual Builder late rethink followed by same-round fresh/continued/reopened native conversations and persisted input. No replacement of lifecycle assertions. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
       "file": "packages/repositories/test/contracts/navigation/committed.test.ts",
@@ -4372,11 +4446,26 @@
       "from": "packages/engine/test/repo-orientation.test.ts"
     },
     {
-      "file": "packages/engine/test/report-images.test.ts",
+      "file": "packages/engine/test/contracts/filesystem/capture-retention.test.ts",
       "declarations": 3,
       "assertionSites": 55,
       "baselineDigest": "121cc28121d14d3be3523d5950dc49ca956a421abf546afa2af32f3b99467216",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/report-images.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/filesystem/capture-retention.test.ts",
+        "packages/engine/test/journeys/agents/chosen-report-images.test.ts",
+        "packages/engine/test/contracts/agents/parallel-report-images.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "filesystem",
+      "review": "Filesystem/archive capture cleanup case omits unrelated Git. Chosen-report local browser/ACP/API/restart and parallel picture-save/message race retain actual boundaries. World setup now lazy and roots tracked before subsequent failure; no claim that original cases shared writable worlds. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
       "file": "packages/engine/test/journeys/checks/shared-repair.test.ts",
@@ -4617,53 +4706,161 @@
       }
     },
     {
-      "file": "packages/engine/test/review-decision.test.ts",
+      "file": "packages/engine/test/contracts/coordination/review-decisions.test.ts",
       "declarations": 5,
       "assertionSites": 81,
       "baselineDigest": "2ea8cc31cb0314d0cc8080529e0fea0c6ec9ab4cbe1a30bbbacbe573b97694ee",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-decision.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/review-decisions.test.ts",
+        "packages/engine/test/journeys/reviews/changed-checks-after-decision.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Real checkpoint/inbox origin and SQLite persistence. Metadata-only cases use registered product records; configured check/version/restart case retains real repositories, command and native Tester. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
-      "file": "packages/engine/test/review-evidence.test.ts",
+      "file": "packages/engine/test/contracts/coordination/settled-finding-evidence.test.ts",
       "declarations": 14,
       "assertionSites": 112,
       "baselineDigest": "d71b18b0b7a713a07c8a5885b3016061f8199e6e8be286412efac7ac17ff9456",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-evidence.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/settled-finding-evidence.test.ts",
+        "packages/engine/test/contracts/coordination/finding-evidence-recovery.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Real report parsing/settlement, immutable saved-copy files, exact coordination API pagination, restarts and recovery. No simulated storage or copied settlement rules. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
-      "file": "packages/engine/test/review-history.test.ts",
+      "file": "packages/core/test/rules/reviews/settled-history.test.ts",
       "declarations": 15,
       "assertionSites": 117,
       "baselineDigest": "f3393246efa22ca8ef4d4411e67d48ce29032a5147a413b00d98101f9ee8d5c9",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-history.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/reviews/settled-history.test.ts",
+        "packages/engine/test/contracts/filesystem/frozen-review-history.test.ts",
+        "packages/engine/test/contracts/reviews/frozen-history-context.test.ts",
+        "packages/engine/test/contracts/coordination/frozen-review-history.test.ts"
+      ],
+      "layer": "rules",
+      "area": "reviews",
+      "review": "Dated settled-claim rule moved unchanged to core with private state. Native packet hashing/freezing/filesystem/context/API/restart interactions stay separate owners. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
-      "file": "packages/engine/test/review-messages.test.ts",
+      "file": "packages/engine/test/contracts/agents/parallel-coordinator-messages.test.ts",
       "declarations": 1,
       "assertionSites": 6,
       "baselineDigest": "40d36593312a83244072bf749dbbc05c44cca37391f3cbbeff8c4d76942669fc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-messages.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/agents/parallel-coordinator-messages.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "agents",
+      "review": "Native ACP prompt/live message/interrupt receipts for every unfinished reviewer, including after a peer hands back; provider transport is the subject. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
-      "file": "packages/engine/test/review-settlement.test.ts",
+      "file": "packages/engine/test/contracts/repositories/review-anchor-settlement.test.ts",
       "declarations": 3,
       "assertionSites": 19,
       "baselineDigest": "9c605b9e2a5c1ad1633897989043df6fe2b3fb686efbcffccc10c6de52ab67fc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-settlement.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/repositories/review-anchor-settlement.test.ts",
+        "packages/engine/test/contracts/repositories/review-copy-settlement.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "repositories",
+      "review": "Real per-repository Git anchors and detached-copy cleanup while state projection interleaves. Replace two complete fake-service worlds with canonical private Git+SQLite record fixture; distinct second commit and every original matcher remain. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
-      "file": "packages/engine/test/review-todo.test.ts",
+      "file": "packages/engine/test/contracts/agents/review-progress.test.ts",
       "declarations": 8,
       "assertionSites": 85,
       "baselineDigest": "108c1b865892fbcfdefd7eaf24a14ad9542dc3e2887a144ffdfc84cf98097c4c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review-todo.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/agents/review-progress.test.ts",
+        "packages/engine/test/journeys/recovery/review-progress.test.ts",
+        "packages/engine/test/contracts/storage/legacy-verifier-progress.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "agents",
+      "review": "Actual grouped agent progress callbacks, ownership, permission clocks, replacement and restart. Legacy SQLite votes and OS-process restart composition retain dedicated owners. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
-      "file": "packages/engine/test/review.test.ts",
+      "file": "packages/engine/test/contracts/storage/reopened-review-verdicts.test.ts",
       "declarations": 15,
       "assertionSites": 135,
       "baselineDigest": "5b463f43a3a46a5a27a84351b2a65c2b0c61e1bac4c3341610e58ed7e4e86dd6",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/review.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/storage/reopened-review-verdicts.test.ts",
+        "packages/engine/test/contracts/agents/current-review-evidence.test.ts",
+        "packages/engine/test/journeys/reviews/finding-reopening.test.ts",
+        "packages/engine/test/journeys/reviews/blind-review-ballots.test.ts",
+        "packages/engine/test/journeys/reviews/rejected-objection.test.ts",
+        "packages/engine/test/journeys/recovery/unfinished-review.test.ts",
+        "packages/engine/test/contracts/repositories/reviewer-tamper.test.ts",
+        "packages/engine/test/contracts/agents/serial-review-seats.test.ts",
+        "packages/engine/test/journeys/delivery/reviewed-squash.test.ts",
+        "packages/core/test/rules/reviews/finding-count.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "storage",
+      "review": "Real review convergence, correction conversations, blinded detached copies, durable historical verdicts, tamper repair and squash publication. Retained native handoff/session/copy interactions; pure count wording moved to core. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
       "file": "packages/engine/test/journeys/delivery/risk.test.ts",
@@ -5188,11 +5385,11 @@
       }
     },
     {
-      "file": "packages/engine/test/security.test.ts",
+      "file": "packages/engine/test/contracts/delivery/credentialed-git-settings.test.ts",
       "declarations": 6,
       "assertionSites": 37,
       "baselineDigest": "07ed018078153f3260dc208d77a00ef44f2c82f2816bcf5309b5a52029895689",
-      "status": "pending",
+      "status": "reviewed",
       "baselineDeclarations": 7,
       "baselineAssertionSites": 44,
       "migratedCases": [
@@ -5205,13 +5402,22 @@
           "review": "All seven original settings retain real native Git refusal coverage; fetchRef, credentialed lookups, all remote refs and a positive helper/hook control strengthen it. One representative complete task retains every original task assertion. Original matrix required seven complete task preparations; those repetitions tested the same common failure route. Each setting now has a private repository and a named native case. Existing publishing journeys share the verified hook fixture and retain all assertions."
         }
       ],
-      "review": "Partial audit: native unsafe-setting matrix and one representative task now have separate owners. All seven original declarations and assertion expressions reconcile across the retained file and journey. Remaining credentialed publication, SSH, confirmation, serialization and process-wide environment manipulation need their own complete layer/portability audit; this original file remains pending.",
+      "review": "Real approved Git/GH publication, saved SSH address, untrusted hooks/tags/gitlink/submodule controls and serialization; only irrelevant provider transport uses canonical ScriptedAgents. Git config/SSH settings exist solely in owned leased child environment, with real native fact observations returned before the plain-push positive control. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
       "validation": {
-        "artifact": "security-case-reconciliation.json",
-        "neighborhood": "security-reviewed-neighborhood.xml: 54 passed / 567 assertions / 4 files / 38.63s",
-        "finalSelected": "security-boundary-after-2026-10-24T18-16-51-840Z/cases.xml: nine cases / 95 assertions pass",
-        "resourceComparison": "546 to 189 observed direct launches; 11.54s to 2.13s selected runner time, same observer and normal runner settings; full-suite effect not yet measured"
-      }
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      },
+      "from": "packages/engine/test/security.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/delivery/credentialed-git-settings.test.ts",
+        "packages/engine/test/contracts/delivery/saved-ssh-address.test.ts",
+        "packages/engine/test/contracts/delivery/credentialed-git-serialization.test.ts",
+        "packages/engine/test/journeys/delivery/address-confirmation.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "delivery"
     },
     {
       "file": "packages/engine/test/contracts/server/connection-key.test.ts",
@@ -5349,11 +5555,25 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/side-step.test.ts",
+      "file": "packages/engine/test/contracts/storage/internal-step-restart.test.ts",
       "declarations": 2,
       "assertionSites": 17,
       "baselineDigest": "f7db3efed030790b806ea67f65a6233a0c00c2d145bb7b54c39e5b53c32e24ef",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/side-step.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/storage/internal-step-restart.test.ts",
+        "packages/engine/test/contracts/repositories/internal-source-refresh.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "storage",
+      "review": "Actual snapshot/restore policy extracted unchanged; new value/effect controls cover absence/zero/empty/reentry/conflicting role/checkpoint failure. Original durable restart and actual source refresh remain native. All original declaration titles, loop variants, helper assertions and runtime multiplicities retained. Exact production bodies moved into real core/controller owners with narrow native observations. Root reviewed all production seams, manual assertion substitutions and fixture lifetimes; fixed child-result exit validation and before-handoff cleanup. Current Git literal/path formatting and coordinator-message imports preserved during integration.",
+      "validation": {
+        "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
+        "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
+        "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/sources/approved-clone.test.ts",
