@@ -9,6 +9,7 @@ export default defineConfig({
   server: {
     port: 1430,
     strictPort: true,
+    allowedHosts: [".tunnelite.com"],
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1431 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
