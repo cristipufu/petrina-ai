@@ -1,5 +1,5 @@
 import { ProcessObservations, readObservation, type ProcessListRead } from "./process-observations.js";
-import { parseDescendants, parseChildState, parseProcessState, type ChildState, type ObservedProcess } from "./process-snapshots.js";
+import { stoppedProcessStates, parseDescendants, parseChildState, type ChildState, type ObservedProcess } from "./process-snapshots.js";
 export { parseDescendants, parseChildState, parseProcessState, type ChildState, type ProcessState, type ObservedProcess } from "./process-snapshots.js";
 export type { ProcessListRead } from "./process-observations.js";
 import { execFile } from "node:child_process";
@@ -55,17 +55,9 @@ export function sharedRead(read: ProcessListRead, timeout: number, since: number
 /** Every process with its group and state, for confirming a forced stop including defunct members. */
 export const readProcessGroups: ProcessListRead = (timeout) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
 
-/** Only a complete list positively naming every still-present target as defunct confirms it ended. */
+/** Interpret a final snapshot relative to the native process making this observation. */
 export function presentStates(list: string | undefined, present: readonly number[]): { ended: boolean; processes: ObservedProcess[] } {
-  const complete = list !== undefined && list.split("\n").some((line) => Number(line.trim().split(/\s+/)[0]) === process.pid);
-  const members = (group: number) => list!.split("\n").map((line) => line.trim().split(/\s+/)).filter(([, pgid]) => Number(pgid) === group).map(([pid]) => Number(pid));
-  const processes = present.flatMap((target): ObservedProcess[] => {
-    if (!complete) return [{ pid: Math.abs(target), state: "unknown", sources: [target < 0 ? "group" : "target"] }];
-    if (target > 0) return [{ pid: target, state: parseProcessState(list!, target), sources: ["target"] }];
-    const listed = members(-target);
-    return listed.length ? listed.map((pid) => ({ pid, state: parseProcessState(list!, pid), sources: ["group"] })) : [{ pid: -target, state: "absent", sources: ["group"] }];
-  });
-  return { ended: complete && processes.every(({ state }) => state === "finished"), processes };
+  return stoppedProcessStates(list, present, process.pid);
 }
 
 /**

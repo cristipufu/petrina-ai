@@ -8,7 +8,7 @@ import { BACKGROUND_FEATURES } from "./codex-background.js";
 import { claudeReports } from "./claude-usage-report.js";
 import { CLAUDE_USAGE_COMMAND, ClaudeUsage } from "./claude-usage.js";
 import { claudeLimit, codexLimit, grokLimit } from "./provider-limits.js";
-import { claudeInterruptions, codexInterruptions, grokInterruptions } from "./provider-interruptions.js";
+import { claudeInterruptions, codexInterruptions, grokInterruptions } from "./native-provider-interruptions.js";
 import { CODEX_USAGE_COMMAND, CodexUsage } from "./codex-usage.js";
 import { GrokUsage } from "./grok-usage.js";
 import { grokTurnReport } from "./grok-report.js";

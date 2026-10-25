@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
 import type { ToolInvocation, ToolInvocationStatus } from "@petrina/core";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
-import { commandOf, describeTool, fileOf, isPlumbing, kindOf, type ToolActivity } from "./native-tool-activity.js";
+import type { ToolActivity, createToolActivity } from "./tool-activity.js";
+
+export interface InvocationEffects { now: () => number; id: () => string; activity: Pick<ReturnType<typeof createToolActivity>, "commandOf" | "describeTool" | "fileOf" | "isPlumbing" | "kindOf"> }
 
 export const MAX_TOOL_INVOCATIONS = 100;
 export const MAX_TOOL_COMMAND = 4096;
@@ -57,10 +58,10 @@ function mergeCall(previous: ToolActivity, update: ToolActivity): ToolActivity {
 export class ToolInvocations {
   private entries = new Map<string, Entry>();
   private latest?: string;
-  private turnId = randomUUID();
-  constructor(private readonly publish: (event: ToolActivityEvent) => void, private readonly now = Date.now) {}
+  private turnId: string;
+  constructor(private readonly publish: (event: ToolActivityEvent) => void, private readonly effects: InvocationEffects) { this.turnId = effects.id(); }
 
-  startTurn(): void { this.entries.clear(); this.latest = undefined; this.turnId = randomUUID(); }
+  startTurn(): void { this.entries.clear(); this.latest = undefined; this.turnId = this.effects.id(); }
   known(id: string): ToolActivity | undefined { return this.entries.get(id)?.call; }
 
   update(update: Update, start: boolean): void {
@@ -72,15 +73,16 @@ export class ToolInvocations {
       this.entries.set(update.toolCallId, entry);
     }
     entry.call = mergeCall(entry.call, update);
+    const { commandOf, describeTool, fileOf, isPlumbing, kindOf } = this.effects.activity;
     if (isPlumbing(entry.call)) return;
     const previous = entry.invocation;
-    const at = this.now();
+    const at = this.effects.now();
     const status = reportedStatus(update.status) ?? previous?.status;
     const command = commandOf(entry.call.rawInput)?.slice(0, MAX_TOOL_COMMAND);
     const paths = entry.call.locations?.map(location => location.path) ?? (fileOf(entry.call) ? [fileOf(entry.call)!.slice(0, MAX_PATH)] : undefined);
     const shortened = (update.title?.length ?? 0) > 240 || (update.kind?.length ?? 0) > 80 || update.toolCallId.length > 200 || (commandOf(update.rawInput)?.length ?? 0) > MAX_TOOL_COMMAND || (update.locations?.length ?? 0) > MAX_PATHS || update.locations?.some(location => location.path.length > MAX_PATH) || (fileOf(update)?.length ?? 0) > MAX_PATH;
     const invocation: ToolInvocation = {
-      ...previous, id: previous?.id ?? randomUUID(), turnId: this.turnId, toolCallId: update.toolCallId.slice(0, 200),
+      ...previous, id: previous?.id ?? this.effects.id(), turnId: this.turnId, toolCallId: update.toolCallId.slice(0, 200),
       description: describeTool(entry.call), kind: kindOf(entry.call), startedAt: previous?.startedAt ?? at, updatedAt: at,
       ...(entry.call.title ? { title: entry.call.title } : {}), ...(status ? { status } : {}),
       ...(terminal(status) ? { endedAt: previous?.endedAt ?? at } : {}),
@@ -102,7 +104,7 @@ export class ToolInvocations {
   }
 
   endTurn(): void {
-    const at = this.now();
+    const at = this.effects.now();
     for (const entry of this.entries.values()) {
       if (entry.invocation && !terminal(entry.invocation.status)) entry.invocation.turnEndedAt = at;
     }

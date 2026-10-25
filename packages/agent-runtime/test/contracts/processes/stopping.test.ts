@@ -7,13 +7,16 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_CLEANUP_NOTE, AgentRun, stopAll } from "@petrina/agent-runtime/acp-run";
 import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
-import { childState, parseChildState, presentStates, processList, readProcessList, type ObservedProcess } from "@petrina/platform/process-tree";
-import { defunctProcess as uncollected, finishedHelper, removeDir, SLOW, tempDir, waitFor } from "./fixtures.js";
+import { childState, parseChildState, presentStates, processList, readProcessList } from "@petrina/platform/process-tree";
+import { defunctProcess as uncollected } from "@petrina/test-support/defunct-process";
+import { finishedHelper } from "@petrina/test-support/process-helper";
+import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
+import { SLOW } from "@petrina/test-support/slow";
 
 const root = tempDir("petrina-agent-lifetime-");
 afterAll(() => removeDir(root));
 const profile = ENGINE_PROFILES.find(profile => profile.id === "sol-high")!;
-const command = [process.execPath, join(import.meta.dir, "fake-agent.ts")];
+const command = [process.execPath, join(import.meta.dir, "../../fixtures/session-agent.ts")];
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
 type Signals = ReturnType<typeof spyOn<typeof process, "kill">>;
 
@@ -68,7 +71,7 @@ process.once("SIGTERM", () => { void (async () => {
   ${exitsOnTerm ? "process.exit(0);" : ""}
 })(); });
 process.argv.push("--stubborn");
-await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
+await import(${JSON.stringify(join(import.meta.dir, "../../fixtures/session-agent.ts"))});`);
   const original = processes.execFile;
   let forks = 0;
   const workerPids = () => Array.from({ length: forks }, (_, i) => workerFile(i + 1, "pid")).flatMap(path => existsSync(path) ? Number(readFileSync(path, "utf8")) || [] : []);
@@ -207,7 +210,7 @@ import { writeFileSync } from "node:fs";
 const startWorker = () => { const child = spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { detached: true, stdio: "ignore" }); ${delayedRecord ? "" : `writeFileSync(${JSON.stringify(record)}, String(child.pid));`} child.unref(); };
 startWorker();
 ${stubborn ? 'process.argv.push("--stubborn");' : ""}
-await import(${JSON.stringify(join(import.meta.dir, "fake-agent.ts"))});`);
+await import(${JSON.stringify(join(import.meta.dir, "../../fixtures/session-agent.ts"))});`);
   const workerPid = () => existsSync(record) ? Number(readFileSync(record, "utf8")) || undefined : undefined;
   const original = processes.execFile;
   const scanned: boolean[] = [];
@@ -371,31 +374,6 @@ it.skipIf(process.platform === "win32")("reclaims an uncollected fixture interru
   await expectRejection(uncollected(pid => { holderPid = pid; throw new Error("Fixture setup interrupted"); }), "Fixture setup interrupted");
   expect(holderPid).toBeDefined(); expect(alive(holderPid!)).toBe(false);
 });
-
-// What the final list shows of a target that still answers after the forced stop (a program, or its group by its
-// negative number). Only a complete list that names it, or every member of its group, defunct shows it ended: a list
-// silent about something still present, an empty group, a running member or no list at all leaves it unconfirmed.
-// Rows are this check's own columns: number, group, state.
-{
-  const self = `${process.pid} ${process.pid} S`, leader = 4242, both = [-leader, leader];
-  const cases: [string, string | undefined, number[], boolean, ObservedProcess?][] = [
-    ["its own row and its group's only member defunct", `${self}\n${leader} ${leader} Z`, both, true],
-    ["every member of its group defunct, the leader and one it started", `${self}\n${leader} ${leader} Z\n4243 ${leader} Z+`, both, true],
-    ["nothing still present", self, [], true],
-    ["a member of its group still running", `${self}\n${leader} ${leader} Z\n4243 ${leader} S`, both, false],
-    ["no readable list", undefined, both, false],
-    ["a list cut short before this process", `${leader} ${leader} Z`, both, false],
-    ["no row for the program, though its group's other member is defunct", `${self}\n4243 ${leader} Z`, both, false, { pid: leader, state: "absent", sources: ["target"] }],
-    ["no listed member of its group, though the program's own row is defunct", `${self}\n${leader} 1 Z`, both, false, { pid: leader, state: "absent", sources: ["group"] }],
-    ["no row for a lone program", self, [leader], false],
-    ["no listed member of a lone group", self, [-leader], false],
-  ];
-  for (const [name, list, present, ended, observed] of cases) it(`${ended ? "counts" : "never counts"} what is still present after the forced stop as ended with ${name}`, () => {
-    const states = presentStates(list, present);
-    expect(states.ended).toBe(ended);
-    if (observed) expect(states.processes).toContainEqual(observed);
-  });
-}
 
 // The stop's final second reads the process list for what is still present after the forced stop. Only a complete
 // list showing it defunct confirms the stop; an unreadable list, or one that shows it running, never does.

@@ -10,6 +10,7 @@ import { EngineLifecycle, LifecycleStore } from "../src/lifecycle.js";
 import { serve } from "../src/server.js";
 import { writeConnection } from "../src/instance.js";
 import { mcpRequest, mcpTools } from "../src/mcp.js";
+import { createToolActivity } from "@petrina/agent-runtime/tool-activity";
 import { ToolInvocations } from "@petrina/agent-runtime/tool-invocations";
 import { recordToolActivity } from "../src/record-tool-activity.js";
 import { CLI, firstLine, removeDir, runChecks, tempDir, engineEnv, SLOW, waitFor } from "./support.js";
@@ -54,7 +55,7 @@ describe("focused coordination and durable decisions", () => {
       const summary = recordToolActivity(task, "activity", { seat, roleId: "reviewer", profileId: "sol-high", productId: "product" }, event)!;
       task.hunt!.work![seat]!.toolActivity = summary;
       e.showReviewWork(task);
-    });
+    }, { now: Date.now, id: () => crypto.randomUUID(), activity: createToolActivity(() => undefined) });
     const a = track("reviewer:0"), b = track("reviewer:1");
     a.update({ toolCallId: "first", kind: "execute", status: "in_progress", rawInput: { cmd: "private-command-one" } }, true);
     b.update({ toolCallId: "first", kind: "execute", status: "pending", rawInput: { command: "private-command-two" } }, true);

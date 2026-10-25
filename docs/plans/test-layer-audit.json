@@ -1046,11 +1046,11 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/agent-lifetime.test.ts",
+      "file": "packages/agent-runtime/test/contracts/processes/stopping.test.ts",
       "declarations": 12,
       "assertionSites": 73,
       "baselineDigest": "0e1285e6f66f0351cbaa32cca5ab626faf4e9a403d2dfda06f813cdedf668b7d",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "template:`reclaims a started agent when its ${observer} observer throws (${reopen ? \"reopen\" : \"fresh\"})`",
@@ -1077,7 +1077,20 @@
           "assertionsUnchanged": true
         }
       ],
-      "review": "Partial semantic audit: Four simple lifecycle sites moved. Native late-fork/scan/deadline matrix and pure final-snapshot permutations remain mixed; separate platform observation policy from ACP shutdown before moving remaining file."
+      "review": "Complete ownership audit: metadata, invocation and final-process-state decisions use data and explicit formatter/clock/identity inputs; actual SDK, provider, process lifetime and host recording controls retain their real boundaries. All 26 remaining static cases and 185 complete matcher AST sites retained; prior migrated owners remain listed.",
+      "from": "packages/engine/test/agent-lifetime.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/contracts/processes/stopping.test.ts",
+        "packages/platform/test/rules/processes/stop-confirmation.test.ts",
+        "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "processes",
+      "validation": {
+        "artifact": "parallel-agent-runtime/next-runtime/reconciliation.json",
+        "rules": "Platform 10 pass; host activity 5 pass",
+        "native": "Runtime 111 pass / 50.764s; Engine neighbors 79 pass / 26.270s. Console/JUnit assertion totals differ under concurrency; both raw records retained. Combined source/platform qualification due."
+      }
     },
     {
       "file": "packages/agent-runtime/test/rules/activity/messages.test.ts",
@@ -2257,13 +2270,26 @@
       "partialReview": "Six real acceptance/Git-restoration variants reuse canonical acceptanceAgents with explicit caller-owned work, preserving all 156 assertions. All other seventy case bytes and the private workspace fixture body are unchanged. Native Tester/line-ending journey remains. Whole-file semantic migration pending; see acceptance-fixture-0a70f683/review.json and assertion-reconciliation.json."
     },
     {
-      "file": "packages/engine/test/provider-interruptions.test.ts",
+      "file": "packages/agent-runtime/test/rules/providers/interruptions.test.ts",
       "declarations": 13,
       "assertionSites": 84,
       "baselineDigest": "bee219f8e32134a1cf1aec7ff199c513ab29d3d957854b60f7c5902a78d91af6",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [],
-      "review": "Partial semantic audit: Imports updated only. Metadata decisions, real SDK errors, native scripted notices and workflow-aware fixture remain mixed; not declared audited."
+      "review": "Complete ownership audit: metadata, invocation and final-process-state decisions use data and explicit formatter/clock/identity inputs; actual SDK, provider, process lifetime and host recording controls retain their real boundaries. All 26 remaining static cases and 185 complete matcher AST sites retained; prior migrated owners remain listed.",
+      "from": "packages/engine/test/provider-interruptions.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/rules/providers/interruptions.test.ts",
+        "packages/agent-runtime/test/contracts/providers/interruptions.test.ts",
+        "packages/agent-runtime/test/contracts/providers/registry.test.ts"
+      ],
+      "layer": "rules",
+      "area": "providers",
+      "validation": {
+        "artifact": "parallel-agent-runtime/next-runtime/reconciliation.json",
+        "rules": "Platform 10 pass; host activity 5 pass",
+        "native": "Runtime 111 pass / 50.764s; Engine neighbors 79 pass / 26.270s. Console/JUnit assertion totals differ under concurrency; both raw records retained. Combined source/platform qualification due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/testing/full-run.test.ts",
@@ -3026,13 +3052,25 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/tool-invocations.test.ts",
+      "file": "packages/engine/test/rules/activity/recording.test.ts",
       "declarations": 5,
       "assertionSites": 38,
       "baselineDigest": "237d079520b2a527d2d8be3832362ae9404b06876e4cab669f24e2bc24c00275",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [],
-      "review": "Partial semantic audit: Imports updated only. Runtime invocation tracker plus host recordToolActivity/core recovery assertions share one fixture; separate pure tracker from host persistence/summary ownership before moving."
+      "review": "Complete ownership audit: metadata, invocation and final-process-state decisions use data and explicit formatter/clock/identity inputs; actual SDK, provider, process lifetime and host recording controls retain their real boundaries. All 26 remaining static cases and 185 complete matcher AST sites retained; prior migrated owners remain listed.",
+      "from": "packages/engine/test/tool-invocations.test.ts",
+      "splitFiles": [
+        "packages/engine/test/rules/activity/recording.test.ts",
+        "packages/agent-runtime/test/rules/activity/invocations.test.ts"
+      ],
+      "layer": "rules",
+      "area": "activity",
+      "validation": {
+        "artifact": "parallel-agent-runtime/next-runtime/reconciliation.json",
+        "rules": "Platform 10 pass; host activity 5 pass",
+        "native": "Runtime 111 pass / 50.764s; Engine neighbors 79 pass / 26.270s. Console/JUnit assertion totals differ under concurrency; both raw records retained. Combined source/platform qualification due."
+      }
     },
     {
       "file": "packages/engine/test/tool-updates.test.ts",

@@ -17,7 +17,7 @@ import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, typ
 import type { SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages } from "./agent-messages.js";
 import { messageClock } from "./message-clock.js";
-import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, type ToolActivity } from "./native-tool-activity.js";
+import { browserTarget, commandOf, describeTool, isPlumbing, kindOf, fileOf, type ToolActivity } from "./native-tool-activity.js";
 import type { AccountReading } from "./tool-adapter.js";
 import { ownSession } from "@petrina/platform/process-environment";
 import { ToolInvocations } from "./tool-invocations.js";
@@ -470,7 +470,7 @@ export class AgentRun implements AgentSession {
     const tools = state.tools = new ToolInvocations(event => {
       if (event.isNew) state.messages.activity();
       callbacks.onToolActivity?.(event);
-    });
+    }, { activity: { commandOf, describeTool, isPlumbing, kindOf, fileOf }, now: Date.now, id: () => crypto.randomUUID() });
     const publishTool = (call: ToolActivity, isNew = false) => {
       if (isPlumbing(call)) return;
       const line = describeTool(call);

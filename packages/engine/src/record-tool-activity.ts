@@ -1,10 +1,9 @@
-import type { Id } from "@petrina/core";
-import type { MTask } from "./kernel.js";
+import type { Id, DeepMutable, Task } from "@petrina/core";
 import { MAX_TOOL_INVOCATIONS } from "@petrina/agent-runtime/tool-invocations";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
 
 /** Shared bookkeeping for main agents, reviewer seats and voter seats. */
-export function recordToolActivity(task: MTask, journeyId: Id, worker: { seat: string; roleId: Id; profileId: Id; productId: Id }, event: ToolActivityEvent) {
+export function recordToolActivity(task: Pick<DeepMutable<Task>, "journey">, journeyId: Id, worker: { seat: string; roleId: Id; profileId: Id; productId: Id }, event: ToolActivityEvent) {
   const step = task.journey?.find(step => step.id === journeyId);
   if (!step) return undefined;
   const summary = step.toolActivity?.[worker.seat] ?? { actionCount: 0 };

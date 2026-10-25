@@ -6,7 +6,6 @@
 // - A terminal capacity stop: the turn has ended because the selected model is full. Petrina retries it.
 // - A native retry: the tool is still working the turn and is trying again by itself. Petrina only shows it.
 // A native retry warning never establishes why a later turn ended.
-import { RequestError } from "@agentclientprotocol/sdk";
 import type { RetryCause } from "@petrina/orchestrator";
 
 /** A turn ended because the selected model is full. `retryAfterMs` is an explicit provider delay. */
@@ -131,22 +130,22 @@ function codexNotice(notice: SessionNotice): RetryNotice | undefined {
 }
 
 /** codex-acp attributes this response metadata to the completed prompt, unlike session-wide notices. */
-function codexFailure(response: unknown): Error | undefined {
-  const record = recordOf(response);
-  if (record?.stopReason === "cancelled") return undefined;
-  const failure = sessionFailureOf(record);
-  if (failure?.severity !== "error" || typeof failure.title !== "string") return undefined;
-  const title = failure.title.trim() || "Codex reported a failed turn.";
-  const actions = Array.isArray(failure.actions) ? failure.actions : [];
-  if (failure.category === "access" && actions.includes("login")) return RequestError.authRequired();
-  // Typed limit policy distinguishes account quota/rate limits from context or session budgets.
-  // A new-session action alone does not prove the account has run out.
-  const codexErrorInfo = failure.category === "limit" && !actions.includes("new_session")
-    ? actions.includes("retry") ? "rateLimitExceeded" : "usageLimitExceeded" : undefined;
-  return Object.assign(new Error(failure.category === "connection" ? `Codex's connection failed: ${title}` : title), { data: codexErrorInfo ? { codexErrorInfo } : {} });
+function createCodexFailure(authRequired: () => Error) {
+  return function codexFailure(response: unknown): Error | undefined {
+    const record = recordOf(response);
+    if (record?.stopReason === "cancelled") return undefined;
+    const failure = sessionFailureOf(record);
+    if (failure?.severity !== "error" || typeof failure.title !== "string") return undefined;
+    const title = failure.title.trim() || "Codex reported a failed turn.";
+    const actions = Array.isArray(failure.actions) ? failure.actions : [];
+    if (failure.category === "access" && actions.includes("login")) return authRequired();
+    // Typed limit policy distinguishes account quota/rate limits from context or session budgets.
+    // A new-session action alone does not prove the account has run out.
+    const codexErrorInfo = failure.category === "limit" && !actions.includes("new_session")
+      ? actions.includes("retry") ? "rateLimitExceeded" : "usageLimitExceeded" : undefined;
+    return Object.assign(new Error(failure.category === "connection" ? `Codex's connection failed: ${title}` : title), { data: codexErrorInfo ? { codexErrorInfo } : {} });
+  };
 }
-
-export const codexInterruptions: ToolInterruptions = { capacity: codexCapacity, notice: codexNotice, failure: codexFailure };
 
 // ── Claude Code ──────────────────────────────────────────────────────────
 
@@ -161,7 +160,6 @@ function claudeCapacity(source: unknown): CapacityStop | undefined {
   return recordOf(recordOf(source)?.data)?.errorKind === "overloaded" ? {} : undefined;
 }
 
-export const claudeInterruptions: ToolInterruptions = { capacity: claudeCapacity };
 
 // ── Grok ─────────────────────────────────────────────────────────────────
 
@@ -207,7 +205,15 @@ function grokNotice(notice: SessionNotice): RetryNotice | undefined {
   return { retrying: GROK_CONNECTION.test(reason) ? "network" : "transient" };
 }
 
-export const grokInterruptions: ToolInterruptions = { capacity: grokCapacity, notice: grokNotice };
 
 // Antigravity: the pinned 1.4.1 server records its retries and service-unavailable errors only in its own
 // log, never as an ACP event, and a 503 does not establish a full model. It has no interruptions here.
+
+/** Pure observations use the host's authentication error representation. */
+export function createProviderInterruptions(authRequired: () => Error): { codex: ToolInterruptions; claude: ToolInterruptions; grok: ToolInterruptions } {
+  return {
+    codex: { capacity: codexCapacity, notice: codexNotice, failure: createCodexFailure(authRequired) },
+    claude: { capacity: claudeCapacity },
+    grok: { capacity: grokCapacity, notice: grokNotice },
+  };
+}

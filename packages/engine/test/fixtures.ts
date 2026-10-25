@@ -3,7 +3,6 @@ export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repo
 import { tempDir, removeDir } from "@petrina/test-support/fixtures";
 export { tempDir, removeDir, waitFor, waitForFile, firstLine, testBrowserRoot } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
-import { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { State } from "@petrina/core";
@@ -194,14 +193,7 @@ export function headNow(worktree: string): string {
 /** A ref's commit on the stand-in GitHub, or undefined when Git confirms the ref is absent. */
 export const remoteRef = (remote: string, ref: string): Promise<string | undefined> => commitAt(remote, ref);
 
-/**
- * A stand-in for a process-list helper whose exit a test reports itself. Its output has ended, as a real
- * helper's has when its reported success is a complete list, so the read takes that success as one.
- */
-export function finishedHelper(): ChildProcess {
-  return Object.defineProperty(new ChildProcess(), "stdout", { value: { readableEnded: true } });
-}
-
+export { finishedHelper } from "@petrina/test-support/process-helper";
 
 /** Synthetic failures' sleep evidence: no records, and this Mac's power log is never read. */
 export const noMachineRecords: MachineRecords = async () => "";

@@ -57,3 +57,8 @@ export class ModelAtCapacity extends Error {
     this.name = "ModelAtCapacity";
   }
 }
+
+/** The JSON-RPC code ACP uses for "log in first". */
+export function isAuthRequired(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === -32000;
+}

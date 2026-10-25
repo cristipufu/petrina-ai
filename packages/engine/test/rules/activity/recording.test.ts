@@ -1,18 +1,20 @@
 import { describe, expect, it } from "bun:test";
-import { clearRunningTools } from "@petrina/core";
-import type { MTask } from "../src/kernel.js";
+import { clearRunningTools, createTaskState } from "@petrina/core";
 import { MAX_TOOL_COMMAND, MAX_TOOL_INVOCATIONS, ToolInvocations } from "@petrina/agent-runtime/tool-invocations";
 import type { ToolActivityEvent } from "@petrina/orchestrator";
-import { recordToolActivity } from "../src/record-tool-activity.js";
+import { recordToolActivity } from "../../../src/record-tool-activity.js";
+import { createToolActivity } from "@petrina/agent-runtime/tool-activity";
 
 function fixture() {
-  const task = { state: "running", statusLine: "Working", journey: [{ id: "step", kind: "agent", startedAt: 0, round: 1, sub: 0 }] } as MTask;
-  let at = 10;
+  const task = createTaskState({ productId: "", title: "Invocation evidence" }, [], { id: "task", timelineId: "timeline", now: 0, priority: 0 });
+  task.state = "running"; task.statusLine = "Working";
+  task.journey = [{ id: "step", kind: "agent", startedAt: 0, round: 1, sub: 0 }];
+  let at = 10, serial = 0;
   const events: ToolActivityEvent[] = [];
   const track = (seat = "main") => new ToolInvocations(event => {
     events.push(structuredClone(event));
     recordToolActivity(task, "step", { seat, roleId: "reviewer", profileId: seat, productId: "p" }, event);
-  }, () => at++);
+  }, { now: () => at++, id: () => `inv-${++serial}`, activity: createToolActivity(() => undefined) });
   const records = () => task.journey![0]!.toolInvocations!;
   const summary = (seat = "main") => task.journey![0]!.toolActivity![seat]!;
   return { task, events, track, records, summary };

@@ -23,7 +23,7 @@ import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { MaintenanceProfileProblem, Kernel, Aborted, ScreenWait, SourceRefreshRequired, notReady, stepKey, ToolProblem, type EngineOptions } from "./kernel.js";
 import type { TurnAgent } from "./tracking.js";
 import { WaitClock } from "@petrina/storage/worklog";
-import { isAuthRequired } from "@petrina/agent-runtime/probe";
+import { isAuthRequired } from "@petrina/agent-runtime/failures";
 import type { ToolChecks } from "./tool-checks.js";
 import { coordinatorNotes, type Section } from "./context.js";
 import { supplyReviewHistory } from "./review-history.js";

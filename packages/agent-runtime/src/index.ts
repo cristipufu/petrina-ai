@@ -5,4 +5,5 @@ export type { AgentLaunchOptions, ToolAdapter } from "./tools.js";
 export { UsageLimited, ModelAtCapacity, CAPACITY_WAIT, limitFromFailure, limitFromReport } from "./usage.js";
 export type { UsageInfo } from "./usage.js";
 export { AgentBrowser, recoverBrowserTemps } from "./browser.js";
-export { checkAgentTool, isAuthRequired, AGENT_CHECK_TIMEOUT_MS } from "./probe.js";
+export { checkAgentTool, AGENT_CHECK_TIMEOUT_MS } from "./probe.js";
+export { isAuthRequired } from "./failures.js";

@@ -1,6 +1,7 @@
 // Native coding-provider readiness, using the same session boundary as task execution.
 import type { AgentProfile } from "@petrina/core";
 import type { ToolProbeResult } from "@petrina/orchestrator";
+import { isAuthRequired } from "./failures.js";
 import { AgentRun } from "./acp-run.js";
 import { adapterEntry, type ToolAdapter } from "./tools.js";
 
@@ -9,10 +10,6 @@ export type ExecutableLookup = (name: string) => string | null;
 export const AGENT_CHECK_TIMEOUT_MS = 30_000;
 const tail = (text: string) => text.trim().slice(-400);
 
-/** The JSON-RPC code ACP uses for "log in first". */
-export function isAuthRequired(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === -32000;
-}
 
 /**
  * Is an agent tool installed and logged in? Opens a conversation in an empty folder with the same
