@@ -25,5 +25,5 @@ for (const converted of [false, true]) for (const committed of [false, true]) it
     // Bun's diff shows both line endings alike: the escaped text gets a line of its own.
     if (restored !== expected) console.error(`Restored ${JSON.stringify(restored)} where ${JSON.stringify(expected)} was expected`);
     expect(restored).toBe(expected);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

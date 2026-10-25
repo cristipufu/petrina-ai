@@ -2,7 +2,6 @@ import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { git } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { versionsOf } from "../../../src/repositories.js";
@@ -38,7 +37,7 @@ it("retains an earlier pass and refreshes it when an affected product changes du
       expect(f.task.proofRefreshes).toBeUndefined();
       expect(f.task.timeline.some(line => line.text === "Final acceptance testing: the task's code changed since acceptance testing")).toBe(true);
     } finally { refresh.mockRestore(); }
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("keeps new requests from a reopened passing review, while replay and restart keep each request once", async () => {
@@ -58,13 +57,13 @@ it("keeps new requests from a reopened passing review, while replay and restart 
     await start(); await apply("Run Windows paths");
     const sources = f.task.proofRequests!.map(request => request.source);
     expect(new Set(sources).size).toBe(2);
-    f.engine.setPoolPaused(true); await f.engine.shutdown();
-    f.engine = new Engine(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine.setPoolPaused(true); await f.stop(f.engine);
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     await apply("Run Windows paths");
     expect(f.task.proofRequests!.map(request => request.text)).toEqual(["Run Linux capacity", "Run Windows paths"]);
     expect(f.task.proofRequests!.map(request => request.source)).toEqual(sources);
     expect(f.task.proofRequests!.every(request => request.status === "pending")).toBe(true);
     expect(f.task.findings).toEqual([]); expect(f.task.rounds.review).toBeUndefined();
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

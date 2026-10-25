@@ -23,7 +23,7 @@ it("saves a take-over's undone tracked edit with the acceptance run, while new o
     expect(f.task.acceptanceRun.restored!.products).toEqual([{ productId: f.task.productId, edits: true, files: ["feature.txt"] }]);
     expect(await git(worktree, "status", "--porcelain")).toBe(""); expect(readFileSync(join(worktree, "feature.txt"), "utf8")).toBe("the task's change\n");
     expect(f.task.timeline.some(entry => entry.text === restoredLine("changes to project files", "Product 1", "feature.txt"))).toBe(true);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("keeps an undone change with its acceptance run through the coordinator's take-over and hand back", async () => {
@@ -38,7 +38,7 @@ it("keeps an undone change with its acceptance run through the coordinator's tak
     f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before the take-over\n" }], testerProofAnswers: passes([request.id]) });
     const driving = f.drive();
-    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work");
+    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work", undefined, { during: driving });
     await f.engine.takeOver(f.task.id, "copy"); await driving;
     const restored = [{ productId: f.task.productId, edits: true, files: ["tester-edit.txt"] }];
     expect(f.task.driving).toBeDefined(); expect(f.task.acceptanceRun!.restored!.products).toEqual(restored);
@@ -52,5 +52,5 @@ it("keeps an undone change with its acceptance run through the coordinator's tak
     expect(testerSteps(f).at(-1)!.proofRun!.restored!.products).toEqual(restored);
     expect(f.task.acceptanceUnverified).toBe(true); expect(f.task.findings).toEqual([]); expect(f.scope.work.acceptanceReturns).toBeUndefined();
     expect(fakes.openings("tester")).toHaveLength(2);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

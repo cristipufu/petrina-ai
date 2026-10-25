@@ -22,7 +22,7 @@ it("checks a saved prepared delivery again after main moves and retains the publ
     await f.engine["shipping"]["prepareAgain"](f.scope, "Main moved during publishing");
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined();
     expect(f.task.timeline.at(-1)!.text).toContain("Nothing more was published");
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("refreshes a released prerequisite before publishing and retains exact-version proof approval", async () => {
@@ -53,7 +53,7 @@ it("refreshes a released prerequisite before publishing and retains exact-versio
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
     expect(f.task.checkedProofDecision).not.toEqual(approved);
     expect(f.task.proofRefreshes).toBe(2);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("requires explicit release-gap approval and permits only Petrina's verified version commit, including the pushed restart and shared continuation", async () => {
@@ -82,7 +82,7 @@ it("requires explicit release-gap approval and permits only Petrina's verified v
     delete release.release; release.shipping = preparedRelease; delete release.shipping.pushed;
     writeFileSync(join(release.worktree!, "unexpected.txt"), "unreviewed edit"); await git(release.worktree!, "add", "."); await git(release.worktree!, "commit", "-q", "-m", "Unexpected change");
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("adds final preparation to a plan that omitted delivery approval, while current proof keeps its authorized automatic route", async () => {
@@ -98,7 +98,7 @@ it("adds final preparation to a plan that omitted delivery approval, while curre
     f.scope.work.delivery = "release";
     expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
     expect(proofGap(f.task)).toContain("release version");
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("discards an unpublished release identity before proving and preparing a newly approved version", async () => {
@@ -127,7 +127,7 @@ it("discards an unpublished release identity before proving and preparing a newl
     expect(await f.engine["shipping"]["readyToShip"](f.scope, signal())).toBe("ready");
     expect(await f.engine["shipping"]["prepare"](f.scope, f.ship, signal())).toBe("ready");
     expect(f.scope.work.proofRelease!.start).not.toBe(start); expect(f.scope.work.shipping!.prepared!.tested).not.toBe(tested);
-  } finally { choose.mockRestore(); notes.mockRestore(); await f.engine.shutdown(); }
+  } finally { choose.mockRestore(); notes.mockRestore(); await f.close(); }
 });
 
 it("retains an exact local update awaiting its push while rejecting a newer destination version", async () => {
@@ -141,7 +141,7 @@ it("retains an exact local update awaiting its push while rejecting a newer dest
     await f.advance();
     expect(await f.engine["shipping"]["proofApprovalCurrent"](f.task, signal(), true)).toBe(false);
     expect(f.scope.work.shipping.localUpdated).toBe(tested);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("guards a pending local push through interrupted delivery recovery while preserving an already published result", async () => {
@@ -170,5 +170,5 @@ it("guards a pending local push through interrupted delivery recovery while pres
     expect(await f.engine["shipping"].deliver(f.task, f.ship, signal())).toBe("stop");
     expect(push).not.toHaveBeenCalled(); expect(f.scope.work.landed?.sha).toBe(tested.slice(0, 7));
     expect(f.scope.work.confirmedDelivery?.sha).toBe(tested);
-  } finally { push.mockRestore(); refs.mockRestore(); contains.mockRestore(); connection.mockRestore(); await f.engine.shutdown(); }
+  } finally { push.mockRestore(); refs.mockRestore(); contains.mockRestore(); connection.mockRestore(); await f.close(); }
 });

@@ -85,7 +85,7 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`ke
       f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
       expect(f.task.approvedProofDecision).toEqual({ versions, statuses: { [request.id]: "unverified" } });
     }
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 for (const output of ["checks", "tester"] as const) it(`settles requested proof when only ${output === "checks" ? "the automated checks" : "the final Tester"} left new output files`, async () => {
@@ -107,7 +107,7 @@ for (const output of ["checks", "tester"] as const) it(`settles requested proof 
     expect(f.task.timeline.some(entry => entry.text.startsWith("This acceptance run cannot verify"))).toBe(false);
     expect(await git(worktree, "status", "--porcelain")).toBe("");
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toBe("Ready to ship “Keep required Linux proof current”");
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 for (const committed of [false, true]) it(`keeps the first read-only acceptance run unverified after Petrina undoes its ${committed ? "commit" : "tracked edit"}, without a repair or an unchanged retry`, async () => {
@@ -147,7 +147,7 @@ for (const committed of [false, true]) it(`keeps the first read-only acceptance 
     expect(fakes.openings("tester")).toHaveLength(1); expect(f.task.stageIndex).toBe(3);
     const delivery = f.engine.s.inbox.find(item => item.kind === "delivery")!;
     expect(delivery.title).toContain("1 acceptance check could not be verified"); expect(delivery.body).toContain(ACCEPTANCE_RESTORED);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 for (const edited of [false, true]) it(`${edited ? "waits for your decision" : "still delivers on its own"} with delivery approval off and no requested proof after a ${edited ? "first acceptance run Petrina had to undo" : "clean first acceptance run"}`, async () => {
@@ -185,7 +185,7 @@ for (const edited of [false, true]) it(`${edited ? "waits for your decision" : "
     // The coordinator's explicit decision still ships it.
     f.engine.approve(delivery!.id); await f.drive();
     expect(f.scope.work.landed).toBeDefined(); expect(await git(product.path!, "rev-parse", "main")).not.toBe(main);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 for (const [where, change] of [["active", "edit"], ["companion", "edit"], ["companion", "commit"], ["companion", "output"]] as const) it(`${change === "output" ? "keeps" : "invalidates"} the whole shared acceptance run when the Tester leaves ${change === "output" ? "new output" : change === "edit" ? "a tracked edit" : "a commit"} in the ${where} product`, async () => {
@@ -220,5 +220,5 @@ for (const [where, change] of [["active", "edit"], ["companion", "edit"], ["comp
     if (where === "companion") expect(f.task.timeline.some(entry => entry.text === `Undid ${change === "commit" ? "commits" : "changes"} in ${name} from Tester, which is read-only`)).toBe(true);
     // The invalid run keeps the item's ownership and versions rather than reassigning them, and any earlier unavailable reason.
     expect(f.task.brief.acceptance[0]).toEqual({ text: "A greeting file exists", productIds: [other.id], versions: { [other.id]: before[other.id]! }, verification: "blocked", reason: `${ACCEPTANCE_RESTORED} Together: no valid affected products were assigned. The coordinator must resolve ownership.` });
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

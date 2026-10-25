@@ -18,7 +18,7 @@ it("starts a genuinely fresh acceptance run after a pause, keeping the paused at
     f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before the pause\n" }], testerProofAnswers: passes([request.id]) });
     const driving = f.drive();
-    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work");
+    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work", undefined, { during: driving });
     f.engine.pause(f.task.id); await driving;
     const paused = testerSteps(f).at(-1)!;
     expect(paused.proofRun!.restored!.products).toEqual([{ productId: f.task.productId, edits: true, files: ["tester-edit.txt"] }]);
@@ -32,5 +32,5 @@ it("starts a genuinely fresh acceptance run after a pause, keeping the paused at
     expect(paused).toMatchObject({ outcome: "Stopped before a result", reason: "Petrina undid changes during this attempt; the next run starts fresh" });
     expect(paused.proofRun!.restored).toBeDefined(); expect(paused.acceptanceChecks).toBeUndefined();
     expect(f.task.acceptanceUnverified).toBe(false); expect(f.task.acceptancePassed).toBe(true);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED } from "@petrina/core";
-import { Engine, type EngineOptions } from "../../engine.js";
+import type { EngineOptions } from "../../engine.js";
 import { Fakes, git, tempDir, waitFor } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { Store } from "@petrina/storage/store";
@@ -32,7 +32,7 @@ for (const extra of [false, true]) it(`recovers Tester restoration once after sh
     f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ reopen: "resume", tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before Petrina closes\n" }], testerProofAnswers: passes([request.id]) });
     driving = f.drive();
-    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the real Tester to be at work");
+    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the real Tester to be at work", undefined, { during: driving });
     let record: ExtraValidation | undefined;
     if (extra) {
       const reply = await new Coordination(f.engine).call("validation.run", { taskId: f.task.id, requestId: "late-shutdown-extra", name: "Required platform check", reason: "Verify shutdown evidence isolation", image: "local:ready", argv: ["probe", "hold"] });
@@ -43,7 +43,7 @@ for (const extra of [false, true]) it(`recovers Tester restoration once after sh
       const container = f.engine.extraValidations["container"], cleanup = container.cleanup.bind(container);
       container.cleanup = async owned => { entered.resolve(); await released.promise; return cleanup(owned); };
     }
-    f.engine.setPoolPaused(true); stopping = f.engine.shutdown();
+    f.engine.setPoolPaused(true); stopping = f.stop(f.engine);
     if (extra) await entered.promise;
     await driving;
     const cleanup = f.task.acceptanceCleanupPending!, marker = join(f.engine.dataDir, "acceptance-restorations", `${cleanup}.json`);
@@ -64,7 +64,7 @@ for (const extra of [false, true]) it(`recovers Tester restoration once after sh
         expect(task.timeline.filter(line => line.text.includes("Extra validation") && line.text.includes("seconds"))).toHaveLength(1);
       }
     } finally { saved.close(); }
-    f.engine = new Engine(f.engine.dataDir, settings); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, settings); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     expect(f.task.timeline.filter(line => line.text === warning)).toHaveLength(1);
     expect(f.task.acceptanceCleanupPending).toBeUndefined(); expect(existsSync(marker)).toBe(false);
@@ -82,7 +82,7 @@ for (const extra of [false, true]) it(`recovers Tester restoration once after sh
     expect(f.task.acceptancePassed).toBe(false); expect(f.task.acceptanceUnverified).toBe(true);
     expect(f.task.proofRequests![0]).toMatchObject({ status: "unverified", proof: { result: "blocked", reason: ACCEPTANCE_RESTORED } });
     expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
-  } finally { released.resolve(); await stopping; await driving; await f.engine.shutdown(); }
+  } finally { released.resolve(); await f.close(); }
 });
 
 for (const outcome of ["kept", "clean", "unwritable", "unreadable"] as const) it(`${outcome === "clean" ? "settles" : "keeps unverified"} a run resumed after Petrina closed mid-test when the cleanup's record is ${outcome}`, async () => {
@@ -90,7 +90,7 @@ for (const outcome of ["kept", "clean", "unwritable", "unreadable"] as const) it
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(false, false, fakes);
   const reopen = async () => {
-    f.engine = new Engine(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
   };
   const saved = () => { const store = new Store(join(f.engine.dataDir, "petrina.db")); try { return store.load()!.tasks.find(task => task.id === f.task.id)!; } finally { store.close(); } };
@@ -102,11 +102,11 @@ for (const outcome of ["kept", "clean", "unwritable", "unreadable"] as const) it
     f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ reopen: "resume", tester: "work", ...(outcome === "clean" ? {} : { testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before Petrina closes\n" }] }), testerProofAnswers: passes([request.id]) });
     const driving = f.drive();
-    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work");
+    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work", undefined, { during: driving });
     expect(f.task.acceptanceRun!.restored).toBeUndefined();
     // A file where the record's folder belongs makes the record impossible to write.
     if (outcome === "unwritable") writeFileSync(folder, "Not a folder\n");
-    f.engine.setPoolPaused(true); await f.engine.shutdown(); await driving;
+    f.engine.setPoolPaused(true); await f.stop(f.engine); await driving;
     expect(readFileSync(join(worktree, "tester-edit.txt"), "utf8")).toBe("Saved before acceptance\n");
     // The last save marked the run with its cleanup's identity before the cleanup could look; only that cleanup's record can clear it.
     const cleanup = saved().acceptanceCleanupPending!, record = join(folder, `${cleanup}.json`);
@@ -143,12 +143,12 @@ for (const outcome of ["kept", "clean", "unwritable", "unreadable"] as const) it
     if (outcome !== "kept") return;
     // A record no marked run names, such as one an earlier start could not remove, changes nothing and goes.
     const lines = f.task.timeline.length;
-    f.engine.setPoolPaused(true); await f.engine.shutdown();
+    f.engine.setPoolPaused(true); await f.stop(f.engine);
     mkdirSync(folder, { recursive: true });
     writeFileSync(record, JSON.stringify({ taskId: f.task.id, cleanup, restored: { at: 1, products: restored }, lines: ["An unrelated record"] }));
     await reopen();
     expect(existsSync(record)).toBe(false); expect(f.task.acceptanceRun).toBeUndefined(); expect(f.task.timeline).toHaveLength(lines);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 for (const folderState of ["locked", "writable"] as const) it(`keeps a run unverified after a second close ${folderState === "locked" ? "when only an earlier cleanup's record of it remains" : "whose cleanup's record arrives"}`, async () => {
@@ -156,7 +156,7 @@ for (const folderState of ["locked", "writable"] as const) it(`keeps a run unver
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(false, false, fakes);
   const reopen = async () => {
-    f.engine = new Engine(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
   };
   const saved = () => { const store = new Store(join(f.engine.dataDir, "petrina.db")); try { return store.load()!.tasks.find(task => task.id === f.task.id)!; } finally { store.close(); } };
@@ -169,8 +169,8 @@ for (const folderState of ["locked", "writable"] as const) it(`keeps a run unver
     f.products[0]!.shipLowRisk = true; f.task.retest = true; f.task.stageIndex = 1;
     fakes.scenario({ reopen: "resume", tester: "work", testerProofAnswers: passes([request.id]) });
     const driving = f.drive();
-    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work");
-    f.engine.setPoolPaused(true); await f.engine.shutdown(); await driving;
+    await waitFor(() => fakes.marked("tester-worked") && f.scope.work.conversation?.briefed, "the Tester to be at work", undefined, { during: driving });
+    f.engine.setPoolPaused(true); await f.stop(f.engine); await driving;
     // A genuine record that this cleanup undid nothing, for this same task and run.
     const first = saved().acceptanceCleanupPending!, earlier = join(folder, `${first}.json`);
     expect(JSON.parse(readFileSync(earlier, "utf8"))).toEqual({ taskId: f.task.id, cleanup: first, lines: [] });
@@ -181,9 +181,9 @@ for (const folderState of ["locked", "writable"] as const) it(`keeps a run unver
     // The same conversation goes on, edits the saved file and is still working when Petrina closes again.
     rmSync(join(fakes.dir, "tester-worked"));
     fakes.scenario({ reopen: "resume", tester: "work", testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited after the first close\n" }], testerProofAnswers: passes([request.id]) });
-    const working = f.engine["work"].runDo(f.scope, f.tester, signal()).then(() => undefined, (error: unknown) => error);
-    await waitFor(() => fakes.marked("tester-worked") && readFileSync(edited, "utf8") === "Edited after the first close\n", "the resumed Tester to edit");
-    f.engine.setPoolPaused(true); await f.engine.shutdown(); await working;
+    const working = f.run(f.engine, () => f.engine["work"].runDo(f.scope, f.tester, signal()).then(() => undefined, (error: unknown) => error));
+    await waitFor(() => fakes.marked("tester-worked") && readFileSync(edited, "utf8") === "Edited after the first close\n", "the resumed Tester to edit", undefined, { during: working });
+    f.engine.setPoolPaused(true); await f.stop(f.engine); await working;
     expect(readFileSync(edited, "utf8")).toBe("Saved before acceptance\n");
     const second = saved().acceptanceCleanupPending!;
     expect(second).not.toBe(first); expect(existsSync(join(folder, `${second}.json`))).toBe(folderState === "writable");
@@ -204,7 +204,7 @@ for (const folderState of ["locked", "writable"] as const) it(`keeps a run unver
     expect(proof.status).toBe("unverified"); expect(proof.proof).toMatchObject({ stepId: final.id, result: "blocked", reason: folderState === "writable" ? ACCEPTANCE_RESTORED : ACCEPTANCE_UNACCOUNTED });
     expect(f.task.acceptancePassed).toBe(false); expect(f.task.acceptanceUnverified).toBe(true);
     expect(f.task.findings).toEqual([]); expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
-  } finally { locked?.restore(); await f.engine.shutdown(); }
+  } finally { locked?.restore(); await f.close(); }
 });
 
 for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) it(`keeps the resumed run unverified when Petrina closes after the Tester answered, with its cleanup ${phase === "approval-off" ? "starting in a plan without the delivery check" : `held when ${phase}`}`, async () => {
@@ -213,7 +213,7 @@ for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) 
   const shared = phase === "companion", gated = phase !== "approval-off", committed = phase === "commit" || phase === "companion";
   const f = await fixture(shared, false, fakes);
   const reopen = async () => {
-    f.engine = new Engine(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
   };
   const saved = () => { const store = new Store(join(f.engine.dataDir, "petrina.db")); try { return store.load()!.tasks.find(task => task.id === f.task.id)!; } finally { store.close(); } };
@@ -233,9 +233,9 @@ for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) 
       return original(path, ...rest);
     }) as never);
     fakes.scenario({ reopen: "resume", testerFiles: [{ dir: touched.worktree, file: "tester-edit.txt", text: "Changed during acceptance\n", commit: committed }], ...(request ? { testerProofAnswers: passes([request.id]) } : {}) });
-    const running = f.engine["work"].runDo(f.scope, f.tester, signal()).then(() => undefined, (error: unknown) => error);
-    await waitFor(() => holding, `the cleanup to reach the ${phase} point`);
-    const stopping = f.engine.shutdown(); release.resolve(); await stopping; await running;
+    const running = f.run(f.engine, () => f.engine["work"].runDo(f.scope, f.tester, signal()).then(() => undefined, (error: unknown) => error));
+    await waitFor(() => holding, `the cleanup to reach the ${phase} point`, undefined, { during: running });
+    const stopping = f.stop(f.engine); release.resolve(); await stopping; await running;
     spy.mockRestore(); spy = undefined;
     expect(readFileSync(join(touched.worktree, "tester-edit.txt"), "utf8")).toBe("Saved before acceptance\n");
     expect(await git(touched.worktree, "status", "--porcelain")).toBe("");
@@ -256,7 +256,7 @@ for (const phase of Object.keys(cleanupHolds) as (keyof typeof cleanupHolds)[]) 
     expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
     if (request) expect(f.task.proofRequests![0]).toMatchObject({ status: "unverified", proof: { result: "blocked", reason: ACCEPTANCE_RESTORED } });
     else expect(f.task.plan!.stages.some(stage => stage.kind === "gate" && stage.gate === "delivery")).toBe(true);
-  } finally { release.resolve(); spy?.mockRestore(); await f.engine.shutdown(); }
+  } finally { release.resolve(); spy?.mockRestore(); await f.close(); }
 });
 
 it("keeps an undone change with its acceptance run through a stand-in and a restart, then settles it unverified once", async () => {
@@ -270,16 +270,16 @@ it("keeps an undone change with its acceptance run through a stand-in and a rest
     f.task.retest = true; f.task.stageIndex = 1;
     // The first Tester edits and runs out of usage; its stand-in edits nothing and works until Petrina restarts.
     fakes.scenario({ tester: "work", limited: [{ model: "opus", role: "tester" }], testerFiles: [{ dir: worktree, file: "tester-edit.txt", text: "Edited before running out\n", model: "opus" }], testerProofAnswers: passes([request.id]) });
-    const first = f.engine["work"].runDo(f.scope, f.tester, signal()).then(() => undefined, (error: unknown) => error);
-    await waitFor(() => fakes.marked("tester-worked"), "the stand-in Tester to be at work");
+    const first = f.run(f.engine, () => f.engine["work"].runDo(f.scope, f.tester, signal()).then(() => undefined, (error: unknown) => error));
+    await waitFor(() => fakes.marked("tester-worked"), "the stand-in Tester to be at work", undefined, { during: first });
     const restored = [{ productId: f.task.productId, edits: true, files: ["tester-edit.txt"] }];
     expect(f.task.acceptanceRun!.restored!.products).toEqual(restored);
     expect(testerSteps(f)).toHaveLength(2);
     expect(testerSteps(f).every(step => step.proofRun?.restored?.products.length === 1)).toBe(true);
     expect(readFileSync(join(worktree, "tester-edit.txt"), "utf8")).toBe("Saved before acceptance\n");
     const run = structuredClone(f.task.acceptanceRun);
-    f.engine.setPoolPaused(true); await f.engine.shutdown(); await first;
-    f.engine = new Engine(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine.setPoolPaused(true); await f.stop(f.engine); await first;
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.engine.setPoolPaused(false); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     expect(f.task.acceptanceRun).toEqual(run);
     await f.engine["work"].runDo(f.scope, f.tester, signal());
@@ -288,5 +288,5 @@ it("keeps an undone change with its acceptance run through a stand-in and a rest
     expect(final.profileId).not.toBe("opus-high"); expect(final.proofRun!.restored!.products).toEqual(restored);
     expect(f.task.acceptanceUnverified).toBe(true); expect(f.task.acceptanceRun).toBeUndefined();
     expect(f.task.findings).toEqual([]); expect(f.scope.work.acceptanceReturns).toBeUndefined();
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

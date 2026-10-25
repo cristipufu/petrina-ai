@@ -1,0 +1,66 @@
+import { lstatSync } from "node:fs";
+import { FixtureOperations } from "@petrina/test-support/fixture-operations";
+import { CLEANUP_MS } from "@petrina/test-support/commands";
+import { SLOW } from "@petrina/test-support/slow";
+import { Engine, type EngineOptions } from "../engine.js";
+import { removeDir } from "../fixtures.js";
+
+/** removeDir is best effort; disposal is complete only when the private folder is absent. */
+export function removeFixtureRoot(root: string): void {
+  removeDir(root);
+  try { lstatSync(root); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  throw new Error(`Direct-driver fixture could not remove ${root}`);
+}
+
+/** Actual Engine generations plus manual operations omitted from the Engine's normal drain. */
+export function directDrivers(root: string) {
+  const active = new Map<Engine, FixtureOperations>();
+  const completed = new WeakSet<Engine>();
+  let closing = false;
+  const deadlines = {
+    allowanceMs: CLEANUP_MS * SLOW,
+    arm(expired: () => void, ms: number) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
+  };
+  const owner = new FixtureOperations({
+    ...deadlines, label: `Direct-driver fixture at ${root}`,
+    stop: async () => {
+      const settled = await Promise.allSettled([...active.values()].map(generation => generation.close()));
+      const failed = settled.filter(result => result.status === "rejected");
+      if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Engine generations could not all be stopped");
+    },
+    dispose: () => removeFixtureRoot(root),
+  });
+  const open = (dataDir: string, options: EngineOptions = {}): Engine => {
+    if (closing) throw new Error("Direct-driver fixture is closing; no Engine may open");
+    if (active.size) throw new Error("Stop and settle the current Engine before opening its replacement");
+    const engine = new Engine(dataDir, options);
+    const generation = new FixtureOperations({
+      ...deadlines, label: `Engine generation at ${dataDir}`,
+      stop: () => engine.shutdown(),
+      dispose: () => { active.delete(engine); completed.add(engine); },
+    });
+    active.set(engine, generation);
+    return engine;
+  };
+  const run = <T>(engine: Engine, start: () => Promise<T>): Promise<T> => {
+    const generation = active.get(engine);
+    if (!generation) return Promise.reject(new Error("Manual work needs an active owned Engine generation"));
+    return generation.run(start);
+  };
+  const stop = (engine: Engine): Promise<void> => {
+    if (completed.has(engine)) return Promise.resolve();
+    const generation = active.get(engine);
+    if (!generation) return Promise.reject(new Error("Cannot stop an unowned Engine generation"));
+    return generation.close();
+  };
+  const close = (): Promise<void> => { closing = true; return owner.close(); };
+  return { open, run, stop, close };
+}
+
+/** Observe every fixture owner before reporting any failure; retain shared stand-in folders on uncertainty. */
+export async function closeDirectDrivers(owners: Iterable<ReturnType<typeof directDrivers>>): Promise<void> {
+  const settled = await Promise.allSettled([...owners].map(owner => owner.close()));
+  const failed = settled.filter(result => result.status === "rejected");
+  if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Direct-driver fixtures could not all be closed");
+}

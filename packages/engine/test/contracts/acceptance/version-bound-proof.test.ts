@@ -1,6 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
 import { beginAgentStep } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { versionsOf } from "../../../src/repositories.js";
 import { recordReviewProofs } from "@petrina/orchestrator";
 import { ReviewResult } from "../../../src/roles.js";
@@ -46,11 +45,11 @@ for (const brief of [false, true]) it(`forces exact-version proof after unchange
     expect(checkpoint.proofRequests![0]!.status).toBe("stale");
     expect(checkpoint.proofRefreshes).toBe(2);
     expect(checkpoint.acceptance!.evidence.products[0]!.state).toBe("same-change");
-    const id = f.task.id; f.engine.setPoolPaused(true); await f.engine.shutdown();
-    const restored = new Engine(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); restored.schedule = () => {};
+    const id = f.task.id; f.engine.setPoolPaused(true); await f.stop(f.engine);
+    const restored = f.open(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); restored.schedule = () => {};
     try { expect(restored.task(id)!.proofRefreshes).toBe(2); expect(restored.task(id)!.proofRequests![0]!.status).toBe("stale"); }
-    finally { await restored.shutdown(); }
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+    finally { await f.stop(restored); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 for (const refreshes of [0, 1]) it(`refreshes proof after main moves during final testing, with ${2 - refreshes} main refreshes available`, async () => {
@@ -68,7 +67,7 @@ for (const refreshes of [0, 1]) it(`refreshes proof after main moves during fina
     expect(f.task.proofRefreshBlocked).toBe(!!refreshes);
     expect(f.task.stageIndex).toBe(3);
     f.engine.s.inbox = []; await f.drive(); expect(reply).toHaveBeenCalledTimes(2 - refreshes);
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("passes proof-only review without votes or Builder work, freezes peer context and tests once after both main advances", async () => {
@@ -91,7 +90,7 @@ it("passes proof-only review without votes or Builder work, freezes peer context
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.proofRequests![0]!.status).toBe("proved");
     expect(f.task.journey!.filter(step => step.roleId === "builder")).toHaveLength(0);
     expect(f.task.rounds.review).toBeUndefined();
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("keeps ordinary unchanged-patch reuse and already-current proof without an additional Tester", async () => {
@@ -100,5 +99,5 @@ it("keeps ordinary unchanged-patch reuse and already-current proof without an ad
     await f.recordPass([]); await f.advance(); await f.drive(); expect(reply).not.toHaveBeenCalled();
     f.engine.s.inbox = []; await f.request(); await f.recordPass(); await f.drive(); expect(reply).not.toHaveBeenCalled();
     expect(f.task.proofRequests![0]!.status).toBe("proved");
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });

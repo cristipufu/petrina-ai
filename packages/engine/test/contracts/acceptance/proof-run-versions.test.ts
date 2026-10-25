@@ -2,7 +2,6 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sameVersions } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { git } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../../../src/repositories.js";
@@ -31,7 +30,7 @@ for (const proof of [false, true]) it(`takes a new prepared snapshot after a fai
       if (proof) expect(f.task.proofRequests![0]!.status).toBe("proved");
       expect(f.task.proofRefreshes).toBeUndefined();
     } finally { reply.mockRestore(); }
-  } finally { broken.mockRestore(); review.mockRestore(); await f.engine.shutdown(); }
+  } finally { broken.mockRestore(); review.mockRestore(); await f.close(); }
 });
 
 for (const savedConversation of [false, true]) it(`binds a restarted Tester to its ${savedConversation ? "saved conversation" : "newly prepared copy"}`, async () => {
@@ -39,19 +38,19 @@ for (const savedConversation of [false, true]) it(`binds a restarted Tester to i
   const versions = await versionsOf(f.task);
   f.task.acceptanceRun = { versions, changes: await changesOf(f.task), requestIds: [f.task.proofRequests![0]!.id] };
   if (savedConversation) f.scope.work.conversation = { step: stepKey(f.task), roleId: "tester", profileId: "opus-high", toolId: "claude", model: "opus", sessionId: "saved-tester", startedAt: 1 };
-  f.engine.setPoolPaused(true); await f.engine.shutdown();
-  f.engine = new Engine(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
+  f.engine.setPoolPaused(true); await f.stop(f.engine);
+  f.engine = f.open(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
   await f.engine.waitUntilReady(); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task); f.engine.setPoolPaused(false);
   const reply = testerReply(f, passes); const review = spyOn(f.engine["reviews"], "runReview").mockResolvedValue("stop");
   try {
     await f.advance(); f.task.state = "running";
     const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
-    try { await f.engine["driver"].workflow["drive"](f.task.id); } finally { admit.mockRestore(); }
+    try { await f.run(f.engine, () => f.engine["driver"].workflow["drive"](f.task.id)); } finally { admit.mockRestore(); }
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.acceptancePassed).toBe(true);
     expect(f.task.testedVersions).toEqual(await versionsOf(f.task));
     expect(sameVersions(f.task.testedVersions, versions)).toBe(savedConversation);
     expect(f.task.proofRequests![0]!.status).toBe("proved"); expect(f.task.proofRefreshes).toBeUndefined();
-  } finally { reply.mockRestore(); review.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); review.mockRestore(); await f.close(); }
 });
 
 for (const shared of [false, true]) for (const unrelated of shared ? [false, true] : [false]) for (const result of ["pass", "fail"] as const) it(`preserves ${result} for ${shared ? "shared" : "single"} proof when ${unrelated ? "another" : "an affected"} product changes during testing`, async () => {
@@ -79,5 +78,5 @@ for (const shared of [false, true]) for (const unrelated of shared ? [false, tru
       finally { refresh.mockRestore(); }
     }
     expect(f.task.proofRefreshes).toBeUndefined();
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });

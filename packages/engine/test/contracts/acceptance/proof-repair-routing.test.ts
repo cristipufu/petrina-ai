@@ -25,7 +25,7 @@ it("routes reproduced proof failures by request id even with identical text and 
     await f.drive();
     expect(stop).toHaveBeenCalled(); expect(f.task.retest).toBe(true);
     stop.mockRestore();
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("never starts a Tester while configured checks fail and preserves the existing Builder return", async () => {
@@ -33,10 +33,10 @@ it("never starts a Tester while configured checks fail and preserves the existin
   try {
     await f.request(); f.engine.setProductChecks(f.task.productId, [{ name: "Tests", command: commandText([process.execPath, "-e", "console.error('reproduced check failure');process.exit(1)"]) }]);
     const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(false);
-    await f.engine["driver"].workflow["drive"](f.task.id); admit.mockRestore();
+    await f.run(f.engine, () => f.engine["driver"].workflow["drive"](f.task.id)); admit.mockRestore();
     expect(reply).not.toHaveBeenCalled(); expect(f.task.stageIndex).toBe(0); expect(f.scope.work.checkReturns).toBe(1);
     expect(f.task.findings[0]!.raisedBy).toBe("petrina"); expect(f.task.proofRequests![0]!.status).toBe("pending");
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("keeps real and mixed code findings on their normal review repair route", async () => {
@@ -51,7 +51,7 @@ it("keeps real and mixed code findings on their normal review repair route", asy
       expect(f.task.stageIndex).toBe(0); expect(f.task.fixing).toBe(true); expect(f.task.rounds.review).toBe(2);
       expect(f.task.findings[0]!.status).toBe("open");
       if (mixed) { expect(f.task.proofRequests![0]!.status).toBe("pending"); expect(proofContext(f.task.proofRequests!)).toContain("final acceptance"); }
-    } finally { await f.engine.shutdown(); }
+    } finally { await f.close(); }
   }
 });
 
@@ -69,7 +69,7 @@ it("retains acceptance failure limits and does not charge main-only refreshes fo
       expect(f.task.stageIndex).toBe(turn < 3 ? 0 : 3);
     }
     expect(reply).toHaveBeenCalledTimes(3); expect(f.task.findings).toHaveLength(1); expect(f.task.acceptanceBlocked).toBe(true);
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("tries a newly pending request despite an earlier unavailable acceptance result", async () => {
@@ -81,7 +81,7 @@ it("tries a newly pending request despite an earlier unavailable acceptance resu
     await f.request(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.proofRequests![0]!.status).toBe("proved");
     expect(f.scope.work.acceptanceReturns).toBeUndefined();
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("keeps an ordinary reproduced checklist failure's Builder retries when requested platform proof is unavailable", async () => {
@@ -100,5 +100,5 @@ it("keeps an ordinary reproduced checklist failure's Builder retries when reques
       await f.engine["work"].runDo(f.scope, f.tester, signal());
       expect(f.scope.work.acceptanceReturns).toBe(2); expect(f.task.stageIndex).toBe(turn === 2 ? 0 : 3);
     }
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });

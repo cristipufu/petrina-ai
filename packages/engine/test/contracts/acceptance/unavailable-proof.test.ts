@@ -13,5 +13,5 @@ it("keeps unavailable platform proof unverified, never auto-ships and never retr
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("could not be verified");
     f.engine.s.inbox = []; await f.drive(); expect(reply).toHaveBeenCalledTimes(1);
     expect(f.task.approvedProofDecision).toBeUndefined();
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });

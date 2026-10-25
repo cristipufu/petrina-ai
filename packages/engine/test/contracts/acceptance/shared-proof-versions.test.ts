@@ -1,7 +1,6 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { sameVersions } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { git } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { versionsOf } from "../../../src/repositories.js";
@@ -21,7 +20,7 @@ it("requires every affected shared product version and bounds main-only shared r
     expect(reply).toHaveBeenCalledTimes(2); expect(f.task.proofRefreshes).toBe(2); expect(request.status).toBe("stale");
     expect(sameVersions(request.proof!.versions, await versionsOf(f.task), request.productIds)).toBe(false);
     expect(f.task.repair).toBeUndefined(); expect(f.task.findings).toEqual([]);
-  } finally { reply.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("binds an explicit decision about A's proof on version B to B, blocks publishing C, and keeps the refresh limit after restart", async () => {
@@ -32,20 +31,20 @@ it("binds an explicit decision about A's proof on version B to B, blocks publish
     expect(Object.values(viewed.statuses)).toEqual(["stale"]);
     f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
     expect(f.task.approvedProofDecision).toEqual(viewed); expect(f.task.stageIndex).toBe(4);
-    f.engine.setPoolPaused(true); await f.engine.shutdown();
+    f.engine.setPoolPaused(true); await f.stop(f.engine);
     const saved = new Store(join(f.engine.dataDir, "petrina.db")); expect(saved.load()!.tasks.find(task => task.id === f.task.id)!.approvedProofDecision).toEqual(viewed); saved.close();
-    f.engine = new Engine(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
+    f.engine = f.open(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); f.engine.schedule = () => {};
     await f.engine.waitUntilReady(); f.task = f.engine.task(f.task.id)!; f.scope = executionFor(f.task);
     f.engine.setPoolPaused(false); await f.advance();
     const destinationBefore = await git(f.products[0]!.path!, "rev-parse", "main");
     expect(await f.engine["shipping"]["readyToShip"](f.scope, signal())).toBe("back");
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined(); expect(f.task.proofRefreshes).toBe(2);
     expect(await git(f.products[0]!.path!, "rev-parse", "main")).toBe(destinationBefore);
-    f.task.state = "running"; await f.engine["driver"].workflow["drive"](f.task.id); expect(f.task.proofRefreshes).toBe(2); expect(f.task.checkedProofDecision).not.toEqual(viewed);
+    f.task.state = "running"; await f.run(f.engine, () => f.engine["driver"].workflow["drive"](f.task.id)); expect(f.task.proofRefreshes).toBe(2); expect(f.task.checkedProofDecision).not.toEqual(viewed);
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
     f.engine.requestChanges(f.engine.s.inbox.find(item => item.kind === "delivery")!.id, "Obtain the required proof after the next fix");
     expect(f.task.proofRefreshes).toBeUndefined();
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("asks after the shared refresh limit even when main moved only outside a request's product subset", async () => {
@@ -61,5 +60,5 @@ it("asks after the shared refresh limit even when main moved only outside a requ
     expect(request.status).toBe("proved"); expect(f.task.proofRefreshBlocked).toBe(true);
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined();
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("two refreshes from main");
-  } finally { reply.mockRestore(); publish.mockRestore(); await f.engine.shutdown(); }
+  } finally { reply.mockRestore(); publish.mockRestore(); await f.close(); }
 });

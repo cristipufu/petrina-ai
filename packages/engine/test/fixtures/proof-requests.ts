@@ -1,22 +1,26 @@
+import { directDrivers, closeDirectDrivers, removeFixtureRoot } from "./direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expect, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { beginAgentStep, refreshProofs, type DeepMutable, type JourneyStep, type ProofRequest, type Product } from "@petrina/core";
-import { Engine, type EngineOptions } from "../engine.js";
-import { Fakes, git, makeProduct, removeDir, tempDir } from "../fixtures.js";
+import type { EngineOptions } from "../engine.js";
+import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../../src/repositories.js";
 import { commandText } from "../../src/checks.js";
 
 export function proofRequestFixtures() {
 const roots: string[] = [];
+const fixtures = new Set<ReturnType<typeof directDrivers>>();
 const signal = () => new AbortController().signal;
 async function fixture(shared = false, brief = false, fakes?: Fakes, options: EngineOptions = {}) {
   const root = tempDir("petrina-proof-requests-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => fakes ? [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir] : undefined, terminals: () => [], ...options });
+  const lifetime = directDrivers(root); fixtures.add(lifetime);
+  const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
   return setupWithCleanup(async () => {
+    const engine = lifetime.open(join(root, "data"), { agentCommand: () => fakes ? [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir] : undefined, terminals: () => [], ...options });
     engine.schedule = () => {};
     await engine.waitUntilReady();
     engine.setPoolPaused(false);
@@ -76,11 +80,11 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
     };
     const drive = async () => {
       const admit = spyOn(engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
-      try { task.state = "running"; await engine["driver"].workflow["drive"](task.id); if (engine.task(task.id)?.state === "failed") throw new Error(task.error); }
+      try { task.state = "running"; await lifetime.run(engine, () => engine["driver"].workflow["drive"](task.id)); if (engine.task(task.id)?.state === "failed") throw new Error(task.error); }
       finally { admit.mockRestore(); }
     };
-    return { root, engine, task, scope, owners, products, build, tester, review, gate, ship, advance, request, recordPass, drive };
-  }, () => engine.shutdown());
+    return { root, engine, task, scope, owners, products, build, tester, review, gate, ship, advance, request, recordPass, drive, close, open: lifetime.open, stop: lifetime.stop, run: lifetime.run };
+  }, close);
 }
 function testerReply(f: Awaited<ReturnType<typeof fixture>>, answers: (ids: readonly string[]) => unknown[], before?: () => void | Promise<void>, checklist?: unknown[]) {
   return spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, profileId, _given, schema, _signal, options) => {
@@ -116,6 +120,9 @@ function lockRecords(folder: string, kept: string) {
   return { refused, restore: () => { if (!restored) for (const spy of spies) spy.mockRestore(); restored = true; } };
 }
 const cleanupHolds = { answered: "worktreeStatus", detected: "trackedChangesSince", restoring: "discardChanges", commit: "resetTo", companion: "resetTo", "approval-off": "worktreeStatus" } as const;
-async function close() { return roots.forEach(removeDir); }
+async function close() {
+  await closeDirectDrivers(fixtures); fixtures.clear();
+  roots.forEach(removeFixtureRoot);
+}
 return { roots, signal, fixture, testerReply, passes, greetingPass, testerSteps, restoredLine, lockRecords, cleanupHolds, close };
 }

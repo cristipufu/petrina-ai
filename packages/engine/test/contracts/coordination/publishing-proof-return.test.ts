@@ -16,5 +16,5 @@ for (const started of [false, true]) it(`records the publishing return with ${st
     expect(steps).toHaveLength(1); expect(steps[0]!.outcome).toBe("Nothing published; a new delivery decision is needed");
     expect(steps[0]!.endedAt).toBeDefined(); expect(steps[0]!.reason).toContain("differ from your delivery decision");
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined();
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
