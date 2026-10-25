@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getEventListeners } from "node:events";
 import { rejectionOf } from "@petrina/test-support/rejections";
-import { loginShellPath, LoginShellCleanupError, type LoginShellProcess } from "../../../src/login-shell.js";
+import { loginShellPath, LoginShellCleanupError, type LoginShellOptions, type LoginShellProcess } from "../../../src/login-shell.js";
 import type { ProcessDeadline } from "../../../src/process-capabilities.js";
 
 const flush = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
@@ -74,4 +74,28 @@ describe.skipIf(process.platform === "win32")("login-shell cleanup outcomes", ()
     expect(f.timers.size).toBe(0);
     expect(getEventListeners(lifetime.signal, "abort")).toHaveLength(0);
   });
+  it("preserves the adapter's method-backed starter and deadline receivers", async () => {
+    const env = { SHELL: "private-shell" };
+    class Ports implements LoginShellOptions {
+      readonly started: { shell: string; command: string; env: NodeJS.ProcessEnv }[] = [];
+      readonly armed: number[] = [];
+      readonly cancelled: number[] = [];
+      start(shell: string, command: string, environment: NodeJS.ProcessEnv): LoginShellProcess {
+        this.started.push({ shell, command, env: environment });
+        return { stdout: new ReadableStream<Uint8Array>({ start(controller) {
+          controller.enqueue(new TextEncoder().encode("__petrina_env__\nPATH=/private/bin\n__petrina_env__\n")); controller.close();
+        } }), exited: Promise.resolve(0), exitCode: 0,
+        kill() { throw new Error("The completed helper needs no stop request"); } };
+      }
+      arm(_expire: () => void, ms: number) {
+        this.armed.push(ms); return () => { this.cancelled.push(ms); };
+      }
+    }
+    const ports = new Ports();
+    expect(await loginShellPath(env, 4_000, ports)).toBe("/private/bin");
+    expect(ports.started).toEqual([{ shell: "private-shell", command: "echo __petrina_env__; /usr/bin/env; echo __petrina_env__", env }]);
+    expect(ports.armed).toEqual([4_000, 500]);
+    expect(ports.cancelled).toEqual([4_000, 500]);
+  });
+
 });

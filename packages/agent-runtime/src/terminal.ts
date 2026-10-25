@@ -1,3 +1,4 @@
+import { terminalOutput } from "./terminal-output.js";
 import { ADAPTERS } from "./tools.js";
 // Take over in the coordinator's own terminal. Petrina writes one small launcher into a folder only
 // the coordinator can read, and asks the usual terminal of the system to run it. The launcher opens
@@ -148,22 +149,8 @@ function sameStart(now: string, noted: string, platform: Platform): boolean {
 
 /** Claude Code's ask-before-acting mode, by the name the installed copy lists in its help. */
 export async function askMode(path: string): Promise<AskMode> {
-  const help = await output([path, "--help"]);
+  const help = await terminalOutput([path, "--help"]) ?? "";
   return /"manual"/.test(help) ? "manual" : "default";
-}
-
-/** What a short command prints, or nothing when it fails or takes longer than 10 seconds. */
-async function output(command: string[]): Promise<string> {
-  try {
-    const proc = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: { ...terminalEnv(process.env), LC_ALL: "C" }, windowsHide: true });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const text = await Promise.race([new Response(proc.stdout).text(), new Promise<string>((resolve) => (timer = setTimeout(() => resolve(""), 10_000)))]);
-    clearTimeout(timer);
-    proc.kill();
-    return text;
-  } catch {
-    return "";
-  }
 }
 
 /** When a process started, as the launcher records it: `ps` in the C locale, or .NET ticks on Windows. */
@@ -172,5 +159,5 @@ async function startTime(pid: number, platform: Platform): Promise<string | unde
     platform === "win32"
       ? ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).StartTime.ToUniversalTime().Ticks`]
       : ["ps", "-o", "lstart=", "-p", String(pid)];
-  return (await output(command)).trim() || undefined;
+  return (await terminalOutput(command) ?? "").trim() || undefined;
 }

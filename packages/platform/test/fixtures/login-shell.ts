@@ -5,10 +5,12 @@ import { createProcessLease } from "@petrina/test-support/process-lease";
 import { CLEANUP_MS, runCommand } from "@petrina/test-support/commands";
 import { removeDir, tempDir, waitForFile } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
 /** A real ready actor with independent parent-death cleanup; no login shell or account setup. */
 export async function preparedLoginShell(kind: "success" | "closed-output" | "stubborn" | "held-output" | "waiting") {
-  const root = tempDir("petrina-owned-login-shell-"), lease = await createProcessLease();
+  const root = tempDir("petrina-owned-login-shell-");
+  const lease = await setupWithCleanup(createProcessLease, () => removeDir(root));
   const ready = join(root, "ready"), go = join(root, "go"), helperReady = join(root, "holder-ready");
   const env = { HOME: root, TMPDIR: root, SHELL: "private-ready-shell" };
   const signals: string[] = [];
