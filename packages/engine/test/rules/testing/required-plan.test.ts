@@ -7,6 +7,8 @@ const manifests = () => new Map(Object.entries({
   "packages/test-support": "bun src/run.ts",
   "packages/storage": "bun ../test-support/src/run.ts",
   "packages/platform": "bun ../test-support/src/run.ts",
+  "packages/agent-runtime": "bun ../test-support/src/run.ts",
+  "packages/repositories": "bun ../test-support/src/run.ts",
 }).map(([workspace, test]) => [`${workspace}/package.json`, JSON.stringify({ scripts: { test } })]));
 
 it("runs every native package in one execution after all independent Vitest prerequisites", () => {
