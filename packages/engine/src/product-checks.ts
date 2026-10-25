@@ -5,7 +5,7 @@ import { beginRepair } from "@petrina/orchestrator";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
-import { beginPetrinaStep, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, runtimeWaitHolds, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
+import { beginPetrinaStep, checkOutcome, checkOutcomeLabel, checkCounts, checkProblem, checkResult, incompleteCheckOutcome, decisionEvidence, gateStatus, evidenceFor, originalCheck, recordCheckReuse, checkProblemTitle, endAgentStep, endPetrinaStep, JOURNEY_WORDS as W, lastIndexWhere, openStep, repositoryPublished, runtimeWaitHolds, stepsFrom, type Id, type ProductCheck, type State, type Task } from "@petrina/core";
 import { livePowerRecords, powerInterruption, readMachineRecords, type MachineRecords } from "./check-interruption.js";
 import * as git from "@petrina/repositories/git";
 import { CheckFinderResult } from "./roles.js";
@@ -158,7 +158,7 @@ export class ProductChecks {
 
   /**
    * The product's checks. The Check finder works them out once per product, and again only when the
-   * CI, build or hook files it read have changed or a check could not even start. Checks the coordinator set
+   * CI, build or hook files it read have changed. Checks the coordinator set
    * by hand are never replaced. Discovery acquires a real agent slot; commands use their own queue.
    */
   async ensureChecks(scope: RepositoryContext, signal: AbortSignal): Promise<readonly ProductCheck[]> {
@@ -170,15 +170,14 @@ export class ProductChecks {
     const continuing = this.k.role(repository.conversation?.roleId ?? "")?.result === "check-discovery";
     if (product.checksBy === "coordinator" && !continuing) return product.checks ?? [];
     const fingerprint = checksFingerprint(repository.worktree);
-    const unstartable = repository.checks?.results.some((run) => run.output.startsWith("Could not start")) ?? false;
-    if (!continuing && product.checks && product.checksFingerprint === fingerprint && !unstartable) return product.checks;
+    if (!continuing && product.checks && product.checksFingerprint === fingerprint) return product.checks;
     // Tasks on different bases have different CI and build files: each reuses what was found for its own.
     const seen = product.checksSeen?.find((entry) => entry.fingerprint === fingerprint);
-    if (!continuing && seen && !unstartable) return seen.checks;
+    if (!continuing && seen) return seen.checks;
     const declared = detectChecks(repository.worktree);
     // A side errand inside the step: it leaves the step's own restart bookkeeping as it found it.
     const restore = beginSideStep(this.k, scope, "check-finder");
-    const why = !product.checks ? "first time" : unstartable ? "a check could not start" : "the CI, build or hook files changed";
+    const why = !product.checks ? "first time" : "the CI, build or hook files changed";
     // On a tool the squad can use, like every other step.
     const finder = this.k.onUsable(CHECK_FINDER_PROFILE);
     let ran: Id = finder;
@@ -429,8 +428,8 @@ export class ProductChecks {
         check.run = { ...event.run };
         check.result = signal.aborted ? "stopped" : checkResult(event.run);
         check.endedAt = event.at;
-        if (!event.run.ok) check.detail = checkDiagnostic(event.run.output);
-        if (!event.run.ok && id.startsWith("check-")) check.namedFailures = namedCheckFailures(event.run.output);
+        if (checkOutcome(event.run).kind !== "passed") check.detail = checkDiagnostic(event.run.output);
+        if (checkOutcome(event.run).kind === "failed" && id.startsWith("check-")) check.namedFailures = namedCheckFailures(event.run.output);
       }
       const running = step!.productChecks!.filter((entry) => entry.result === "running").map((entry) => entry.name);
       task.statusLine = running.length ? `Running checks: ${running.join(", ")}` : "Finishing the check run";
@@ -490,8 +489,8 @@ export class ProductChecks {
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     const failed = this.settleFindings(scope, results);
-    const interrupted = results.some((run) => run.interruption || run.interrupted);
-    for (const entry of entries.values()) if (entry.run && !entry.run.ok) {
+    const interrupted = results.some((run) => { const kind = checkOutcome(run).kind; return kind === "incomplete" || kind === "unavailable"; });
+    for (const entry of entries.values()) if (entry.run && checkOutcome(entry.run).kind === "failed") {
       entry.findingId = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === `Check failed: ${entry.run!.name} (${entry.run!.command})` && (!task.repositories || finding.productIds?.includes(repository.productId)))?.id;
     }
     if (provenance && !failed.length && !interrupted && provenance.tree) {
@@ -504,10 +503,10 @@ export class ProductChecks {
       const commands = [...orderedChecks(checks).map((check) => commandText(check.argv)), ...hooks.map((hook) => hook === "pre-commit" ? "git hook run --ignore-missing pre-commit" : "git hook run commit-msg")];
       provenance.passed = current?.definition === definition
         && JSON.stringify(commands) === JSON.stringify(results.map((run) => run.command))
-        && results.every((run) => run.ok && !run.interruption && !run.interrupted && !run.timedOut && !run.cleanupIncomplete);
+        && results.every((run) => checkOutcome(run).kind === "passed");
       repository.checks.current = provenance.passed;
     }
-    if (results.every((run) => run.ok && !run.interruption && !run.interrupted)) await this.closeEpisode(scope, state);
+    if (results.every((run) => checkOutcome(run).kind === "passed")) await this.closeEpisode(scope, state);
     const incomplete = incompleteCheckOutcome(results.map((run) => ({ name: run.name, result: checkResult(run), run })));
     const failureNames = failed.map((run) => run.name).join(", ");
     this.k.log(scope, failed.length || interrupted ? "warn" : "done", incomplete ? `${incomplete}${failed.length ? ` (${failureNames})` : ""}; original reported results retained` : failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failureNames})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
@@ -517,7 +516,7 @@ export class ProductChecks {
       endPetrinaStep(task, incomplete ? { outcome: incomplete, reason: incomplete, tone: "back" } : failed.length ? { outcome: W.checks(failed.length, results.length), reason: W.checksFailed(failed.length), tone: "back" } : { outcome: W.checks(0, results.length), reason: results.length ? W.checksPassed : W.noChecks }, Date.now());
     }
     this.k.commit();
-    return results.filter((run) => !run.ok || run.interruption || run.interrupted).length;
+    return results.filter((run) => checkOutcome(run).kind !== "passed").length;
   }
 
   /**
@@ -543,7 +542,7 @@ export class ProductChecks {
   /** A builder's answer cannot settle a failed check; only a fresh passing run can. */
   private settleFindings(scope: RepositoryContext, results: readonly CheckRun[]): readonly CheckRun[] {
     const { task, work: repository } = scope;
-    const failed = results.filter((run) => !run.ok && !run.interruption && !run.interrupted);
+    const failed = results.filter((run) => checkOutcome(run).kind === "failed");
     const product = this.k.productOf(scope);
     const declared = new Set([
       ...(product && repository.worktree ? checksFor(product, repository.worktree) : []).map((check) => `Check failed: ${check.name} (${commandText(check.argv)})`),
@@ -554,8 +553,8 @@ export class ProductChecks {
     for (const finding of task.findings) {
       if (finding.raisedBy === "petrina" && (finding.status === "open" || finding.status === "unverified") && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId))) {
         const matching = results.find((run) => finding.text === `Check failed: ${run.name} (${run.command})`);
-        if (!declared.has(finding.text) || (matching?.ok && !matching.interruption && !matching.interrupted)) finding.status = "fixed";
-        else if (matching?.interruption || matching?.interrupted) finding.status = "unverified";
+        if (!declared.has(finding.text) || (matching && checkOutcome(matching).kind === "passed")) finding.status = "fixed";
+        else if (matching && checkOutcome(matching).kind !== "failed") finding.status = "unverified";
       }
     }
     for (const run of failed) {
@@ -627,10 +626,9 @@ export class ProductChecks {
       if (hooks.length) return false;
     }
     const matched = (!!tree && repository.checks.tree === tree) || (!!sha && repository.checks.sha === sha);
-    if (matched) repository.checks.definition = definition;
     // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
     // their inputs stayed unchanged. Revalidate passes; a captured failure still blocks without retrying.
-    if (matched && repository.checks.results.every((run) => run.ok) && hooks.length) return false;
+    if (matched && repository.checks.results.every((run) => checkOutcome(run).kind === "passed") && hooks.length) return false;
     return matched;
   }
 
@@ -739,14 +737,14 @@ export class ProductChecks {
       }
       // Rereading a saved failure is no new attempt; a saved pass on this code and these definitions is a genuine pass.
       this.settleFindings(scope, saved.results);
-      const passed = saved.results.every((run) => run.ok && !run.interruption && !run.interrupted);
+      const passed = saved.results.every((run) => checkOutcome(run).kind === "passed");
       if (passed) await this.closeEpisode(scope, state);
       // The reuse and its basis are saved on the step that ran the original, so the evidence survives restarts and later runs.
       const host = (saved.provenance ? task.journey?.find((step) => step.id === saved.provenance!.nodeId) : undefined) ?? task.journey?.at(-1);
       if (host) host.reuses = [...(host.reuses ?? []), { at: Date.now(), purpose, productId: repository.productId, ...(saved.provenance ? { attemptId: saved.provenance.attemptId } : {}), basis: state.tree && saved.tree === state.tree ? "same-tree" : "same-commit", originalAt: saved.at, ...(saved.sha ? { sha: saved.sha } : {}), ...(saved.tree ? { tree: saved.tree } : {}), ...(saved.definition ? { definition: saved.definition } : {}), passed }];
       recordCheckReuse(scope.task, repository, Date.now());
       this.k.commit();
-      return saved.results.some((run) => !run.ok || run.interruption || run.interrupted);
+      return saved.results.some((run) => checkOutcome(run).kind !== "passed");
     }
     return (await this.runProductChecks(scope, checks, signal, await this.savedProductResults(scope, checks, state), state, prepare)) > 0;
   }
@@ -881,11 +879,11 @@ export class ProductChecks {
     const stages = task.plan?.stages ?? [];
     const shared = !!task.repositories;
     const failing = scopesFor(task).flatMap((scope) => {
-      const runs = scope.work.checks?.results.filter((run) => !run.ok || run.interruption || run.interrupted) ?? [];
+      const runs = scope.work.checks?.results.filter((run) => checkOutcome(run).kind !== "passed") ?? [];
       return runs.length ? [{ scope, runs, name: this.k.productOf(scope)?.name ?? scope.work.productId }] : [];
     });
-    const names = failing.flatMap(({ runs, name }) => runs.filter((run) => !run.interruption && !run.interrupted).map((run) => shared ? `${name}: ${run.name}` : run.name));
-    const unverifiedNames = failing.flatMap(({ runs, name }) => runs.filter((run) => run.interruption || run.interrupted).map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const names = failing.flatMap(({ runs, name }) => runs.filter((run) => checkOutcome(run).kind === "failed").map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const unverifiedNames = failing.flatMap(({ runs, name }) => runs.filter((run) => checkOutcome(run).kind !== "failed").map((run) => shared ? `${name}: ${run.name}` : run.name));
     const turns = (count: number) => `${count} automatic Builder ${count === 1 ? "turn" : "turns"}`;
     const sections = failing.map(({ scope, runs, name }) => {
       const attempts = scope.work.checkReturns ?? 0;
@@ -893,7 +891,7 @@ export class ProductChecks {
         const finding = task.findings.findLast((entry) => entry.raisedBy === "petrina" && entry.text === `Check failed: ${run.name} (${run.command})` && (!shared || entry.productIds?.includes(scope.work.productId)));
         const answer = (shared ? finding?.answers?.[scope.work.productId] : undefined) ?? finding?.answer;
         return [
-          `• ${run.name} ${run.interruption ? "interrupted — verification incomplete; original reported result" : run.interrupted ? "stopped — verification incomplete; original reported result" : run.timedOut ? "did not finish" : "failed"}: ${diagnosticOf(run)}`,
+          `• ${run.name} ${checkOutcomeLabel(checkOutcome(run))}: ${diagnosticOf(run)}`,
           ...(run.interruption ? [`  ${run.interruption.source}: ${new Date(run.interruption.at).toLocaleString()} — ${run.interruption.event}`] : []),
           ...(answer ? [`  The Builder's last answer${answer.fixed ? ", saying it fixed this" : ""}: “${answer.text.trim()}”`] : []),
           ...(answer && !answer.fixed ? ["  Builder’s explanation — not independently confirmed. Only recorded machine evidence establishes interruption."] : []),
@@ -903,7 +901,7 @@ export class ProductChecks {
       const reused = evidence.some((check) => check.reusedAt !== undefined);
       const fresh = evidence.some((check) => check.run && check.reusedAt === undefined);
       const { failed, unverified } = checkCounts(evidence);
-      return [failed ? `${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.${unverified ? ` ${unverified} ${unverified === 1 ? "check also unverified" : "checks also unverified"}.` : ""}` : `${shared ? `${name}: ` : ""}Checks unverified. No automatic repair for interruption alone.`, ...lines, ...(reused ? [fresh ? "Some previous check evidence reused; other checks ran in this attempt." : "Previous check evidence reused; no new execution."] : [])].join("\n");
+      return [failed ? `${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.${unverified ? ` ${unverified} ${unverified === 1 ? "check also unverified" : "checks also unverified"}.` : ""}` : `${shared ? `${name}: ` : ""}Checks unverified. Unavailable or incomplete execution does not use an automatic Builder turn.`, ...lines, ...(reused ? [fresh ? "Some previous check evidence reused; other checks ran in this attempt." : "Previous check evidence reused; no new execution."] : [])].join("\n");
     });
     const builder = lastIndexWhere(stages, (entry, index) => index < task.stageIndex && entry.kind === "do" && this.k.role(entry.roleId, task)?.result === "build");
     const where = this.stoppedAt(task);

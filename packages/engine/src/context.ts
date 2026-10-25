@@ -1,4 +1,4 @@
-import { finalDesignNotes } from "@petrina/core";
+import { checkOutcome, checkOutcomeLabel, finalDesignNotes } from "@petrina/core";
 import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
@@ -247,9 +247,9 @@ export class Context {
   private checkResults(scope: RepositoryContext, current: boolean): Section[] {
     const { work: repository } = scope;
     if (!repository.checks?.results.length) return [];
-    const lines = repository.checks.results.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})${run.cleanupIncomplete ? ` — ${CLEANUP_INCOMPLETE}` : ""}`);
+    const lines = repository.checks.results.map((run) => `- ${run.name}: ${checkOutcomeLabel(checkOutcome(run))} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})${run.cleanupIncomplete ? ` — ${CLEANUP_INCOMPLETE}` : ""}`);
     const guidance = current
-      ? repository.checks.results.every((run) => run.ok)
+      ? repository.checks.results.every((run) => checkOutcome(run).kind === "passed")
         ? "These complete passing results still match the code, commands and hooks. Use them for automated acceptance; do not rerun the full checks just to confirm them. Exercise every user acceptance item, with focused tests or a build needed to try the product."
         : "These results match the current work, but some checks failed or did not finish. They are not passing acceptance evidence."
       : "Historical results: these have not been established to cover the current code, required commands and hooks. Do not use an older pass as proof that this version passes.";

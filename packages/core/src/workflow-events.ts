@@ -6,7 +6,8 @@
 
 import type { AgentProfile, CheckAttemptEvidence, Finding, Id, InboxItem, InboxKind, InputManifestEntry, JourneyAgentInput, JourneyStep, Role, RunState, Task, TaskRepository, TaskState, UsageLimit } from "./model.js";
 import { JOURNEY_WORDS, landingOf, stepName, type Landing } from "./journey.js";
-import { checkCounts } from "./check-evidence.js";
+import { checkCounts, checkEntryResult } from "./check-evidence.js";
+import { checkOutcome, checkOutcomeLabel, type CheckOutcome } from "./check-outcome.js";
 import { copyNoLongerNeeded, markedDoneUnconfirmed } from "./cleanup.js";
 import { historyItem, historyStatus, type HistoryStatus } from "./history.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
@@ -180,7 +181,11 @@ interface CheckFacts {
   endedAt?: number;
   queuedAt?: number;
   productId?: Id;
+  /** Original reported flag; commandOutcome carries the recorded execution meaning. */
   ok?: boolean;
+  commandOutcome?: CheckOutcome;
+  previousRunOutcome?: CheckOutcome;
+  reportedResult?: string;
   ms?: number;
   logComplete?: boolean;
   logRecorded?: boolean;
@@ -390,10 +395,11 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
   const checks: CheckFacts[] = (step.productChecks ?? []).flatMap((check, position) => copies || check.reusedAt !== undefined ? [] : [{
     index: position,
     ...(check.id ? { id: check.id } : {}), ...(check.attemptId ? { attemptId: check.attemptId } : {}),
-    name: check.name, result: check.result,
+    name: check.name, result: checkEntryResult(check),
+    ...(checkEntryResult(check) !== check.result ? { reportedResult: check.result } : {}),
     ...(check.startedAt !== undefined ? { startedAt: check.startedAt } : {}), ...(check.endedAt !== undefined ? { endedAt: check.endedAt } : {}), ...(check.queuedAt !== undefined ? { queuedAt: check.queuedAt } : {}),
     ...(check.productId ? { productId: check.productId } : {}),
-    ...(check.run ? { ok: check.run.ok, ms: check.run.ms, logRecorded: !!check.run.logPath, ...(check.run.logComplete !== undefined ? { logComplete: check.run.logComplete } : {}) } : {}),
+    ...(check.run ? { ok: check.run.ok, ...(["pending", "running", "skipped", "stopped"].includes(check.result) ? { previousRunOutcome: checkOutcome(check.run) } : { commandOutcome: checkOutcome(check.run) }), ms: check.run.ms, logRecorded: !!check.run.logPath, ...(check.run.logComplete !== undefined ? { logComplete: check.run.logComplete } : {}) } : {}),
     ...(check.detail ? { detail: clip(check.detail, 300) } : {}),
   }]);
   const asks: AskFacts[] = (step.asks ?? []).map((ask) => ({ id: ask.id, kind: ask.kind, title: clip(ask.title, 200)!, at: ask.at, ...(ask.endedAt !== undefined ? { endedAt: ask.endedAt } : {}), ...(ask.how ? { how: ask.how } : {}), ...(ask.answer ? { answer: clip(ask.answer, 300) } : {}) }));
@@ -448,7 +454,7 @@ export function workflowFacts(task: TaskState, ctx: WorkflowContext): WorkflowFa
     works: works.map((work, index) => ({
       productId: work.productId, productName: productName(work.productId), delivery: work.delivery,
       result: results[index]!,
-      ...(work.checks ? { checks: { at: work.checks.at, ...(work.checks.sha ? { sha: work.checks.sha } : {}), ...(work.checks.tree ? { tree: work.checks.tree } : {}), ...(work.checks.definition ? { definition: work.checks.definition } : {}), ...(work.checks.current !== undefined ? { current: work.checks.current } : {}), passed: work.checks.results.every((run) => run.ok), count: work.checks.results.length, ...(work.checks.provenance ? { node: work.checks.provenance.nodeId, attemptId: work.checks.provenance.attemptId } : {}) } } : {}),
+      ...(work.checks ? { checks: { at: work.checks.at, ...(work.checks.sha ? { sha: work.checks.sha } : {}), ...(work.checks.tree ? { tree: work.checks.tree } : {}), ...(work.checks.definition ? { definition: work.checks.definition } : {}), ...(work.checks.current !== undefined ? { current: work.checks.current } : {}), passed: work.checks.results.every((run) => checkOutcome(run).kind === "passed"), count: work.checks.results.length, ...(work.checks.provenance ? { node: work.checks.provenance.nodeId, attemptId: work.checks.provenance.attemptId } : {}) } } : {}),
       checkReturns: work.checkReturns ?? 0, acceptanceReturns: work.acceptanceReturns ?? 0, stepAttempts: work.stepAttempts ?? 0,
       ...(work.baseSha ? { baseSha: work.baseSha } : {}), ...(work.reviewedSha ? { reviewedSha: work.reviewedSha } : {}), ...(work.reviewedTree ? { reviewedTree: work.reviewedTree } : {}),
       ...(work.approvedFor ? { approvedFor: work.approvedFor } : {}), ...(work.cleanup ? { cleanup: work.cleanup } : {}),
@@ -574,11 +580,11 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
       const terminal = !["pending", "running"].includes(check.result);
       if (!earlier) push({ at: check.queuedAt ?? node.startedAt, kind: "check.queued", ...at, summary: `${check.name} queued`, name: check.name, ...(check.attemptId ? { attemptId: check.attemptId } : {}), ...(check.productId ? { productId: check.productId } : {}), refs: ref });
       if ((!earlier || earlier.result === "pending") && (check.result === "running" || (terminal && check.startedAt !== undefined))) push({ at: check.startedAt ?? node.startedAt, kind: "check.started", ...at, summary: `${check.name} started`, name: check.name, ...(check.attemptId ? { attemptId: check.attemptId } : {}), ...(check.productId ? { productId: check.productId } : {}), refs: ref });
-      if (terminal && (!earlier || earlier.result !== check.result)) push({ at: check.endedAt ?? ctx.now, kind: "check.finished", ...at, summary: `${check.name}: ${check.result === "pass" ? "passed" : check.result === "fail" ? "failed" : check.result === "did-not-finish" ? "did not finish" : check.result}${check.ms !== undefined ? ` in ${Math.max(1, Math.round(check.ms / 1000))}s` : ""}${check.detail ? `: ${check.detail.split("\n")[0]}` : ""}`, name: check.name, result: check.result, ...(check.ok !== undefined ? { ok: check.ok } : {}), ...(check.attemptId ? { attemptId: check.attemptId } : {}), ...(check.productId ? { productId: check.productId } : {}), ...(check.logRecorded !== undefined ? { log: check.logRecorded ? (check.logComplete === false ? "incomplete" : check.logComplete ? "complete" : "unverified") : "excerpt-only" } : {}), ...(check.detail ? { detail: check.detail } : {}), versions: check.attemptId ? node.checked.find((entry) => entry.attemptId === check.attemptId && entry.productId === check.productId) ?? null : null, refs: ref });
+      if (terminal && (!earlier || earlier.result !== check.result)) push({ at: check.endedAt ?? ctx.now, kind: "check.finished", ...at, summary: `${check.name}: ${check.commandOutcome && (check.commandOutcome.kind === "incomplete" || check.commandOutcome.kind === "unavailable") ? checkOutcomeLabel(check.commandOutcome) : check.result === "pass" ? "passed" : check.result === "fail" ? "failed" : check.result === "did-not-finish" ? "did not finish" : check.result}${check.ms !== undefined ? ` in ${Math.max(1, Math.round(check.ms / 1000))}s` : ""}${check.detail ? `: ${check.detail.split("\n")[0]}` : ""}`, name: check.name, result: check.result, ...(check.commandOutcome ? { commandOutcome: check.commandOutcome } : {}), ...(check.previousRunOutcome ? { previousRunOutcome: check.previousRunOutcome } : {}), ...(check.reportedResult ? { reportedResult: check.reportedResult } : {}), ...(check.ok !== undefined ? { ok: check.ok } : {}), ...(check.attemptId ? { attemptId: check.attemptId } : {}), ...(check.productId ? { productId: check.productId } : {}), ...(check.logRecorded !== undefined ? { log: check.logRecorded ? (check.logComplete === false ? "incomplete" : check.logComplete ? "complete" : "unverified") : "excerpt-only" } : {}), ...(check.detail ? { detail: check.detail } : {}), versions: check.attemptId ? node.checked.find((entry) => entry.attemptId === check.attemptId && entry.productId === check.productId) ?? null : null, refs: ref });
     }
     for (const [position, reuse] of node.reuses.entries()) {
       if (!fresh && old!.reuses[position]) continue;
-      push({ at: reuse.at, kind: "check.reused", ...at, summary: `Checks reused for ${reuse.purpose}: the ${reuse.passed ? "passing" : "failing"} run from ${node.name} still covers the same ${reuse.basis === "same-tree" ? "code" : "commit"} and check definitions`, purpose: reuse.purpose, ...(reuse.attemptId ? { attemptId: reuse.attemptId } : {}), basis: reuse.basis, passed: reuse.passed, originalAt: reuse.originalAt, ...(reuse.productId ? { productId: reuse.productId } : {}), ...(reuse.sha ? { sha: reuse.sha } : {}), ...(reuse.tree ? { tree: reuse.tree } : {}), ...(reuse.definition ? { definition: reuse.definition } : {}), refs: { node: { taskId: next.id, nodeId: node.id }, checks: node.checks.filter((check) => check.ok !== undefined && (!reuse.attemptId || check.attemptId === reuse.attemptId)).map((check) => ({ taskId: next.id, nodeId: node.id, index: check.index })) } });
+      push({ at: reuse.at, kind: "check.reused", ...at, summary: `Checks reused for ${reuse.purpose}: the ${reuse.passed ? "passing" : "non-passing"} evidence from ${node.name} still covers the same ${reuse.basis === "same-tree" ? "code" : "commit"} and check definitions`, purpose: reuse.purpose, ...(reuse.attemptId ? { attemptId: reuse.attemptId } : {}), basis: reuse.basis, passed: reuse.passed, originalAt: reuse.originalAt, ...(reuse.productId ? { productId: reuse.productId } : {}), ...(reuse.sha ? { sha: reuse.sha } : {}), ...(reuse.tree ? { tree: reuse.tree } : {}), ...(reuse.definition ? { definition: reuse.definition } : {}), refs: { node: { taskId: next.id, nodeId: node.id }, checks: node.checks.filter((check) => check.ok !== undefined && (!reuse.attemptId || check.attemptId === reuse.attemptId)).map((check) => ({ taskId: next.id, nodeId: node.id, index: check.index })) } });
     }
     for (const ask of node.asks) {
       const earlier = fresh ? undefined : old!.asks.find((entry) => entry.id === ask.id);

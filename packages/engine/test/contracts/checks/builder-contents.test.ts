@@ -1,3 +1,4 @@
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { beginAgentStep, JOURNEY_WORDS, type Stage, type DeepMutable } from "@petrina/core";
 import { join } from "node:path";
@@ -37,7 +38,7 @@ for (const [change, updating, folding] of [
       scope.work.base = "main"; scope.work.branch = "task";
       await git(repo, "checkout", "-qb", "task");
     }
-    scope.work.checks = { ...(folding === "malformed" ? { current: true } : {}), at: Date.now(), tree: await git(repo, "rev-parse", "HEAD^{tree}"), results: [{ name: "Tests", command: "tests", ok: false, ms: 1, output: "Original failure" }] };
+    scope.work.checks = { ...(folding === "malformed" ? { current: true } : {}), at: Date.now(), tree: await git(repo, "rev-parse", "HEAD^{tree}"), results: [{ name: "Tests", command: "tests", ok: false, execution: completeCheckExecution(7), ms: 1, output: "Original failure" }] };
     task.findings = [{ id: "check", text: "Check failed: Tests (tests)", raisedBy: "petrina", confirmedBy: [], severity: "blocking", status: "open" }];
     // A renamed build-result role must receive exactly the same contract.
     const role = engine.role("builder")!;

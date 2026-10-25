@@ -41,7 +41,8 @@ it(`${kind} reads saved startup failures beside real process output, including h
         const read = (index: number) => call("journey.check", { taskId: task.id, index, ...(nodeId ? { nodeId } : {}) });
         const missing = await read(0);
         expect(missing.text).toBe(runs[0]!.output);
-        expect(missing.commandOutcome).toBe("failed");
+        expect(missing.commandOutcome).toBe("unavailable");
+        expect(missing.reportedOk).toBe(false);
         expect(missing.completeness).toBe("incomplete");
         expect(missing.source).toBe("saved-result");
         expect(missing.savedResult).toHaveProperty("text", runs[0]!.output);
@@ -64,7 +65,8 @@ it(`${kind} reads saved startup failures beside real process output, including h
       connect();
       const original = await call("journey.check", { taskId: task.id, nodeId: "original-checks", index: 0 });
       expect(original.text).toBe(runs[0]!.output);
-      expect(original.commandOutcome).toBe("failed");
+      expect(original.commandOutcome).toBe("unavailable");
+      expect(original.reportedOk).toBe(false);
       expect(original.relevance).toBe("historical");
       const facts = ({ logFileIdentity, logFileLength, logFileBeginning }: CheckRun) => ({ logFileIdentity, logFileLength, logFileBeginning });
       const restored = restarted.task(task.id)!;

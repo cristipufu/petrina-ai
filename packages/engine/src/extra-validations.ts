@@ -3,11 +3,10 @@ import { arch, platform } from "node:os";
 import { constants, realpathSync } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
+import { checkOutcome, openStep, runtimeWaitHolds, type DeepMutable, type ExtraValidation } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
-import { unreportedCheckExit } from "./check-log-read.js";
 import { runChecks, CHECK_TIMEOUT_MS, checkLogBeginning, commandText } from "./checks.js";
 import { containerEnv, ExtraContainer } from "./extra-container.js";
 import type { Result } from "./coordination.js";
@@ -198,7 +197,8 @@ export class ExtraValidations {
             }), admitted);
           const run = runs[0];
           if (run) record.run = { ...run, command: commandText(record.argv) };
-          result = signal.aborted ? "stopped" : !run || run.exitSignal || run.timedOut || run.cleanupIncomplete || run.interruption || run.interrupted || unreportedCheckExit(run) ? "did not finish" : run.ok ? "passed" : "failed";
+          const outcome = checkOutcome(run);
+          result = signal.aborted ? "stopped" : outcome.kind === "passed" ? "passed" : outcome.kind === "failed" ? "failed" : outcome.kind === "unavailable" ? "not run" : "did not finish";
           detail = signal.aborted ? "The task or Petrina stopped this extra validation." : result === "passed" ? "The extra validation passed; delivery still requires the configured product checks." : run?.output ?? "The command did not start.";
         }
       }

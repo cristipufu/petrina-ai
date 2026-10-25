@@ -1,3 +1,4 @@
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
 import { chmodSync, writeFileSync } from "node:fs";
@@ -122,7 +123,7 @@ it("keeps two direct check runs' evidence apart, and cancelling one leaves the o
 it("keeps two engines' evidence apart through failure reuse, and stopping one leaves the other's collection and result unaffected", async () => {
   const now = Date.now();
   const checks = [{ name: "Tests", argv: ["test"] }];
-  const saved = (output: string): CheckRun[] => [{ name: "Tests", command: "test", ok: false, ms: 60_000, output, startedAt: now - 120_000, endedAt: now - 60_000 }];
+  const saved = (output: string): CheckRun[] => [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 60_000, output, startedAt: now - 120_000, endedAt: now - 60_000 }];
   const sleep = powerLogSleep(now - 100_000, 30);
   const start = async (name: string, held: ReturnType<typeof heldMachineRecords>) => {
     const dir = root(`petrina-machine-records-${name}-`);

@@ -4,6 +4,7 @@ import { beginYouStep, journeyView, recordCheckReuse } from "../../../src/journe
 import { gateTitle, type DeepMutable } from "../../../src/flow.js";
 import type { Task } from "../../../src/model.js";
 import { fixture, now } from "../../fixtures/check-evidence.js";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 
 describe("saved check evidence", () => {
   it("retains a real failure alongside interrupted verification in actual and reused outcomes", () => {
@@ -51,7 +52,7 @@ describe("saved check evidence", () => {
   it("attributes the latest return, check problem and reuse to their own product", () => {
     const { task, run } = fixture();
     const first = task.productId;
-    const peer = { ...run, ok: true, source: { ...run.source!, stepId: "peer-original" } };
+    const peer = { ...run, ok: true, execution: completeCheckExecution(0), source: { ...run.source!, stepId: "peer-original" } };
     task.repositories = [
       { productId: first, delivery: "local", completedStages: [], checks: task.checks },
       { productId: "API", delivery: "local", completedStages: [], checks: { at: now, current: true, results: [peer] } },
@@ -83,7 +84,7 @@ describe("saved check evidence", () => {
 
   it("keeps products, source runs and interrupted evidence independent of the selected passing product", () => {
     const { task, run } = fixture(true);
-    const other = { ...run, name: "Startup", ok: false, source: { stepId: "other", attemptId: "run-0", checkId: "check-0" } };
+    const other = { ...run, name: "Startup", ok: false, execution: completeCheckExecution(7), source: { stepId: "other", attemptId: "run-0", checkId: "check-0" } };
     task.repositories = [{ productId: "shop", delivery: "local", completedStages: [], checks: task.checks }, { productId: "notes", delivery: "local", completedStages: [], checks: { at: now, results: [other] } }];
     expect(checkDecisionLabel(task)).toBe("Your call: checks still failing");
     expect(decisionEvidence(task).map((check) => [check.productId, check.result, check.run?.source?.stepId])).toEqual([["shop", "pass", "original"], ["notes", "fail", "other"]]);
@@ -211,7 +212,7 @@ describe("saved check evidence", () => {
     task.journey = [original, { ...original, id: "peer-original", productChecks: [{ ...original.productChecks![0]!, productId: second, run: peer }] }, builder,
       { ...builder, id: "peer-builder", builderReturn: { ...builder.builderReturn!, productId: second } }];
     if (fresh) {
-      const next = { ...run, ok: true, source: { stepId: "fresh-first", attemptId: "run-0", checkId: "check-0" } };
+      const next = { ...run, ok: true, execution: completeCheckExecution(0), source: { stepId: "fresh-first", attemptId: "run-0", checkId: "check-0" } };
       task.repositories[0]!.checks = { at: now, current: true, results: [next] };
       task.journey.push({ ...original, id: "fresh-first", startedAt: now, endedAt: now + 1, productChecks: [{ id: "check-0", attemptId: "run-0", productId: first, name: run.name, result: "pass", run: next }] });
     }

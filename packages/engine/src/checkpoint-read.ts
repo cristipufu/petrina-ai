@@ -1,5 +1,5 @@
 // A decision projection of existing task and journey evidence. No new evidence or gate state is saved.
-import { assignedProducts, evidenceFor, findingReportCounts, originalCheck, outstandingReportsFirst, resultSeatOf, reviewDecisionPending, roleForTask, taskProductIds, type InboxItem, type Task } from "@petrina/core";
+import { assignedProducts, checkEntryCommandOutcome, checkOutcome, evidenceFor, findingReportCounts, originalCheck, outstandingReportsFirst, resultSeatOf, reviewDecisionPending, roleForTask, taskProductIds, type InboxItem, type Task } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { checkCommandOutcome, readCheckLog, SAVED_RESULT_PREVIEW, unreportedCheckExit } from "./check-log-read.js";
 import { fingerprint } from "@petrina/storage/receipt-identity";
@@ -25,13 +25,14 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
       const savedRead = savedRun && { taskId, productId: work.productId, index, ifRevision: fingerprint(savedRun) };
       const ref = original?.check.run ? originalRead : savedRead;
       const diagnostics = run && ref && await readCheckLog(engine.dataDir, task, { ...ref, limit: SAVED_RESULT_PREVIEW, preview: "ends" });
-      const failure = run && (!run.ok || run.interruption || run.interrupted || run.timedOut || run.cleanupIncomplete);
+      const failure = run && checkOutcome(run).kind !== "passed";
       const attemptId = run?.source?.attemptId ?? check.attemptId;
       const attempt = node?.checkAttempts?.find((entry) => entry.id === attemptId && entry.productId === work.productId);
       const reuse = node?.reuses?.findLast((entry) => entry.productId === work.productId && (!entry.attemptId || entry.attemptId === attemptId));
       return {
         name: check.name, result: check.result,
-        commandOutcome: run ? checkCommandOutcome(run) : "not-executed",
+        commandOutcome: original ? checkEntryCommandOutcome({ ...original.check, run }) : checkCommandOutcome(run),
+        reportedOk: run?.ok ?? null,
         ...(attemptId ? { attemptId } : {}),
         ...(attempt && (attempt.sha !== saved.sha || attempt.tree !== saved.tree || attempt.definition !== saved.definition) ? { versions: { sha: attempt.sha, tree: attempt.tree, definition: attempt.definition } } : {}),
         ...(run ? { startedAt: run.startedAt ?? null, endedAt: run.endedAt ?? null, durationMs: run.ms } : {}),

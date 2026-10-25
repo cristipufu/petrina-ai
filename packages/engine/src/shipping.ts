@@ -5,7 +5,7 @@ import { realPath } from "@petrina/repositories/paths";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { addDeliveryCheck, clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
-import { proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
+import { checkOutcome, checkOutcomeLabel, proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
 import { companionText, landingState, repositoryDelivered, syncRuntimeWait } from "@petrina/core";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
@@ -545,7 +545,7 @@ export class Shipping {
     // Ticked only where a tester checked it; an item that could not be verified says so, whatever the approval.
     if (acceptance.length) parts.push(`### Acceptance\n${acceptance.map((item) => (item.verification === "blocked" ? `- [ ] ${item.text} (Could not verify)` : item.met === undefined ? `- ${item.text}` : `- [${item.met ? "x" : " "}] ${item.text}`)).join("\n")}`);
     const runs = repository.checks?.results ?? [];
-    if (runs.length) parts.push(`### Checks Petrina ran on this commit\n${runs.map((run) => `- ${run.name}: ${run.ok ? "passed" : run.timedOut ? "did not finish" : "failed"} (\`${run.command}\`)`).join("\n")}`);
+    if (runs.length) parts.push(`### Checks Petrina ran on this commit\n${runs.map((run) => `- ${run.name}: ${checkOutcomeLabel(checkOutcome(run))} (\`${run.command}\`)`).join("\n")}`);
     const reviewers = [...new Set((task.plan?.stages ?? []).filter((stage) => stage.kind === "review-chain").flatMap((stage) => stage.profileIds.map((profileId, position) => this.k.describe(reviewerAt(stage, position), profileId))))];
     if (reviewers.length) parts.push(`### Reviewed by\n${reviewers.map((reviewer) => `- ${reviewer}`).join("\n")}`);
     const followUps = task.findings.filter((finding) => finding.status === "open" && finding.severity === "pre-existing");

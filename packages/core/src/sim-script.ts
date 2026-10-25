@@ -27,10 +27,11 @@ export const DEMO_RISK: Record<TaskKind, { level: "low" | "medium" | "high"; why
   bug: { level: "medium", why: "A fix to how people sign in and pay, in one place." },
   chore: { level: "low", why: "Only words and styles change: nothing can be lost or opened up." },
 };
+/** Scripted completed-check observations for offline demos, never loaded execution evidence. */
 export const DEMO_CHECKS: CheckRun[] = [
-  { name: "Type check", command: "bun run typecheck", ok: true, ms: 9_000, output: "No errors." },
-  { name: "Tests", command: "bun run test", ok: true, ms: 41_000, output: "212 pass\n0 fail\nRan 212 tests across 31 files." },
-  { name: "Build", command: "bun run build", ok: true, ms: 23_000, output: "Built in 22.4s." },
+  { name: "Type check", command: "bun run typecheck", ok: true, execution: { started: true, exit: { status: "reported", code: 0 }, stdout: "eof", stderr: "eof", timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested" }, ms: 9_000, output: "No errors." },
+  { name: "Tests", command: "bun run test", ok: true, execution: { started: true, exit: { status: "reported", code: 0 }, stdout: "eof", stderr: "eof", timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested" }, ms: 41_000, output: "212 pass\n0 fail\nRan 212 tests across 31 files." },
+  { name: "Build", command: "bun run build", ok: true, execution: { started: true, exit: { status: "reported", code: 0 }, stdout: "eof", stderr: "eof", timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested" }, ms: 23_000, output: "Built in 22.4s." },
 ];
 
 interface ScriptContext {

@@ -1,4 +1,4 @@
-import { matchesCheckLogIdentity, unreportedCheckExit as outcomeUnreported, checkCommandOutcome as outcomeOf } from "@petrina/core";
+import { checkEntryCommandOutcome, matchesCheckLogIdentity, unreportedCheckExit as outcomeUnreported, checkCommandOutcome as outcomeOf } from "@petrina/core";
 // Verify and page the diagnostic file belonging to one recorded check.
 import type { CheckRun, Task } from "@petrina/core";
 import { constants, lstatSync } from "node:fs";
@@ -8,14 +8,13 @@ import type { Result } from "./coordination.js";
 import { cursor, position, readText } from "./evidence-read.js";
 import { fingerprint } from "@petrina/storage/receipt-identity";
 import { checkLogBeginning } from "./checks.js";
-import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 
 export const SAVED_RESULT_PREVIEW = 1000;
 // Saved-result offsets stay in string units; move preview boundaries off a surrogate pair.
 const bisectsCharacter = (text: string, at: number) => (text.codePointAt(at - 1) ?? 0) > 0xffff;
 
-export const unreportedCheckExit = (run: CheckRun): boolean => outcomeUnreported(run, CLEANUP_INCOMPLETE);
-export const checkCommandOutcome = (run?: CheckRun) => outcomeOf(run, CLEANUP_INCOMPLETE);
+export const unreportedCheckExit = (run: CheckRun): boolean => outcomeUnreported(run);
+export const checkCommandOutcome = (run?: CheckRun) => outcomeOf(run);
 
 /** The same file facts used by diagnostic continuations, without loading process output. */
 export function checkLogRevision(dataDir: string, taskId: string, paths: readonly (string | undefined)[]) {
@@ -32,10 +31,12 @@ export async function readCheckLog(dataDir: string, task: Task, a: { nodeId?: st
   if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
   const work = a.productId ? (task.repositories ?? [task]).find((work) => work.productId === a.productId) : task;
   if (a.productId && !work) return { outcome: "missing", message: "That product has no repository record on this task." };
-  const run = a.nodeId ? node?.productChecks?.[a.index]?.run : work?.checks?.results[a.index];
+  const entry = a.nodeId ? node?.productChecks?.[a.index] : undefined;
+  const run = a.nodeId ? entry?.run : work?.checks?.results[a.index];
   if (a.ifRevision && (!run || fingerprint(run) !== a.ifRevision)) return { outcome: "changed", message: "That saved check changed. Inspect the checkpoint again. No newer run is substituted." };
   const metadata = {
-    commandOutcome: checkCommandOutcome(run),
+    commandOutcome: entry ? checkEntryCommandOutcome(entry) : checkCommandOutcome(run),
+    reportedOk: run?.ok ?? null,
     relevance: a.nodeId ? "historical" : work?.checks?.sha || work?.checks?.tree ? "recorded-version-only" : "unverified",
     command: run?.command ?? null,
     ...(run && unreportedCheckExit(run) ? { exitUnreported: true } : {}),

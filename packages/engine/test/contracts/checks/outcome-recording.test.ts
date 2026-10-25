@@ -1,4 +1,5 @@
 import { rejectionOf } from "@petrina/test-support/rejections";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { checkDecisionLabel, checkResult, journeyView, type CheckRun } from "@petrina/core";
@@ -38,6 +39,7 @@ it.each(["failed", "interrupted", "mixed", "passed"] as const)("keeps %s results
     const at = Date.parse("2026-10-21T17:01:00+03:00");
     const runs: CheckRun[] = checks.map((check, index) => ({
       name: check.name, command: check.argv[0]!, ok: kind === "passed", ms: 240_000, output: `Original ${check.name} diagnostic`,
+      execution: completeCheckExecution(kind === "passed" ? 0 : 7),
       startedAt: at + (kind === "interrupted" ? 1 : index) * 3_180_000, endedAt: at + (kind === "interrupted" ? 1 : index) * 3_180_000 + 240_000,
       ...((kind === "interrupted" || kind === "mixed" && index === 1) ? { interruption: { source: "macOS power log" as const, at: Date.parse("2026-10-21T17:55:44+03:00"), event: "Entering Sleep state" } } : {}),
     }));

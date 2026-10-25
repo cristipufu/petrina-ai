@@ -1,15 +1,30 @@
 import type { CheckRun, JourneyProductCheck, RepositoryState, Task } from "./model.js";
+import { checkOutcome, checkCommandOutcome } from "./check-outcome.js";
 
 export function checkResult(run: CheckRun): JourneyProductCheck["result"] {
-  return run.interruption || run.interrupted ? "stopped" : run.ok ? "pass" : run.timedOut ? "did-not-finish" : "fail";
+  const outcome = checkOutcome(run);
+  return outcome.kind === "passed" ? "pass" : outcome.kind === "failed" ? "fail" : outcome.reason === "timed-out" ? "did-not-finish" : "stopped";
 }
 
-/** Recorded interruption qualifies the reported result without discarding it. */
+/** A prior run carried by a reopened row cannot replace that row's actual lifecycle. */
+export function checkEntryResult(check: Pick<JourneyProductCheck, "result" | "run">): JourneyProductCheck["result"] {
+  if (["pending", "running", "skipped", "stopped"].includes(check.result)) return check.result;
+  return check.run ? checkResult(check.run) : "stopped";
+}
+
+/** A running/reopened row describes this lifecycle, not the earlier run it may retain. */
+export function checkEntryCommandOutcome(check: Pick<JourneyProductCheck, "result" | "run">) {
+  if (check.result === "skipped") return "not-executed";
+  if (check.result === "pending" || check.result === "running" || check.result === "stopped") return "unfinished";
+  return checkCommandOutcome(check.run);
+}
+
+/** Lifecycle remains authoritative while completed rows use the shared execution meaning. */
 export function checkCounts(checks: readonly JourneyProductCheck[]) {
-  const results = checks.map((check) => check.run?.interruption || check.run?.interrupted ? "stopped" : check.result);
+  const results = checks.map(checkEntryResult);
   return {
-    failed: results.filter((result) => result === "fail" || result === "did-not-finish").length,
-    unverified: results.filter((result) => result === "stopped" || result === "pending" || result === "running").length,
+    failed: results.filter((result) => result === "fail").length,
+    unverified: results.filter((result) => result === "stopped" || result === "did-not-finish" || result === "pending" || result === "running").length,
     passed: results.filter((result) => result === "pass").length,
   };
 }
@@ -23,7 +38,9 @@ export function incompleteCheckOutcome(checks: readonly JourneyProductCheck[]): 
   const { failed, unverified } = checkCounts(checks);
   if (!unverified) return undefined;
   if (failed) return `Checks: ${checkProblemWords(checks)}`;
-  return checks.some((check) => check.run?.interruption) ? "Interrupted — verification incomplete" : "Stopped — verification incomplete";
+  if (checks.some((check) => check.run?.interruption)) return "Interrupted — verification incomplete";
+  if (checks.some((check) => check.run && checkOutcome(check.run).kind === "unavailable")) return "Checks unavailable — verification incomplete";
+  return checks.some((check) => check.result === "stopped" || check.run?.interrupted) ? "Stopped — verification incomplete" : "Checks unverified";
 }
 
 /** Attempts stay separate across products, restarts and reused evidence. */
@@ -54,8 +71,8 @@ export function latestCheckResults(checks: readonly JourneyProductCheck[]): Jour
 /** Evidence becoming outdated never settles a recorded failure or interruption. */
 export function checkProblem(task: Pick<Task, "repositories" | "checks">): "failing" | "unverified" | undefined {
   const checks = task.repositories ? task.repositories.map((work) => work.checks) : [task.checks];
-  if (checks.some((entry) => entry?.results.some((run) => !run.ok && !run.interruption && !run.interrupted))) return "failing";
-  if (checks.some((entry) => entry?.results.some((run) => run.interruption || run.interrupted))) return "unverified";
+  if (checks.some((entry) => entry?.results.some((run) => checkOutcome(run).kind === "failed"))) return "failing";
+  if (checks.some((entry) => entry?.results.some((run) => checkOutcome(run).kind !== "passed"))) return "unverified";
   return undefined;
 }
 
@@ -97,11 +114,12 @@ export function evidenceFor(task: Pick<Task, "journey">, work: Pick<RepositorySt
     const source = run.source ?? (found && original?.id && original.attemptId ? { stepId: found.stepId, checkId: original.id, attemptId: original.attemptId } : undefined);
     const reusedAt = reusedAtFor(source, run.logPath);
     const recordedRun = { ...run, ...(source ? { source } : {}), ...(run.startedAt === undefined && original?.startedAt !== undefined ? { startedAt: original.startedAt } : {}), ...(run.endedAt === undefined && original?.endedAt !== undefined ? { endedAt: original.endedAt } : {}) };
-    return { ...original, id: source?.checkId ?? `saved-${index}`, name: run.name, productId: work.productId, result: checkResult(run), run: recordedRun, ...(reusedAt !== undefined ? { reusedAt } : {}) };
+    return { ...original, id: source?.checkId ?? `saved-${index}`, name: run.name, productId: work.productId, result: original ? checkEntryResult({ ...original, run }) : checkResult(run), run: recordedRun, ...(reusedAt !== undefined ? { reusedAt } : {}) };
   });
   const sources = new Set(entries.flatMap(({ run }) => run?.source ? [`${run.source.stepId}:${run.source.attemptId}`] : []));
   for (const step of task.journey ?? []) for (const check of step.productChecks ?? []) {
-    if (check.result === "skipped" && sources.has(`${step.id}:${check.attemptId}`) && check.productId === work.productId) {
+    if (check.result === "skipped" && sources.has(`${step.id}:${check.attemptId}`) && check.productId === work.productId
+      && !entries.some(entry => entry.id === check.id && entry.attemptId === check.attemptId && entry.run?.source?.stepId === step.id)) {
       const source = check.id && check.attemptId ? { stepId: step.id, attemptId: check.attemptId, checkId: check.id } : undefined;
       const reusedAt = reusedAtFor(source);
       entries.push({ ...check, ...(source ? { source } : {}), ...(reusedAt !== undefined ? { reusedAt } : {}) });

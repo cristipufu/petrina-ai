@@ -1,5 +1,6 @@
 import { createTaskState, type CheckEvidenceTask, type DeepMutable, type Task } from "../../src/index.js";
 import { relatedCheckCandidates, type CheckFailureReference } from "../../src/related-check-evidence.js";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 
 export const copyEvidence = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -11,7 +12,7 @@ const immutableTask = createTaskState({ productId: "p", title: "Private check ev
 export function failure(nodeId = "j5", duration = "22.91ms"): DeepMutable<CheckFailureReference> {
   return { nodeId, attempt: { id: "run-0", productId: "p", sha: sha("a"), tree: sha("b"), definition: "failure-hooks", commands: [...commands] },
     check: { id: "check-1", attemptId: "run-0", productId: "p", findingId: "f1", name: "Tests", result: "fail", detail: `(fail) ${failureName} [${duration}]`,
-      run: { name: "Tests", command: "bun run test", ok: false, ms: 25, output: "captured failure", logPath: "/missing-check.log" } } };
+      run: { name: "Tests", command: "bun run test", ok: false, execution: completeCheckExecution(7), ms: 25, output: "captured failure", logPath: "/missing-check.log" } } };
 }
 export function peer(id = "task-58913"): DeepMutable<CheckEvidenceTask> {
   const f = failure();

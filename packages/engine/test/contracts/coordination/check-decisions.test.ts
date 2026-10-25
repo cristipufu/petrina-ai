@@ -1,4 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { Engine } from "../../engine.js";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
@@ -17,7 +18,7 @@ async function fixture(interrupted = false, shared = false) {
   engine.s.products.push({ id: "shop", name: "Shop", repo: "local/shop", tone: "blue", delivery: "local" });
   const task = engine.task(engine.addTask({ productId: "shop", title: "Fix the shop" }))!;
   const work = executionFor(task).work;
-  work.checks = { at: 1, sha: "checked", tree: "tree", current: true, results: [{ name: "Tests", command: "bun test", ok: false, output: "Original failure", ms: 1, ...(interrupted ? { interrupted: true } : {}) }] };
+  work.checks = { at: 1, sha: "checked", tree: "tree", current: true, results: [{ name: "Tests", command: "bun test", ok: false, execution: completeCheckExecution(7), output: "Original failure", ms: 1, ...(interrupted ? { interrupted: true } : {}) }] };
   work.checkReturns = 2;
   work.checkedSha = "checked"; work.checkedPatch = "patch";
   if (shared) task.repositories = [{ ...work, completedStages: [] }, { productId: "api", delivery: "local", completedStages: [] }];
@@ -69,6 +70,7 @@ it("keeps ordinary delivery approval available and refuses reruns on other decis
   const { engine, task, work, item, coordination: c } = await fixture();
   try {
     work.checks!.results[0]!.ok = true;
+    work.checks!.results[0]!.execution = completeCheckExecution(0);
     const inspected = await c.call("inbox.inspect", { itemId: item.id });
     expect(inspected.decisions).toEqual(["inbox.approve", "inbox.changes"]);
     expect(() => engine.rerunChecks(item.id)).toThrow("no failed or unverified");

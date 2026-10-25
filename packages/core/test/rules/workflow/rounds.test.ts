@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { workflowFixture } from "../../fixtures/workflow.js";
 import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteReproduction, noteRoundEnd, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "../../../src/flow.js";
 import { BUILT_IN_ROLES } from "../../../src/library.js";
@@ -32,7 +33,7 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
   });
 
   it("names the failing checks at a check problem instead of counting the findings they raise", () => {
-    const run = (name: string, ok: boolean) => ({ name, command: `bun run ${name.toLowerCase()}`, ok, output: ok ? "ok" : "failed", ms: 1 });
+    const run = (name: string, ok: boolean) => ({ name, command: `bun run ${name.toLowerCase()}`, ok, execution: completeCheckExecution(ok ? 0 : 7), output: ok ? "ok" : "failed", ms: 1 });
     const task = copy({ findings: [important()], checks: { at: 1, results: [run("Tests", false), run("Typecheck", true)] } });
     expect(gateTitle(task, "delivery")).toBe(`Your call on “${planned.title}”: a check still fails (Tests)`);
     expect(gateStatus(task, "delivery")).toBe("Checks still fail. Your call");
@@ -40,6 +41,16 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
     expect(gateTitle(both, "delivery")).toBe(`Your call on “${planned.title}”: checks still fail (Tests, Build)`);
     // Once the checks pass, open Important findings are counted as before.
     expect(gateTitle(copy({ findings: [important()], checks: { at: 1, results: [run("Tests", true)] } }), "delivery")).toBe(`Your call on “${planned.title}”: 1 blocking finding still open`);
+  });
+
+  it.each(["legacy", "timed-out", "start-failed"] as const)("keeps %s verification separate from a completed code failure at delivery", kind => {
+    const failed = { name: "Tests", command: "tests", ok: false, execution: completeCheckExecution(7), output: "Failed", ms: 1 };
+    const unverified = { ...failed, name: "Build", execution: kind === "legacy" ? undefined : kind === "timed-out" ? { ...completeCheckExecution(7), timedOut: true } : { ...completeCheckExecution(7), started: false, exit: { status: "unreported" as const }, failure: { kind: "start" as const, message: "Cannot launch" } } };
+    expect(gateTitle(copy({ checks: { at: 1, results: [failed, unverified] } }), "delivery")).toBe(`Your call on “${planned.title}”: a check still fails (Tests); unverified (Build)`);
+    const alone = copy({ checks: { at: 1, results: [unverified] } });
+    expect(gateTitle(alone, "delivery")).toBe(`Your call on “${planned.title}”: checks unverified`);
+    expect(gateStatus(alone, "delivery")).toBe("Checks unverified. Your call");
+    expect(unverified.ok).toBe(false);
   });
 
   it("sends a delivery back to the builder, and a plan back to the planner", () => {

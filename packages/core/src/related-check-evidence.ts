@@ -1,4 +1,5 @@
 import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, type CheckEvidenceTask, type CheckEvidenceStep } from "./related-check-contract.js";
+import { checkOutcome } from "./check-outcome.js";
 import type { CheckAttemptEvidence, CheckRepairEvidence, JourneyProductCheck, RepositoryState, TaskState } from "./model.js";
 
 const EVIDENCE_ENTRY_LIMIT = 3;
@@ -65,7 +66,7 @@ export interface CheckFailureReference {
 function failures(journey: readonly CheckEvidenceStep[], productId: string): CheckFailureReference[] {
   return journey.flatMap((step) => (step.productChecks ?? []).slice(-32).flatMap((check) => {
     const attempt = step.checkAttempts?.slice(-8).find((attempt) => attempt.id === check.attemptId && attempt.productId === productId);
-    if (!attempt?.tree || !attempt.sha || !fullSha(attempt.tree) || !fullSha(attempt.sha) || check.productId !== productId || !check.id || !/(?:^|:)check-\d+$/.test(check.id) || !check.findingId || check.result !== "fail" || !check.run || check.run.ok || check.run.interruption || check.run.interrupted || check.run.timedOut || check.run.cleanupIncomplete || !attempt.commands.includes(check.run.command)) return [];
+    if (!attempt?.tree || !attempt.sha || !fullSha(attempt.tree) || !fullSha(attempt.sha) || check.productId !== productId || !check.id || !/(?:^|:)check-\d+$/.test(check.id) || !check.findingId || check.result !== "fail" || !check.run || checkOutcome(check.run).kind !== "failed" || !attempt.commands.includes(check.run.command)) return [];
     return [{ nodeId: step.id, check: { ...check, run: check.run }, attempt }];
   }));
 }

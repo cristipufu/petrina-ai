@@ -4,6 +4,7 @@
 
 import { roleForTask } from "./roles.js";
 import { checkProblem } from "./check-evidence.js";
+import { checkOutcome } from "./check-outcome.js";
 import { proofGap } from "./proof-requests.js";
 import { exhaustedAcceptanceFailure, restoredAcceptance } from "./acceptance.js";
 import { CALL_WORDS, callOn, designStageIndex, startCall } from "./call.js";
@@ -56,8 +57,8 @@ export const reviewDecisionPending = (task: Pick<Task, "reviewDecision">): boole
 export function gateTitle(task: Task, gate: GateKind): string {
   if (gate === "delivery" && reviewDecisionPending(task)) return `Your call on “${task.title}”: review needs a decision before final checks`;
   if (gate === "delivery" && checkProblem(task) === "unverified") return `Your call on “${task.title}”: checks unverified`;
-  const failing = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => !run.ok && !run.interruption && !run.interrupted).map((run) => run.name) ?? []) : [];
-  const unverifiedChecks = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => run.interruption || run.interrupted).map((run) => run.name) ?? []) : [];
+  const failing = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => checkOutcome(run).kind === "failed").map((run) => run.name) ?? []) : [];
+  const unverifiedChecks = gate === "delivery" ? (task.repositories ?? [task]).flatMap((work) => work.checks?.results.filter((run) => { const kind = checkOutcome(run).kind; return kind === "incomplete" || kind === "unavailable"; }).map((run) => run.name) ?? []) : [];
   if (failing.length) return checkProblemTitle(task.title, failing, unverifiedChecks);
   const open = gate === "delivery" ? stillBlocking(task) : 0;
   if (open) return `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open`;

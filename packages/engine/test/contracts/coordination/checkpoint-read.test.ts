@@ -1,4 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,7 +51,7 @@ const verifiedLog = (path: string) => {
   const beginning = createHash("sha256").update(readFileSync(path).subarray(0, 4096)).digest("hex");
   return { logPath: path, logFileIdentity: { device: String(info.dev), inode: String(info.ino) }, logFileLength: Number(info.size), logFileBeginning: beginning };
 };
-const run = (name: string, output = ""): CheckRun => ({ name, command: `check ${name}`, ok: true, ms: 150, startedAt: 1, endedAt: 151, output, logComplete: true });
+const run = (name: string, output = ""): CheckRun => ({ name, command: `check ${name}`, ok: true, execution: completeCheckExecution(0), ms: 150, startedAt: 1, endedAt: 151, output, logComplete: true });
 const finding = (id: string, severity: Finding["severity"] = "blocking"): DeepMutable<Finding> => ({ id, text: `Report ${id}`, severity, status: "open", raisedBy: "opus-high", confirmedBy: [] });
 async function complete(c: Coordination, name: string, args: Record<string, unknown> = {}) {
   const pages: Result[] = [];
@@ -466,7 +467,7 @@ it("keeps startup explanations, unfinished results, skipped checks and quiet com
   const log = join(folder, "quiet.log");
   writeFileSync(log, "");
   const quiet = { ...run("Quiet"), ...verifiedLog(log) };
-  const failed = { ...run("Startup", "Could not start the command.\n" + "Saved explanation\n".repeat(1000)), ok: false, ...verifiedLog(log) };
+  const failed = { ...run("Startup", "Could not start the command.\n" + "Saved explanation\n".repeat(1000)), ok: false, execution: { ...completeCheckExecution(7), started: false, exit: { status: "unreported" as const }, stdout: "incomplete" as const, stderr: "incomplete" as const, failure: { kind: "start" as const, message: "Cannot launch" } }, ...verifiedLog(log) };
   const stopped = { ...run("Interrupted", "Stopped after machine sleep"), interruption: { source: "macOS power log" as const, at: 2, event: "Sleep" }, logComplete: false };
   const results = [quiet, failed, stopped].map((run, index) => ({ ...run, source: { stepId: "checks", attemptId: "a", checkId: `c${index}` } }));
   task.journey = [{ id: "checks", kind: "petrina", work: "checks", startedAt: 1, round: 1, sub: 0, productChecks: [...results.map((run, index) => ({ id: `c${index}`, attemptId: "a", productId: "product", name: run.name, result: index === 0 ? "pass" as const : "fail" as const, run })), { id: "skipped", attemptId: "a", productId: "product", name: "Skipped", result: "skipped" }] }];
@@ -489,7 +490,7 @@ it("keeps startup explanations, unfinished results, skipped checks and quiet com
 
 it("labels missing historical diagnostics honestly and pins fallback reads without substituting a newer run", async () => {
   const { c, task, work, taskId, offer, home } = fixture();
-  work.checks = { at: 10, sha: "old", results: [{ ...run("Older", "Saved failure"), ok: false, logPath: join(home, "checks", taskId, "missing.log"), logFileIdentity: { device: "1", inode: "1" }, logFileLength: 13, logFileBeginning: createHash("sha256").update("Saved failure").digest("hex"), source: { stepId: "lost", checkId: "lost", attemptId: "lost" } }] };
+  work.checks = { at: 10, sha: "old", results: [{ ...run("Older", "Saved failure"), ok: false, execution: undefined, logPath: join(home, "checks", taskId, "missing.log"), logFileIdentity: { device: "1", inode: "1" }, logFileLength: 13, logFileBeginning: createHash("sha256").update("Saved failure").digest("hex"), source: { stepId: "lost", checkId: "lost", attemptId: "lost" } }] };
   task.journey = [];
   const itemId = offer("delivery");
   const { value } = await complete(c, "inbox.inspect", { itemId });
@@ -497,7 +498,8 @@ it("labels missing historical diagnostics honestly and pins fallback reads witho
   expect(check.original).toBeNull();
   expect(check.diagnostics).toMatchObject({ completeness: "missing-file", savedResult: { text: "Saved failure" } });
   const { operation, ...args } = check.diagnostics.read;
-  expect((await c.call(operation, args)).commandOutcome).toBe("failed");
+  expect((await c.call(operation, args)).commandOutcome).toBe("unknown");
+  expect(check.reportedOk).toBe(false);
   task.journey = [{ id: "lost", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 1, productChecks: [{ id: "lost", attemptId: "lost", productId: "product", name: "Older", result: "fail", startedAt: 1 }] }];
   const retained = (await complete(c, "inbox.inspect", { itemId })).value.products[0].checks.results[0];
   expect(retained.original).toEqual({ taskId, nodeId: "lost", index: 0 });
@@ -545,7 +547,7 @@ it("invalidates inspection and approval when omitted process diagnostics change,
 
 it("keeps reuse timing separate from execution and reads another product’s pinned saved run", async () => {
   const { c, task, taskId, offer } = fixture();
-  const original = { ...run("Tests", "Original failure"), ok: false, source: { stepId: "checks", checkId: "test", attemptId: "attempt" } };
+  const original = { ...run("Tests", "Original failure"), ok: false, execution: completeCheckExecution(7), source: { stepId: "checks", checkId: "test", attemptId: "attempt" } };
   task.journey = [{ id: "checks", kind: "petrina", work: "checks", startedAt: 1, endedAt: 151, round: 1, sub: 0, productChecks: [{ id: "test", attemptId: "attempt", name: "Tests", productId: "api", result: "fail", run: original }], reuses: [{ at: 500, purpose: "delivery-check", productId: "api", attemptId: "attempt", basis: "same-tree", originalAt: 151, passed: false }] }];
   task.repositories = [{ productId: "product", source: source(), delivery: "local", completedStages: [], checks: { at: 100, results: [run("Tests", "Other product pass")] } }, { productId: "api", source: source("api"), delivery: "local", completedStages: [], checks: { at: 151, results: [original] } }];
   task.activeProductId = "product";
@@ -560,7 +562,7 @@ it("keeps reuse timing separate from execution and reads another product’s pin
 });
 
 for (const [name, flags, ending, outcome] of [
-  ["Unknown exit", {}, CHECK_EXIT_UNREPORTED, "unknown"],
+  ["Unknown exit", { execution: { ...completeCheckExecution(7), exit: { status: "unreported" } } }, CHECK_EXIT_UNREPORTED, "unknown"],
   ["Deadline", { timedOut: true }, "Stopped after 20 minutes without finishing.", "unfinished"],
   ["Cleanup", { cleanupIncomplete: true }, `(fail) suite > the final case\n1 fail\n${CLEANUP_INCOMPLETE}`, "unfinished"],
   ["Failure", {}, "(fail) suite > the final case\n1 fail", "failed"],
@@ -569,7 +571,7 @@ for (const [name, flags, ending, outcome] of [
   const output = tidyOutput("(pass) ordinary passing line\n".repeat(600) + ending);
   expect(output.length).toBeGreaterThan(1000);
   expect(output.slice(0, 1000)).not.toContain(ending);
-  work.checks = { at: 1, results: [{ ...run(name, output), ...flags, ok: false }] };
+  work.checks = { at: 1, results: [{ ...run(name, output), ok: false, execution: completeCheckExecution(7), ...flags }] };
   const itemId = offer("delivery");
   const { value } = await complete(c, "inbox.inspect", { itemId });
   const check = value.products[0].checks.results[0];
@@ -609,7 +611,7 @@ for (const prefix of ["", "é"]) it(`keeps whole characters at both saved-result
   const { c, work, offer } = fixture();
   const ending = "\n(fail) end";
   const output = prefix + "🙂".repeat(3000) + ending;
-  work.checks = { at: 1, results: [{ ...run("Tests", output), ok: false }] };
+  work.checks = { at: 1, results: [{ ...run("Tests", output), ok: false, execution: completeCheckExecution(7) }] };
   const { value } = await complete(c, "inbox.inspect", { itemId: offer("delivery") });
   const diagnostics = value.products[0].checks.results[0].diagnostics;
   const head = diagnostics.savedResult, tail = diagnostics.savedResultEnding;
@@ -650,4 +652,37 @@ for (const shared of [false, true]) it(`preserves ${shared ? "shared" : "single-
   ];
   const { value } = await complete(c, "inbox.inspect", { itemId: offer("delivery") });
   expect(value.findings.reports.map((report: any) => report.productIds)).toEqual(shared ? [[], [], ["product"], []] : [["product"], ["product"], ["product"], ["product"]]);
+});
+
+for (const reportedOk of [false, true]) it(`keeps text-only legacy reportedOk=${reportedOk} unverified without reading an exit fact from prose`, async () => {
+  const { c, taskId, work, offer } = fixture();
+  const old = { ...run("Older", CHECK_EXIT_UNREPORTED), ok: reportedOk, execution: undefined };
+  work.checks = { at: 1, results: [old] };
+  const itemId = offer("delivery");
+  const { value, pages } = await complete(c, "inbox.inspect", { itemId });
+  const saved = value.products[0].checks.results[0];
+  expect(pages[0]!.decisions).toEqual(["inbox.rerun-checks", "inbox.changes"]);
+  expect(saved.commandOutcome).toBe("unknown");
+  expect(saved.reportedOk).toBe(reportedOk);
+  expect(saved.exitUnreported).toBeUndefined();
+  expect(saved.diagnostics.savedResult.text).toBe(CHECK_EXIT_UNREPORTED);
+  const focused = await c.call("journey.check", { taskId, index: 0 });
+  expect(focused.commandOutcome).toBe("unknown");
+  expect(focused.reportedOk).toBe(reportedOk);
+  expect(old.execution).toBeUndefined();
+});
+
+for (const result of ["pending", "running", "skipped", "stopped"] as const) it(`reads a ${result} lifecycle ahead of a carried old successful run`, async () => {
+  const { c, task, taskId, work, offer } = fixture();
+  const old = { ...run("Tests", "Earlier successful diagnostic"), source: { stepId: "checks", checkId: "c0", attemptId: "run-0" } };
+  task.journey = [{ id: "checks", kind: "petrina", work: "checks", startedAt: 1, round: 1, sub: 0, productChecks: [{ id: "c0", attemptId: "run-0", productId: "product", name: "Tests", result, run: old }] }];
+  work.checks = { at: 1, results: [old] };
+  const expected = result === "skipped" ? "not-executed" : "unfinished";
+  const saved = (await complete(c, "inbox.inspect", { itemId: offer("delivery") })).value.products[0].checks.results;
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toMatchObject({ result, commandOutcome: expected, reportedOk: true });
+  const focused = await c.call("journey.check", { taskId, nodeId: "checks", index: 0 });
+  expect(focused.commandOutcome).toBe(expected);
+  expect(focused.reportedOk).toBe(true);
+  expect(focused.savedResult).toMatchObject({ text: "Earlier successful diagnostic" });
 });

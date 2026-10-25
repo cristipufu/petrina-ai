@@ -1,3 +1,4 @@
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ it.each(["drain", "stop", "restart", "shutdown"] as const)("cancels startup evid
   task.state = "needs-you";
   task.statusLine = "Checks still fail. Your call";
   const at = Date.parse("2026-10-21T17:54:07+03:00");
-  executionFor(task).work.checks = { at, results: [{ name: "Tests", command: "test", ok: false, ms: 219_000, output: "Original failure", startedAt: at, endedAt: at + 219_000 }] };
+  executionFor(task).work.checks = { at, results: [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 219_000, output: "Original failure", startedAt: at, endedAt: at + 219_000 }] };
   executionFor(task).work.checkReturns = 2;
   await seed.shutdown();
   // Even a completed read racing the stop must not update saved evidence.

@@ -2191,11 +2191,13 @@
       "from": "packages/engine/test/check-outcomes.test.ts",
       "splitFiles": [
         "packages/engine/test/contracts/checks/outcome-recording.test.ts",
-        "packages/engine/test/contracts/recovery/check-evidence.test.ts"
+        "packages/engine/test/contracts/recovery/check-evidence.test.ts",
+        "packages/engine/test/contracts/checks/outcome-routing.test.ts",
+        "packages/core/test/rules/checks/outcomes.test.ts"
       ],
       "layer": "contracts",
       "area": "checks",
-      "review": "Actual Engine/SQLite recording and reuse/recovery; injected evidence snapshot is appropriate; keep originals and routing counts, do not substitute saved-failure algorithm. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "review": "Actual Engine/SQLite recording and reuse/recovery; injected evidence snapshot is appropriate; keep originals and routing counts, do not substitute saved-failure algorithm. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership. Shared strict outcome classification now preserves original report and lifecycle while blocking incomplete execution; complete fixture observations are explicit and no historical evidence is upgraded.",
       "variants": [
         "failed/interrupted/mixed/passed",
         "drain/stop/restart/shutdown during held source"
@@ -2207,7 +2209,8 @@
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
         "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
-        "fullQualification": "8f7e2893"
+        "fullQualification": "8f7e2893",
+        "outcomeQualification": "check-outcomes-focused"
       }
     },
     {
@@ -7356,6 +7359,15 @@
       "independentEvidence": "full-97f02a67/manifest-verification.json; full-97f02a67/case-count-reconciliation.json",
       "preservation": "All5037 previous case/outcome identities retained;34addedpassingcontrols explicitly named. Counts do not replace the per-case assertion audits.",
       "limits": "NativeLinux/Windows, new resource measurement, remaining49originals, check environment and delivery-gate work pending."
+    },
+    "check-outcomes-focused": {
+      "kind": "focused, not full or platform qualification",
+      "integratedOn": "83df2ed0",
+      "artifact": "workstreams/check-environment-next/root-integrated.json; scope.json; assertion-reconciliation.json",
+      "root": "1275 Core cases/129 files;76 native recording/routing/reader cases;all nine types and conventions exit0",
+      "author": "117 distinct native cases/13 owners across retained source-specific attempts and corrections",
+      "preservation": "96 original declaration registrations,655 original matcher sites;10 intentional truth-projection expectation changes;645 remaining matcher ASTs unchanged. Added typed failure, malformed facts, lifecycle and explicit rerun controls.",
+      "limits": "Generic setup preflight/environment-bound reuse and final full/platform qualification remain pending."
     }
   },
   "resourceAudit": {
