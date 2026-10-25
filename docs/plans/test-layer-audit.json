@@ -3992,11 +3992,11 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/repositories.test.ts",
+      "file": "packages/engine/test/journeys/checks/shared-repair.test.ts",
       "declarations": 42,
       "assertionSites": 492,
       "baselineDigest": "20c4ca083312c76da157f5b4c0c3eeb6d37a5acd5d4b670b8a411c2db84cc7df",
-      "status": "pending",
+      "status": "reviewed",
       "baselineDeclarations": 43,
       "baselineAssertionSites": 496,
       "baselineRuntimeCases": 88,
@@ -4009,23 +4009,41 @@
           "review": "Actual report application consumes normalized observations. Every original owner/evidence/no-confirmation assertion remains, plus unique identities and correct per-participant verdict counts. These cases never asserted persistence or native output parsing. The adjacent native saved-owner restart/repair/archive journey and all eight shared-fix restart orders remain unchanged."
         }
       ],
-      "review": "Partial audit: twelve state-only ownership permutations no longer create Engine/SQLite. The actual report and settlement production methods moved behind a portable host port; this is not a duplicate implementation. All 42 retained native declarations and assertion bodies are unchanged. Remaining source, Git, delivery, cleanup, shared repair, restart and snapshot controls still require their own complete audit.",
+      "review": "Every remaining case and variant inspected against its actual owner; real Git/SQLite/checks/delivery/restart retained where asserted, saved-record policies use explicit data and canonical scripted agents replace unrelated provider transport. Earlier partial migrations remain recorded separately. Two exact core policy extractions preserve native version observations and selected-owner behavior. Root and independent review corrected over-minimized Git data and approval preludes before integration.",
       "validation": {
-        "artifact": "review-owner-case-reconciliation.json",
-        "production": "review-reports-reconciliation.json",
-        "before": "review-reports-native-before-migration.xml: 203 native cases / 2,921 assertions / six files pass in 45.67s before migration",
-        "measurement": "review-owners-before-2026-10-24T20-25-27-272Z: twelve cases, about 0.937s summed case wall time, one observed Bun launch, stable source and no observer errors. These were already a small state-only fixture; no material full-suite speedup is claimed.",
-        "after": "review-reports-native-reviewed.xml: 283 passed / 3,728 assertions / thirteen files / 56.18s; saved-owner restart/repair/archive and all eight shared-fix restart variants remain. All core/orchestrator cases, workspace types and conventions pass.",
-        "full": "Complete clean b03b03a8 passes all 4,653 cases plus eleven explicit skips; every retained native repository case executes. This remains a partial semantic audit, not completed package/platform qualification."
+        "artifact": "workstreams/shared-repositories-next/handoff.json; workstreams/shared-repositories-review/",
+        "preservation": "119 current-original runtime names and 725 matcher sites across both originals retained; ten new controls separate. All baseline metadata and earlier migrated-case records retained.",
+        "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending."
       },
-      "partialReview": "Two reopening/independent-finding cases split into actual portable review-controller variants and native schema/SQLite/ballot contracts, using canonical reviewRecords for saved state. Other cases remain pending; see review-layers-16bce9e0/original-cases.ts.txt and reconciliation.json."
+      "partialReview": "Two reopening/independent-finding cases split into actual portable review-controller variants and native schema/SQLite/ballot contracts, using canonical reviewRecords for saved state. Other cases remain pending; see review-layers-16bce9e0/original-cases.ts.txt and reconciliation.json.",
+      "from": "packages/engine/test/repositories.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/checks/shared-repair.test.ts",
+        "packages/engine/test/journeys/reviews/shared-review.test.ts",
+        "packages/engine/test/contracts/checkpoints/shared-delivery.test.ts",
+        "packages/engine/test/contracts/reviews/shared-records.test.ts",
+        "packages/engine/test/contracts/cleanup/shared-repositories.test.ts",
+        "packages/engine/test/journeys/delivery/shared-publishing.test.ts",
+        "packages/engine/test/journeys/delivery/shared-decisions.test.ts",
+        "packages/engine/test/journeys/reviews/native-shared-screen.test.ts",
+        "packages/engine/test/journeys/sources/shared-additions.test.ts",
+        "packages/engine/test/journeys/sources/shared-recovery.test.ts",
+        "packages/engine/test/contracts/state/shared-repair-history.test.ts",
+        "packages/engine/test/contracts/sources/shared-preparation.test.ts",
+        "packages/engine/test/contracts/acceptance/shared-tree-freshness.test.ts",
+        "packages/engine/test/journeys/context/shared-edits.test.ts",
+        "packages/engine/test/journeys/acceptance/shared-exhaustion.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "repositories",
+      "reviewedCurrentOriginalDeclarations": 40
     },
     {
-      "file": "packages/engine/test/repository-context.test.ts",
+      "file": "packages/engine/test/contracts/context/shared-acceptance-trees.test.ts",
       "declarations": 39,
       "assertionSites": 294,
       "baselineDigest": "6f08e0329b6c80ae00cf1ca088730635c04d9e0ab90f334469face72c5a7facf",
-      "status": "pending",
+      "status": "reviewed",
       "migratedCases": [
         {
           "original": "resolves shared source rows concurrently, retaining their order and independent errors",
@@ -4051,7 +4069,31 @@
           ]
         }
       ],
-      "review": "Partial audit only: three source-proposal decisions moved to their actual portable controller. Other repository-context cases remain pending; native Git/release/storage interactions stay intact."
+      "review": "Every remaining case and variant inspected against its actual owner; real Git/SQLite/checks/delivery/restart retained where asserted, saved-record policies use explicit data and canonical scripted agents replace unrelated provider transport. Earlier partial migrations remain recorded separately. Two exact core policy extractions preserve native version observations and selected-owner behavior. Root and independent review corrected over-minimized Git data and approval preludes before integration.",
+      "from": "packages/engine/test/repository-context.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/shared-acceptance-trees.test.ts",
+        "packages/engine/test/contracts/cleanup/shared-repositories.test.ts",
+        "packages/engine/test/contracts/acceptance/shared-snapshots.test.ts",
+        "packages/engine/test/contracts/acceptance/custom-result-routing.test.ts",
+        "packages/engine/test/contracts/state/repository-ownership.test.ts",
+        "packages/engine/test/contracts/checks/repository-snapshots.test.ts",
+        "packages/engine/test/contracts/hand-back/shared-snapshots.test.ts",
+        "packages/orchestrator/test/rules/repositories/scopes.test.ts",
+        "packages/engine/test/contracts/checkpoints/shared-delivery.test.ts",
+        "packages/engine/test/contracts/delivery/release-preparation.test.ts",
+        "packages/engine/test/contracts/delivery/shared-confirmation.test.ts",
+        "packages/engine/test/contracts/guidance/shared-lessons.test.ts",
+        "packages/engine/test/contracts/checks/shared-episodes.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "repositories",
+      "reviewedCurrentOriginalDeclarations": 36,
+      "validation": {
+        "artifact": "workstreams/shared-repositories-next/handoff.json; workstreams/shared-repositories-review/",
+        "preservation": "119 current-original runtime names and 725 matcher sites across both originals retained; ten new controls separate. All baseline metadata and earlier migrated-case records retained.",
+        "qualification": "Root integrated native118pass/0fail/25files/16.91s plus9core and2controller cases; all9types/conventions pass. Full combined qualification pending."
+      }
     },
     {
       "file": "packages/repositories/test/contracts/worktrees/paths.test.ts",

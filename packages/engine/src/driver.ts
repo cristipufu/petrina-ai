@@ -4,7 +4,7 @@ import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orches
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
-import { acceptanceGap, openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, requiredUnverified, sameVersions } from "@petrina/core";
+import { openProofs, proofDecision, proofTestNeeded, refreshProofs, requiredUnverified, sameVersions, shipsUnasked } from "@petrina/core";
 import { join } from "node:path";
 import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
@@ -812,17 +812,6 @@ export class Driver {
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
   private shipsUnasked(task: MTask): boolean {
     const scope = executionFor(task);
-    if (task.reviewDecision) return false;
-    if (proofGap(task)) return false;
-    // The added check lifts on a complete, current pass of every required item, even when an extra probe could not be verified.
-    if (task.proofDeliveryGate && !task.approveDelivery && task.acceptancePassed === true && !acceptanceGap(task) && !task.findings.some(finding => finding.status === "open" && finding.severity === "blocking")) return true;
-    // Shared work also needs the saved task choice and combined acceptance; single-product work keeps
-    // the product's existing low-risk opt-in, even when its ordinary deliveries ask first.
-    if (task.repositories && (task.approveDelivery || task.acceptancePassed !== true)) return false;
-    if (task.repositories && (!task.repositories.every((work) => this.k.s.products.find((product) => product.id === work.productId)?.shipLowRisk && !!work.checks?.results.length && work.checks.results.every((run) => run.ok)))) return false;
-    if (task.risk?.level !== "low" || !this.k.productOf(task)?.shipLowRisk) return false;
-    if (task.acceptanceUnverified || task.acceptancePassed === false) return false;
-    if (task.findings.some((finding) => finding.status === "open" && finding.severity === "blocking")) return false;
-    return scope.work.checks?.results.every((run) => run.ok) ?? true;
+    return shipsUnasked(task, { products: this.k.s.products, product: this.k.productOf(task), checks: scope.work.checks });
   }
 }

@@ -1,5 +1,5 @@
 import { observeCommittedCode, scopesFor } from "@petrina/orchestrator";
-import { assignedProducts, type Task } from "@petrina/core";
+import { applyAcceptanceVersions, assignedProducts, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import type { MTask } from "./kernel.js";
 import { repositoryObservationQueries } from "@petrina/repositories/observations";
@@ -32,19 +32,7 @@ export function productsFor(task: MTask, ids: readonly string[] | undefined): st
 export async function invalidateAcceptance(task: MTask, versions?: Record<string, string>): Promise<Record<string, string> | undefined> {
   if (!task.repositories) return;
   const current = versions ?? await versionsOf(task);
-  for (const work of task.repositories) if (work.checks) work.checks.current = work.checks.tree === current[work.productId];
-  if (!task.brief) return current;
-  let changed = false;
-  for (const item of task.brief.acceptance) {
-    if (item.verification !== "passed" || !item.versions) continue;
-    if (Object.entries(item.versions).some(([id, version]) => current[id] !== version)) {
-      delete item.met;
-      item.verification = "stale";
-      item.reason = "An affected product changed after this acceptance check. Combined verification is required again.";
-      changed = true;
-    }
-  }
-  if (changed) task.acceptancePassed = false;
+  applyAcceptanceVersions(task, current);
   return current;
 }
 

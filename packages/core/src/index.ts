@@ -1,4 +1,6 @@
 export * from "./model.js";
+export { shipsUnasked, type DeliveryPolicyContext, type DeliveryPolicyTask } from "./delivery-policy.js";
+export { applyAcceptanceVersions } from "./acceptance-versions.js";
 export * from "./message-delivery.js";
 export * from "./call.js";
 export * from "./journey.js";
