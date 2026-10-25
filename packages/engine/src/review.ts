@@ -1,4 +1,5 @@
-import { executionFor, scopesFor, repositoryView, VerifierBallots, ReviewReports, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
+import { createVerifierBallots } from "./verifier-host.js";
+import { executionFor, scopesFor, repositoryView, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "./repositories.js";
 import { beginRepair } from "@petrina/orchestrator";
 import { refreshProofs } from "@petrina/core";
@@ -13,7 +14,7 @@ import * as git from "./git.js";
 import { formatFindings } from "./prompts.js";
 import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
 import { Kernel, type MStage, type MTask, ScreenWait, SourceRefreshRequired } from "./kernel.js";
-import { CAPACITY_WAIT, WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
+import { WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
@@ -46,20 +47,7 @@ export class Reviews {
       id: task => k.id(task.id), now: () => Date.now(),
       verdict: (...args) => k.tracking.verdict(...args), note: (...args) => k.log(...args),
     });
-    this.ballots = new VerifierBallots({
-      profile: id => k.profile(id), profileName: id => k.named(id),
-      toolName: id => k.s.tools.find(tool => tool.id === id)?.name ?? id,
-      roleResult: (id, task) => k.role(id, task)?.result,
-    }, {
-      candidates: stage => this.voters(stage), admissionsClosed: task => k.taskAdmissionsClosed(task),
-      resolve: (task, id) => {
-        const choice = k.choose(id, task, "verifier");
-        if (!choice) return undefined;
-        return choice.kind === "none"
-          ? { kind: choice.waiting.startsWith(CAPACITY_WAIT) ? "capacity" : "unavailable", waiting: choice.waiting }
-          : { kind: "selected", profile: { id: choice.profile.id, toolId: choice.profile.toolId } };
-      },
-    }, { checkpoint: task => k.commitNow(task), changed: task => k.commit(task), note: (task, tone, text) => k.log(task, tone, text), now: () => Date.now() });
+    this.ballots = createVerifierBallots(k);
   }
 
   /** Bring review checks onto their current source and reconcile Petrina's own findings. */
@@ -342,24 +330,6 @@ export class Reviews {
   private pendingVote(task: MTask, stage: MStage): PendingVerification | undefined {
     this.settleReviews(task, stage);
     return this.ballots.next(task, stage);
-  }
-
-  /**
-   * One fresh voter per usable tool, in the tools' stable order: the candidates a panel is chosen from. Prefer high
-   * effort for checking a specific claim; the stage's discovery reviewers keep their configured profiles.
-   */
-  private voters(stage: Stage): Id[] {
-    const usable = this.k.usableTools() as Id[];
-    const ready = new Set(this.k.s.tools.filter((tool) => tool.status === "ready" && (!usable.length || usable.includes(tool.id))).map((tool) => tool.id));
-    // With no tool found ready (tests stand in for the tools), the tools the stage's reviewers use.
-    const tools = ready.size ? [...ready] : [...new Set(stage.profileIds.map((id) => this.k.profile(id)?.toolId).filter((id): id is Id => !!id))];
-    return tools
-      .map((toolId) => {
-        const own = stage.profileIds.find((id) => this.k.profile(id)?.toolId === toolId);
-        const profiles = this.k.s.profiles.filter((profile) => profile.toolId === toolId && !profile.standby);
-        return profiles.find((profile) => profile.effort === "high")?.id ?? own ?? profiles[0]?.id;
-      })
-      .filter((id): id is Id => !!id);
   }
 
   /**

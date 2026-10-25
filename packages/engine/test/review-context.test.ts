@@ -156,19 +156,6 @@ describe("immutable review inputs", () => {
     } finally { await f.engine.shutdown(); }
   });
 
-  it("uses high-effort verifiers without changing discovery profiles, retaining a configured fallback when high is absent", async () => {
-    const f = await bare();
-    try {
-      const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["opus-xhigh", "sol-xhigh"], maxRounds: 2 };
-      f.engine.s.tools.forEach((tool) => { tool.status = "ready"; });
-      const voters = f.engine["reviews"]["voters"](stage);
-      expect(voters.length).toBeGreaterThan(1);
-      expect(voters.every((id) => f.engine.profile(id)!.effort === "high")).toBe(true);
-      expect(stage.profileIds).toEqual(["opus-xhigh", "sol-xhigh"]);
-      f.engine.s.profiles = f.engine.s.profiles.filter((profile) => profile.toolId !== "codex" || profile.effort !== "high");
-      expect(f.engine["reviews"]["voters"](stage)).toContain("sol-xhigh");
-    } finally { await f.engine.shutdown(); }
-  });
   for (const empty of ["old", "new", "both"]) it(`prepares a port whose ${empty} commit range is empty`, async () => {
     const f = await bare();
     try {

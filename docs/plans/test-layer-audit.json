@@ -1477,7 +1477,7 @@
       "baselineDeclarations": 36,
       "baselineAssertionSites": 243,
       "baselineRuntimeCases": 49,
-      "retainedRuntimeCases": 44,
+      "retainedRuntimeCases": 43,
       "migratedCases": [
         {
           "original": "keeps the existing mildest-verdict tie rule on an exhaustive pair",
@@ -1506,9 +1506,16 @@
           "case": "keeps unknown legacy reasons without counting a nominal profile as an actual tool",
           "variants": 1,
           "assertions": "Actual controller sees the legacy nominal voted profile without evidence, admits both proven actual tools, preserves the older reason without adding toolId, and settles only their current verdicts. Native proven/unproven restart and majority controls remain."
+        },
+        {
+          "original": "keeps a tool near its usage limit eligible for the pair",
+          "file": "packages/engine/test/contracts/reviews/verifier-selection.test.ts",
+          "case": "keeps allowed Grok usage at 95% eligible for the independent verifier pair",
+          "variants": 3,
+          "assertions": "Actual native quota/readiness composition selects two independent tools at allowed utilization 0%, 30% and 95%. The retained four-tool real-session admission journey now also uses 95% Grok usage, retaining all nine original actual admission assertions."
         }
       ],
-      "review": "Partial semantic audit: five decision-only runtime variants now use the actual extracted ballot controller and core round-routing rule, with seven smaller variants including reversed order. All 32 retained declarations and their assertion bodies are unchanged (verifier-policy-case-reconciliation.json). The remaining 44 native cases still need complete ownership, fixture and resource audit; this mixed original file remains pending.",
+      "review": "Partial semantic audit: five decision-only runtime variants now use the actual extracted ballot controller and core round-routing rule, with seven smaller variants including reversed order. All 32 retained declarations and their assertion bodies are unchanged (verifier-policy-case-reconciliation.json). The remaining 44 native cases still need complete ownership, fixture and resource audit; this mixed original file remains pending. Subsequent selection composition audit moves one quota-only journey to three native adapter variants; the retained real fresh-pair admission control now also has near-limit usage. Other surrounding case bodies remain unchanged; verifier-selection-9651ee88/reconciliation.json records the exact exception. Forty-three native cases remain pending full semantic audit.",
       "validation": {
         "artifact": "verifier-policy-case-reconciliation.json",
         "native": "verifier-policy-native.xml",
@@ -1973,7 +1980,13 @@
       "declarations": 36,
       "assertionSites": 292,
       "baselineDigest": "89063651269938edd01a9a5b2878516d9739d8d2942bf7dcd01fc5a7577bbb03",
-      "status": "pending"
+      "status": "pending",
+      "partialAudit": {
+        "moved": "High-effort verifier candidate preferences",
+        "owner": "packages/core/test/rules/reviews/profiles.test.ts",
+        "assertions": "All four original preference assertions retained. Added ordering, usable-set, no-ready, standby and first-profile controls. All other surrounding case bodies unchanged. Mixed native file remains pending.",
+        "evidence": "verifier-selection-9651ee88/reconciliation.json"
+      }
     },
     {
       "file": "packages/engine/test/review-continuation-rounds.test.ts",
@@ -2904,6 +2917,26 @@
       "review": "Nine original declaration bodies / twelve runtime role-edit variants retain their 53 assertion sites and golden contract bytes. Uses actual role-edit rules and result contracts, typed tool metadata and canonical private prompt contexts. Temporary incremental-contract mutation retains its original finally restoration. No native services or I/O.",
       "validation": "prompt-layers-e19eb144/reconciliation.json and prompts-fixed.xml: all 35 original cases / 3813 assertions across the two owners pass. The golden JSON is byte identical. Full changed-batch qualification remains due.",
       "fullValidation": "Complete required macOS suite at 58706d2b: 4895 pass / 11 explicit skips / 0 fail / 425031ms; exact 356-file manifest independently reconciled. Native Linux/Windows qualification remains due."
+    },
+    {
+      "file": "packages/core/test/rules/reviews/profiles.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "reviews",
+      "declarations": 4,
+      "assertionSites": 9,
+      "review": "Five runtime rule variants exercise actual candidate preference with fresh scalar catalog copies; no native effects. Preserves the original four high/fallback assertions and adds ready/usable order, no-ready tool, standby and planned/first fallback controls.",
+      "validation": "verifier-selection-9651ee88/core-rules-final.json: 23 rules in the two neighboring files pass. Types and conventions pass; complete changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/engine/test/contracts/reviews/verifier-selection.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "reviews",
+      "declarations": 1,
+      "assertionSites": 2,
+      "review": "Three allowed-usage variants exercise actual native quota/readiness and ballot recording through the same production factory as Reviews, using private SQLite and canonical single-product records with explicit scripted readiness. No repository, agent or native account dependency. Actual fresh admission remains covered by the strengthened real-session control.",
+      "validation": "verifier-selection-9651ee88/selection-ready.xml: three pass/six assertions; native-neighborhood.xml: 187 pass/2044 assertions; native-admission-reviewed.xml: one pass/nine assertions. Complete changed-batch qualification remains due."
     }
   ],
   "rust": [

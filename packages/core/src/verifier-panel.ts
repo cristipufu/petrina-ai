@@ -1,10 +1,28 @@
 // Bounded verifier panels: which tools check a round's Important findings, which answers count, when a third
 // independent tool is asked, and who may take over a place. Decisions only; the engine admits and records them.
 
-import type { Finding, Hunt, Id, Task, VerifierPanel, VerifierSeat, Vote } from "./model.js";
+import type { AgentProfile, Finding, Hunt, Id, Task, Tool, VerifierPanel, VerifierSeat, Vote } from "./model.js";
 import { independentVotes } from "./reviews.js";
 import { assignedProducts } from "./repositories.js";
 import { exhaustedAcceptanceFailure } from "./acceptance.js";
+
+/** Profile candidates only. Actual quota/readiness resolution remains with the selector. */
+export function verifierProfiles(input: {
+  profiles: readonly Pick<AgentProfile, "id" | "toolId" | "effort" | "standby">[];
+  tools: readonly Pick<Tool, "id" | "status">[];
+  usable: readonly Id[];
+  planned: readonly { id: Id; toolId?: Id }[];
+}): Id[] {
+  const ready = input.tools.filter(tool => tool.status === "ready" && (!input.usable.length || input.usable.includes(tool.id))).map(tool => tool.id);
+  // Preserve the stage's candidates when none is ready; resolution still decides availability.
+  const tools = ready.length ? [...new Set(ready)] : [...new Set(input.planned.flatMap(profile => profile.toolId ? [profile.toolId] : []))];
+  return tools.flatMap(toolId => {
+    const own = input.planned.find(profile => profile.toolId === toolId)?.id;
+    const profiles = input.profiles.filter(profile => profile.toolId === toolId && !profile.standby);
+    const id = profiles.find(profile => profile.effort === "high")?.id ?? own ?? profiles[0]?.id;
+    return id ? [id] : [];
+  });
+}
 
 /** Open Important reports that lack support from two independent tools. */
 export function findingsNeedingVotes<F extends Finding>(task: Pick<Task, "productId" | "repositories" | "selectedProducts" | "workRows" | "acceptanceBlocked"> & { findings: readonly F[] }, toolOf: (profileId: Id) => Id | undefined): F[] {

@@ -325,8 +325,10 @@ const inject = (f: Awaited<ReturnType<typeof voting>>, id: string, raisedBy: str
 
 describe.concurrent("bounded verifier panels", () => {
   it("starts two fresh verifiers instead of one per ready tool, avoiding the reporting tool", async () => {
-    const f = await fixture({ reviewer: "important" }, 4, undefined, undefined, true, true);
+    const f = await voting({}, 4, [], true);
     try {
+      // Keep actual near-limit admission in this transport control; usage permutations belong to selection contracts.
+      f.engine.s.pool.usage = [{ toolId: "grok", kind: "five_hour", status: "allowed", utilization: 0.95, resetsAt: Date.now() + 3_600_000, at: Date.now() }];
       await f.advance(f.delivery);
       const finding = checkedFinding(f);
       expect(new Set(independentVotes(finding.votes).map((vote) => vote.toolId))).toEqual(new Set(["codex", "grok"]));
@@ -354,16 +356,6 @@ describe.concurrent("bounded verifier panels", () => {
       expect(verifierSteps(f)).toHaveLength(1);
       expect(verifierSteps(f)[0]!.agentInputs![0]!.selectionReason).toContain("usable at selection: Codex and Antigravity");
       expect(f.fakes.openings("builder")).toHaveLength(1);
-    } finally { await f.engine.shutdown(); }
-  });
-
-  it("keeps a tool near its usage limit eligible for the pair", async () => {
-    const f = await voting({}, 3, []);
-    try {
-      f.engine.s.pool.usage = [{ toolId: "grok", kind: "five_hour", status: "allowed", utilization: 0.95, resetsAt: Date.now() + 3_600_000, at: Date.now() }];
-      await f.advance(f.delivery);
-      expect(new Set(plain(checkedFinding(f).votes)!.map((vote) => vote.toolId))).toEqual(new Set(["codex", "grok"]));
-      expect(f.fakes.openings("verifier")).toHaveLength(2);
     } finally { await f.engine.shutdown(); }
   });
 
