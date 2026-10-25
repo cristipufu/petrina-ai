@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { notificationFixture } from "../../fixtures/notifications";
 import { beforeEach, describe, expect, it } from "vitest";
 import { historyItem, reviewStats, type InboxItem, type InboxKind, type State } from "@petrina/core";
@@ -25,13 +26,13 @@ function withInbox(inbox: readonly InboxItem[]): State {
 
 it.each(["failed", "interrupted", "passing", "outdated", "outdated-failed", "outdated-interrupted"] as const)("keeps %s check decisions consistent in notifications and in-app messages", (result) => {
   const failed = result.endsWith("failed"), interrupted = result.endsWith("interrupted");
-  const task = { ...guestCheckout, findings: [], acceptanceUnverified: false, checks: { at: 1, current: !result.startsWith("outdated"), results: [{ name: "Tests", command: "tests", ms: 1, output: "original result", ok: !failed && !interrupted, ...(interrupted ? { interruption: { source: "macOS power log" as const, at: 0, event: "Sleep" } } : {}) }] } };
+  const task = { ...guestCheckout, findings: [], acceptanceUnverified: false, checks: { at: 1, current: !result.startsWith("outdated"), results: [{ name: "Tests", command: "tests", ms: 1, output: "original result", ok: !failed && !interrupted, execution: completeCheckExecution(failed || interrupted ? 7 : 0), ...(interrupted ? { interruption: { source: "macOS power log" as const, at: 0, event: "Sleep" } } : {}) }] } };
   const decision = item("delivery");
   const state = { ...demo, tasks: [task], inbox: [decision] };
   const words = failed ? "checks still failing, your call" : interrupted ? "checks unverified, your call" : "a task is ready to ship";
   expect(noticeFor(decision, state).title).toBe(`Petrina: ${words}`);
   expect(waitingLine(decision, state)).toContain(words);
-  const shared = { ...task, repositories: [{ productId: demo.products[0]!.id, delivery: "local" as const, completedStages: [], checks: task.checks }, { productId: demo.products[1]!.id, delivery: "local" as const, completedStages: [], checks: { at: 1, results: [{ name: "Build", command: "build", ms: 1, ok: true, output: "pass" }] } }] };
+  const shared = { ...task, repositories: [{ productId: demo.products[0]!.id, delivery: "local" as const, completedStages: [], checks: task.checks }, { productId: demo.products[1]!.id, delivery: "local" as const, completedStages: [], checks: { at: 1, results: [{ name: "Build", command: "build", ms: 1, ok: true, execution: completeCheckExecution(0), output: "pass" }] } }] };
   expect(noticeFor(decision, { ...state, tasks: [shared] }).title).toBe(`Petrina: ${words}`);
 });
 

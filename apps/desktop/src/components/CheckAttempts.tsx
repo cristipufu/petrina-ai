@@ -1,5 +1,5 @@
 import { LoaderCircle } from "lucide-react";
-import { checkAttemptsOf, checkCounts, incompleteCheckOutcome, type JourneyProductCheck } from "@petrina/core";
+import { checkEntryResult, checkOutcome, checkOutcomeLabel, checkAttemptsOf, checkCounts, incompleteCheckOutcome, type JourneyProductCheck } from "@petrina/core";
 import { duration, type Lookup } from "../lib";
 
 function outcome(checks: readonly JourneyProductCheck[]) {
@@ -27,24 +27,29 @@ function Attempt({ checks, find, now, taskId, onOriginal, evidence }: Props) {
   return <div className="journey-context check-attempt">
     {(product || (!evidence && !reused)) && <p className="quiet-text num">{product && (find.product(product)?.name ?? "Removed product")}{!evidence && !reused && <>{product ? " · " : ""}{timing}</>}</p>}
     <ul className="journey-check-list">{checks.map((recorded, index) => {
-      const check = recorded.run?.interruption || recorded.run?.interrupted ? { ...recorded, result: "stopped" as const } : recorded;
+      const result = checkEntryResult(recorded);
+      const check = { ...recorded, result };
+      const lifecycle = ["pending", "running", "stopped", "skipped"].includes(recorded.result);
+      const pending = recorded.result === "pending" || recorded.result === "running";
       const run = check.run;
       const source = run?.source ?? check.source;
-      const start = run?.startedAt ?? check.startedAt;
-      const end = run?.endedAt ?? check.endedAt;
+      const start = pending ? check.startedAt : run?.startedAt ?? check.startedAt;
+      const end = pending ? undefined : run?.endedAt ?? check.endedAt;
+      const words = run && !lifecycle && result === "stopped" ? checkOutcomeLabel(checkOutcome(run)) : undefined;
+      const label = words ? words[0]!.toUpperCase() + words.slice(1) : result === "stopped" && !lifecycle ? "Unverified — execution details were not recorded" : ({ pass: "Passed", fail: "Failed", "did-not-finish": "Timed out", running: "Running", pending: "Pending", stopped: "Stopped — verification incomplete", skipped: "Skipped" } as const)[result];
       const href = new URL(window.location.href);
       if (taskId) href.pathname = `/tasks/${encodeURIComponent(taskId)}`;
       if (source) { href.searchParams.set("node", source.stepId); href.searchParams.set("attempt", source.attemptId); }
       return <li key={`${check.id ?? index}:${index}`}>
-        <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" || check.result === "did-not-finish" ? "bad" : check.result === "running" ? "running" : ""}`}>{check.result === "running" && <LoaderCircle size={12} className="check-progress-spinner" aria-hidden="true" />}{({ pass: "Passed", fail: "Failed", "did-not-finish": "Timed out", running: "Running", pending: "Pending", stopped: run?.interruption ? "Interrupted — verification incomplete" : "Stopped — verification incomplete", skipped: "Skipped" } as const)[check.result]}</span>
+        <span className={`label ${check.result === "pass" ? "ok" : check.result === "fail" || check.result === "did-not-finish" ? "bad" : check.result === "running" ? "running" : ""}`}>{check.result === "running" && <LoaderCircle size={12} className="check-progress-spinner" aria-hidden="true" />}{label}</span>
         <strong>{check.name}</strong>
         {check.reusedAt !== undefined ? <span className="quiet-text num">Previous result reused {new Date(check.reusedAt).toLocaleString()}; no new execution</span> : evidence && <span className="quiet-text">Original execution</span>}
         {check.result === "skipped" ? <span className="quiet-text">Skipped in the original check attempt; no execution</span> : (evidence || reused) && <span className="quiet-text num">Original execution: {start !== undefined ? new Date(start).toLocaleString() : "time unavailable"}{run && Number.isFinite(run.ms) ? ` · ${recordedDuration(run.ms)} recorded duration` : start !== undefined && end !== undefined ? ` · ${recordedDuration(end - start)} recorded duration` : " · duration unavailable"}</span>}
         {!evidence && !reused && start !== undefined && <span className="quiet-text num">{duration(start, end ?? now)}{end === undefined ? " so far" : ""}</span>}
         {source && (evidence || reused) ? <a className="linkish" href={`${href.pathname}${href.search}`} onClick={(event) => { if (onOriginal && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); onOriginal(source.stepId, source.attemptId); } }}>See original checks · {/^run-\d+$/.test(source.attemptId) ? `attempt ${Number(source.attemptId.slice(4)) + 1}` : "recorded attempt"}</a> : (evidence || reused) && check.result !== "skipped" ? <span className="quiet-text">Original journey link unavailable</span> : null}
         {run?.interruption && <span>{run.interruption.source} · {new Date(run.interruption.at).toLocaleString()}: {run.interruption.event}. Sleep overlap does not prove the cause of every reported failure.</span>}
-        {check.result === "stopped" && run && <span>Original reported result: {run.ok ? "passed" : run.timedOut ? "timed out" : "failed"}</span>}
-        {check.detail || (run && !run.ok) ? <span className="journey-check-detail">{check.detail ?? run!.output.slice(-1000)}</span> : null}
+        {check.result === "stopped" && (run || recorded.result === "pass" || recorded.result === "fail") && <span>Original reported result: {run ? run.ok ? "passed" : run.timedOut ? "timed out" : "failed" : recorded.result === "pass" ? "passed" : "failed"}</span>}
+        {check.detail || (run && checkOutcome(run).kind !== "passed") ? <span className="journey-check-detail">{check.detail ?? run!.output.slice(-1000)}</span> : null}
       </li>;
     })}</ul>
   </div>;

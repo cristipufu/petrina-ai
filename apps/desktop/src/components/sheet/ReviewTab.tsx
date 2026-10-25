@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { findingCount, independentVotes, trackingWords, VERDICT_WORDS, voteSummary, type CheckRun, type Finding, type Task, type Vote } from "@petrina/core";
+import { checkCounts, checkOutcome, checkOutcomeLabel, checkProblemWords, checkResult, findingCount, independentVotes, trackingWords, VERDICT_WORDS, voteSummary, type CheckRun, type Finding, type Task, type Vote } from "@petrina/core";
 import { ago, profileText, type Lookup } from "../../lib";
 import { followLink, routeHref } from "../../routes";
 import { openFirst } from "./order";
@@ -161,12 +161,14 @@ function FindingsSection({ findings, find, empty, onOpen }: { findings: readonly
 
 /** What Petrina saw when it ran the product's checks itself: evidence, never an agent's word. */
 function ChecksSection({ runs, at, now }: { runs: readonly CheckRun[]; at: number; now: number }) {
-  const failed = runs.filter((run) => !run.ok).length;
+  const checks = runs.map(run => ({ name: run.name, result: checkResult(run), run }));
+  const { failed, unverified } = checkCounts(checks);
+  const result = unverified ? checkProblemWords(checks) : failed ? `${failed} of ${runs.length} failed` : `all ${runs.length} passed`;
   const when = ago(at, now);
   return (
     <section className="sheet-section">
       <h2>
-        Checks <span className="quiet-text num">{failed ? `${failed} of ${runs.length} failed` : `all ${runs.length} passed`} · run by Petrina {when === "now" ? "just now" : `${when} ago`}</span>
+        Checks <span className="quiet-text num">{result} · run by Petrina {when === "now" ? "just now" : `${when} ago`}</span>
       </h2>
       <ol className="issues">
         {runs.map((run) => (
@@ -178,17 +180,22 @@ function ChecksSection({ runs, at, now }: { runs: readonly CheckRun[]; at: numbe
 }
 
 function CheckItem({ run }: { run: CheckRun }) {
-  const [open, setOpen] = useState(!run.ok);
+  const outcome = checkOutcome(run);
+  const passed = outcome.kind === "passed", failed = outcome.kind === "failed";
+  const words = checkOutcomeLabel(outcome);
+  const label = words[0]!.toUpperCase() + words.slice(1);
+  const [open, setOpen] = useState(!passed);
   return (
     <li className="issue">
       <div className="issue-status">
-        <span className={`label ${run.ok ? "ok" : "bad"}`}>{run.ok ? "Passed" : run.timedOut ? "Too slow" : "Failed"}</span>
+        <span className={`label ${passed ? "ok" : failed ? "bad" : ""}`}>{label}</span>
         <span aria-hidden="true">·</span>
         <span className="issue-text">{run.name}</span>
         <span aria-hidden="true">·</span>
         <span className="num">{Math.max(1, Math.round(run.ms / 1000))}s</span>
       </div>
       <p className="issue-who mono">{run.command}</p>
+      {!passed && !failed && <p className="quiet-text">Original reported result: {run.ok ? "passed" : "failed"}</p>}
       {run.cleanupIncomplete && <p className="issue-text">Petrina could not confirm every child process stopped. Some may still be running.</p>}
       {run.output && (
         <>

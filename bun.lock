@@ -19,6 +19,7 @@
         "remark-gfm": "^4.0.1",
       },
       "devDependencies": {
+        "@petrina/test-support": "workspace:*",
         "@tauri-apps/cli": "2.12.2",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",

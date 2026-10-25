@@ -70,6 +70,8 @@ Automated checks show every check in that run, with pending, running and complet
 
 Each attempt keeps its original start date, time and overall elapsed duration. The step outcome follows the latest attempt, including any reused results in it. A mixed outcome states both the failures and the unverified checks. A stopped check without recorded machine evidence says “Stopped — verification incomplete”; confirmed machine interruption says “Interrupted — verification incomplete” and shows its supporting event.
 
+Check totals and individual result labels use the same recorded execution facts. Missing execution details stay unverified, even when the original report said passed; the original report and diagnostic remain separately visible. A command that could not start or whose exit or cleanup is uncertain is distinct from a completed failure. Pending and running rows retain their own current timing and status when an earlier result is still attached.
+
 ### Release notes
 
 Pausing or restarting unfinished release notes keeps the same Release Manager box. Preparation checks still run again before the agent continues, with their results in that step's timeline. The box gets its completion check only after the notes are ready; failed checks interrupt it and say why.

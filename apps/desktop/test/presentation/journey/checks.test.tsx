@@ -11,6 +11,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, createDemoState, type State, type Task, type DeepMutable } from "@petrina/core";
 import { App } from '../../../src/App';
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { acceptanceFixture } from "../../fixtures/acceptance";
 
 let simulator: Simulator;
@@ -29,6 +30,9 @@ vi.mock('../../../src/engine', () => ({
 }));
 
 const NOW = 1_000_000_000_000;
+
+// Explicit completed scenario input; missing/running/stopped controls deliberately omit this.
+const completedRun = (name: string, code: number, output = "") => ({ name, command: `check ${name}`, ms: 100, ok: code === 0, output, execution: completeCheckExecution(code) });
 
 let root: Root;
 
@@ -79,7 +83,7 @@ describe('the journey in the task sheet', () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');
     const checkStep = task.journey!.findLast((step) => step.kind === 'petrina' && step.work === 'checks')!;
-    checkStep.productChecks = [{ name: 'Type check', result: 'pass' }, { name: 'Tests', result: 'fail' }];
+    checkStep.productChecks = [{ name: 'Type check', result: 'pass', run: completedRun('Type check', 0) }, { name: 'Tests', result: 'fail', run: completedRun('Tests', 7) }];
     await mount(state);
     await openTask('pricing-refresh');
     const checkItem = host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${checkStep.id}"]`)!;
@@ -95,7 +99,7 @@ describe('the journey in the task sheet', () => {
     const state = createDemoState(NOW);
     const task = taskOf(state, 'pricing-refresh');
     const step = task.journey!.findLast((step) => step.kind === 'petrina' && step.work === 'checks')!;
-    step.productChecks = [{ name: 'Type check', result: 'pass', startedAt: NOW - 60_000, endedAt: NOW - 50_000 }, { name: 'Tests', result: 'running', startedAt: NOW - 120_000 }, { name: 'Commit message hook', result: 'pending' }];
+    step.productChecks = [{ name: 'Type check', result: 'pass', run: completedRun('Type check', 0), startedAt: NOW - 60_000, endedAt: NOW - 50_000 }, { name: 'Tests', result: 'running', startedAt: NOW - 120_000 }, { name: 'Commit message hook', result: 'pending' }];
     await mount(state);
     await openTask(task.id);
     await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!.click());
@@ -111,8 +115,8 @@ describe('the journey in the task sheet', () => {
     const step = task.journey!.findLast((step) => step.kind === 'petrina' && step.work === 'checks')!;
     step.productChecks = [
       { id: 'check-0', name: 'Tests', result: 'stopped', detail: 'Original interruption', startedAt: NOW - 90_000, endedAt: NOW - 80_000 },
-      { id: 'run-1:check-0', name: 'Tests', result: 'fail', detail: 'Original failure', startedAt: NOW - 60_000, endedAt: NOW - 50_000 },
-      { id: 'run-2:check-0', attemptId: 'run-2', productId: task.productId, queuedAt: NOW - 30_000, name: 'Tests', result: 'pass', startedAt: NOW - 20_000, endedAt: NOW - 10_000 },
+      { id: 'run-1:check-0', name: 'Tests', result: 'fail', run: completedRun('Tests', 7, 'Original failure'), detail: 'Original failure', startedAt: NOW - 60_000, endedAt: NOW - 50_000 },
+      { id: 'run-2:check-0', attemptId: 'run-2', productId: task.productId, queuedAt: NOW - 30_000, name: 'Tests', result: 'pass', run: completedRun('Tests', 0), startedAt: NOW - 20_000, endedAt: NOW - 10_000 },
     ];
     await mount(state);
     await openTask(task.id);
@@ -139,7 +143,7 @@ describe('the journey in the task sheet', () => {
     const task = taskOf(state, 'pricing-refresh');
     const step = task.journey!.find((step) => step.work === 'checks')!;
     const originalOutcome = step.outcome;
-    const failed = { ...step.productChecks![0]!, result: 'fail' as const, run: { ...step.productChecks![0]!.run!, ok: false, output: 'Completed failure before sleep' }, detail: 'Completed failure before sleep' };
+    const failed = { ...step.productChecks![0]!, result: 'fail' as const, run: { ...step.productChecks![0]!.run!, ok: false, execution: completeCheckExecution(7), output: 'Completed failure before sleep' }, detail: 'Completed failure before sleep' };
     const run = { ...step.productChecks![1]!.run!, ok: false, output: 'Original startup failure', interruption: { source: 'macOS power log' as const, at: NOW - 90_000, event: 'Entering Sleep state due to Clamshell Sleep' } };
     step.productChecks = [...(mixed ? [failed] : []), { ...step.productChecks![1]!, result: 'fail', run, detail: 'Original startup failure' }];
     await mount(state); await openTask(task.id);
@@ -164,9 +168,9 @@ describe('the journey in the task sheet', () => {
     const checkStep = task.journey!.find((step) => step.kind === 'petrina' && step.work === 'checks')!;
     task.journey = [...task.journey!.slice(0, deliveryIndex), { ...checkStep, id: 'checks-before-delivery', startedAt: NOW - 100, endedAt: NOW - 10 }, ...task.journey!.slice(deliveryIndex)];
     task.checks = { at: NOW, definition: 'current', results: [
-      { name: 'Type check', command: 'bun run typecheck', ok: true, ms: 10, output: 'passed' },
-      { name: 'Tests', command: 'bun run test', ok: false, ms: 100, output: '@petrina/engine:test  | (fail) reviews after a usage handoff > keeps a real reviewer handoff independent with 1 pool slots and one slot per tool [66762.68ms]\n@petrina/engine:test  | error: Timed out waiting for the independent reviews' },
-      { name: 'Desktop shell', command: 'cargo check', ok: true, ms: 10, output: 'passed' },
+      { name: 'Type check', command: 'bun run typecheck', ok: true, execution: completeCheckExecution(0), ms: 10, output: 'passed' },
+      { name: 'Tests', command: 'bun run test', ok: false, execution: completeCheckExecution(7), ms: 100, output: '@petrina/engine:test  | (fail) reviews after a usage handoff > keeps a real reviewer handoff independent with 1 pool slots and one slot per tool [66762.68ms]\n@petrina/engine:test  | error: Timed out waiting for the independent reviews' },
+      { name: 'Desktop shell', command: 'cargo check', ok: true, execution: completeCheckExecution(0), ms: 10, output: 'passed' },
     ] };
     delete task.journey!.findLast((step) => step.kind === 'you' && step.waitsFor === 'delivery')!.productChecks;
     await mount(state);
@@ -187,7 +191,7 @@ describe('the journey in the task sheet', () => {
     const task = taskOf(state, 'pricing-refresh') as DeepMutable<Task>;
     task.after = ['guest-checkout'];
     const original = task.journey!.find((step) => step.work === 'checks')!;
-    const run = { ...original.productChecks!.find((check) => check.name === 'Tests')!.run!, ok: passed, output: passed ? 'passed' : 'Startup cause remains unresolved', startedAt: NOW - 90_000, endedAt: NOW - 49_000 };
+    const run = { ...original.productChecks!.find((check) => check.name === 'Tests')!.run!, ok: passed, execution: completeCheckExecution(passed ? 0 : 7), output: passed ? 'passed' : 'Startup cause remains unresolved', startedAt: NOW - 90_000, endedAt: NOW - 49_000 };
     const source = run.source!;
     original.productChecks = [{ id: source.checkId, attemptId: source.attemptId, productId: task.productId, name: run.name, result: passed ? 'pass' : 'fail', run }];
     task.checks = { at: NOW - 49_000, current: true, results: [run] };
@@ -250,7 +254,7 @@ describe('the journey in the task sheet', () => {
 
   it.each([false, true])('retains the check decision after outdated interrupted=%s evidence', async (interrupted) => {
     const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
-    task.checks = { at: NOW - 1, current: false, results: [{ name: 'Tests', command: 'tests', ms: 100, ok: false, output: 'Original diagnostic', ...(interrupted ? { interruption: { source: 'macOS power log', at: NOW - 1000, event: 'Sleep' } } : {}) }] };
+    task.checks = { at: NOW - 1, current: false, results: [{ name: 'Tests', command: 'tests', ms: 100, ok: false, execution: completeCheckExecution(7), output: 'Original diagnostic', ...(interrupted ? { interruption: { source: 'macOS power log', at: NOW - 1000, event: 'Sleep' } } : {}) }] };
     task.findings = [];
     task.statusLine = gateStatus(task, 'delivery');
     const item = state.inbox.find(item => item.taskId === task.id && item.kind === 'delivery')!;

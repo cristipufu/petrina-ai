@@ -1,3 +1,4 @@
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { oneTaskFixture } from "./state";
 import { displayTask, type State, type JourneyStep } from "@petrina/core";
 
@@ -17,8 +18,8 @@ export function acceptanceFixture(custom = false) {
     { ...base, id: "j14", kind: "agent", roleId: tester, profileId: "sol-high", acceptanceChecks: checks, agentResults: [{ roleId: tester, profileId: "sol-high", at: state.now - 900, value: {}, versions: { [task.productId]: "tested-tree" } }] },
     { ...base, id: "repair", kind: "agent", roleId: builder, profileId: "sol-high", fixing: true, trigger: { after: "j14", reason: "Acceptance failures" }, buildVersions: { [task.productId]: "repaired-tree" }, startedAt: state.now - 800, endedAt: state.now - 700 },
     { ...base, id: "j65", kind: "petrina", work: "checks", startedAt: state.now - 600, endedAt: state.now - 500, productChecks: [
-      { name: "Type check", result: "pass" }, { name: "Web build", result: "pass" }, { name: "Desktop shell", result: "pass" },
-      { name: "Tests", result: "fail", detail: "First recorded timeout diagnostic\nSecond recorded timeout diagnostic" },
+      ...["Type check", "Web build", "Desktop shell"].map(name => ({ name, result: "pass" as const, run: { name, command: `check ${name}`, ms: 100, ok: true, output: "", execution: completeCheckExecution(0) } })),
+      { name: "Tests", result: "fail", detail: "First recorded timeout diagnostic\nSecond recorded timeout diagnostic", run: { name: "Tests", command: "check Tests", ms: 100, ok: false, output: "First recorded timeout diagnostic\nSecond recorded timeout diagnostic", execution: completeCheckExecution(7) } },
     ] },
     { ...base, id: "command-repair", kind: "agent", roleId: builder, fixing: true, trigger: { after: "j65", reason: "Automated check failed" }, startedAt: state.now - 400, endedAt: state.now - 300 },
   ];
