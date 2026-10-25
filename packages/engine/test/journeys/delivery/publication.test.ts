@@ -1,3 +1,4 @@
+import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
 // Petrina publishes deliveries itself: it pushes, opens the pull request with the builder's description, sets a
 // release's version and creates the release, or moves main forward, checked on GitHub or in the main copy before
 // it says so. The only agent at delivery is the Release Manager, writing a release's notes across everything since
@@ -6,7 +7,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
-import { coordinator, finish, git, gitWith, itemOf, makeWorld, removeDir, REPO, remoteRef, runGit, taskOf, until, type World } from "./support.js";
+import { coordinator, finish, git, gitWith, itemOf, makeWorld, removeDir, REPO, remoteRef, runGit, taskOf, until, type World } from "../../support.js";
 import { createSetupSteps } from "@petrina/test-support/setup-steps";
 import { completeAll } from "@petrina/core";
 
@@ -67,7 +68,7 @@ async function busyDelivery(w: World, delivery: DeliveryMode) {
     engine.setPoolLimit(1);
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, delivery, true);
-    const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+    const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
     const state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));
     const approvalId = itemOf(state, taskId, "delivery")!.id;
     const hold = join(w.dir, "busy-builder");
@@ -296,7 +297,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
       (engine.getState().products.find((entry) => entry.id === productId) as { releaseBump?: string }).releaseBump = "minor";
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const state = await finish(engine, taskId);
       const task = taskOf(state, taskId);
       expect(task.error).toBeUndefined();
@@ -345,7 +346,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.error).toBeUndefined();
       expect(task.release?.tag).toBe("v0.1.0");
@@ -392,7 +393,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", true);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       // Right before the coordinator approves, a teammate's commit reaches GitHub's main, unknown to the main copy.
       let teammate = "";
       const approving = coordinator();
@@ -438,7 +439,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       await git(w.clone, "switch", "-q", "-c", "notes");
       writeFileSync(join(w.clone, "notes.txt"), "mine\n");
       engine.setProductDelivery(productId, "local", false);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
       expect(task.error).toBeUndefined();
       expect(task.state).toBe("done");
@@ -458,7 +459,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", false);
       writeFileSync(join(w.clone, "README.md"), "# Mine, not committed\n");
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       let task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain("has changes that are not committed");
@@ -495,7 +496,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = engine.addTask( { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       let task = taskOf(await finish(engine, taskId), taskId);
       expect(task.state).toBe("failed");
       expect(task.error).toContain("Getting the delivery ready failed 2 times");
@@ -528,7 +529,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "pull-request", true);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+      const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       let state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));
       engine.setPoolPaused(true);
       engine.approve(itemOf(state, taskId, "delivery")!.id);

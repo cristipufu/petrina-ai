@@ -6,7 +6,8 @@ import { endAgentStep, JOURNEY_WORDS as W, type DeepMutable, type Id, type Guide
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { GuideResult } from "./roles.js";
-import { addToSection, AGENTS_FILE, appendPoints, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, localPoints, pointsText } from "./points.js";
+import { AGENTS_FILE, cleanPoint, GUIDE, GUIDE_FILE, hasPoint, pointsText } from "@petrina/core";
+import { addToSection, appendPoints, localPoints } from "./points.js";
 
 /** What AGENTS.md says about the review guide, so every agent reads it, in Petrina or not. */
 const GUIDE_SECTION = "## Review guide";

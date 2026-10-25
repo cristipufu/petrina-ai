@@ -1,6 +1,6 @@
-import { expect, it } from "bun:test";
-import { CheckQueue } from "../src/check-queue.js";
-import { DeliveryTurns } from "../src/delivery-turns.js";
+import { expect, it } from "vitest";
+import { CheckQueue } from "../../../src/check-queue.js";
+import { DeliveryTurns } from "../../../src/delivery-turns.js";
 
 it("takes all local destinations together and keeps overlapping requests in order without blocking independent branches", () => {
   let order = 0;
@@ -37,7 +37,7 @@ it("returns cancelled and paused requests without retaining destinations, and re
 });
 
 it("uses no check capacity while waiting and carries the original request order into the canonical line", async () => {
-  const checks = new CheckQueue(() => 1, () => undefined);
+  const checks = new CheckQueue(() => 1, () => undefined, () => false, { aborted: () => new Error("Stopped"), unavailable: reason => new Error(reason) });
   const turns = new DeliveryTurns(() => checks.reserveOrder());
   const controller = new AbortController();
   const running = await checks.acquire(controller.signal);

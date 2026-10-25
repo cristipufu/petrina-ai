@@ -2,12 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { draftOf, MAINTENANCE_ROLES, type RoutineDraft, type Task } from "@petrina/core";
-import { makeWorld, Fakes, FAKE_AGENT, until, removeDir } from "./support.js";
-import { normalizePlan } from "../src/plan.js";
-import { plannerRoles } from "../src/roles.js";
-import type { Engine } from "./engine.js";
-import { git } from "./fixtures.js";
-import { Coordination } from "../src/coordination.js";
+import { makeWorld, Fakes, FAKE_AGENT, until, removeDir } from "../../support.js";
+import type { Engine } from "../../engine.js";
+import { git } from "../../fixtures.js";
+import { Coordination } from "../../../src/coordination.js";
 
 async function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["maintenance"], objectFormat?: "sha1" | "sha256") {
   const world = await makeWorld(`maintenance-${name}`, { objectFormat }), fakes = new Fakes(join(world.dir, "agents"));
@@ -449,29 +447,7 @@ describe("real queue maintenance", () => {
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
 
-  it("saves admission atomically, coalesces restart catch-up and does not overlap unfinished work", async () => {
-    const { world, start } = await setup("admission", {}); let engine = start();
-    try {
-      const run = await create(engine, world.clone);
-      engine.pollRoutines(run.due); engine.pollRoutines(run.due - 86_400_000);
-      expect(engine.getState().tasks.filter(t => t.maintenance)).toHaveLength(1);
-      engine.pollRoutines(run.due + 20 * 86_400_000);
-      expect(engine.getState().routines![0]!.blockingTaskId).toBe(run.taskId);
-      engine.cancel(run.taskId);
-      await engine.shutdown(); engine = start();
-      engine.pollRoutines(run.due + 20 * 86_400_000);
-      expect(engine.getState().routines![0]!.latestTaskId).toBe(run.taskId);
-      engine.pollRoutines(run.due + 30 * 86_400_000);
-      const next = engine.getState().routines![0]!.latestTaskId!;
-      expect(next).not.toBe(run.taskId); expect(engine.taskDetails(next)!.maintenance!.catchUp).toContain("latest missed");
-      engine.setRoutineEnabled(run.routineId, false);
-      engine.pollRoutines(run.due + 40 * 86_400_000);
-      expect(engine.getState().routines![0]!.latestTaskId).toBe(next);
-      engine.removeRoutine(run.routineId);
-      engine.pollRoutines(run.due + 50 * 86_400_000);
-      expect(engine.getState().routines).toEqual([]);
-    } finally { await engine.shutdown(); removeDir(world.dir); }
-  });
+
 
   for (const profileId of ["astra-ultra", "sol-ultra", "sol-medium"]) it(`executes the saved ${profileId} profile and finishes writable investigations without changes`, async () => {
     const { world, fakes, start } = await setup(profileId, {}); const engine = start();
@@ -508,16 +484,7 @@ describe("real queue maintenance", () => {
       const actualInput = fakes.prompts("planner")[0]!;
       expect(actualInput).toContain("builder");
       for (const role of MAINTENANCE_ROLES) expect(actualInput).not.toContain(role.id);
-      const roles = engine.getState().roles, maintenance = MAINTENANCE_ROLES[0]!;
-      expect(plannerRoles(roles)).not.toContain(maintenance.id);
-      const plan = normalizePlan({ task: { id: "attempt", delivery: "local", approveDelivery: true }, roles, profiles: engine.getState().profiles, plannerProfileId: "sol-medium", releaseManagerProfileId: "opus-high", result: { rationale: "Try forbidden roles", stages: [
-        { kind: "do", title: "Forbidden standalone", roleId: maintenance.id, profileIds: ["sol-medium"] },
-        { kind: "converge", title: "Forbidden author", roleId: maintenance.id, profileIds: ["sol-medium"], reviewerRoleId: "design-reviewer" },
-        { kind: "converge", title: "Forbidden design reviewer", roleId: "architect", profileIds: ["sol-medium"], reviewerRoleId: maintenance.id },
-        { kind: "review-chain", title: "Forbidden review", roleId: maintenance.id, roleIds: [maintenance.id], profileIds: ["sol-medium"] },
-      ] } });
-      expect(plan.stages.every(s => s.roleId !== maintenance.id && s.reviewerRoleId !== maintenance.id && !s.roleIds?.includes(maintenance.id))).toBe(true);
-      expect(plan.rationale).toContain("maintenance role");
+
     } finally { await engine.shutdown(); removeDir(world.dir); }
   });
 });

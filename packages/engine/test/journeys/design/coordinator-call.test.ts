@@ -1,12 +1,13 @@
+import { FAKE_AGENT } from "../../fixtures.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { git, removeDir, SLOW } from "./fixtures.js";
+import { Engine } from "../../engine.js";
+import { git, removeDir, SLOW } from "../../fixtures.js";
 
-const fake = join(import.meta.dir, "fake-agent.ts");
+const fake = FAKE_AGENT;
 const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
 
 async function makeRepo(name = "repo"): Promise<string> {
@@ -21,7 +22,8 @@ async function makeRepo(name = "repo"): Promise<string> {
   return repo;
 }
 
-afterAll(() => removeDir(temp));
+let retainFiles = false;
+afterAll(() => { if (!retainFiles) removeDir(temp); });
 
 /** Wait for a condition on the engine's state, answering the inbox like a coordinator would. */
 async function until(engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void, ms = 60_000): Promise<State> {
@@ -35,105 +37,6 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
   }
 }
 
-describe("Engine with a fake ACP agent", () => {
-  let repo = "";
-  beforeAll(async () => { repo = await makeRepo(); });
-  const awakeChanges: boolean[] = [];
-  const engine = new Engine(join(temp, "data"), { agentCommand: () => [process.execPath, fake], awakeObserver: (active) => awakeChanges.push(active) });
-
-  afterAll(() => engine.shutdown());
-
-  it("takes a task from the queue to a commit on main, asking the coordinator along the way", async () => {
-    const productId = await engine.addProduct(repo);
-    engine.setProductDelivery(productId, "local", true);
-    const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A friendly greeting file.", kind: "feature" });
-
-    const asked = new Set<string>();
-    const state = await until(
-      engine,
-      (current) => ["done", "failed"].includes(current.tasks.find((task) => task.id === taskId)?.state ?? ""),
-      (current, snapshot) => {
-        for (const item of snapshot.inbox) {
-          if (asked.has(item.id)) continue;
-          asked.add(item.id);
-          if (item.kind === "question") {
-            expect(() => current.approve(item.id)).toThrow("question");
-            expect(() => current.allow(item.id, "once")).toThrow("permission");
-            expect(current.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
-            current.answer(item.id, item.options?.[0] ?? "Yes");
-          }
-          else if (item.kind === "permission") {
-            expect(() => current.approve(item.id)).toThrow("permission");
-            expect(current.getState().inbox.some((entry) => entry.id === item.id)).toBe(true);
-            current.allow(item.id, "once");
-          }
-          else current.approve(item.id);
-        }
-      },
-    );
-
-    const task = state.tasks.find((entry) => entry.id === taskId)!;
-    expect(task.error).toBeUndefined();
-    expect(task.state).toBe("done");
-    expect(awakeChanges[0]).toBe(true);
-    expect(task.landed?.branch).toBe("main");
-    // The coordinator was asked a question, a permission and two checkpoints.
-    expect(task.timeline.some((entry) => entry.text.startsWith("You answered: Formal"))).toBe(true);
-    // The tool's own safety check asked; Petrina passed it on unchanged.
-    expect(task.timeline.some((entry) => entry.text.includes("You allowed: Installing packages"))).toBe(true);
-    expect(task.timeline.some((entry) => entry.text === "You approved the design")).toBe(true);
-    expect(task.timeline.some((entry) => entry.text === "You approved the delivery")).toBe(true);
-    // The work is on main, with the permission granted.
-    expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
-    expect(task.findings.some((finding) => finding.severity === "suggestion")).toBe(true);
-    await until(engine, (s) => s.tasks.find((entry) => entry.id === taskId)?.cleanup?.removedAt !== undefined, () => {});
-    expect(existsSync(task.worktree!)).toBe(false);
-    expect(await git(repo, "rev-parse", task.branch!)).toBe(await git(repo, "rev-parse", "main"));
-    await until(engine, () => awakeChanges.at(-1) === false, () => {});
-  });
-});
-
-describe("answers to a request missing from the inbox", () => {
-  it("resumes its live waiter without an extra agent turn, and keeps other open permissions blocking", async () => {
-    const engine = new Engine(join(temp, "orphan-data"), { agentCommand: () => [process.execPath, fake] });
-    try {
-      const repo = await makeRepo("orphan-repo");
-      const productId = await engine.addProduct(repo);
-      engine.setProductDelivery(productId, "local", true);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file.", kind: "feature" });
-      const state = await until(engine, (s) => s.inbox.some((item) => item.taskId === taskId && item.kind === "permission"), (current, snapshot) => {
-        for (const item of snapshot.inbox) {
-          if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
-          else if (item.kind === "plan" || item.kind === "design") current.approve(item.id);
-        }
-      });
-      const permission = state.inbox.find((item) => item.taskId === taskId && item.kind === "permission")!;
-      // A second permission may be open while another member of a review team asks.
-      const livePermission = engine.s.inbox.find((item) => item.id === permission.id)!;
-      engine.s.inbox.push({ ...livePermission, id: "another-permission" });
-      engine.allow("another-permission", "once");
-      expect(engine.getState().tasks.find((t) => t.id === taskId)!.state).toBe("needs-you");
-      expect(engine.getState().inbox.some((item) => item.id === permission.id)).toBe(true);
-      // Reproduce state saved by an older version after a wrong inbox action consumed the item.
-      engine.s.inbox = engine.s.inbox.filter((item) => item.id !== permission.id);
-      engine.answer(permission.id, "allow", { taskId, about: permission.title });
-      const recovered = engine.getState().tasks.find((t) => t.id === taskId)!;
-      expect(recovered.state).toBe("running");
-      expect(recovered.statusLine).toBe("Back to work");
-      expect(recovered.queued).toEqual([]);
-      const final = await until(engine, (s) => s.tasks.find((t) => t.id === taskId)?.state === "done", (current, snapshot) => {
-        for (const item of snapshot.inbox) {
-          if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
-          else if (item.kind === "permission") current.allow(item.id, "once");
-          else current.approve(item.id);
-        }
-      });
-      expect(final.tasks.find((t) => t.id === taskId)!.timeline.some((entry) => entry.text === "You answered: allow")).toBe(true);
-      expect(await git(repo, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
-    } finally { await engine.shutdown(); }
-  });
-});
-
 describe("The coordinator's call on a design disagreement", () => {
   const CALL = "Show the greeting to everyone, in English only.";
   let repo = "";
@@ -144,7 +47,10 @@ describe("The coordinator's call on a design disagreement", () => {
   const start = () => new Engine(data, { agentCommand: () => [process.execPath, fake, `--hold=${hold}`] });
   let engine = start();
 
-  afterAll(() => engine.shutdown());
+  afterAll(async () => {
+    try { await engine.shutdown(); }
+    catch (error) { retainFiles = true; throw error; }
+  });
 
   /** Answer questions and permissions; leave checkpoints to the test. */
   const coordinator = (current: Engine, state: State) => {

@@ -1,5 +1,5 @@
 import { CompanionLinks } from "./companion-links.js";
-import { DeliveryTurns } from "./delivery-turns.js";
+import { DeliveryAdmission } from "@petrina/orchestrator";
 import { ShippingVerifier, type DeliveryEvidence } from "./shipping-verifier.js";
 import { realPath } from "@petrina/repositories/paths";
 import { ReleasePrep } from "./release-prep.js";
@@ -7,7 +7,7 @@ import { PrMonitor } from "./pr-monitor.js";
 import { addDeliveryCheck, clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
 import { proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
-import { companionText, landingState, repositoryDelivered, runtimeWaitHolds, syncRuntimeWait } from "@petrina/core";
+import { companionText, landingState, repositoryDelivered, syncRuntimeWait } from "@petrina/core";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
 // top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
 // publishes the exact commit it checked, with what the builder wrote to go out with it: it pushes the branch and
@@ -87,8 +87,7 @@ export class Shipping {
   readonly monitor: PrMonitor;
   readonly verifier: ShippingVerifier;
   private readonly companions: CompanionLinks;
-  private readonly deliveryTurns: DeliveryTurns;
-  private readonly preparationEpochs = new WeakMap<MTask, number>();
+  private readonly admission: DeliveryAdmission;
 
   constructor(
     private readonly k: Kernel,
@@ -98,7 +97,18 @@ export class Shipping {
     private readonly connections: Connections,
     private readonly tools: ToolChecks,
   ) {
-    this.deliveryTurns = new DeliveryTurns(() => this.k.checkQueue.reserveOrder());
+    this.admission = new DeliveryAdmission({
+      task: id => k.task(id), roleResult: (id, task) => k.role(id, task)?.result,
+      destination: scope => destination(scope.work, k.repositoryOf(scope)),
+      branch: scope => scope.work.source?.destination.branch ?? k.repositoryOf(scope)?.defaultBranch ?? "main",
+      reserveOrder: () => k.checkQueue.reserveOrder(),
+      rememberOrder: (id, order) => checks.deliveryOrders.set(id, order),
+      forgetOrder: id => { checks.deliveryOrders.delete(id); }, hasOrder: id => checks.deliveryOrders.has(id),
+      hasDriver: id => k.drivers.has(id), hasSettling: id => k.settling.has(id),
+      taskAdmissionsClosed: task => k.taskAdmissionsClosed(task), taskAdmissionWait: task => k.taskAdmissionWait(task),
+      admissionsClosed: () => k.admissionsClosed, poolPaused: () => k.s.pool.paused,
+      draining: () => k.draining, stopped: () => k.stopped, extraRecovery: () => k.extraRecovery,
+    });
     this.releases = new ReleasePrep(k, turns, connections);
     this.companions = new CompanionLinks(k);
     this.verifier = new ShippingVerifier(k, connections);
@@ -108,83 +118,11 @@ export class Shipping {
     });
   }
 
-  /** Ask before taking preparation room or an agent seat. A shared task owns every local branch at once. */
-  waitingForTurn(task: MTask): string | undefined {
-    const stage = task.plan?.stages[task.stageIndex];
-    if (stage?.kind !== "do" || this.k.role(stage.roleId, task)?.result !== "delivery") {
-      this.releaseDeliveryTurn(task.id);
-      return undefined;
-    }
-    const local = scopesFor(task).filter(({ work }) => work.delivery === "local" && work.source?.destination.kind !== "update-pr");
-    // Keep every originally requested branch until this shared delivery step ends, including owners already landed.
-    const remembered = this.deliveryTurns.destinationsFor(task.id);
-    const keys = remembered ?? local.filter(({ work }) => !work.pr && !work.release && !work.landed && !work.nothingToPublish).map(scope => destination(scope.work, this.k.repositoryOf(scope)));
-    if (!keys.length) { this.releaseDeliveryTurn(task.id); return undefined; }
-    // Turns are not saved. A restored candidate cannot keep a turn from the previous engine;
-    // admitted publications still retain their exact candidate for the ordinary recovery lookup.
-    if (!remembered) this.invalidateUnpublishedPreparations(task);
-    const request = this.deliveryTurns.request(task.id, keys);
-    this.checks.deliveryOrders.set(task.id, request.order);
-    if (!request.waitingFor) return undefined;
-    const first = this.k.task(request.waitingFor);
-    const blockedKeys = this.deliveryTurns.destinationsFor(request.waitingFor);
-    const blocked = local.find(scope => blockedKeys?.includes(destination(scope.work, this.k.repositoryOf(scope)))) ?? local[0]!;
-    const branch = blocked.work.source?.destination.branch ?? this.k.repositoryOf(blocked)?.defaultBranch ?? "main";
-    return `Waiting for “${first?.title ?? "another task"}” to finish delivering to ${branch}`;
-  }
-
-  releaseDeliveryTurn(taskId: Id): void {
-    if (this.deliveryTurns.entries().some(entry => entry.taskId === taskId && entry.held)) {
-      const task = this.k.task(taskId);
-      if (task) {
-        this.invalidateUnpublishedPreparations(task);
-        this.preparationEpochs.set(task, (this.preparationEpochs.get(task) ?? 0) + 1);
-      }
-    }
-    this.deliveryTurns.release(taskId);
-    this.checks.deliveryOrders.delete(taskId);
-  }
-
-  /** A candidate belongs to its destination turn; its start still restores an unpublished version commit. */
-  private invalidateUnpublishedPreparations(task: MTask): void {
-    for (const { work } of scopesFor(task)) {
-      if (work.pr || work.release || work.landed || work.nothingToPublish || work.shipping?.step || work.shipping?.pushed) continue;
-      if (work.shipping) delete work.shipping.prepared;
-    }
-  }
-
-  /** An address confirmation may belong to a peer task; its callers yield without another Inbox item. */
-  yieldForDecision(task: MTask): boolean {
-    if (scopesFor(task).some(({ work }) => work.shipping?.step || work.shipping?.pushed)) return false;
-    const released = this.deliveryTurns.destinationsFor(task.id) !== undefined;
-    this.releaseDeliveryTurn(task.id);
-    return released;
-  }
-
-  /** A driver can yield before its delivery is admitted. That waiter keeps its original request order. */
-  finishDeliveryTurn(taskId: Id): void {
-    const task = this.k.task(taskId), stage = task?.plan?.stages[task.stageIndex];
-    const waiting = this.deliveryTurns.entries().some(entry => entry.taskId === taskId && !entry.held);
-    if (waiting && task?.state === "waiting" && !task.held && !this.k.taskAdmissionsClosed(task)
-      && stage?.kind === "do" && this.k.role(stage.roleId, task)?.result === "delivery") return;
-    this.releaseDeliveryTurn(taskId);
-  }
-
-  /** Waiters are ordinary scheduler entries. Only a live holder can retain its check-line place over a pause. */
-  syncDeliveryTurns(): void {
-    for (const { taskId, held } of this.deliveryTurns.entries()) {
-      const task = this.k.task(taskId);
-      const stage = task?.plan?.stages[task.stageIndex];
-      const live = this.k.drivers.has(taskId) || this.k.settling.has(taskId);
-      const publishing = task && scopesFor(task).some(({ work }) => work.shipping?.step);
-      // An admitted publication still settles after cancellation or a hold. Its driver gives up ownership last.
-      // A Release Manager's question yields its destinations; beforePublishing asks for them again afterwards.
-      if (held && live && (task?.state !== "needs-you" || publishing)) continue;
-      if (!task || !["running", "waiting"].includes(task.state) || task.held || runtimeWaitHolds(task)
-        || stage?.kind !== "do" || this.k.role(stage.roleId, task)?.result !== "delivery"
-        || this.k.admissionsClosed && (!held || !this.k.drivers.has(taskId))) this.releaseDeliveryTurn(taskId);
-    }
-  }
+  waitingForTurn(task: MTask): string | undefined { return this.admission.waitingForTurn(task); }
+  releaseDeliveryTurn(taskId: Id): void { this.admission.releaseDeliveryTurn(taskId); }
+  yieldForDecision(task: MTask): boolean { return this.admission.yieldForDecision(task); }
+  finishDeliveryTurn(taskId: Id): void { this.admission.finishDeliveryTurn(taskId); }
+  syncDeliveryTurns(): void { this.admission.syncDeliveryTurns(); }
 
   /**
    * The delivery step. Interrupted while publishing: what went out is looked up first. Otherwise the work is
@@ -210,21 +148,11 @@ export class Shipping {
     }
   }
 
-  /** Check again at the actual publication admission, including after preparation and a product queue. */
+  /** Native composition keeps the established wait and source-refresh failures. */
   private beforePublishing(scope: RepositoryContext, queuedCheck = false): void {
-    const { task, work } = scope;
-    if (work.shipping?.step || work.shipping?.pushed) return;
-    const localTurn = scopesFor(task).some(({ work }) => work.delivery === "local" && work.source?.destination.kind !== "update-pr" && !work.pr && !work.release && !work.landed && !work.nothingToPublish);
-    const keepsPausedPlace = queuedCheck && this.k.s.pool.paused && !this.k.draining && !this.k.stopped && !this.k.extraRecovery && !runtimeWaitHolds(task)
-      && (!localTurn || this.checks.deliveryOrders.has(task.id));
-    if (this.k.taskAdmissionsClosed(task) && !keepsPausedPlace) {
-      const words = this.k.taskAdmissionWait(task);
-      throw new WaitingForUsage(!runtimeWaitHolds(task) && !this.k.draining ? `${words} before publishing` : words);
-    }
-    const deliveryWait = this.waitingForTurn(task);
-    if (deliveryWait) throw new WaitingForUsage(deliveryWait);
-    const wait = task.runtimeWait;
-    if (wait?.refreshPending && (!wait.refreshProducts || wait.refreshProducts.includes(work.productId))) throw new PrerequisiteRefresh();
+    const decision = this.admission.beforePublishing(scope, queuedCheck);
+    if (decision.kind === "wait") throw new WaitingForUsage(decision.reason);
+    if (decision.kind === "refresh") throw new PrerequisiteRefresh();
   }
 
   private async clearUnpublishedPreparations(task: MTask): Promise<void> {
@@ -236,8 +164,8 @@ export class Shipping {
   }
 
   private async deliverMany(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const epoch = this.preparationEpochs.get(task) ?? 0;
-    const lostTurn = () => epoch !== (this.preparationEpochs.get(task) ?? 0);
+    const epoch = this.admission.epoch(task);
+    const lostTurn = () => epoch !== (this.admission.epoch(task));
     const closed = task.repositories!.filter((entry) => entry.pr?.state === "closed" && !entry.landingAccepted);
     const states = await Promise.all(closed.map((work) => github.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh)));
     this.stopIfAsked(signal);
@@ -260,7 +188,7 @@ export class Shipping {
       if (!scope.work.shipping?.prepared) {
         if (scope.work.delivery !== "local") await this.tools.needGitHub(task);
         if (await this.readyToShip(scope, signal) === "back") return "continue";
-        if (lostTurn()) { this.invalidateUnpublishedPreparations(task); return "continue"; }
+        if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
         this.beforePublishing(scope);
         if (scope.work.delivery !== "release" && scope.work.baseSha === await git.head(scope.work.worktree!)) {
           work.nothingToPublish = true;
@@ -272,12 +200,12 @@ export class Shipping {
         if (result !== "ready") return result;
         // A question can release the turn while a helper is finishing. Discard its result too,
         // then restart the preparation pass so earlier products refresh before anything publishes.
-        if (lostTurn()) { this.invalidateUnpublishedPreparations(task); return "continue"; }
+        if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
       }
     }
     // Even an unchanged product can ask a question and take the shortcut above. Every unfinished
     // product must belong to this preparation pass before the first publication is admitted.
-    if (lostTurn()) { this.invalidateUnpublishedPreparations(task); return "continue"; }
+    if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
     const preview = companionText(task.repositories!);
     if (preview) for (const work of task.repositories!) {
 

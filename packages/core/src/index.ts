@@ -74,3 +74,9 @@ export * from "./design-notes.js";
 export * from "./build-rethink.js";
 export * from "./coordinator-message-state.js";
 export * from "./settled-review-history.js";
+
+export * from "./instruction-points.js";
+
+export * from "./resume-context.js";
+
+export * from "./planner-role-description.js";

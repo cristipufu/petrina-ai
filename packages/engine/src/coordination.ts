@@ -6,7 +6,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, seatRemaining, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
-import { offeredLessons } from "./learnings.js";
+import { offeredLessons } from "@petrina/core";
 import { cursor, fingerprint, paginate, readText } from "./evidence-read.js";
 import { checkLogRevision, readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";

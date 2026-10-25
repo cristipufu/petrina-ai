@@ -1,3 +1,5 @@
+import { plannerRoles } from "@petrina/core";
+export { plannerRoles } from "@petrina/core";
 import { reviewRound, stepBack } from "@petrina/core";
 export { reviewRound, stepBack, freshBuilderRethink } from "@petrina/core";
 // Every role's contract with Petrina: what it is told, what it is shown besides that, and the result
@@ -6,7 +8,7 @@ export { reviewRound, stepBack, freshBuilderRethink } from "@petrina/core";
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, hintProducts, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, stepOf, followingCall, VERIFIER_RULES, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, hintProducts, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, followingCall, VERIFIER_RULES, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import { WorkChoiceSchema } from "./source-schema.js";
 
@@ -470,11 +472,6 @@ Do not change any files, and do not commit, tag, push or publish anything: Petri
   },
 };
 
-/** What the planner can choose, including roles the coordinator added. */
-export function plannerRoles(roles: readonly Role[]): string {
-  const fits = { do: 'a "do" stage', design: 'the author of a "converge" stage', "design-review": 'the reviewer of a "converge" stage', review: 'a reviewer in a "review-chain" stage' };
-  return workflowRoles(roles).filter((role) => !role.internal && stepOf(role)).map((role) => `- ${role.id} (${role.name}): ${role.purpose} | ${role.canEdit ? "changes the product" : "read-only"} | hands back: ${role.handsBack || role.result} | fits: ${fits[stepOf(role)!]}`).join("\n");
-}
 
 const COMPLETE_CHECKS_RULE = "Where the repository defines a full local check, select that authoritative command. Focused, affected-only and early-feedback commands may complement it, but cannot replace it. If a required validation cannot run here, state that limitation instead of presenting a subset as complete validation.";
 

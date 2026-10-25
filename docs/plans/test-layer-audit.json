@@ -2776,32 +2776,77 @@
       }
     },
     {
-      "file": "packages/engine/test/delivery-reliability.test.ts",
+      "file": "packages/engine/test/journeys/delivery/serialized-landing.test.ts",
       "declarations": 1,
       "assertionSites": 14,
       "baselineDigest": "e56373381a3cbaf0210a9544093ff947884776cfe838d3067451e0986bb2922e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/delivery-reliability.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/serialized-landing.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/delivery-turn-recovery.test.ts",
+      "file": "packages/engine/test/journeys/delivery/destination-recovery.test.ts",
       "declarations": 13,
       "assertionSites": 125,
       "baselineDigest": "2309191ca4eed03c31badd50f6fa8ce36c4794164565d619534bf0e8b098a4f2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/delivery-turn-recovery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/destination-recovery.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/admission.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/delivery-turns.test.ts",
+      "file": "packages/orchestrator/test/orchestration/delivery/destination-turns.test.ts",
       "declarations": 3,
       "assertionSites": 21,
       "baselineDigest": "dd7915355c637a1259869ce145a64ab98531175f564d84d0010ba41f035a04ad",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/delivery-turns.test.ts",
+      "splitFiles": [
+        "packages/orchestrator/test/orchestration/delivery/destination-turns.test.ts"
+      ],
+      "layer": "orchestration",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/delivery.test.ts",
+      "file": "packages/engine/test/journeys/delivery/publication.test.ts",
       "declarations": 14,
       "assertionSites": 157,
       "baselineDigest": "ec47e24c41d300679eaa5568baf8d35bf831d3818b066040ef37a21332d9e257",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/delivery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/publication.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/coordination/dependency-creation.test.ts",
@@ -2892,11 +2937,25 @@
       }
     },
     {
-      "file": "packages/engine/test/edit-roles.test.ts",
+      "file": "packages/engine/test/contracts/roles/library-operations.test.ts",
       "declarations": 9,
       "assertionSites": 111,
       "baselineDigest": "be4a5ac98e98939953b1f410b05d15a37f7191ee3b4848c823b8e339ddaa1eda",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/edit-roles.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/roles/library-operations.test.ts",
+        "packages/engine/test/contracts/profiles/role-independence.test.ts",
+        "packages/engine/test/journeys/roles/editable-participants.test.ts",
+        "packages/orchestrator/test/orchestration/profiles/added-reviewer-allowance.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "roles",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/testing/engine-options.test.ts",
@@ -2945,11 +3004,24 @@
       }
     },
     {
-      "file": "packages/engine/test/engine.test.ts",
+      "file": "packages/engine/test/journeys/workflow/queue-to-main.test.ts",
       "declarations": 9,
       "assertionSites": 129,
       "baselineDigest": "e21ab2bcf0d7e896643a6a30e359f3a0ebc5e2f2e94cc53b258bfcf0b4644e14",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/engine.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/workflow/queue-to-main.test.ts",
+        "packages/engine/test/journeys/inbox/orphan-permission.test.ts",
+        "packages/engine/test/journeys/design/coordinator-call.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "workflow",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/agent-runtime/test/contracts/providers/safety-modes.test.ts",
@@ -3520,11 +3592,24 @@
       }
     },
     {
-      "file": "packages/engine/test/guide.test.ts",
+      "file": "packages/engine/test/journeys/guidance/review-guide-misses.test.ts",
       "declarations": 7,
       "assertionSites": 30,
       "baselineDigest": "f6c986231d1f158bade24db71aa7c1fde90a3f49f3320b8d3a5887f94aab6b1a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/guide.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/guidance/review-guide-misses.test.ts",
+        "packages/engine/test/contracts/guidance/review-guide-files.test.ts",
+        "packages/core/test/rules/instructions/review-guide-text.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "guidance",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/history/usage.test.ts",
@@ -3738,18 +3823,44 @@
       ]
     },
     {
-      "file": "packages/engine/test/learnings-update.test.ts",
+      "file": "packages/engine/test/journeys/guidance/shared-learning-delivery.test.ts",
       "declarations": 23,
       "assertionSites": 63,
       "baselineDigest": "3479d5fb117e1b0093b5007a767722b5686ca7a07f7771f636bac78ddbbf90c5",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/learnings-update.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/guidance/shared-learning-delivery.test.ts",
+        "packages/engine/test/contracts/repositories/learning-reconciliation.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "guidance",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
-      "file": "packages/engine/test/learnings.test.ts",
+      "file": "packages/engine/test/journeys/guidance/learning-delivery.test.ts",
       "declarations": 9,
       "assertionSites": 35,
       "baselineDigest": "c4eca6c8e1e4173d8954fd981f68d85edf7b165a285ab3977b60e7dda0ed3b05",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/learnings.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/guidance/learning-delivery.test.ts",
+        "packages/engine/test/contracts/guidance/learning-records.test.ts",
+        "packages/core/test/rules/instructions/learnings-text.test.ts",
+        "packages/engine/test/contracts/guidance/learnings-files.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "guidance",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/usage/readings.test.ts",
@@ -3826,11 +3937,22 @@
       ]
     },
     {
-      "file": "packages/engine/test/local-delivery-admission.test.ts",
+      "file": "packages/engine/test/journeys/delivery/local-admission.test.ts",
       "declarations": 10,
       "assertionSites": 90,
       "baselineDigest": "e9b25e4139990bf7a6f9bf74dea6a5de8346442513350e45dc1e117c89b1065e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/local-delivery-admission.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/local-admission.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/checks/machine-records.test.ts",
@@ -3852,11 +3974,25 @@
       ]
     },
     {
-      "file": "packages/engine/test/maintenance.test.ts",
+      "file": "packages/engine/test/contracts/maintenance/queued-admission.test.ts",
       "declarations": 24,
       "assertionSites": 202,
       "baselineDigest": "a5c5b6d8dc261c83c9550333f62dfc69ea5e25a0f056a8ba2f844de6ee6be08f",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/maintenance.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/maintenance/queued-admission.test.ts",
+        "packages/engine/test/journeys/maintenance/native-settings-and-changes.test.ts",
+        "packages/core/test/rules/plans/maintenance-exclusion.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "maintenance",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due.",
+        "rootCorrection": "Metadata-only admission readiness/product setup moved inside cleanup scope;1pass0fail/all7originalassertions, Engine typespass. Three moved tests have explicit unique describe-context relocations recorded in root-qualification; no fuzzy match."
+      }
     },
     {
       "file": "packages/agent-runtime/test/contracts/agents/managed-launch.test.ts",
@@ -4010,11 +4146,23 @@
       ]
     },
     {
-      "file": "packages/engine/test/pickup.test.ts",
+      "file": "packages/engine/test/journeys/runtime/restarted-sessions.test.ts",
       "declarations": 13,
       "assertionSites": 103,
       "baselineDigest": "b063a4289ac66eea90a3c21b1e765d4195676c4ccc739192e7b10635857ed8db",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/pickup.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/runtime/restarted-sessions.test.ts",
+        "packages/core/test/rules/prompts/resume-context.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "runtime",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/core/test/rules/planning/normalization.test.ts",
@@ -4343,11 +4491,23 @@
       }
     },
     {
-      "file": "packages/engine/test/recovery.test.ts",
+      "file": "packages/engine/test/journeys/delivery/interrupted-publication.test.ts",
       "declarations": 19,
       "assertionSites": 99,
       "baselineDigest": "45aaca5c603ecf4ee8bdfea164ddd6478998b1704f8b64ced70d0dd726007924",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/recovery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/interrupted-publication.test.ts",
+        "packages/engine/test/contracts/delivery/queued-publication-cancel.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/rules/testing/rejections.test.ts",
@@ -5548,11 +5708,22 @@
       ]
     },
     {
-      "file": "packages/engine/test/shipping.test.ts",
+      "file": "packages/engine/test/journeys/delivery/interrupted-app-shipping.test.ts",
       "declarations": 12,
       "assertionSites": 94,
       "baselineDigest": "578e31fe3b4bc26cd1f97d241af61990dde9d0b70ca465b43cca8e798539894f",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/shipping.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/delivery/interrupted-app-shipping.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "delivery",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/storage/internal-step-restart.test.ts",
@@ -6083,11 +6254,22 @@
       }
     },
     {
-      "file": "packages/engine/test/update.test.ts",
+      "file": "packages/engine/test/journeys/repositories/branch-updates.test.ts",
       "declarations": 15,
       "assertionSites": 102,
       "baselineDigest": "efe36f80d2c299a7818ef97ba07a0ea42d783b3fb6fc60a6afdc99c0bbec0ba8",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/update.test.ts",
+      "splitFiles": [
+        "packages/engine/test/journeys/repositories/branch-updates.test.ts"
+      ],
+      "layer": "journeys",
+      "area": "repositories",
+      "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
+      "validation": {
+        "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
+        "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/journeys/recovery/legacy-delivery.test.ts",

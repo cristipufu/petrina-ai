@@ -1,10 +1,10 @@
 import { afterAll, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "./engine.js";
+import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../src/checks.js";
-import { git, makeProduct, removeDir, tempDir } from "./fixtures.js";
+import { commandText } from "../../../src/checks.js";
+import { git, makeProduct, removeDir, tempDir } from "../../fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));

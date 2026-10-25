@@ -2,7 +2,7 @@
 // pending: a later correction or removal in that branch must not be undone by the old queue. A lesson
 // leaving the queue keeps a short receipt, so an update can still prove where main's line came from.
 import * as git from "@petrina/repositories/git";
-import { AGENTS_FILE, GUIDE_FILE, hasPoint } from "./points.js";
+import { AGENTS_FILE, GUIDE_FILE, hasPoint } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 
 /** How many receipts a product keeps. */

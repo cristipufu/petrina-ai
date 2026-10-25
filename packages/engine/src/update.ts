@@ -8,7 +8,7 @@ import { type RepositoryContext } from "@petrina/orchestrator";
 import { JOURNEY_WORDS as W, lastIndexWhere, petrinaMoment } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { keptLearnings } from "./learnings.js";
-import { AGENTS_FILE } from "./points.js";
+import { AGENTS_FILE } from "@petrina/core";
 import type { Sources } from "./sources.js";
 import type { Connections } from "./connection.js";
 import type { Kernel } from "./kernel.js";

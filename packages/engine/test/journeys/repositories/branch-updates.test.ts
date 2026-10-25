@@ -1,10 +1,12 @@
+import { FAKE_AGENT } from "../../fixtures.js";
+import { updateAgents } from "../../fixtures/update-agents.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
-import { Engine } from "./engine.js";
-import type { Scenario } from "./fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { Engine } from "../../engine.js";
+import type { Scenario } from "../../fake-agent.js";
+import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
 const posix = process.platform !== "win32";
 const roots: string[] = [];
@@ -36,9 +38,15 @@ type Hook<T extends unknown[]> = (...args: T) => unknown;
 async function ship(scenario: Scenario, hooks: { setup?: Hook<[repo: string]>; beforeBuild?: Hook<[repo: string]>; atDeliveryCheck?: Hook<[repo: string]>; atBuilderPermission?: Hook<[repo: string, task: Task]> } = {}) {
   const root = tempDir("petrina-update-");
   roots.push(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario(scenario);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+  // These two controls assert the native connector's actual reopen/fresh behavior.
+  const nativeConversation = scenario.reviewer === "important" && !scenario.fixes;
+  const native = nativeConversation ? new Fakes(join(root, "fake")) : undefined;
+  native?.scenario(scenario);
+  const scripted = native ? undefined : updateAgents(join(root, "replies"), scenario);
+  const fakes = native ?? scripted!;
+  const engine = new Engine(join(root, "data"), native
+    ? { agentCommand: () => [process.execPath, FAKE_AGENT, native.dir] }
+    : scripted!);
   try {
     const repo = await makeProduct(root);
     await hooks.setup?.(repo);
@@ -76,7 +84,11 @@ async function ship(scenario: Scenario, hooks: { setup?: Hook<[repo: string]>; b
     }, "the work to ship", 90_000);
     return { task, fakes, repo, before, deliveryChecks };
   } finally {
-    await engine.shutdown();
+    try { await engine.shutdown(); }
+    catch (error) {
+      const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
+      throw error;
+    }
   }
 }
 
