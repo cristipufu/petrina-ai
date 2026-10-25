@@ -3,6 +3,9 @@
 // and fixtures' private browser folders after every worker stops.
 import { createTestRun } from "./environment.js";
 import { runProcess, SUITE_RUN_TIMEOUT_MS } from "./run-process.js";
+import { testSelection } from "./test-arguments.js";
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 export { TEST_GIT_IDENTITY } from "./environment.js";
 /** Native probes invoke this same runner from arbitrary working folders. */
 export const TEST_RUNNER = import.meta.path;
@@ -26,7 +29,15 @@ if (import.meta.main) {
   const onInt = () => controller.abort("SIGINT"), onTerm = () => controller.abort("SIGTERM");
   process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
   try {
-    const outcome = await runProcess(testCommand(process.argv.slice(2)), {
+    const args = process.argv.slice(2), selection = testSelection(args), cwd = resolve(selection.cwd ?? process.cwd());
+    const inspected = await Promise.allSettled(selection.paths.map(async path => {
+      const entry = await stat(resolve(cwd, path));
+      if (!entry.isFile() && !entry.isDirectory()) throw new Error("not a file or directory");
+    }));
+    const errors = inspected.flatMap((result, index) => result.status === "rejected"
+      ? [`${selection.paths[index]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
+    if (errors.length) throw new Error(`No tests ran. Explicit test paths must exist in ${cwd}:\n${errors.join("\n")}`);
+    const outcome = await runProcess(testCommand(args), {
       env: owned.env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal: controller.signal, output: "inherit",
     });
     process.exitCode = outcome.kind === "interrupted" ? outcome.signal === "SIGINT" ? 130 : 143 : outcome.result.code;

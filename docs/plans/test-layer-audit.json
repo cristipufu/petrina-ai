@@ -1777,7 +1777,7 @@
       "layer": "contracts",
       "area": "testing",
       "review": "Actual CLI boundary controls with one canonical owned fixture module. Three scripted Vitest report producers and four real Bun package cases exercise actual shared-pool execution, exact manifests, native failure attribution, source/revision binding, preliminary gates, interruption, duration publication and package readiness refusal. Original 54-case responsibilities are reconciled in shared-pool-c73f2646/case-reconciliation.json; redundant per-package parser variants now rely on the shared parser/controller rules with representative actual producer controls. The obsolete native-before-engine serial gate is deliberately replaced by shared native execution.",
-      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due. Complete source1583713a Mac run: 4,799 passes, 11 explicit skips, zero failures / 411,194ms at normal workers. All 344 expected files across seven workspaces independently reparsed and reconciled. Native Linux/Windows remain due."
     },
     {
       "file": "packages/engine/test/queue.test.ts",
@@ -2692,7 +2692,7 @@
       "layer": "contracts",
       "area": "testing",
       "review": "Four native/filesystem controls retain exact shared seeds and atomic optional publication, reject invalid measurements without overwriting prior hints, preserve peer paths relative to actual execution CWD, prune unrelated packages, and prove installed Bun dispatch order. The one-worker ordering probe remains a tiny observation only; required normal workers are unchanged.",
-      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due. Complete source1583713a Mac run: 4,799 passes, 11 explicit skips, zero failures / 411,194ms at normal workers. All 344 expected files across seven workspaces independently reparsed and reconciled. Native Linux/Windows remain due."
     },
     {
       "file": "packages/core/test/rules/tasks/dependencies.test.ts",
@@ -2756,7 +2756,7 @@
       "layer": "rules",
       "area": "testing",
       "review": "Eight data-only execution registry and preparation validation. Every registered package belongs to exactly one execution, the four native packages share the engine CWD after all three Vitest prerequisites, and custom/missing scripts, lifecycle hooks and package Bun configuration cannot be silently bypassed.",
-      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due. Complete source1583713a Mac run: 4,799 passes, 11 explicit skips, zero failures / 411,194ms at normal workers. All 344 expected files across seven workspaces independently reparsed and reconciled. Native Linux/Windows remain due."
     },
     {
       "file": "packages/test-support/test/rules/testing/suite-results.test.ts",
@@ -2764,7 +2764,23 @@
       "layer": "rules",
       "area": "testing",
       "review": "Seven data-only projection controls: actual execution duration/exit recorded once; exact package observations and selection misses; unstarted work has no invented outcomes; unknown exits, absent reports, contradictory success and uncertain native cleanup stay explicit. Source observations remain unchanged.",
-      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due."
+      "validation": "shared-pool-audited.xml: 88 actual CLI/native/report/runner/deadline/convention controls pass / 709 assertions / 15.05s. shared-rules-reviewed.xml: 109 data-only parser, projection, timing and coordinator cases pass / 203 assertions / 30ms. All workspace types and conventions pass. Dotenv before/after failures and fixes are retained. Complete changed-batch and native Linux/Windows qualification remain due. Complete source1583713a Mac run: 4,799 passes, 11 explicit skips, zero failures / 411,194ms at normal workers. All 344 expected files across seven workspaces independently reparsed and reconciled. Native Linux/Windows remain due."
+    },
+    {
+      "file": "packages/test-support/test/rules/testing/arguments.test.ts",
+      "status": "reviewed",
+      "layer": "rules",
+      "area": "testing",
+      "review": "Sixteen value-only CLI selection cases: literal relative/absolute/Windows/UNC paths, deduplication, required option values, optional counts, optional-string equals forms, separators and effective cwd. No filesystem, process, account, clock or Engine.",
+      "validation": "selector-filter-reviewed.xml: 23 combined rule/native controls pass, including absolute/relative cwd spellings and actual bare filename discovery. selector-neighborhood.xml: 55 runner/deadline/root/timing controls pass / 539 assertions / 15.91s. selector-boundaries.xml: three actual shared-report/saved-check-log controls pass. All workspace types and conventions pass. This guard postdates the full source1583713a qualification."
+    },
+    {
+      "file": "packages/test-support/test/contracts/testing/selectors.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "testing",
+      "review": "Seven actual CLI controls with private files and bounded programs. A missing explicit peer rejects before the valid marker case can run; existing directory discovery and a new output path succeed; both native cwd option spellings resolve the selected directory with absolute and relative paths. Real previous behavior reproduces the missing-path failure. No real accounts or external service. Bare filename discovery retains the installed Bun behavior without requiring an identically named file in cwd.",
+      "validation": "selector-filter-reviewed.xml: 23 combined rule/native controls pass, including absolute/relative cwd spellings and actual bare filename discovery. selector-neighborhood.xml: 55 runner/deadline/root/timing controls pass / 539 assertions / 15.91s. selector-boundaries.xml: three actual shared-report/saved-check-log controls pass. All workspace types and conventions pass. This guard postdates the full source1583713a qualification."
     }
   ],
   "rust": [
