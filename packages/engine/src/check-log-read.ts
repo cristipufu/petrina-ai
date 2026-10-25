@@ -1,17 +1,15 @@
-import { unreportedCheckExit as outcomeUnreported, checkCommandOutcome as outcomeOf } from "@petrina/core";
+import { matchesCheckLogIdentity, unreportedCheckExit as outcomeUnreported, checkCommandOutcome as outcomeOf } from "@petrina/core";
 // Verify and page the diagnostic file belonging to one recorded check.
 import type { CheckRun, Task } from "@petrina/core";
 import { constants, lstatSync } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { Result } from "./coordination.js";
-import { cursor, fingerprint, position, readText } from "./evidence-read.js";
+import { cursor, position, readText } from "./evidence-read.js";
+import { fingerprint } from "@petrina/storage/receipt-identity";
 import { checkLogBeginning } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 
-export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
-  return expected.device === actual.dev.toString() && expected.inode === actual.ino.toString();
-}
 export const SAVED_RESULT_PREVIEW = 1000;
 // Saved-result offsets stay in string units; move preview boundaries off a surrogate pair.
 const bisectsCharacter = (text: string, at: number) => (text.codePointAt(at - 1) ?? 0) > 0xffff;

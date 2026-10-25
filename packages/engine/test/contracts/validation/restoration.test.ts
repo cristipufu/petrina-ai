@@ -6,7 +6,8 @@ import { Engine } from "../../engine.js";
 import { waitFor } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
 
-import { EngineLifecycle, LifecycleStore } from "../../../src/lifecycle.js";
+import { EngineLifecycle } from "../../../src/lifecycle.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import * as processTree from "@petrina/platform/process-tree";
 import { ExtraContainer } from "../../../src/extra-container.js";
 import { CheckQueue } from "../../../src/check-queue.js";

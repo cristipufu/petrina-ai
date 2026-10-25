@@ -7,7 +7,8 @@ import { waitFor } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 
 
-import { EngineLifecycle, LifecycleStore } from "../../../src/lifecycle.js";
+import { EngineLifecycle } from "../../../src/lifecycle.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { WaitingForUsage } from "../../../src/usage.js";
 import { ExtraFixtures } from "../../extra-fixtures.js";
 

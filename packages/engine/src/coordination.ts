@@ -7,7 +7,8 @@ import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, seatRe
 import type { Engine } from "./engine.js";
 import { operation } from "./operations.js";
 import { offeredLessons } from "@petrina/core";
-import { cursor, fingerprint, paginate, readText } from "./evidence-read.js";
+import { cursor, paginate, readText } from "./evidence-read.js";
+import { fingerprint } from "@petrina/storage/receipt-identity";
 import { checkLogRevision, readCheckLog } from "./check-log-read.js";
 import { readConversation } from "./conversation-read.js";
 import { readExactInput } from "./exact-input.js";
@@ -16,25 +17,8 @@ import { createHash } from "node:crypto";
 import { readAnalytics } from "./analytics-read.js";
 import { checkpointView } from "./checkpoint-read.js";
 
-export type Outcome =
-  | "completed"
-  | "pending"
-  | "invalid"
-  | "missing"
-  | "conflict"
-  | "changed"
-  | "handled"
-  | "timed-out"
-  | "failed"
-  | "disconnected"
-  | "continuity-lost"
-  | "superseded"
-  | "unavailable";
-export interface Result {
-  outcome: Outcome;
-  message?: string;
-  [key: string]: unknown;
-}
+export type { CoordinationOutcome as Outcome, CoordinationResult as Result } from "@petrina/core";
+import type { CoordinationResult as Result } from "@petrina/core";
 // Arguments have already passed the named operation's strict schema at the boundary.
 type Args = Record<string, any>;
 const clone = <T>(value: T): T => structuredClone(value);

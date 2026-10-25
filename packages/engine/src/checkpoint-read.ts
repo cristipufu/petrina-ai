@@ -2,7 +2,7 @@
 import { assignedProducts, evidenceFor, findingReportCounts, originalCheck, outstandingReportsFirst, resultSeatOf, reviewDecisionPending, roleForTask, taskProductIds, type InboxItem, type Task } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { checkCommandOutcome, readCheckLog, SAVED_RESULT_PREVIEW, unreportedCheckExit } from "./check-log-read.js";
-import { fingerprint } from "./evidence-read.js";
+import { fingerprint } from "@petrina/storage/receipt-identity";
 import { checkpointAcceptance } from "./checkpoint-acceptance.js";
 
 export async function checkpointView(engine: Engine, task: Task, request: InboxItem) {

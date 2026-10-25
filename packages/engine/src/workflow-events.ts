@@ -4,7 +4,8 @@
 // none can touch execution, admission or approvals.
 import { eventInvolvesProduct, WORKFLOW_EVENT_KINDS, WorkflowObserver, type Id, type TaskState, type WorkflowContext, type WorkflowEvent, type WorkflowEventDraft, type WorkflowEventKind } from "@petrina/core";
 import type { Result } from "./coordination.js";
-import { cursor as encodeCursor, fingerprint, readText } from "./evidence-read.js";
+import { cursor as encodeCursor, readText } from "./evidence-read.js";
+import { fingerprint } from "@petrina/storage/receipt-identity";
 
 /** Retention per engine run: whichever limit is reached first. */
 export const EVENT_RETENTION = { events: 10_000, bytes: 16 * 1024 * 1024 };

@@ -136,3 +136,7 @@ export function builderCheckSummary(task: Pick<Task, "journey" | "repositories" 
     return `${name}${entry ? `${builderReturnWords(entry.changed, undefined, entry.claimedFixes)}. ` : ""}${status}${reused && !outdated ? "Previous check evidence reused." : ""}`.trim();
   }).join(" ");
 }
+
+export function matchesCheckLogIdentity(expected: { device: string; inode: string }, actual: { dev: bigint; ino: bigint }): boolean {
+  return expected.device === actual.dev.toString() && expected.inode === actual.ino.toString();
+}

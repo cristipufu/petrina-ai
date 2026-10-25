@@ -5,7 +5,8 @@ import { removeDir, tempDir } from "../../fixtures.js";
 import { Coordination, requestRevision } from "../../../src/coordination.js";
 import { coordinationCli } from "../../../src/coordination-cli.js";
 import type { EngineClient } from "../../client.js";
-import { mcpRequest, mcpTools } from "../../../src/mcp.js";
+import { mcpRequest } from "../../../src/mcp.js";
+import { mcpTools } from "../../../src/mcp-catalog.js";
 
 const roots: string[] = [], engines: Engine[] = [];
 afterEach(() => mock.restore());

@@ -7,7 +7,8 @@ import { randomBytes } from "node:crypto";
 import type { UsagePeriod, UsageReport } from "@petrina/core";
 import type { Result } from "./coordination.js";
 import type { Engine } from "./engine.js";
-import { cursor, fingerprint } from "./evidence-read.js";
+import { cursor } from "./evidence-read.js";
+import { fingerprint } from "@petrina/storage/receipt-identity";
 import { ACCOUNT_ON_PAGE_MS } from "./tracking.js";
 
 import { AnalyticsHolds, ANALYTICS_HOLD_MS, type AnalyticsHold } from "@petrina/core";

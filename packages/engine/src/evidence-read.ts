@@ -1,8 +1,7 @@
 // Bounded evidence pages with revisions scoped to the exact recorded content.
-import { createHash } from "node:crypto";
+import { fingerprint } from "@petrina/storage/receipt-identity";
 import type { Result } from "./coordination.js";
 
-export const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 export function cursor(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }

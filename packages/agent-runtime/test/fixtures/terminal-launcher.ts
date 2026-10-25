@@ -2,7 +2,8 @@ import { quoteGitShellWord as quote } from "@petrina/test-support/git-program";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createProcessLease } from "@petrina/test-support/process-lease";
-import { CommandFailure, runCommand, startCommand, type CommandResult, type Started } from "@petrina/test-support/commands";
+import { runCommand, startCommand, type CommandResult, type Started } from "@petrina/test-support/commands";
+import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { launchPlan, writeLauncher, type Platform } from "../../src/terminal.js";
 import { tempDir } from "@petrina/test-support/fixtures";
 import { SESSION } from "./terminal-input.js";
@@ -20,19 +21,22 @@ export async function terminalLauncher(roots: string[]) {
   const root = tempDir("petrina-launcher-");
   roots.push(root);
   const lease = await createProcessLease();
-  const copies: { controller: AbortController; result: Promise<CommandResult>; finished: boolean }[] = [];
+  const copies: { controller: AbortController; result: Promise<CommandResult> }[] = [];
   const releases = new Set<string>(), removals = new Set<string>();
   const dir = join(root, "takeover", "task-7"), worktree = join(root, "work");
   const hold = join(root, "hold"), starts = join(root, "starts");
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     const errors: unknown[] = [];
+    let ownershipUnconfirmed = false;
     for (const path of releases) try { writeFileSync(path, ""); } catch (error) { errors.push(error); }
     for (const path of [...removals, hold]) try { rmSync(path, { force: true }); } catch (error) { errors.push(error); }
-    try { await lease.close(); } catch (error) { errors.push(error); }
-    for (const copy of copies) if (!copy.finished) copy.controller.abort();
-    const ended = await Promise.allSettled(copies.map(copy => copy.result));
-    for (const result of ended) if (result.status === "rejected" && result.reason instanceof CommandFailure && result.reason.cleanup === "unconfirmed") errors.push(result.reason);
+    try { await lease.close(); } catch (error) { errors.push(error); ownershipUnconfirmed = true; }
+    const ended = await Promise.allSettled(copies.map(copy => settleCommandAfterStop({ result: copy.result, abort: () => copy.controller.abort() })));
+    for (const result of ended) if (result.status === "rejected") { errors.push(result.reason); ownershipUnconfirmed = true; }
+    if (ownershipUnconfirmed) {
+      const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
+    }
     if (errors.length) throw new AggregateError(errors, "The terminal fixture could not confirm all of its cleanup");
   })();
   try {
@@ -63,9 +67,9 @@ export async function terminalLauncher(roots: string[]) {
         // The real launcher remains the owned root after exec; the command runner drains both pipes.
         start: (argv, settings) => child = startCommand(argv, settings),
       });
-      const copy = { controller, result, finished: false };
-      copies.push(copy);
-      void result.then(() => { copy.finished = true; }, () => { copy.finished = true; });
+      // Keep the original result for teardown, while observing failures that arrive before then.
+      void result.catch(() => undefined);
+      copies.push({ controller, result });
       const exited = result.then(result => result.code), stdout = result.then(result => result.stdout);
       void exited.catch(() => undefined); void stdout.catch(() => undefined);
       return { result, exited, stdout, signal(signal) {

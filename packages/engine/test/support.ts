@@ -1,3 +1,4 @@
+import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { displayTask } from "@petrina/core";
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
@@ -178,6 +179,11 @@ export class EngineProcess {
       if (stopped instanceof CommandFailure && stopped.cleanup === "unconfirmed") throw new Error(`${error instanceof Error ? error.message : String(error)}\nEngine fixture cleanup could not be confirmed.`, { cause: stopped });
       throw error;
     } finally { clearTimeout(timer); }
+  }
+
+  /** A private external stop was already requested; retain actual fully drained completion before forcing cleanup. */
+  settleAfterStop() {
+    return settleCommandAfterStop({ result: this.completion, abort: () => this.controller.abort() });
   }
 
   /** Collected while running, so a full stderr pipe never holds up startup or shutdown. */

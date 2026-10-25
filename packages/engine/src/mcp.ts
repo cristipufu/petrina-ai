@@ -1,19 +1,8 @@
 // MCP stdio: only JSON-RPC messages go to stdout. No engine is constructed in this process.
 import { createInterface } from "node:readline";
-import { z } from "zod";
 import { EngineClient } from "./engine-client.js";
 import { OPERATIONS } from "./operations.js";
-const toolName = (name: string) => `petrina_${name.replace(/[.-]/g, "_")}`;
-export const mcpTools = () =>
-  OPERATIONS.map((op) => ({
-    name: toolName(op.name),
-    description: op.description,
-    inputSchema: z.toJSONSchema(op.schema),
-    outputSchema: { type: "object", properties: { outcome: { type: "string" } }, required: ["outcome"], additionalProperties: true },
-    // Changes can replace settings, interrupt work and authorize publishing. Do not claim
-    // additive-only effects or a closed system to the calling agent's safety checker.
-    annotations: { readOnlyHint: !op.changes, idempotentHint: op.changes },
-  }));
+import { mcpTools, toolName } from "./mcp-catalog.js";
 /**
  * Pending tool calls by request id, so a cancellation notification can end the matching wait. JSON-RPC ids
  * keep their type: the number 7 and the text "7" are different requests and never share a slot.

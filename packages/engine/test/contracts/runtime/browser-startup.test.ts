@@ -8,7 +8,7 @@ import * as browserRecovery from "@petrina/agent-runtime/browser";
 import { CLEANUP_NOTE, recoverBrowserTemps } from "@petrina/agent-runtime/browser";
 import { browserProcesses } from "@petrina/platform/browser-processes";
 import { connectionPath } from "../../../src/instance.js";
-import { LifecycleStore } from "../../../src/lifecycle.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { EngineProcess, Fakes, FAKE_AGENT, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "../../support.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 const root = tempDir("petrina-browser-startup-");

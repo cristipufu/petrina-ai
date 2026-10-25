@@ -1,3 +1,4 @@
+import { failAbandonedLifecycle } from "./lifecycle-ownership.js";
 // Starting and stopping an engine process.
 // - `serve`: started by hand in a terminal, on the usual port. Refuses if one is already running.
 // - `app`: started by the desktop shell. Steps aside for an engine that is already running, picks
@@ -15,7 +16,8 @@ import { mergePath } from "@petrina/platform/environment-values";
 import { answers, claimFolder, type Connection, FolderLock, previousToken, readConnection, removeConnection, writeConnection } from "./instance.js";
 import { OutputLog } from "./log.js";
 import { serve } from "./server.js";
-import { EngineLifecycle, LifecycleStore } from "./lifecycle.js";
+import { EngineLifecycle } from "./lifecycle.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 
 export interface LaunchOptions {
   home: string;
@@ -85,7 +87,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
       }
       const ownership = FolderLock.take(home);
       try {
-        if (ownership && lifecycleStore.failAbandoned(home, ownership)) return;
+        if (ownership && failAbandonedLifecycle(lifecycleStore, home, ownership)) return;
       } finally { ownership?.release(); }
       if (Date.now() >= deadline) {
         tell({ type: "error", message: "The engine handoff is still in progress. Reconnect to follow it; no additional engine was started." });
@@ -106,7 +108,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
   }
   let claim = await claimFolder(home);
   while (claim.kind === "free" && recovery && unfinishedHandoff(lifecycleStore.current)) {
-    if (lifecycleStore.failAbandoned(home, claim.lock)) break;
+    if (failAbandonedLifecycle(lifecycleStore, home, claim.lock)) break;
     claim.lock.release();
     await followHandoff();
     claim = await claimFolder(home);

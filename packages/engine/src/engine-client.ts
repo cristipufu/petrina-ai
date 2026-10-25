@@ -1,10 +1,11 @@
+import { failAbandonedLifecycle } from "./lifecycle-ownership.js";
 // CLI and MCP use the same focused API and connection discovery. Secrets stay in headers.
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
 import { readConnection, FolderLock } from "./instance.js";
-import { LifecycleStore } from "./lifecycle.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import type { Result } from "./coordination.js";
 import { operation } from "./operations.js";
 
@@ -108,7 +109,7 @@ export class EngineClient {
       try {
         let current = store.current;
         const scheduling = savedScheduling(this.home) ?? current?.scheduling ?? "running";
-        if (lock && store.failAbandoned(this.home, lock)) {
+        if (lock && failAbandonedLifecycle(store, this.home, lock)) {
           current = store.current;
         }
         if (name === "engine.status")
@@ -177,7 +178,7 @@ export class EngineClient {
       let receipt: Result | undefined;
       try {
         const lock = FolderLock.take(this.home);
-        try { if (lock) store.failAbandoned(this.home, lock); } finally { lock?.release(); }
+        try { if (lock) failAbandonedLifecycle(store, this.home, lock); } finally { lock?.release(); }
         receipt = store.receipt(String(args.requestId)) ?? store.receipt(String(opId));
       } finally {
         store.close();

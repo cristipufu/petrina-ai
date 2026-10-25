@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { Engine } from "../../engine.js";
 import { Coordination } from "../../../src/coordination.js";
-import { EngineLifecycle, LifecycleStore } from "../../../src/lifecycle.js";
+import { EngineLifecycle } from "../../../src/lifecycle.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 
 import { executionFor } from "@petrina/orchestrator";
 

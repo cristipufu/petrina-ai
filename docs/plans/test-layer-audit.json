@@ -2585,53 +2585,169 @@
       }
     },
     {
-      "file": "packages/engine/test/coordination-desktop-handoff.test.ts",
+      "file": "packages/engine/test/contracts/runtime/desktop-handoff.test.ts",
       "declarations": 1,
       "assertionSites": 17,
       "baselineDigest": "ef01aa072bbd34d6d727b8b5da58f8d89a8b8ae367f35c7ae6f8bc6910422ad0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-desktop-handoff.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/desktop-handoff.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
-      "file": "packages/engine/test/coordination-lifecycle.test.ts",
+      "file": "packages/engine/test/contracts/runtime/offline-lifecycle.test.ts",
       "declarations": 6,
       "assertionSites": 63,
       "baselineDigest": "8c7dac3280858738df05144fe42628eda3c4cc8a45762bbbbbb752008b45e0d2",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-lifecycle.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/offline-lifecycle.test.ts",
+        "packages/engine/test/journeys/recovery/review-lifecycle.test.ts",
+        "packages/storage/test/contracts/lifecycle/receipts.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
-      "file": "packages/engine/test/coordination-outcomes.test.ts",
+      "file": "packages/core/test/rules/checks/log-identity.test.ts",
       "declarations": 11,
       "assertionSites": 143,
       "baselineDigest": "aeb7643ced7fb57f48d552577ba222d002884ad66ef6c2b4bf0849eb58251465",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-outcomes.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/checks/log-identity.test.ts",
+        "packages/engine/test/contracts/coordination/check-log-files.test.ts",
+        "packages/engine/test/contracts/coordination/check-log-pages.test.ts",
+        "packages/engine/test/contracts/coordination/check-process-outcomes.test.ts",
+        "packages/engine/test/contracts/coordination/source-outcomes.test.ts",
+        "packages/engine/test/rules/coordination/mcp-discovery.test.ts"
+      ],
+      "layer": "rules",
+      "area": "checks",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
-      "file": "packages/engine/test/coordination-recovery.test.ts",
+      "file": "packages/engine/test/contracts/runtime/desktop-recovery.test.ts",
       "declarations": 7,
       "assertionSites": 57,
       "baselineDigest": "e6920d050f3d00c6da2123208d3ae5e0c4bdb6ef7b97747f0894b22b18295d04",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-recovery.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/desktop-recovery.test.ts",
+        "packages/engine/test/contracts/runtime/lifecycle-controls.test.ts",
+        "packages/engine/test/contracts/runtime/offline-lifecycle.test.ts",
+        "packages/storage/test/contracts/lifecycle/receipts.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
-      "file": "packages/engine/test/coordination-regressions.test.ts",
+      "file": "packages/engine/test/contracts/coordination/checkpoint-decisions.test.ts",
       "declarations": 11,
       "assertionSites": 82,
       "baselineDigest": "f9d38243313a3057e5d400dfa865ff532b5693fd768ecf93ffcba9a1bbb0f1a0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-regressions.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/checkpoint-decisions.test.ts",
+        "packages/engine/test/contracts/coordination/receipts-messages.test.ts",
+        "packages/engine/test/contracts/coordination/shared-delivery.test.ts",
+        "packages/engine/test/contracts/coordination/watches.test.ts",
+        "packages/engine/test/contracts/runtime/admission-pause.test.ts",
+        "packages/engine/test/contracts/runtime/lifecycle-controls.test.ts",
+        "packages/storage/test/contracts/lifecycle/receipts.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
-      "file": "packages/engine/test/coordination-start-ownership.test.ts",
+      "file": "packages/engine/test/contracts/runtime/start-ownership.test.ts",
       "declarations": 2,
       "assertionSites": 18,
       "baselineDigest": "2afe26e22798a21a331042bef85bf63a6239072e52d6df68c4b992053ecb2769",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-start-ownership.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/start-ownership.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "runtime",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
-      "file": "packages/engine/test/coordination.test.ts",
+      "file": "packages/engine/test/contracts/coordination/check-diagnostics.test.ts",
       "declarations": 23,
       "assertionSites": 250,
       "baselineDigest": "149f60afb98f73fcf60d7b29ec0842856c1d090e8c8b0bf1b5c160de84db1ca7",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/check-diagnostics.test.ts",
+        "packages/engine/test/contracts/coordination/checkpoint-decisions.test.ts",
+        "packages/engine/test/contracts/coordination/protocols.test.ts",
+        "packages/engine/test/contracts/coordination/receipts-messages.test.ts",
+        "packages/engine/test/contracts/coordination/shared-delivery.test.ts",
+        "packages/engine/test/contracts/coordination/task-lists-history.test.ts",
+        "packages/engine/test/contracts/coordination/tool-evidence.test.ts",
+        "packages/engine/test/contracts/coordination/watches.test.ts",
+        "packages/engine/test/contracts/runtime/lifecycle-controls.test.ts",
+        "packages/engine/test/rules/coordination/conversations.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "All 61 original declarations, 632 matcher sites and 92 expanded runtime identities retained. Pure conversation, identity and MCP catalog rules are separated from actual HTTP, CLI, MCP, SQLite, file and restart controls. Durable lifecycle methods move exactly to storage; native abandonment stays in the host. Private ports, owned app/command handles and independent leases replace shared-peer and PID assumptions. Independent review fixed transient desktop-child and protocol setup cleanup gaps; root composed the current learning import and canonical command settlement.",
+      "validation": {
+        "artifact": "workstreams/coordinator-lifecycle-next/{handoff.json,owner-map.json,case-audit.json,preservation.json,root-source-parity.json,root-qualification.json}",
+        "independentReview": "workstreams/coordinator-lifecycle-review/review.md: R1/R2 fixed; corrected 5 cases passed in 5.66s; no open finding.",
+        "rootQualification": "244 native passed, zero failures/skips; 35 exact files, 3,469 console expectations in 22.026s, plus one core case. All 92 original runtime identities retained. Includes import changes and terminal races/shared cleanup. All nine type checks pass. Focused evidence; full/resource/native platform qualification remains pending.",
+        "finalChecks": "All nine type checks and conventions pass after terminal fixture explicitly observes early rejection while retaining its original result for teardown. EOF-only blank-line normalization changes no body or assertion."
+      }
     },
     {
       "file": "packages/core/test/rules/messages/recovery.test.ts",
