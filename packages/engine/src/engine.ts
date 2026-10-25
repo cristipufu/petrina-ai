@@ -341,7 +341,7 @@ export class Engine extends Kernel implements Commands {
     this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.startupReady, this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(async () => {
+    this.shutdownDone = Promise.allSettled([this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(async () => {
       // A driver can hand file handling to the background while it settles. Re-read ownership after
       // each group, including work registered by that cleanup, before callers may remove its folders.
       for (;;) {
