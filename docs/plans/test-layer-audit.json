@@ -5511,11 +5511,23 @@
       }
     },
     {
-      "file": "packages/engine/test/start.test.ts",
+      "file": "packages/engine/test/contracts/agents/startup-retry.test.ts",
       "declarations": 1,
       "assertionSites": 2,
       "baselineDigest": "d43766a45a22f41d045416d0340ad4ff996b5283ca6eccd42a07d0d90b2a56c0",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/start.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/agents/startup-retry.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "agents",
+      "review": "Read all original fixture, actual option ownership, native startup/retry and cleanup. Original1case/2matcher sites retained; two additional matchers prove intended effective retry allowance and copied input. Keep deliberate1000ms silent handshake unchanged. Fix the fixture mutation that changed the old input instead of the actual running engine.options; apply the already-intended12000*SLOW only to healthy retry and await it. Explicit plan gate/short fake plan omits incidental downstream work while preserving actual native Engine/Git/ACP retry. Independent read-only review finds no remaining issue.",
+      "validation": {
+        "artifact": "workstreams/root-start-next/{original.json,first.xml,first.log}",
+        "independentReview": "workstreams/root-start-review/review.md",
+        "qualification": "One original native case passes,4expectations,1.86s at normal runner workers; all9types pass. Integrated full/resource/native-platform qualification remains due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/api/state-stream.test.ts",
