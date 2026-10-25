@@ -284,7 +284,8 @@ it("does not consume more rounds when reviews were already exhausted, including 
       task = await f.delivery();
       expect(f.runs()).toEqual(["passed", "failed"]);
       expect(task.checks!.at).toBe(captured.at);
-      expect(task.checks!.definition).toMatch(/^[a-f0-9]{64}$/);
+      expect(task.checks!.definition).toBeUndefined();
+      expect(task.checks!.results).toEqual(captured.results);
       expect(task.blockingAfter?.[review.id]).toEqual([1]);
       expect(task.rounds[review.id] ?? 1).toBe(1);
       expect(lines(task).filter((line) => line.startsWith("Review rounds used up"))).toHaveLength(1);

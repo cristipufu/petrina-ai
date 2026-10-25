@@ -104,7 +104,7 @@ ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.ex
       expect(run!.logPath).toBeDefined();
       if (mode === "launch failure") {
         expect(pid).toBeUndefined(); expect(run!.ok).toBe(false); expect(run!.interrupted).toBeUndefined();
-        expect(run!.output).toStartWith("Could not start:"); expect(checkCommandOutcome(run)).toBe("failed");
+        expect(run!.output).toStartWith("Could not start:"); expect(checkCommandOutcome(run)).toBe("unavailable");
       } else {
         expect(pid).toBeDefined(); expect(await childState(pid!)).toBe("ended");
         expect(run!.ok).toBe(mode === "successful registration");

@@ -4,11 +4,67 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { commandText } from "../../../src/checks.js";
-import { makeProduct, removeDir, tempDir, waitForFile } from "../../fixtures.js";
+import { git, makeProduct, removeDir, tempDir, waitForFile } from "../../fixtures.js";
 import { expectRejection } from "@petrina/test-support/rejections";
+import { checkContext } from "../../fixtures/check-context.js";
+import { writeGitProgram } from "@petrina/test-support/git-program";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
+
+it("requires a fresh execution when a saved complete pass has no recorded check definition", async () => {
+  const root = tempDir("petrina-check-definition-");
+  let f: Awaited<ReturnType<typeof checkContext>> | undefined;
+  try {
+    f = await checkContext(root);
+    f.setCheck("--sequence=PF");
+    expect(await f.check()).toBe(false);
+    const checks = f.engine["checks"], saved = f.scope.work.checks!;
+    const originalAt = saved.at, originalResult = structuredClone(saved.results);
+    delete saved.definition;
+    const required = await checks.ensureChecks(f.scope, new AbortController().signal);
+    expect(await checks.current(f.scope)).toBe(false);
+    const captured = await checks["captureState"](f.scope, required);
+    expect(await checks["savedProductResults"](f.scope, required, captured)).toBeUndefined();
+    expect(saved.definition).toBeUndefined();
+    expect(saved.at).toBe(originalAt); expect(saved.results).toEqual(originalResult);
+    expect(await f.check()).toBe(true);
+    expect(f.runs()).toEqual(["passed", "failed"]);
+    expect(f.scope.work.checks!.definition).toMatch(/^[a-f0-9]{64}$/);
+    expect(f.scope.work.checks!.results[0]!.ok).toBe(false);
+    expect(saved.definition).toBeUndefined();
+    expect(f.task.journey!.flatMap(step => step.reuses ?? []).some(reuse => reuse.passed)).toBe(false);
+  } finally {
+    if (f) { await f.engine.shutdown(); removeDir(root); }
+  }
+});
+
+it("does not reuse an unbound product pass when a previously failing hook now passes", async () => {
+  const root = tempDir("petrina-hook-definition-");
+  let f: Awaited<ReturnType<typeof checkContext>> | undefined;
+  try {
+    f = await checkContext(root);
+    f.setCheck("--sequence=PF");
+    const hooks = join(root, "product-hooks"), hook = join(hooks, "pre-commit");
+    writeGitProgram(hook, "exit 7");
+    await git(f.scope.work.worktree!, "config", "core.hooksPath", hooks);
+    expect(await f.check()).toBe(true);
+    const saved = f.scope.work.checks!;
+    expect(saved.results.map(run => run.ok)).toEqual([true, false]);
+    expect(f.runs()).toEqual(["passed"]);
+    delete saved.definition;
+    f.scope.work.checkReturns = 1;
+    writeGitProgram(hook, "exit 0");
+    expect(await f.check()).toBe(true);
+    expect(f.runs()).toEqual(["passed", "failed"]);
+    expect(f.scope.work.checks!.results.map(run => run.ok)).toEqual([false, true]);
+    expect(f.scope.work.checkReturns).toBe(1);
+    expect(f.scope.work.checks!.definition).toMatch(/^[a-f0-9]{64}$/);
+    expect(saved.definition).toBeUndefined();
+  } finally {
+    if (f) { await f.engine.shutdown(); removeDir(root); }
+  }
+});
 
 it("does not mistake a configured hook command for an automatically appended hook result", async () => {
   const root = tempDir("petrina-explicit-hook-check-"); roots.push(root);

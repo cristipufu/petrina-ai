@@ -622,9 +622,9 @@ export class ProductChecks {
     if (repository.checks.definition) {
       if (repository.checks.definition !== definition) return false;
     } else {
-      // Older runs identify product commands, but cannot establish which hook file or contents ran.
-      // Verify hooks once, then save their complete definition instead of guessing from command text.
-      if (hooks.length) return false;
+      // Missing inputs may keep a failure blocking, but cannot establish a current pass.
+      // Never attach today's definition to an execution that did not record it.
+      if (hooks.length || repository.checks.results.every(run => checkOutcome(run).kind === "passed")) return false;
     }
     const matched = (!!tree && repository.checks.tree === tree) || (!!sha && repository.checks.sha === sha);
     // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
@@ -653,6 +653,8 @@ export class ProductChecks {
     const commands = orderedChecks(checks).map((check) => commandText(check.argv));
     const results = repository.checks.results.slice(0, commands.length);
     if (JSON.stringify(commands) !== JSON.stringify(results.map((run) => run.command))) return undefined;
+    // Rechecking only the hooks cannot bind an earlier product pass to unknown command inputs.
+    if (!repository.checks.definition && results.some(run => checkOutcome(run).kind === "passed")) return undefined;
     const hooks = repository.checks.results.slice(commands.length);
     if (!hooks.every((run) => run.command === "git hook run commit-msg" || run.command === "git hook run --ignore-missing pre-commit")) return undefined;
     return results;
