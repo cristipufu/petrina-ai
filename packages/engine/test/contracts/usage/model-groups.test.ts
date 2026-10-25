@@ -25,7 +25,7 @@ it("starts available Antigravity models while Argon's weekly quota is exhausted"
     entry.state = "waiting"; entry.stageIndex = 0;
     entry.plan = { rationale: "Build", plannerProfileId: flash.id, stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: [index ? flash.id : argon.id] }] };
   }
-  const start = spyOn(engine["driver"], "startDriver").mockImplementation(() => {});
+  const start = spyOn(engine["driver"].workflow, "startDriver").mockImplementation(() => {});
   try {
     engine["driver"].schedule();
     expect(start.mock.calls.map(args => args[0])).toEqual([task.id, other.id]);

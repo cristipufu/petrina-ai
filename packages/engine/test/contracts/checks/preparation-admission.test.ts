@@ -29,7 +29,7 @@ it("admits bounded check preparation while every model slot is occupied", async 
     engine.s.backgroundAgents = [{ id: "occupied", roleId: "verifier", profileId: "sol-high", label: "Comparing older bugs", since: Date.now() }];
     engine.setPoolPaused(false);
     // Admission only: the driver has not started I/O or asked a reviewer anything yet.
-    expect(engine["driver"]["reserveAgent"](task)).toBe(true);
+    expect(engine["driver"].workflow["reserveAgent"](task)).toBe(true);
     expect(task.holdsSlot).toBe(false);
     expect(task.agent).toBeUndefined();
     expect(engine["checks"].preparingCount).toBe(1);
@@ -41,9 +41,9 @@ it("admits bounded check preparation while every model slot is occupied", async 
     expect(engine["checks"].claimPreparation(task.id)).toBe(false);
     engine.s.backgroundAgents = [];
     task.state = "waiting";
-    engine["driver"]["preparedTesters"].set(task.id, "already checked");
+    engine["driver"].workflow["preparedTesters"].set(task.id, "already checked");
     engine.cancel(task.id);
-    expect(engine["driver"]["preparedTesters"].has(task.id)).toBe(false);
+    expect(engine["driver"].workflow["preparedTesters"].has(task.id)).toBe(false);
   } finally { await engine.shutdown(); }
 });
 
@@ -60,7 +60,7 @@ it("admits a queued planner while the check-preparation lane is full", async () 
     const queued = engine.addTask({ productId, title: "Plan while checks wait" });
     engine.s.pool.limit = 1;
     const started: string[] = [];
-    engine["driver"]["startDriver"] = (id) => { started.push(id); };
+    engine["driver"].workflow["startDriver"] = (id) => { started.push(id); };
     engine.setPoolPaused(false);
     expect(started).toContain(queued);
     expect(engine["checks"].preparingCount).toBe(1);

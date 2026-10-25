@@ -46,7 +46,7 @@ async function fixture(inTurn = false) {
   Object.assign(check, { status: "unknown", at: Date.now() - 10 * 60_000, detail: "An older inconclusive answer" });
   checking = true; writeFileSync(gate, "Hold the readiness handshake");
   // This variant reaches the sibling readiness boundary inside Turns, after driver selection.
-  if (inTurn) engine["driver"]["seatFor"] = () => ({ agent: { roleId: "builder", profileId: "sol-high" }, toolId: "codex" });
+  if (inTurn) engine["driver"].workflow["seatFor"] = () => ({ agent: { roleId: "builder", profileId: "sol-high" }, toolId: "codex" });
   engine["reviews"].runReview = async () => "stop";
   const admitted: { fix: boolean; base?: string }[] = [];
   const attach = engine["turns"]["attachInput"].bind(engine["turns"]);
@@ -55,7 +55,7 @@ async function fixture(inTurn = false) {
     return attach(...args);
   };
   return { engine, task, scope, prerequisite, admitted, saved, fakes, base,
-    drive: () => engine["driver"]["drive"](id),
+    drive: () => engine["driver"].workflow["drive"](id),
     reached: () => waitFor(() => existsSync(`${gate}.reached`), "the saved Builder's readiness handshake"),
     unblock: () => rmSync(gate, { force: true }),
     hold() { engine.setRuntimeWait(id, [prerequisite], "This Builder needs the source fix", "readiness-hold"); engine["driver"].syncRuntimeWaits(); },

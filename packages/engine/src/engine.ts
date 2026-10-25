@@ -849,24 +849,16 @@ export class Engine extends Kernel implements Commands {
   }
 
   setPoolLimit(limit: number): void {
-    this.s.pool.limit = Math.max(1, Math.min(12, Math.round(limit)));
-    this.commit();
-    this.schedule();
+    this.driver.workflow.setPoolLimit(limit);
   }
 
   /** How many agents of one tool may run at once (keeps one subscription from being exhausted). */
   setToolCap(toolId: Id, cap: number): void {
-    if (!this.s.tools.some((tool) => tool.id === toolId)) throw new Error("Unknown tool");
-    this.s.pool.toolCaps = { ...this.s.pool.toolCaps, [toolId]: Math.max(1, Math.min(12, Math.round(cap))) };
-    this.commit();
-    this.schedule();
+    this.driver.workflow.setToolCap(toolId, cap);
   }
 
   setPoolPaused(paused: boolean): void {
-    if (!paused && this.draining) throw new Error("Petrina is stopping or restarting. Wait for that operation to finish before resuming.");
-    this.s.pool.paused = paused;
-    this.commitNow();
-    this.schedule();
+    this.driver.workflow.setPoolPaused(paused);
   }
 
   /** The terminal take-overs open in. Empty: the usual one on this machine. */

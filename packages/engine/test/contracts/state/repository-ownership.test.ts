@@ -27,8 +27,8 @@ describe("explicit repository execution contexts", () => {
     const updated = spyOn(engine["updates"], "upToDate").mockResolvedValue("current");
     const checks = spyOn(engine["checks"], "checksBeforeDelivery").mockResolvedValue("passed");
     const version = spyOn(engine["checks"], "acceptanceVersion").mockResolvedValue("final-version");
-    const reserve = engine["driver"]["reserveAgent"];
-    engine["driver"]["reserveAgent"] = () => true;
+    const reserve = engine["driver"].workflow["reserveAgent"];
+    engine["driver"].workflow["reserveAgent"] = () => true;
     const work = spyOn(engine["work"], "runDo").mockImplementation(async (_scope, stage) => {
       expect(stage.roleId).toBe(tester.id);
       expect(task.retest).toBe(true);
@@ -38,12 +38,12 @@ describe("explicit repository execution contexts", () => {
       return "continue";
     });
     try {
-      await engine["driver"]["drive"](task.id, true);
+      await engine["driver"].workflow["drive"](task.id, true);
       expect(task.error).toBeUndefined();
       expect(engine.taskDetails(task.id)!.state).toBe("needs-you");
       expect(work).toHaveBeenCalledTimes(1);
       expect(engine.s.inbox.some(item => item.taskId === task.id && item.kind === "delivery")).toBe(true);
-    } finally { work.mockRestore(); engine["driver"]["reserveAgent"] = reserve; version.mockRestore(); checks.mockRestore(); updated.mockRestore(); await engine.shutdown(); }
+    } finally { work.mockRestore(); engine["driver"].workflow["reserveAgent"] = reserve; version.mockRestore(); checks.mockRestore(); updated.mockRestore(); await engine.shutdown(); }
   });
 
   it("persists cached archive edits before eviction and keeps live projections light with independent revisions", async () => {

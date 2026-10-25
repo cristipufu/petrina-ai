@@ -10,7 +10,7 @@ for (const kind of ["single", "parallel", "security", "added"]) it(`keeps the ${
     try {
       const saved = await f.first();
       expect(Object.values(saved).every((seat) => seat.profileId !== seat.plannedProfileId)).toBe(true);
-      const booked = f.engine["driver"]["seatOf"]({ roleId: f.stage.roleId, profileId: "opus-high", reviewerKey: "0" }, f.task);
+      const booked = f.engine["driver"].workflow["seatOf"]({ roleId: f.stage.roleId, profileId: "opus-high", reviewerKey: "0" }, f.task);
       expect(booked.toolId).toBe(saved["0"]!.toolId);
       const inputs = await f.round(2);
       expect(inputs).toHaveLength(pair ? 2 : 1);

@@ -1,3 +1,4 @@
+import { pauseAgentStep, waitForAgentUsage, releaseAgentForDecision, resumeAgentAfterReply, type AgentAdmissionDependencies, type ParticipantAdmission } from "@petrina/orchestrator";
 import { drainRuntime, inFlightWork, keepsIdleSleep } from "@petrina/orchestrator";
 import { appendSessionLine } from "@petrina/core";
 import { CheckQueue } from "./check-queue.js";
@@ -17,7 +18,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { IdleSleepAssertion } from "./awake.js";
-import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, pauseClock, resumeClock, stepRecord, type ActiveAgent } from "@petrina/core";
+import { NO_ROLE_CHANGES, involvesProduct, libraryRoles, beginYouStep, BUILT_IN_ROLES, callCheckBody, endOpenStep, JOURNEY_WORDS as W, openStep, queueOf, stepTag, workSummary, TAKE_OVER_WORDS, withdrawAsks, type AgentProfile, type Column, type GateKind, type Id, type InboxItem, type InboxKind, type RiskLevel, type Role, type Stage, type State, type StepNote, type Task, type Tone, columnOf, gateStatus, gateTitle, type DeepMutable, CHECK_NAMES, fixFor, wontStartFix, type CheckId, type CheckStatus, type Platform, MAX_STEP_RECORDS, stepRecord, type ActiveAgent } from "@petrina/core";
 import type { AgentSession, StartAgentSession, ToolProbe } from "@petrina/orchestrator";
 import * as git from "@petrina/repositories/git";
 import type { DeveloperToolsResult, Which } from "@petrina/repositories/tool-readiness";
@@ -265,6 +266,8 @@ export function checksLine(task: Task): string | undefined {
 }
 
 export abstract class Kernel {
+  /** One actual scheduler/participant/group boundary, composed by the Engine before agents can run. */
+  agentAdmission!: AgentAdmissionDependencies & { participant: ParticipantAdmission };
   private readonly projection = new StateProjection(this, task => renameRoles({ ...this.s, tasks: [task], inbox: [] }));
   readonly screens = new ScreenCoordinator(this);
   readonly usageCoordinator = new UsageCoordinator(this);
@@ -606,8 +609,7 @@ export abstract class Kernel {
    * `decides`: the stage a check raised again still decides (null when its original recorded none).
    */
   gate(task: MTask, gate: GateKind, problem?: string, checks?: { title: string; body: string }, decides?: Id | null): void {
-    delete task.agent;
-    task.holdsSlot = false;
+    releaseAgentForDecision(task);
     const decision = beginYouStep(task, gate, Date.now());
     if (gate === "delivery" && task.proofRequests?.length) decision.proofDecision = structuredClone(task.checkedProofDecision);
     const reviewCall = gate === "delivery" && library.reviewDecisionPending(task);
@@ -814,10 +816,7 @@ export abstract class Kernel {
 
   /** The agent stops working on the step for a while (it waits for the coordinator or for usage): the wait is not working time. */
   pauseStep(task: MTask, now = Date.now()): void {
-    if (task.stepClock) task.stepClock = pauseClock(task.stepClock, Math.max(now, task.stepClock.since ?? 0));
-    for (const work of Object.values(task.hunt?.work ?? {})) {
-      if (work.clock) work.clock = pauseClock(work.clock, Math.max(now, work.clock.since ?? 0));
-    }
+    pauseAgentStep(task, now);
   }
 
   /**
@@ -874,11 +873,7 @@ export abstract class Kernel {
   }
 
   unblock(task: MTask): void {
-    if (task.state !== "needs-you") return;
-    if (this.s.inbox.some((item) => item.taskId === task.id && item.blocking)) return;
-    task.state = task.holdsSlot ? "running" : "waiting";
-    task.statusLine = task.holdsSlot ? "Back to work" : "Waiting for a free slot";
-    if (task.holdsSlot && task.stepClock && !task.agent?.reviewKey) task.stepClock = resumeClock(task.stepClock, Date.now());
+    resumeAgentAfterReply(task, this.s.inbox.some(item => item.taskId === task.id && item.blocking), Date.now());
   }
 
   takeItem(itemId: Id): DeepMutable<InboxItem> | undefined {
@@ -1156,12 +1151,7 @@ export abstract class Kernel {
 
   /** The task lets go of its slot and waits until a limit ends: the driver stops, and the scheduler starts it again. */
   waitForUsage(task: MTask, words: string): void {
-    this.pauseStep(task);
-    task.state = "waiting";
-    task.holdsSlot = false;
-    delete task.agent;
-    task.statusLine = words;
-    task.column = this.columnFor(task);
+    waitForAgentUsage(task, words, Date.now(), () => this.columnFor(task));
     this.commitNow();
   }
 

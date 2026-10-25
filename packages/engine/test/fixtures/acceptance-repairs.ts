@@ -94,8 +94,8 @@ export async function fixture(options: { gate: boolean; checklist?: readonly str
       mains: () => Promise.all(products.map(product => git(product.path!, "rev-parse", "main"))),
       /** Runs the task until it waits, stops, or (with `stop`) is about to admit an agent while `stop` holds. */
       drive: (stop?: (task: Task) => boolean) => operations.run(async () => {
-        const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockImplementation(async () => !stop?.(f.task as Task));
-        try { f.task.state = "running"; await f.engine["driver"]["drive"](f.task.id); if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error); }
+        const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockImplementation(async () => !stop?.(f.task as Task));
+        try { f.task.state = "running"; await f.engine["driver"].workflow["drive"](f.task.id); if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error); }
         finally { admit.mockRestore(); }
       }),
       decisions: () => f.engine.s.inbox.filter(item => item.taskId === f.task.id && item.kind === "delivery"),

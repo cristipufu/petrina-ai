@@ -41,7 +41,7 @@ it("binds an explicit decision about A's proof on version B to B, blocks publish
     expect(await f.engine["shipping"]["readyToShip"](f.scope, signal())).toBe("back");
     expect(f.task.stageIndex).toBe(3); expect(f.task.approvedProofDecision).toBeUndefined(); expect(f.task.proofRefreshes).toBe(2);
     expect(await git(f.products[0]!.path!, "rev-parse", "main")).toBe(destinationBefore);
-    f.task.state = "running"; await f.engine["driver"]["drive"](f.task.id); expect(f.task.proofRefreshes).toBe(2); expect(f.task.checkedProofDecision).not.toEqual(viewed);
+    f.task.state = "running"; await f.engine["driver"].workflow["drive"](f.task.id); expect(f.task.proofRefreshes).toBe(2); expect(f.task.checkedProofDecision).not.toEqual(viewed);
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toContain("earlier version");
     f.engine.requestChanges(f.engine.s.inbox.find(item => item.kind === "delivery")!.id, "Obtain the required proof after the next fix");
     expect(f.task.proofRefreshes).toBeUndefined();

@@ -75,8 +75,8 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
       return node;
     };
     const drive = async () => {
-      const admit = spyOn(engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
-      try { task.state = "running"; await engine["driver"]["drive"](task.id); if (engine.task(task.id)?.state === "failed") throw new Error(task.error); }
+      const admit = spyOn(engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
+      try { task.state = "running"; await engine["driver"].workflow["drive"](task.id); if (engine.task(task.id)?.state === "failed") throw new Error(task.error); }
       finally { admit.mockRestore(); }
     };
     return { root, engine, task, scope, owners, products, build, tester, review, gate, ship, advance, request, recordPass, drive };

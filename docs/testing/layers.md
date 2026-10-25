@@ -34,9 +34,11 @@ application host (existing engine entrypoints, CLI/MCP/server and desktop)
   -> storage -> core and consumed contracts
 ```
 
-`@petrina/agent-runtime` owns native ACP sessions, provider launch/configuration, account readers, browser processes and image files. Its pure report parsers and message decisions have separate source owners and tests. `@petrina/repositories` owns Git/GitHub commands, worktrees, native path resolution and repository/source query adapters. Both consume core data, orchestrator contracts and shared platform capabilities; neither imports the application host. The engine owns workflow admission, recording, persistence and composition. Shared process-environment transformations live in platform.
+`@petrina/agent-runtime` owns native ACP sessions, provider launch/configuration, account readers, browser processes and image files. Its pure report parsers and message decisions have separate source owners and tests. `@petrina/repositories` owns Git/GitHub commands, worktrees, native path resolution and repository/source query adapters. Both consume core data, orchestrator contracts and shared platform capabilities; neither imports the application host. The engine composes workflow admission controllers, recording, persistence and native effects. Shared process-environment transformations live in platform.
 
 The host constructs native adapters and supplies them to controllers. The orchestrator never imports concrete adapters. An adapter may depend on the pure contract it implements, including a contract owned by the consuming package; the controller must not import the adapter back. Shared contracts get a separate package only when several owners actually need them. There are no extra services or network boundaries.
+
+`AgentWorkflow` owns scheduling, main-seat reservation, stage admission and dispatch. `ParallelAdmissionGroup` owns reviewer/voter reservation, rejoining and settlement. Both consume the same live ownership registries and profile/readiness contracts. Selected-profile qualification and synchronous activation also use that owner; native clock, input and checkpoint preparation keep their order between them. Repository preparation, checks, agent execution, publishing and confirmed cleanup remain named host effects. Test cap permutations through these controllers and retain representative actual Engine/Git/session composition. A failure has a separate presence flag: an `undefined` rejection is still failure.
 
 | Responsibility | Interface boundary | Native implementation owns |
 | --- | --- | --- |

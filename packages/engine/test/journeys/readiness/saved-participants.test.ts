@@ -654,8 +654,8 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
       const saved = structuredClone(f.scope.work.builderSession!);
       f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-before-builder");
-      expect(f.engine["driver"]["reserveAgent"](f.task)).toBe(false);
-      expect(await f.engine["driver"]["admitNext"](f.task, new AbortController().signal)).toBe(false);
+      expect(f.engine["driver"].workflow["reserveAgent"](f.task)).toBe(false);
+      expect(await f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal)).toBe(false);
       expect(f.checks()).toEqual([]);
       expect(f.scope.work.builderSession!.readinessWait).toBeUndefined();
       expect(f.task.state).toBe("waiting");
@@ -664,7 +664,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved continuing", "clear-before-builder");
       await f.engine["driver"]["refreshAfterWait"](f.task, new AbortController().signal);
       f.seated();
-      const admitted = f.engine["driver"]["admitNext"](f.task, new AbortController().signal);
+      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
       await held.reached();
       held.release();
       expect(await admitted).toBe(true);
@@ -682,7 +682,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       f.task.startedAt = Date.now();
       const prerequisite = f.engine.addTask({ productId: "p", title: "Fix the capacity tests", backlog: true });
       const saved = structuredClone(f.scope.work.builderSession!);
-      const admitted = f.engine["driver"]["admitNext"](f.task, new AbortController().signal);
+      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
       await held.reached();
       const wait = structuredClone(f.scope.work.builderSession!.readinessWait!);
       f.engine.setRuntimeWait(f.task.id, [prerequisite], "The final validation needs the capacity fix", "hold-during-builder-check");
@@ -700,7 +700,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       await waitFor(() => f.check("codex").status === "ready", "the shared readiness answer after the place was released");
       f.engine.setRuntimeWait(f.task.id, [], "The coordinator approved continuing", "clear-after-builder-check");
       await f.engine["driver"]["refreshAfterWait"](f.task, new AbortController().signal);
-      expect(await f.engine["driver"]["admitNext"](f.task, new AbortController().signal)).toBe(true);
+      expect(await f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal)).toBe(true);
       expect(f.task.agent).toEqual(expect.objectContaining({ roleId: "builder", profileId: saved.profileId }));
       expect(f.scope.work.builderSession!.readinessWait).toEqual(wait);
       expect(f.scope.work.builderSession!.sessionId).toBe(saved.sessionId);
@@ -751,7 +751,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       const choice = f.engine.choose("opus-high", f.task, "builder", () => true);
       expect(choice).toEqual(expect.objectContaining({ freshReason: "its saved tool's readiness recheck was inconclusive", readiness: expect.objectContaining({ check: "started", outcome: "unknown" }) }));
       expect(choice?.kind === "none" ? undefined : choice?.profile.toolId).not.toBe("claude-code");
-      f.engine["driver"]["reserveAgent"](f.task);
+      f.engine["driver"].workflow["reserveAgent"](f.task);
       expect(f.checks().filter((entry) => entry.tool === "claude-code")).toHaveLength(1);
     } finally { await f.engine.shutdown(); }
   });
@@ -760,7 +760,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
     const f = await fixRound();
     try {
       const held = f.holdCheck("codex");
-      const admitted = f.engine["driver"]["admitNext"](f.task, new AbortController().signal);
+      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
       await held.reached();
       expect(f.task.statusLine).toBe("Checking Codex before the Builder returns");
       expect(f.ours()).toEqual([expect.objectContaining({ toolId: "codex", roleId: "builder", profileId: "sol-high" })]);
@@ -776,7 +776,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
     const f = await fixRound();
     try {
       const held = f.holdCheck("codex");
-      const admitted = f.engine["driver"]["admitNext"](f.task, new AbortController().signal);
+      const admitted = f.engine["driver"].workflow["admitNext"](f.task, new AbortController().signal);
       await held.reached();
       f.engine.s.pool.toolCaps["codex"] = 0;
       held.release();
@@ -793,7 +793,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       const held = f.holdCheck("codex");
       Object.assign(f.task, { state: "waiting", holdsSlot: false });
       delete f.task.agent;
-      expect(f.engine["driver"]["reserveAgent"](f.task)).toBe(false);
+      expect(f.engine["driver"].workflow["reserveAgent"](f.task)).toBe(false);
       await held.reached();
       expect(f.task.holdsSlot).toBe(false);
       expect(f.task.statusLine).toBe("Checking Codex before the Builder returns");
@@ -801,7 +801,7 @@ describe.concurrent("a returning Builder's uncertain tool", () => {
       // The same task now holding its place waits there; pausing ends that wait and the place.
       Object.assign(f.task, { state: "running", holdsSlot: true });
       const stop = new AbortController();
-      const admitted = f.engine["driver"]["admitNext"](f.task, stop.signal);
+      const admitted = f.engine["driver"].workflow["admitNext"](f.task, stop.signal);
       await waitFor(() => f.task.agent?.profileId === "sol-high", "the Builder to wait in its place");
       stop.abort();
       f.engine.pause(f.task.id);

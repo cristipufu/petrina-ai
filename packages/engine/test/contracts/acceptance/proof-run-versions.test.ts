@@ -45,8 +45,8 @@ for (const savedConversation of [false, true]) it(`binds a restarted Tester to i
   const reply = testerReply(f, passes); const review = spyOn(f.engine["reviews"], "runReview").mockResolvedValue("stop");
   try {
     await f.advance(); f.task.state = "running";
-    const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
-    try { await f.engine["driver"]["drive"](f.task.id); } finally { admit.mockRestore(); }
+    const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
+    try { await f.engine["driver"].workflow["drive"](f.task.id); } finally { admit.mockRestore(); }
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.acceptancePassed).toBe(true);
     expect(f.task.testedVersions).toEqual(await versionsOf(f.task));
     expect(sameVersions(f.task.testedVersions, versions)).toBe(savedConversation);

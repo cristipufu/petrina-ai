@@ -97,8 +97,8 @@ async function fixture(options: { shared?: boolean; checklist?: readonly string[
     testerName: tester.roleId === "tester" ? "tester" : "quality partner",
     mains: () => Promise.all(products.map(product => git(product.path!, "rev-parse", "main"))),
     drive: async () => {
-      const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
-      try { f.task.state = "running"; await f.engine["driver"]["drive"](f.task.id); if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error); }
+      const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(true);
+      try { f.task.state = "running"; await f.engine["driver"].workflow["drive"](f.task.id); if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error); }
       finally { admit.mockRestore(); }
     },
     decisions: () => f.engine.s.inbox.filter(item => item.taskId === f.task.id && item.kind === "delivery"),

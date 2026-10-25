@@ -1,31 +1,30 @@
+import { nextReviewPlace, pendingReviewPlaces, plannedReviewPlaces, rememberReviewProfile } from "@petrina/orchestrator";
+import { ParallelAdmissionGroup } from "@petrina/orchestrator";
 import { ReviewRoundCompletion } from "@petrina/orchestrator";
 import { createVerifierBallots } from "./verifier-host.js";
-import { executionFor, scopesFor, repositoryView, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
+import { executionFor, scopesFor, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "./repositories.js";
 import { refreshProofs } from "@petrina/core";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { checkReviewEvidence, reopenFinding, runtimeWaitHolds, endAgentStep, exhaustedAcceptanceFailure, findingCount, inBallot, JOURNEY_WORDS as W, openStep, pickStarts, portReviewerIndex, reviewerAt, seatAnswered, slotUses, type ActiveAgent, type AgentProfile, type ConversationNote, type DeepMutable, type Id, type ReadinessRecheck, type Role, type Stage, type Task } from "@petrina/core";
+import { checkReviewEvidence, reopenFinding,  endAgentStep, exhaustedAcceptanceFailure, findingCount, inBallot, JOURNEY_WORDS as W, openStep,   reviewerAt, seatAnswered,  type ActiveAgent, type AgentProfile, type ConversationNote,  type Id, type ReadinessRecheck, type Role, type Stage, type Task } from "@petrina/core";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
-import { Kernel, type MStage, type MTask, ScreenWait, SourceRefreshRequired } from "./kernel.js";
-import { WaitingForCapacity, waitingFor, WaitingForUsage } from "./usage.js";
+import { Kernel, type MStage, type MTask,  SourceRefreshRequired } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
-import { finishMessageGroup, routeMessages } from "@petrina/core";
 import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";
 import { completeAll } from "@petrina/core";
 import { checkProofRequests, recordReviewProofs } from "@petrina/orchestrator";
-import type { ReadinessNeed } from "./readiness.js";
 
 /** What admission decided for a parallel seat: the words on its start, why a saved conversation was not kept, and its readiness recheck. */
 type SeatSelection = { selectionReason?: string; freshReason?: string; readiness?: ReadinessRecheck };
@@ -178,26 +177,19 @@ export class Reviews {
 
   /** Who works on the review step next: a reviewer who has not reported yet, else a voter, else nobody. */
   nextAgent(task: MTask, stage: MStage): { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined {
-    const reviewer = this.pendingReviewers(task, stage)[0];
-    if (reviewer) return { roleId: reviewerAt(stage, Number(reviewer.key)), profileId: reviewer.profileId, reviewerKey: reviewer.key };
-    const voter = this.pendingVote(task, stage)?.voters[0];
-    return voter ? { roleId: "verifier", profileId: voter, requiredToolId: this.k.profile(voter)?.toolId } : undefined;
+    return nextReviewPlace(task, stage, {
+      roles: () => this.k.s.roles, profile: id => this.k.profile(id), pendingVoter: () => this.pendingVote(task, stage)?.voters[0],
+    });
   }
 
   /** The stage's reviewers who have not reported this round, by their place in the stage. */
   private pendingReviewers(task: MTask, stage: Stage): { key: string; profileId: Id }[] {
-    const scope = executionFor(task);
-    const reported = task.hunt?.stageId === stage.id && task.hunt.round === (task.rounds[stage.id] ?? 1) ? task.hunt.reported : {};
-    if (scope.work.portReview && Object.keys(reported).length) return [];
-    return this.plannedReviewers(task, stage).filter((entry) => !reported[entry.key]);
+    return pendingReviewPlaces(task, stage, { roles: () => this.k.s.roles, profile: id => this.k.profile(id) });
   }
 
   /** Every reviewer place the round waits for: the whole stage, or a port review's one reviewer. */
   private plannedReviewers(task: MTask, stage: Stage): { key: string; profileId: Id }[] {
-    const scope = executionFor(task);
-    const planned = stage.profileIds.map((profileId, index) => ({ key: String(index), profileId }));
-    // The journey and the engine share the port reviewer's position; tool choice follows the latest builder.
-    return scope.work.portReview ? [planned[portReviewerIndex(repositoryView(scope), stage.profileIds, (id) => this.k.profile(id)?.toolId, this.k.s.roles)]!] : planned;
+    return plannedReviewPlaces(task, stage, { roles: () => this.k.s.roles, profile: id => this.k.profile(id) });
   }
 
   /** The positions the round's step expects a result from, recorded on the step as its participants are admitted. */
@@ -206,7 +198,7 @@ export class Reviews {
   }
 
   private rememberReviewer(task: MTask, key: string, profileId: Id): void {
-    task.hunt = { ...task.hunt!, profiles: { ...task.hunt!.profiles, [key]: profileId } };
+    rememberReviewProfile(task, key, profileId);
     this.k.commitNow();
   }
 
@@ -431,8 +423,6 @@ export class Reviews {
    */
   private async together(task: MTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string): Promise<void> {
     const scope = executionFor(task);
-    const stop = new AbortController();
-    const signal = AbortSignal.any([parentSignal, stop.signal]);
     const root = this.k.repositoryOf(scope)!.path!;
     const copyFolder = (productId: Id) => join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`);
     const folder = copyFolder(scope.work.productId);
@@ -468,326 +458,66 @@ export class Reviews {
     await this.turns.refresh(scope);
     // An unopened group must return through ordinary source updates and snapshot preparation.
     if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-    const pending = [...members];
-    const accepted = new Set<string>();
-    const running = new Map<string, { agent: ActiveAgent; done: Promise<void> }>();
-    const yielded = new Set<string>();
-    // Members whose saved conversation waits for its tool's bounded readiness decision: the group stays open until
-    // each settles, and later members keep their order behind it.
-    const deciding = new Map<string, { need: ReadinessNeed; done: Promise<void> }>();
-    // Members waiting out a full model beside working peers. Each keeps its own wait, so one that rejoined
-    // and reported never leaves the task waiting after everyone has reported.
-    const paused = new Set<string>();
-    const waits = new Map<string, WaitingForUsage>();
-    // Members whose working copies exist: a member coming back reuses its own.
-    const made = new Set<string>();
-    let failure: unknown;
-    let closing = false;
-    let wake: (() => void) | undefined;
-    const wait = (key: string, waiting: WaitingForUsage) => {
-      waits.delete(key);
-      waits.set(key, waiting);
-    };
-    // A full model's wait wins over a usage wait, as the latest one recorded.
-    const noOne = () => [...waits.values()].findLast((entry) => entry instanceof WaitingForCapacity) ?? waits.values().next().value;
-    // A member stopped by a full model waits aside, whatever its next start waits for: the model, a free seat for the
-    // model that takes over, or its account. The usual choice then decides when it can start again.
-    const asideFor = (key: string, waiting: WaitingForUsage) => waiting instanceof WaitingForCapacity || !!task.capacityRetries?.some((entry) => entry.member === key);
-    const show = () => {
-      if (signal.aborted) return;
-      this.k.selectScreen(task);
-      if (task.screen?.member) scope.work.conversation ??= task.hunt?.screenTurns?.[task.screen.member]?.conversation;
-      const agents = [...running.entries()].filter(([key]) => !yielded.has(key)).sort(([a], [b]) => Number(b === task.screen?.member) - Number(a === task.screen?.member)).map(([, entry]) => entry.agent);
-      const [waitingOn, decision] = [...deciding.entries()][0] ?? [];
-      if (agents.length) {
-        task.holdsSlot = true;
-        task.agent = agents[0]!;
-      } else if (task.screen || runtimeWaitHolds(task)) {
-        // A screen wait or prerequisite hold releases the group's last place. Ordinary cleanup keeps it.
-        task.holdsSlot = false;
-        delete task.agent;
-      } else if (decision && task.holdsSlot && !this.k.readiness.charge(task, decision.need, members.find((member) => member.key === waitingOn)?.reviewKey)) {
-        // The last working reviewer finished during a readiness decision. Its one main place stays with the group,
-        // charged to the waiting reviewer's saved tool; where that tool has no room, the place is let go.
-        task.holdsSlot = false;
-        delete task.agent;
-      }
-      if (agents.length > 1) task.helpers = agents.slice(1);
-      else delete task.helpers;
-      const held = !agents.length && runtimeWaitHolds(task);
-      task.state = this.k.s.inbox.some((item) => item.taskId === task.id && item.blocking) ? "needs-you" : held || task.screen && !task.screen.granted ? "waiting" : "running";
-      if (held && task.state === "waiting") task.statusLine = this.k.taskAdmissionWait(task);
-      else if (task.state === "running") task.statusLine = !agents.length && decision ? decision.need.words : status(running.size, pending.length);
-      this.k.showReviewWork(task);
-      this.k.syncScreen();
-    };
-    // A handoff replaces this member's seat; its working peers still count against every cap.
-    const roomFor = (key: string) => (toolId: Id, profile: AgentProfile) => {
-      const member = members.find(member => member.key === key);
-      if (member && this.k.role(member.roleId)?.result === "votes" && this.k.profile(member.profileId)?.toolId !== toolId) return false;
-      const state = this.k.activeState();
-      let uses = slotUses(state);
-      const agent = running.get(key)?.agent;
-      if (agent) {
-        const own = uses.findIndex((use) => use.taskId === task.id && use.profileId === agent.profileId && use.roleId === agent.roleId);
-        uses = uses.filter((_, index) => index !== own);
-      } else if (!running.size) uses = uses.filter((use) => use.taskId !== task.id);
-      return pickStarts({ candidates: [{ ...profile, taskId: task.id, toolId }], inUse: uses, pool: state.pool, now: state.now }).length > 0;
-    };
-    // The screen member's step ends with its result. Peers still working or waiting out a full model keep their own
-    // retry counts and conversations to continue.
-    const finishScreenStep = (key: string) => {
-      const peers = <T extends { member?: string }>(entries: T[] | undefined) => entries?.filter((entry) => entry.member !== undefined && entry.member !== key) ?? [];
-      const resume = peers(task.capacityResume), retries = peers(task.capacityRetries), waiting = peers(task.capacityPaused);
-      this.k.finishStep(task);
-      if (resume.length) task.capacityResume = resume;
-      if (retries.length) task.capacityRetries = retries;
-      if (waiting.length) task.capacityPaused = waiting;
-    };
-    const startMember = (member: (typeof members)[number], copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, continuing: boolean, selection?: SeatSelection) => {
-      yielded.delete(member.key);
-      paused.delete(member.key);
-      waits.delete(member.key);
-      const agent: DeepMutable<ActiveAgent> = { roleId: member.roleId, profileId: seat, since: Date.now(), step: 0, reviewKey: member.reviewKey };
-      let completed = false;
-      // A continued member reopens the companion copies its screen turn kept, as it reopens its primary one.
-      const kept = continuing ? task.hunt?.screenTurns?.[member.key]?.copies : undefined;
-      const used = (profileId: Id) => {
-        agent.profileId = profileId;
-        if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, profileId);
-        show();
-        this.k.commitNow();
-      };
-      // A screen continuation or a member back from a full model works in the copies it already has.
-      const reuse = continuing || made.has(member.key);
-      const done = Promise.resolve()
-        .then(async () => {
-          const copies: Record<string, string> = { [scope.work.productId]: copy };
-          await completeAll([
-            reuse ? Promise.resolve() : git.addCopy(root, copy, sha),
-            ...versions.filter((work) => work.productId !== scope.work.productId).map(async (work) => {
-              const peer = kept?.[work.productId] ?? memberCopy(work.productId, member.key);
-              if (!reuse) await git.addCopy(work.root, peer, work.sha);
-              copies[work.productId] = peer;
-            }),
-          ]);
-          made.add(member.key);
-          if (versions.length) this.turns.repositoryCopies.set(copy, copies);
-          try { await member.work(copy, room, seat, used, agent, continuing, signal, selection); }
-          finally {
+    const group = new ParallelAdmissionGroup({
+      state: () => this.k.s, activeState: () => this.k.activeState(), now: () => Date.now(), draining: () => this.k.draining,
+      admissionsClosed: task => this.k.taskAdmissionsClosed(task), admissionWait: task => this.k.taskAdmissionWait(task), sourceRefreshDue: task => this.k.taskSourceRefreshDue(task),
+      selectScreen: task => this.k.selectScreen(task), syncScreen: () => this.k.syncScreen(), showReviewWork: task => this.k.showReviewWork(task), finishStep: task => this.k.finishStep(task), waitForUsage: (task, words) => this.k.waitForUsage(task, words),
+      rememberReviewer: (task, key, profileId) => this.rememberReviewer(task, key, profileId), changed: () => this.k.commit(), checkpoint: () => this.k.commitNow(), schedule: () => this.k.schedule(),
+    }, this.k.agentAdmission);
+    await group.run({ scope, members, signal: parentSignal, status, workspaces: {
+      reference: member => memberCopy(scope.work.productId, member),
+      prepare: async (member, copy, continuing, reuse) => {
+        const kept = continuing ? task.hunt?.screenTurns?.[member.key]?.copies : undefined;
+        const copies: Record<string, string> = { [scope.work.productId]: copy };
+        await completeAll([
+          reuse ? Promise.resolve() : git.addCopy(root, copy, sha),
+          ...versions.filter((work) => work.productId !== scope.work.productId).map(async (work) => {
+            const peer = kept?.[work.productId] ?? memberCopy(work.productId, member.key);
+            if (!reuse) await git.addCopy(work.root, peer, work.sha);
+            copies[work.productId] = peer;
+          }),
+        ]);
+        return {
+          activate: () => {
+            if (versions.length) this.turns.repositoryCopies.set(copy, copies);
+          },
+          finish: () => {
             const saved = task.hunt?.screenTurns?.[member.key];
             if (saved && versions.length) { saved.copies = copies; saved.conversation.repositoryCopies = copies; this.k.commitNow(); }
             // Primary and companion copies are reclaimed together by their owning repositories
             // when the group settles; saved screen turns retain their complete map.
             this.turns.repositoryCopies.delete(copy);
-          }
-        })
-        .then(() => {
-          completed = true;
-          if (task.hunt?.screenTurns) delete task.hunt.screenTurns[member.key];
-        })
-        .catch((error: unknown) => {
-          // Usage and capacity waits keep the missing seat; partners finish and keep their ballots.
-          if (error instanceof WaitingForUsage) {
-            wait(member.key, error);
-            // A full model waits aside to rejoin. A member that holds the screen keeps its own path.
-            if (asideFor(member.key, error) && !continuing && task.screen?.member !== member.key) paused.add(member.key);
-          } else if (!(error instanceof ScreenWait)) {
-            failure ??= error;
-            // Stop question and permission waits too, so cleanup cannot wait on a dead peer.
-            stop.abort();
-          }
-        })
-        .finally(() => {
-          running.delete(member.key);
-          // Release and expose the next peer together, after its result is saved. No other task
-          // can take the screen in between while learnings or other result handling awaits I/O.
-          if ((!signal.aborted || completed) && failure === undefined && task.screen?.member === member.key && !task.hunt?.screenTurns?.[member.key]) finishScreenStep(member.key);
-          show();
-          this.k.commit();
-          wake?.();
-          // Peers and queued tasks may use the seats that actually came free.
-          if (failure === undefined) this.k.schedule();
-        });
-      running.set(member.key, { agent, done });
-      show();
-      // Saving the profile notifies listeners, which may change permissions and schedule again.
-      // Expose its reservation first so that reentrant scheduling counts every seat and cannot admit it twice.
-      if (member.reviewerKey !== undefined) this.rememberReviewer(task, member.reviewerKey, seat);
-    };
-    const continueScreen = () => {
-      if (signal.aborted || failure !== undefined || this.k.taskAdmissionsClosed(task) || this.k.taskSourceRefreshDue(task)) return;
-      const member = members.find((entry) => entry.key === task.screen?.member);
-      const saved = member && task.hunt?.screenTurns?.[member.key];
-      if (!member || !saved || running.has(member.key)) return;
-      const index = pending.findIndex((entry) => entry.key === member.key);
-      if (index >= 0) pending.splice(index, 1);
-      scope.work.conversation ??= saved.conversation;
-      startMember(member, saved.copy, roomFor(member.key), task.agent?.profileId ?? saved.conversation.profileId, true);
-    };
-    // Nobody starts or comes back while admission is closed for this task, a peer owns or waits
-    // for the screen, or the group is ending. The same rule covers model returns and readiness probes.
-    const mayStart = () => !closing && failure === undefined && !signal.aborted && !this.k.taskAdmissionsClosed(task) && !this.k.taskSourceRefreshDue(task) && !task.screen && !Object.keys(task.hunt?.screenTurns ?? {}).length;
-    /** Who would start for this member now, by the usual choice, or why it waits and whether only its saved tool's readiness stands in the way. */
-    const admission = (member: (typeof members)[number]) => {
-      const room = roomFor(member.key);
-      const choice = this.k.choose(member.profileId, task, member.roleId, room, member.reviewerKey);
-      if (choice?.kind === "none") return { room, waiting: waitingFor(choice.waiting), readiness: choice.readiness };
-      const seat = choice?.profile.id ?? member.profileId;
-      const selection: SeatSelection | undefined = choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) } : undefined;
-      return { room, seat, profile: this.k.profile(seat)!, selection };
-    };
-    /**
-     * A member set aside, by the usual choice: who would start for it now, or why it still waits. Its saved tool's
-     * readiness recheck starts or is joined meanwhile, without a place and without waiting for working peers.
-     */
-    const due = (member: (typeof members)[number]) => {
-      const next = admission(member);
-      if (next.waiting) {
-        wait(member.key, next.waiting);
-        if (next.readiness) void this.k.readiness.resolve(next.readiness);
-      }
-      return next;
-    };
-    /**
-     * Members whose own wait ended come back in their stable order, each only into a free seat, at most `limit`.
-     * A member's reservation is visible before anything is saved, so a schedule during its start cannot admit it twice.
-     */
-    const rejoin = (limit = Infinity) => {
-      for (const member of members) {
-        if (limit <= 0 || !mayStart()) return;
-        if (!paused.has(member.key) || running.has(member.key)) continue;
-        const next = due(member);
-        if (next.waiting) continue;
-        if (!next.room(next.profile.toolId, next.profile)) continue;
-        startMember(member, memberCopy(scope.work.productId, member.key), next.room, next.seat, false, next.selection);
-        limit -= 1;
-      }
-    };
-    const start = () => {
-      while (pending.length && mayStart()) {
-        const member = pending[0]!;
-        // Its decision is still open: no peer is moved ahead of it.
-        if (deciding.has(member.key)) break;
-        const next = admission(member);
-        if (next.readiness && this.k.readiness.open(next.readiness)) {
-          // The group owns this member's decision: the check starts or is joined now, without waiting for working
-          // peers, and the member stays pending without a place of its own until the check answers or its limit passes.
-          // Places are settled first: with no peer working, the group's main place moves to the saved tool.
-          const decision = { need: next.readiness, done: Promise.resolve() };
-          deciding.set(member.key, decision);
-          show();
-          decision.done = this.k.readiness.resolveHeld(next.readiness, signal, () => {
-            // A hold ends only the group's admission decision, never the shared tool check or
-            // a peer already working. Reconcile those owners before the driver frees a place.
-            show();
-            return !task.holdsSlot;
-          }).then(() => {
-            deciding.delete(member.key);
-            wake?.();
-          });
-          break;
-        }
-        if (next.waiting) {
-          pending.shift();
-          wait(member.key, next.waiting);
-          // A full model waits aside too, and joins its peers once that wait ends.
-          if (asideFor(member.key, next.waiting)) paused.add(member.key);
-          continue;
-        }
-        if (!next.room(next.profile.toolId, next.profile)) break;
-        pending.shift();
-        startMember(member, memberCopy(scope.work.productId, member.key), next.room, next.seat, false, next.selection);
-      }
-      rejoin();
-      this.k.commit();
-    };
-    this.k.screenGroups.set(task.id, {
-      continue: continueScreen,
-      running: (key) => running.has(key),
-      yield: (key) => { yielded.add(key); show(); },
-      recipients: () => members.filter((member) => !accepted.has(member.key)).map((member) => member.key),
-      finished: (key) => { accepted.add(key); },
-      // The scheduler weighs a member whose wait ended against other work in progress, then brings it back.
-      returning: () => mayStart() ? members.flatMap((member) => {
-        if (!paused.has(member.key) || running.has(member.key)) return [];
-        const next = due(member);
-        return next.waiting ? [] : [{ ...next.profile, taskId: task.id, toolId: next.profile.toolId }];
-      }) : [],
-      rejoin: () => rejoin(1),
-    });
-    routeMessages(task, members.map((member) => member.key));
-    try {
-      if (task.screen?.member) continueScreen();
-      else start();
-      while (running.size || deciding.size) {
-        // A member reopened while its peers work, or a settled readiness decision, must also be able to wake this group.
-        await Promise.race([...running.values()].map((entry) => entry.done).concat([...deciding.values()].map((entry) => entry.done), new Promise<void>((resolve) => { wake = resolve; })));
-        if (failure !== undefined || signal.aborted) break;
-        start();
-      }
-      // Every peer has finished: a member still waiting stays with the task's wait, not this group.
-      closing = true;
-      if (failure !== undefined) throw failure;
-      // Readiness can settle after a wait ended. Unwind and clean the old copies before catch-up;
-      // returning normally would let runReview treat this unopened group as finished.
-      if (!signal.aborted && this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-      const waiting = noOne();
-      if (!signal.aborted && !(waiting instanceof WaitingForCapacity) && Object.keys(task.hunt?.screenTurns ?? {}).length) {
-        show();
-        this.k.commitNow();
-        throw new ScreenWait();
-      }
-      // Admitted members keep their reports. Missing seats remain on this same group after release.
-      if (pending.length && this.k.taskAdmissionsClosed(task)) {
-        const words = this.k.taskAdmissionWait(task);
-        this.k.waitForUsage(task, words);
-        throw new WaitingForUsage(words);
-      }
-      // The rest looked at the change and reported; the ones left wait, and the driver starts them again after.
-      // A required seat waits even when a partner already voted.
-      if (waiting) {
-        this.k.waitForUsage(task, waiting.words);
-        throw waiting;
-      }
-      if (!signal.aborted && !this.k.draining && !pending.length) finishMessageGroup(task, members.map((member) => member.key));
-    } finally {
-      closing = true;
-      this.k.screenGroups.delete(task.id);
-      this.k.stopHelpers(task.id);
-      if (failure !== undefined || signal.aborted) this.k.runs.get(task.id)?.close();
-      await Promise.allSettled([...running.values()].map((entry) => entry.done));
-      delete task.helpers;
-      // A member who yielded the screen released its seat before its process exited.
-      await this.turns.releasedStops();
-      // Every independent cleanup settles before failure is propagated. The primary copy's
-      // read-only recovery also supplies its status, rather than inspecting it twice.
-      const readOnly = members.every((member) => !this.k.role(member.roleId)?.canEdit);
-      await completeAll([
-        ...copyOwners.map(async (owner) => {
-          try { await git.removeCopies(owner.root, owner.folder, keptCopies()); }
-          catch (error) {
-            // Disposable-copy cleanup must not discard an accepted report or hide the
-            // agent's original failure. The normal cleanup sweep can reclaim it later.
-            this.k.log(task, "warn", `Could not remove a review copy: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        }),
-        ...versions.filter((work) => !readOnly || work.path !== scope.work.worktree).map(async (work) => {
-          const state = await git.worktreeStatus(work.path);
-          if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);
-          if (!state.clean) await git.discardChanges(work.path);
-        }),
-        // Copies share branches: recover the original task copy too, after every agent stopped.
-        ...(scope.work.worktree && readOnly ? [(async () => {
-          const state = await git.worktreeStatus(scope.work.worktree!);
-          if (state.head !== restoreSha) {
-            await git.resetTo(scope.work.worktree!, restoreSha);
-            this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
-          }
-          await this.k.undoReadOnly(scope, members[0]!.roleId, scope.work.worktree!, state.clean);
-        })()] : []),
-      ]);
-    }
+          },
+        };
+      },
+      stopHelpers: () => this.k.stopHelpers(task.id), closeTaskRun: () => this.k.runs.get(task.id)?.close(), releasedStops: () => this.turns.releasedStops(),
+      finish: async readOnly => {
+        await completeAll([
+          ...copyOwners.map(async (owner) => {
+            try { await git.removeCopies(owner.root, owner.folder, keptCopies()); }
+            catch (error) {
+              // Disposable-copy cleanup must not discard an accepted report or hide the
+              // agent's original failure. The normal cleanup sweep can reclaim it later.
+              this.k.log(task, "warn", `Could not remove a review copy: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }),
+          ...versions.filter((work) => !readOnly || work.path !== scope.work.worktree).map(async (work) => {
+            const state = await git.worktreeStatus(work.path);
+            if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);
+            if (!state.clean) await git.discardChanges(work.path);
+          }),
+          // Copies share branches: recover the original task copy too, after every agent stopped.
+          ...(scope.work.worktree && readOnly ? [(async () => {
+            const state = await git.worktreeStatus(scope.work.worktree!);
+            if (state.head !== restoreSha) {
+              await git.resetTo(scope.work.worktree!, restoreSha);
+              this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
+            }
+            await this.k.undoReadOnly(scope, members[0]!.roleId, scope.work.worktree!, state.clean);
+          })()] : []),
+        ]);
+      },
+    } });
   }
 
   /** Settle objections and shared repairs together, only after the whole reviewer group reports. */

@@ -4075,17 +4075,37 @@
       "assertionSites": 30,
       "baselineDigest": "ba55df1be08331deb0f5b24fc37337313445c69bdeee78e8de2142860428a11f",
       "status": "reviewed",
-      "review": "Whole original file, setup/teardown, all declared cases, parameterized inputs and matcher occurrences audited. Independent AST reconciliation preserves all 173 declarations/1,344 original matcher sites across this twenty-file batch; reviewed split/retention additions give177/1,348. Native provider/session/process boundaries remain native; pure activity/account parsing and session retention use production rules, allowance ordering uses the real portable controller. Root reviewed native composition, reconciliation/commit ordering and activity ID allocation. Sandbox fresh/reopen environment evidence was corrected to preserve each separate start.",
+      "review": "All five original cap scenarios now exercise the actual AgentWorkflow scheduler/reservation/dispatch and selected-participant gates plus the actual ParallelAdmissionGroup through narrow effects. Exact normalized original describe AST preserves31 matcher sites, four registrations/five runtime variants, nine tasks,27 reviewer turns, loop oracles and allowances. Canonical ScriptedAgents/ReleaseEvents/slot recipe are shared; remaining native phases are explicit scripted completions, without Git/pass/SHA invention or copied admission logic. One two-task actual Engine/Git design/question/check/reviewer-copy composition preserves native wiring and six actual reviewer turns. Seven new portable ownership controls cover reentrancy, pending profile handoff, cancellation, released-stop ordering and Error/undefined rejection. Independent source review verified eight scheduling bodies after explicit port renames.",
       "validation": {
-        "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
-        "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+        "artifact": "workstreams/agent-admission-next/handoff.json; candidate-final; case-parity.json; native-hook-ast-parity.json; production-review-v1/root-source-review.json",
+        "qualification": "Author12 portable passing; per-file native128 across15 owners after four receiver corrections and model-group observer correction; failed126-case run retained. Root integrated composition pending; complete/resource/platform qualification required."
       },
       "from": "packages/engine/test/limits.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/usage/admission-slots.test.ts"
+        "packages/engine/test/journeys/usage/admission-slots.test.ts",
+        "packages/orchestrator/test/orchestration/scheduling/admission-slots.test.ts",
+        "packages/orchestrator/test/orchestration/scheduling/admission-ownership.test.ts"
       ],
       "layer": "journeys",
-      "area": "usage"
+      "area": "usage",
+      "costQualification": {
+        "status": "integrated; root composition qualification in progress",
+        "recordedBefore": {
+          "source": "1d8c8e90cf4aab8856f69c0ef71c967d3cb23cf4",
+          "launches": 894,
+          "git": 894,
+          "originalRuntimeVariants": 5,
+          "artifact": "workstreams/agent-admission-next/root-original-full-cost.json"
+        },
+        "afterFocused": {
+          "actualNativeCompositionLaunches": 177,
+          "observedExits": 177,
+          "nativeTasks": 2,
+          "actualReviewerTurns": 6,
+          "portableOriginalVariants": 5,
+          "scope": "Different source and deliberately reduced native workload; native coverage transfers to actual smaller owners and representative composition. Not a controlled wall-time or full-suite reduction claim."
+        }
+      }
     },
     {
       "file": "packages/engine/test/journeys/progress/public-messages.test.ts",
@@ -7342,7 +7362,7 @@
     "status": "in progress",
     "source": "1d8c8e90cf4aab8856f69c0ef71c967d3cb23cf4",
     "report": ".test-results/resources/2026-10-25T18-08-07-116Z-471b771c/summary.json",
-    "remainingMeasuredProblem": "100352 Git launches; all-file semantic audit did not complete native cost reduction",
+    "remainingMeasuredProblem": "100352 Git launches in last fully measured source; targeted acceptance/admission cost slices integrated, current complete-run/resource reduction not yet measured",
     "exitCriteria": [
       "Trace every top20 expensive case to actual fixture/production callers",
       "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",

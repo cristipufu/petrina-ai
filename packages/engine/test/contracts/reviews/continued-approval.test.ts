@@ -26,7 +26,7 @@ it("sends an unchanged finding back as today without a decision to continue, aft
 it("never covers failing product checks before the later review or before delivery", async () => {
   for (const where of ["review", "delivery"] as const) {
     const f = await rounds();
-    const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(false);
+    const admit = spyOn(f.engine["driver"].workflow as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockResolvedValue(false);
     try {
       f.task.findings = [important("accepted")];
       await f.exhaust();
@@ -36,7 +36,7 @@ it("never covers failing product checks before the later review or before delive
       f.task.stageIndex = f.task.plan!.stages.findIndex((stage) => stage.id === (where === "review" ? "security" : "delivery"));
       // The review's own start runs the checks; delivery preparation runs them before any agent is admitted.
       if (where === "review") expect(await f.engine["reviews"].runReview(f.task, f.stageOf("security"), signal())).toBe("continue");
-      else await f.engine["driver"]["drive"](f.task.id);
+      else await f.engine["driver"].workflow["drive"](f.task.id);
       expect(f.task.stageIndex).toBe(0); expect(executionFor(f.task).work.checkReturns).toBe(1);
       expect(f.task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open")).toBe(true);
       expect(f.task.reviewDecision!.accepted).toBe(true);

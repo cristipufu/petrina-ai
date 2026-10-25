@@ -174,7 +174,7 @@ it("holds an unverified saved process number across restart without claiming or 
 it("keeps added extra-only tasks out of agent admission while their saved version is read", async () => {
     const f = await fixture();
     const admitted: string[] = [];
-    const start = spyOn(f.engine["driver"], "startDriver").mockImplementation(id => { admitted.push(id); });
+    const start = spyOn(f.engine["driver"].workflow, "startDriver").mockImplementation(id => { admitted.push(id); });
     let adding: ReturnType<typeof f.add> | undefined;
     try {
       f.engine.s.tools.forEach(tool => { tool.status = "ready"; });
@@ -196,7 +196,7 @@ it("keeps extra-only tasks at a coordinator checkpoint through resume and restar
     let replacement: Engine | undefined;
     const noAgentAdmission = (engine: Engine) => {
       const admitted: string[] = [];
-      const start = spyOn(engine["driver"], "startDriver").mockImplementation(id => { admitted.push(id); });
+      const start = spyOn(engine["driver"].workflow, "startDriver").mockImplementation(id => { admitted.push(id); });
       try {
         // Ready tools must not turn an extra-only control into a real agent workflow.
         engine.s.tools.forEach(tool => { tool.status = "ready"; });

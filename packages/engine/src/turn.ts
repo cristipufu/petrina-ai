@@ -362,17 +362,8 @@ export class Turns {
     const forScreen = screen && !screen.heard ? screen : undefined;
     // Only the agent that has the screen is told it may use it.
     const screenWords = screen ? { reason: screen.reason } : mayAskScreen(role) ? ("ask" as const) : undefined;
-    if (signal.aborted) throw new Aborted();
-    if (this.k.taskAdmissionsClosed(task)) throw new WaitingForUsage(this.k.taskAdmissionWait(task));
-    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-    if (!task.holdsSlot || this.k.profile(task.agent?.profileId ?? "")?.toolId !== profile.toolId) {
-      const waiting = this.k.taskAdmissionsClosed(task) ? (this.k.taskAdmissionWait(task)) : slotWait(this.k.activeState(), { ...profile, taskId, toolId: profile.toolId });
-      if (waiting) {
-        this.k.pendingAgentAdmissions.set(taskId, { step, roleId, profileId });
-        throw new WaitingForUsage(waiting);
-      }
-    }
-    this.k.pendingAgentAdmissions.delete(taskId);
+    const admission = { task, profile, roleId, step, ...(options.reviewKey ? { reviewKey: options.reviewKey } : {}) };
+    this.k.agentAdmission.participant.qualify(admission, signal);
     // A step that starts fresh (a new step, after a pause, Try again) drops the old to-do item and starts its clock again.
     // After a restart, or with a stand-in taking over, both stay: the to-do item shows until the agent names its own.
     if (!same) delete task.todo;
@@ -383,10 +374,7 @@ export class Turns {
       task.stepClock = reviewWork.clock;
     } else task.stepClock = same && task.stepClock ? resumeClock(task.stepClock, Date.now()) : startClock(repositoryView(scope), roleId, Date.now());
 
-    task.agent = { roleId, profileId, since: Date.now(), step: 0, ...(options.reviewKey ? { reviewKey: options.reviewKey } : {}) };
-    task.state = this.k.s.inbox.some((item) => item.taskId === taskId && item.blocking) ? "needs-you" : "running";
-    task.holdsSlot = true;
-    task.column = this.k.columnFor(task);
+    this.k.agentAdmission.participant.activate(admission);
     // A stand-in is a new box, so the first agent's tool, time and lines stay with its own work.
     const previous = openStep(task);
     if (previous?.kind === "agent" && previous.roleId === roleId && !previous.team && previous.profileId !== profileId) {
