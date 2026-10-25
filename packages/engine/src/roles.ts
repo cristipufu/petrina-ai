@@ -490,6 +490,8 @@ export function plannerRoles(roles: readonly Role[]): string {
   return workflowRoles(roles).filter((role) => !role.internal && stepOf(role)).map((role) => `- ${role.id} (${role.name}): ${role.purpose} | ${role.canEdit ? "changes the product" : "read-only"} | hands back: ${role.handsBack || role.result} | fits: ${fits[stepOf(role)!]}`).join("\n");
 }
 
+const COMPLETE_CHECKS_RULE = "Where the repository defines a full local check, select that authoritative command. Focused, affected-only and early-feedback commands may complement it, but cannot replace it. If a required validation cannot run here, state that limitation instead of presenting a subset as complete validation.";
+
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
@@ -503,7 +505,7 @@ export function contractFor(role: Role): RoleContract {
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx) + (role.category === "maintenance" ? '\nSet "complete" to true only after completing the bounded investigation. Return false for an incomplete investigation and explain what prevented completion. Distinguish findings from missing evidence.\n' : "");
     const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "votes" ? VERIFIER_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "votes" ? VERIFIER_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : role.result === "check-discovery" ? [COMPLETE_CHECKS_RULE] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };

@@ -23,6 +23,11 @@ describe("saved role wording", () => {
           .replace('{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request"}], "rationale":', '{"worksOn": [{"productId": "<registered product id>", "startFrom": {"kind": "default"}, "delivery": "pull-request", "reason": "Why this product is involved", "builderProfileId": "<profile id>"}], "leadProductId": "<product id for shared repairs>", "rationale":');
         expect(now.replace(job(now), "")).toBe(expected.replace(job(expected), ""));
         expect(now).toContain(plannerRoles(context.roles));
+      } else if (context.role.result === "check-discovery") {
+        const ending = "Hand back between one and eight checks, fastest first.";
+        const complete = "Where the repository defines a full local check, select that authoritative command. Focused, affected-only and early-feedback commands may complement it, but cannot replace it. If a required validation cannot run here, state that limitation instead of presenting a subset as complete validation.";
+        // Only this new gate requirement changes; retain the immutable baseline for all other wording.
+        expect(now).toBe(was.replace(ending, `${ending}\n${complete}`));
       } else expect(now).toBe(was);
     }
   });
@@ -61,6 +66,16 @@ describe("saved role wording", () => {
     expect(text).toContain("Always include exactly one builder stage before the review chain.");
     expect(text).toContain("Put every stage that may change the product before the final review chain.");
   });
+  for (const edited of [false, true]) it(`retains full-check discovery requirements with ${edited ? "edited" : "default"} wording`, () => {
+    const ctx = contexts["check-finder"]!;
+    const role = edited ? { ...ctx.role, instructions: "Discover this repository's checks." } : ctx.role;
+    const text = contractFor(role).instructions({ ...ctx, role });
+    expect(text).toContain("select that authoritative command");
+    expect(text).toContain("cannot replace it");
+    expect(text).toContain("state that limitation instead of presenting a subset as complete validation");
+    if (edited) expect(text).toContain(role.instructions);
+  });
+
   for (const [id, guidance] of [
     ["check-finder", "Hand back between one and eight checks, fastest first."],
     ["guide-keeper", "Do not repeat a point the guide already has."],

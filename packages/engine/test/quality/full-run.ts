@@ -1,18 +1,15 @@
 // Every required workspace must run and pass. Vitest workspaces run first; all Bun packages
 // then share one normal native worker pool. Selection is observed, never used to omit tests.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { conventions, inputs, observe, readGit, recordedCoverage, ROOT } from "./repository.js";
 import { fingerprint, impactPlan, isTest } from "./impact.js";
-import { requireFiles, executionTestResults } from "@petrina/test-support/test-results";
 import { createTestRun } from "@petrina/test-support/environment";
 import { PRELIMINARY, NATIVE_SCOPE, REQUIRED_EXECUTIONS, nativeScriptProblems } from "./required-plan.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { keepTestTimings, seedTestTimings, type TimingHintUse } from "./timings.js";
-import { SuiteCoordinator, type WorkspaceEvidence } from "@petrina/test-support/suite-coordinator";
-import { runProcess, SUITE_RUN_TIMEOUT_MS } from "@petrina/test-support/run-process";
-import { CommandFailure } from "@petrina/test-support/commands";
-import { testCommand } from "@petrina/test-support/run";
+import { SuiteCoordinator } from "@petrina/test-support/suite-coordinator";
+import { executeTests } from "./execution.js";
 import { suiteRecords, workspaceOutcome } from "@petrina/test-support/suite-results";
 
 // This entry point is the required full check, never a focused test selector.
@@ -66,51 +63,14 @@ const owned = createTestRun();
 try {
   await coordinator.run(async execution => {
     const native = execution.id === NATIVE_SCOPE.id;
-    const cwd = join(ROOT, native ? NATIVE_SCOPE.cwd : execution.workspaces[0]!);
-    const output = join(folder, `${native ? "native" : suite(execution.id)}.${native ? "xml" : "json"}`);
     const timings = join(folder, "native-timings.json");
     if (native) {
       details.set(execution.id, { durationHints: seedTestTimings(ROOT, NATIVE_SCOPE, timings, expectedFiles) });
       timingOutput = timings;
     }
-    const selectors = native ? execution.workspaces.map(workspace => {
-      const path = relative(cwd, join(ROOT, workspace, "test"));
-      return path.startsWith(".") ? path : `./${path}`;
-    }) : [];
-    const command = native ? testCommand([...selectors, "--reporter=junit", `--reporter-outfile=${output}`, `--timings=${timings}`, "--update-timings"])
-      : [process.execPath, "--no-env-file", "run", "test", "--reporter=json", `--outputFile=${output}`];
-    const start = performance.now();
-    let code: number | null = null, executionError: string | undefined;
-    try {
-      const outcome = await runProcess(command, { cwd, env: owned.env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal: controller.signal, output: "inherit" });
-      code = outcome.result.code;
-    } catch (error) {
-      if (!(error instanceof CommandFailure)) throw error;
-      code = error.code ?? null;
-      executionError = error.message;
-    }
-    const ms = Math.round(performance.now() - start);
-    let workspaces: WorkspaceEvidence[];
-    try {
-      const parsed = executionTestResults(readFileSync(output, "utf8"), { root: ROOT, cwd, runner: native ? "bun" : "vitest", workspaces: execution.workspaces });
-      workspaces = parsed.workspaces.map(work => {
-        const { workspace, files, failures, ...counts } = work;
-        try {
-          requireFiles(work, expectedFiles.filter(file => file.startsWith(`${workspace}/`)));
-          return { workspace, failures, counts, reportComplete: true };
-        } catch (error) { return { workspace, failures, counts, error: `Incomplete test evidence: ${error instanceof Error ? error.message : String(error)}` }; }
-      });
-      if (code !== 0 && !parsed.total.failures.length) executionError ??= "Run failed without an attributable test file; selection accuracy is unknown";
-    } catch (error) {
-      const message = `Incomplete test evidence: ${error instanceof Error ? error.message : String(error)}`;
-      workspaces = execution.workspaces.map(workspace => ({ workspace, error: message }));
-    }
-    if (executionError) console.error(`${execution.id}: ${executionError}`);
-    for (const work of workspaces) {
-      if (work.error) console.error(`${work.workspace}: ${work.error}`);
-      else if (code === 0 && work.failures?.length) console.error(`${work.workspace}: structured results report failed files despite a zero exit code: ${work.failures.join(", ")}`);
-    }
-    return { code, ms, workspaces, ...(executionError ? { error: executionError } : {}) };
+    return executeTests(execution, { root: ROOT, folder, expectedFiles, env: owned.env, signal: controller.signal,
+      ...(native ? { timings } : {}),
+    });
   }, controller.signal);
   finished = true;
 } finally {

@@ -40,6 +40,16 @@ UI changes also need light and dark and all three demos: `?demo`, `?demo=portfol
 
 The workspace registry in `packages/engine/test/quality/workspaces.ts` supplies package aliases, required suite paths, runner types and required execution membership. Add new test workspaces there; a new package must not disappear from the complete check. Production core/orchestrator dependency boundaries and lower test-layer resource restrictions are enforced before suites launch.
 
+## Affected feedback
+
+For early feedback on this repository, run `bun run test:affected --base <revision>` (default: `origin/main`, or `PETRINA_TEST_BASE`). Unlike `test:impact`, this command executes the selected files. It follows current test-file dependencies and exact-input coverage observations; changed fixtures, runner/configuration/dependency inputs, unknown mappings and stale coverage conservatively select the full set. A missing base also selects everything and records why.
+
+Only selected workspace owners run, in their existing order, with one normal native worker pool. Native feedback selects exact files. Vitest feedback runs the whole selected workspace, preserving its normal script/configuration and avoiding its substring filename filters; these short suites provide bounded early feedback. Reports distinguish requested files from the expanded manifest. A selected preliminary failure holds native work. Expected files and structured case outcomes must be complete; skipped-only work, unknown exits, changed source and interruption cannot establish passing feedback. An empty selection explicitly records that no validation was performed.
+
+Reports live separately under `.test-results/feedback/`, with `kind: affected-feedback` and `deliveryEligible: false`, even when selection included every file. They do not update full-suite timing hints or replace required-suite evidence. Full and affected executions share the same bounded native runner, private environment and report verification. The required `bun run test` command still runs every workspace and binds its evidence to the current integrated source.
+
+This selector belongs to Petrina's Bun/Vitest repository. The generic engine does not infer test dependencies for other products; each product retains its configured full checks. Agents may use affected feedback before handing work back, and must keep actual check failures visible rather than repeating the command until green.
+
 ## Shared-host load diagnostics
 
 Ordinary focused tests and diagnostics, Petrina's required checks and the normal parallel full run need no extra permission. Deliberate host stress does: CPU busy loops, memory or disk fillers, process floods or many concurrent copies of a test can disrupt every task on the computer, even when investigating one focused test and bounded in time. The default test run must never deliberately saturate the host. A test needing real contention uses an isolated environment with hard CPU, memory and process limits (and relevant disk/I/O limits), or an explicit opt-in like the native browser tests' `PETRINA_BROWSER_CHECK`; opting in does not authorize host stress.
