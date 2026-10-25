@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { ACCEPTANCE_RESTORED, ACCEPTANCE_UNACCOUNTED, acceptanceSummary, beginAgentStep, beginPetrinaStep, endAgentStep, proofContext, proofDecision, proofGap, refreshProofs, sameVersions, type DeepMutable, type JourneyStep, type ProofRequest, type Product, type Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "./engine.js";
 import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { acceptanceAgents } from "./fixtures/acceptance-agents.js";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../src/repositories.js";
 import { recordReviewProofs } from "@petrina/orchestrator";
@@ -93,7 +94,7 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
 }
 
 /** Controls result handling and external code changes; replaces the turn, including its edit cleanup.
- * Use the real turn with Fakes when testing an agent's permissions or changes. */
+ * Keep the real turn with scripted sessions for Git changes, and native Fakes for process/ACP behavior. */
 function testerReply(f: Awaited<ReturnType<typeof fixture>>, answers: (ids: readonly string[]) => unknown[], before?: () => void | Promise<void>, checklist?: unknown[]) {
   return spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, profileId, _given, schema, _signal, options) => {
     expect(roleId).toBe("tester");
@@ -109,23 +110,25 @@ function testerReply(f: Awaited<ReturnType<typeof fixture>>, answers: (ids: read
   });
 }
 const passes = (ids: readonly string[]) => ids.map(id => ({ id, result: "pass" as const, evidence: "Ubuntu capacity 30/30 and recovery 71/71 passed on this prepared copy" }));
+const greetingPass = { text: "A greeting file exists", result: "pass" as const, evidence: "The scripted greeting check returned the expected result." };
 
 /** Steps the scripted tools record for one acceptance role, oldest first. */
 const testerSteps = (f: Awaited<ReturnType<typeof fixture>>, roleId = "tester") => f.task.journey!.filter(step => step.kind === "agent" && step.roleId === roleId);
 const restoredLine = (what: string, product: string, files: string) => `This acceptance run cannot verify the restored product: Petrina is undoing ${what} from Tester in ${product} (${files})`;
 
 for (const proof of [false, true]) for (const committed of [false, true]) it(`keeps final acceptance unverified once when Petrina undoes an editing role's ${committed ? "commit" : "tracked edit"}, with requested proof ${proof}`, async () => {
-  const fakeRoot = tempDir("petrina-proof-read-only-"); roots.push(fakeRoot);
-  const fakes = new Fakes(fakeRoot);
-  const f = await fixture(false, false, fakes);
+  const fakes = acceptanceAgents({ beforeChecks: async ({ cwd }) => {
+    writeFileSync(join(cwd, "tester-edit.txt"), committed ? "After the review\n" : "Before the review\n");
+    if (committed) { await git(cwd, "add", "tester-edit.txt"); await git(cwd, "commit", "--quiet", "-m", "Tester commits after the review"); }
+  } });
+  const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
   try {
     const role = { ...f.engine.role("tester")!, id: "acceptance-specialist", canEdit: true };
     f.engine.s.roles.push(role); f.tester.roleId = role.id;
     const request = proof ? await f.request() : undefined;
     const worktree = f.scope.work.worktree!;
-    // A saved project file: the stand-in rewrites it, and on a later pass also commits it. Different text
-    // makes the uncommitted rewrite a real tracked edit rather than new output.
-    if (committed) writeFileSync(join(fakeRoot, "tester-passed-once"), "");
+    // A saved project file distinguishes a tracked rewrite from new output. The commit variant
+    // also changes history, so both real Git restoration paths remain covered.
     writeFileSync(join(worktree, "tester-edit.txt"), committed ? "Before the review\n" : "Saved before acceptance\n");
     await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Keep the permitted earlier edit");
     const earlier = await f.recordPass();
@@ -135,13 +138,13 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`ke
     const versions = await versionsOf(f.task);
     // Approval is normally skipped for this low-risk product.
     f.products[0]!.shipLowRisk = true;
-    fakes.scenario({ tester: "writes", ...(request ? { testerProofAnswers: passes([request.id]) } : {}) });
+    fakes.configure({ builder: "plain", testerChecks: [greetingPass], ...(request ? { testerProofAnswers: passes([request.id]) } : {}) });
 
-    // Keep the actual turn, access restriction and cleanup: only the external coding tool is a stand-in.
+    // Keep the actual turn, final-pass restriction and real Git cleanup; the provider uses its session port.
     await f.drive();
 
-    expect(fakes.openings("tester")).toHaveLength(1);
-    expect(fakes.openings("tester")[0]).toContain(MAY_CHANGE.afterReview);
+    expect(fakes.openings(role.id)).toHaveLength(1);
+    expect(fakes.openings(role.id)[0]).toContain(MAY_CHANGE.afterReview);
     const delivery = f.engine.s.inbox.find(item => item.kind === "delivery")!;
     expect(f.task.stageIndex).toBe(3); expect(delivery.title).toContain(proof ? "requested proof could not be verified" : "acceptance could not be verified");
     if (!proof) expect(delivery.body).toContain(ACCEPTANCE_RESTORED);
@@ -177,7 +180,7 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`ke
     expect(checkpoint.acceptance.evidence).toMatchObject({ nodeId: final.id, counts: { passed: 0, couldNotVerify: 1 + (proof ? 1 : 0) }, restored: { reason: ACCEPTANCE_RESTORED } });
     // Unavailable evidence is not tested again unchanged, and never ships unasked, even where the task's own setting would.
     f.engine.s.inbox = []; await f.drive();
-    expect(fakes.openings("tester")).toHaveLength(1); expect(f.task.stageIndex).toBe(3);
+    expect(fakes.openings(role.id)).toHaveLength(1); expect(f.task.stageIndex).toBe(3);
     expect(f.task.approvedProofDecision).toBeUndefined(); expect(f.scope.work.landed).toBeUndefined();
     expect(f.engine["driver"]["shipsUnasked"]({ ...f.task, proofDeliveryGate: "gate", approveDelivery: false })).toBe(false);
     if (request) {
@@ -189,14 +192,15 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`ke
 });
 
 for (const output of ["checks", "tester"] as const) it(`settles requested proof when only ${output === "checks" ? "the automated checks" : "the final Tester"} left new output files`, async () => {
-  const fakeRoot = tempDir("petrina-proof-output-"); roots.push(fakeRoot);
-  const fakes = new Fakes(fakeRoot);
-  const f = await fixture(false, false, fakes);
+  const fakes = acceptanceAgents({ beforeChecks: ({ cwd }) => {
+    if (output === "tester") writeFileSync(join(cwd, "tester-edit.txt"), "Before the review\n");
+  } });
+  const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
   try {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
     if (output === "checks") f.engine.setProductChecks(f.task.productId, [{ name: "Test", command: commandText([process.execPath, "-e", "require('node:fs').writeFileSync('check-output.log', 'ran\\n')"]) }]);
     const versions = await versionsOf(f.task);
-    fakes.scenario({ ...(output === "tester" ? { tester: "writes" as const } : {}), testerProofAnswers: passes([request.id]) });
+    fakes.configure({ builder: "plain", testerChecks: [greetingPass], testerProofAnswers: passes([request.id]) });
     await f.drive();
     expect(fakes.openings("tester")).toHaveLength(1);
     expect(request.status).toBe("proved"); expect(request.proof!.versions).toEqual(versions);

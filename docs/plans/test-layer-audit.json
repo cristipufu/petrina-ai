@@ -1763,7 +1763,8 @@
       "declarations": 45,
       "assertionSites": 514,
       "baselineDigest": "60958e66e674cad152d1aa84b8c29a2615bc6ecf8a1213c940364816a70c8a58",
-      "status": "pending"
+      "status": "pending",
+      "partialReview": "Six real acceptance/Git-restoration variants reuse canonical acceptanceAgents with explicit caller-owned work, preserving all 156 assertions. All other seventy case bytes and the private workspace fixture body are unchanged. Native Tester/line-ending journey remains. Whole-file semantic migration pending; see acceptance-fixture-0a70f683/review.json and assertion-reconciliation.json."
     },
     {
       "file": "packages/engine/test/provider-interruptions.test.ts",
@@ -2820,6 +2821,14 @@
       "area": "reviews",
       "review": "Eight real schema/recording/ballot contracts retain both reporter choices and all three severities, string/object confirmation normalization, independent product identities, real verdict recording and complete finding/verdict preservation across restart. Uses the canonical reviewRecords setup with private SQLite and scripted catalogs, rather than unrelated repositories or native agents. The actual portable report controller remains in the composition.",
       "validation": "review-layers-16bce9e0/after/cases.xml: eight pass / 24 assertions / zero observed launches. native-shared-records.xml: nine retained shared-record/restart variants pass / 43 assertions. All workspace types and conventions pass. The prior two tests launched 12 Git commands; this focused observation is no whole-suite performance claim."
+    },
+    {
+      "file": "packages/engine/test/contracts/fixtures/acceptance-agents.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "fixtures",
+      "review": "Seven native fixture/schema contracts cover fresh/resumed identity, repairs, explicit check ordering, normalized independent findings, refusal of unsupported work, awaited caller effects, frozen per-turn proof/configuration, concurrent admission order and propagated work failure. Private folders and canonical session fixture; no installed agent or account. Effects use explicit barriers; added cases have bounded deadlines.",
+      "validation": "acceptance-fixture-0a70f683/contracts-first.xml: seven pass / 29 assertions. neighborhood.xml: all 27 session/acceptance-repair contracts pass / 304 assertions. native-tester.xml: original ACP/final-pass/Git line-ending journey passes / 14 assertions. Six migrated proof variants pass / 156 assertions; all types and conventions pass. contracts-reviewed.xml repeats all seven cases after explicit test deadlines. types-reviewed.log and conventions-reviewed.log pass. Full changed-batch qualification remains due."
     }
   ],
   "rust": [

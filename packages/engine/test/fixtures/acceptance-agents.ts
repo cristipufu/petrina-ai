@@ -1,8 +1,9 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { JourneyStep } from "@petrina/core";
 import { ReopenFailed, type StartAgentSession } from "@petrina/orchestrator";
 import { answersTo, findingIds } from "../scripted-findings.js";
-import { ScriptedAgents, scriptedResult } from "../scripted-agents.js";
+import { ScriptedAgents, scriptedResult, type ScriptedPrompt } from "../scripted-agents.js";
 
 interface Check {
   text: string;
@@ -19,14 +20,17 @@ export interface AcceptanceScript {
   testerChecks?: Check[];
   testerChecksFixed?: Check[];
   testerRuns?: Check[][];
+  testerProofAnswers?: JourneyStep["proofChecks"];
   reviewer?: "confirm" | "important";
   affectedProducts?: string[];
   reopen?: "resume";
 }
 
-export function acceptanceAgents() {
-  let script: AcceptanceScript = { builder: "plain" }, repairs = 0, testerRun = 0;
-  const agents = new ScriptedAgents(prompt => {
+/** Caller-owned work finishes before the report. A turn keeps its starting recipe while that work runs. */
+export function acceptanceAgents(effects: { beforeChecks?(prompt: ScriptedPrompt, signal: AbortSignal): void | Promise<void> } = {}) {
+  let configured: AcceptanceScript = { builder: "plain" }, repairs = 0, testerRun = 0;
+  const agents = new ScriptedAgents(async (prompt, signal) => {
+    const script = configured;
     const { result, text, cwd } = prompt;
     switch (result) {
       case "build":
@@ -35,10 +39,13 @@ export function acceptanceAgents() {
         return scriptedResult({ summary: "Added the greeting.", changes: ["People see a greeting"], tests: "Petrina runs the product checks.", answers: answersTo(text) });
       case "checks": {
         const runs = script.testerRuns;
-        const checks = runs?.length ? runs[Math.min(testerRun++, runs.length - 1)]
+        const run = runs?.length ? Math.min(testerRun++, runs.length - 1) : undefined;
+        await effects.beforeChecks?.(prompt, signal);
+        const checks = run !== undefined ? runs![run]
           : script.testerChecksFixed && existsSync(join(cwd, "welcome.txt")) ? script.testerChecksFixed : script.testerChecks;
         if (!checks) throw new Error("The acceptance fixture needs explicit check results");
-        return scriptedResult({ summary: "Tried every acceptance item.", checks: structuredClone(checks) });
+        return scriptedResult({ summary: "Tried every acceptance item.", checks: structuredClone(checks),
+          ...(script.testerProofAnswers ? { proofAnswers: structuredClone(script.testerProofAnswers) } : {}) });
       }
       case "findings": {
         if (prompt.roleId === "security-reviewer") return scriptedResult({ verdict: "pass", findings: [], confirms: [], disputes: [] });
@@ -58,15 +65,15 @@ export function acceptanceAgents() {
   });
   const start: StartAgentSession = (options, role) => {
     // Match the native stand-in's declared capability; default scenarios deliberately start fresh.
-    if (options.reopen && script.reopen !== "resume") return Promise.reject(new ReopenFailed("This acceptance scenario does not reopen conversations"));
+    if (options.reopen && configured.reopen !== "resume") return Promise.reject(new ReopenFailed("This acceptance scenario does not reopen conversations"));
     return agents.start(options, role);
   };
   return {
     start,
     configure(next: AcceptanceScript) {
-      const supported = new Set(["builder", "fixes", "testerChecks", "testerChecksFixed", "testerRuns", "reviewer", "affectedProducts", "reopen"]);
+      const supported = new Set(["builder", "fixes", "testerChecks", "testerChecksFixed", "testerRuns", "testerProofAnswers", "reviewer", "affectedProducts", "reopen"]);
       for (const key of Object.keys(next)) if (!supported.has(key)) throw new Error(`Unsupported acceptance fixture option: ${key}`);
-      script = structuredClone(next);
+      configured = structuredClone(next);
     },
     prompts: (roleId: string) => agents.received().filter(prompt => prompt.roleId === roleId).map(prompt => prompt.text),
     openings: (roleId: string) => agents.received().filter(prompt => prompt.roleId === roleId && prompt.turn === 1).map(prompt => prompt.text),
