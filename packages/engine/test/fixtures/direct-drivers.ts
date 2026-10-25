@@ -31,6 +31,8 @@ export function directDrivers(root: string) {
     },
     dispose: () => removeFixtureRoot(root),
   });
+  // Repository/peer setup can own native work before there is an Engine generation.
+  const prepare = <T>(start: () => Promise<T>): Promise<T> => owner.run(start);
   const open = (dataDir: string, options: EngineOptions = {}): Engine => {
     if (closing) throw new Error("Direct-driver fixture is closing; no Engine may open");
     if (active.size) throw new Error("Stop and settle the current Engine before opening its replacement");
@@ -55,7 +57,7 @@ export function directDrivers(root: string) {
     return generation.close();
   };
   const close = (): Promise<void> => { closing = true; return owner.close(); };
-  return { open, run, stop, close };
+  return { prepare, open, run, stop, close };
 }
 
 /** Observe every fixture owner before reporting any failure; retain shared stand-in folders on uncertainty. */

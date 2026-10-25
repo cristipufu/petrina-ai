@@ -68,3 +68,50 @@ it("settles peer generations and retains a rejected owner's root instead of dele
     removeFixtureRoot(failedRoot); removeFixtureRoot(peerRoot);
   }
 });
+
+
+it("owns preparation before an Engine opens, including a synchronous reentrant close", async () => {
+  const root = tempDir("petrina-direct-preparation-"), owner = directDrivers(root), release = Promise.withResolvers<void>();
+  let closing: Promise<void> | undefined, finished = false;
+  const work = owner.prepare(() => {
+    closing = owner.close();
+    void closing.then(() => { finished = true; }, () => { finished = true; });
+    return release.promise.then(() => {
+      const file = join(root, "prepared.txt");
+      writeFileSync(file, "The actual prepared operation finished before disposal");
+      return readFileSync(file, "utf8");
+    });
+  });
+  try {
+    await Promise.resolve();
+    expect(finished).toBe(false); expect(existsSync(root)).toBe(true);
+    expect(() => owner.open(join(root, "data"))).toThrow("closing");
+    release.resolve();
+    expect(await work).toBe("The actual prepared operation finished before disposal");
+    await closing;
+    expect(finished).toBe(true); expect(existsSync(root)).toBe(false);
+  } finally {
+    release.resolve();
+    const settled = await Promise.allSettled([work, owner.close()]);
+    const failed = settled.filter(result => result.status === "rejected");
+    if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Prepared operation cleanup was not confirmed; root retained");
+  }
+});
+
+for (const failure of [new Error("Preparation failed before opening an Engine"), undefined]) it(`retains rejected preparation and its private root before an Engine opens (${failure === undefined ? "undefined" : "Error"})`, async () => {
+  const root = tempDir("petrina-direct-prepare-rejection-"), owner = directDrivers(root);
+  try {
+    const result = await rejectionOf(setupWithCleanup(() => owner.prepare(() => Promise.reject(failure)), owner.close));
+    expect(result).toBeInstanceOf(AggregateError);
+    if (result instanceof AggregateError) {
+      expect(result.errors[0]).toBe(failure);
+      expect(result.errors[1]).toBeInstanceOf(AggregateError);
+      if (result.errors[1] instanceof AggregateError) expect(result.errors[1].errors).toEqual([failure]);
+    }
+    expect(existsSync(root)).toBe(true);
+  } finally {
+    await Promise.allSettled([owner.close()]);
+    // The controlled rejection started no Engine, program or asynchronous writer; its expected-error root is ours.
+    removeFixtureRoot(root);
+  }
+});

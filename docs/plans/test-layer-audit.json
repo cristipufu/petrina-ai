@@ -5021,7 +5021,9 @@
         "packages/engine/test/contracts/reviews/detached-voters.test.ts",
         "packages/engine/test/journeys/conversations/reviewer-inputs.test.ts",
         "packages/engine/test/journeys/conversations/reviewer-conflicts.test.ts",
-        "packages/engine/test/contracts/conversations/scope-digests.test.ts"
+        "packages/engine/test/contracts/conversations/scope-digests.test.ts",
+        "packages/engine/test/contracts/context/reviewer-inputs.test.ts",
+        "packages/engine/test/contracts/agents/reviewer-input-fallback.test.ts"
       ],
       "layer": "rules",
       "area": "context",
@@ -5032,6 +5034,22 @@
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
         "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
         "fullQualification": "97f02a67"
+      },
+      "reviewerInputCost": {
+        "source": "workstreams/reviewer-input-cost-next/scope.json, patch52b4fc6fc9084fface781ee199d5c1d0c93943567f471f9c28d8c07c95205b52",
+        "ownership": "Nine input/freshness variants use actual prepared Reviews/Context/Turns/Git/SQLite; eleven original native conjunction bodies and shared run fixture remain unchanged. Lost native session remains actual ACP.",
+        "preservation": "All20 original runtime names/outcomes and600 runtime expectations; all114 literal matcher sites reconcile (98 retained ordered,16 exact AST transfers).",
+        "lifetime": "Canonical directDrivers.prepare registers actual native setup before Engine creation; three additional root lifecycle/rejection controls preserve Error/undefined and block premature disposal.",
+        "qualification": "Author15 functional+20 equivalent observer; root26 composition/ownership with630 expectations, all9 workspace types and conventions passed. Independent source/oracle/ownership review closed with no remaining finding; workstreams/reviewer-input-independent-review/.",
+        "cost": {
+          "beforeLaunches": 3316,
+          "afterLaunches": 2570,
+          "beforeGit": 2751,
+          "afterGit": 2225,
+          "selectedOriginalCases": 20,
+          "noObserverGaps": true
+        },
+        "limits": "Focused source-bound observations; current full-suite94099Git remains the last measured integrated source. Final full/platform/resource qualification remains required."
       }
     },
     {
