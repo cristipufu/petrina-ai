@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tempDir, removeDir } from "../../../src/fixtures.js";
@@ -36,6 +36,6 @@ describe('fixture suite',()=>{
   expect(events.filter(event => event.kind === "case-end").map(event => (event.case as { name: string }).name)).toEqual([
     "top level", "fixture suite > promise", "fixture suite > each 1", "fixture suite > each 2", "fixture suite > callback", "fixture suite > missing sync executable",
   ]);
-  expect(summary.report().topByDuration.every(cost => cost.file.endsWith("observer.test.ts"))).toBe(true);
+  expect(summary.report().topByDuration.every(cost => realpathSync.native(cost.file) === realpathSync.native(file))).toBe(true);
   expect(summary.report().completedFiles).toEqual([file]);
 });

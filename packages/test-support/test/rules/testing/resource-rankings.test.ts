@@ -54,3 +54,47 @@ it("keeps an uninstrumented Vitest case out of the native launch ranking", () =>
   expect(result.report().topByLaunches).toEqual([]);
   expect(result.report().topByReportedHeap[0]?.reportedHeapBytes).toBe(2048);
 });
+
+it("attributes native cases to their recorded worker entry without modifying raw stack labels", () => {
+  const result = new ResourceSummary();
+  const raw = { id: "nested", file: "<anonymous> (/old/stack.test.ts", name: "nested case" };
+  result.accept({ kind: "case-start", instance: "worker-one", case: raw });
+  result.accept({ kind: "case-end", instance: "worker-one", case: raw, wallMs: 12 });
+  result.accept({ kind: "case-start", instance: "worker-two", case: owner("other") });
+  result.accept({ kind: "file-end", instance: "worker-one", file: "/actual/entry.test.ts" });
+  expect(result.report().topByDuration[0]?.file).toBe("/actual/entry.test.ts");
+  expect(result.report().topByLaunches.find(cost => cost.id === "other")?.file).toBe("other.test.ts");
+  expect(raw.file).toBe("<anonymous> (/old/stack.test.ts");
+});
+
+it("ranks files by case-attributed work without presenting overlapping callback sums as elapsed time", () => {
+  const result = new ResourceSummary();
+  for (const id of ["one", "two"]) {
+    const item = { ...owner(id), file: "shared.test.ts" };
+    result.accept({ kind: "case-end", case: item, wallMs: 20 });
+    result.accept({ kind: "spawn", id, case: item, program: "git" });
+  }
+  expect(result.report().topFilesByCallbackTimeSum[0]).toMatchObject({ file: "shared.test.ts", cases: 2, nativeCases: 2, callbackReadings: 2, callbackMsSum: 40, launches: 2, cpuReadings: 0 });
+  expect(result.report().topFilesByObservedChildCpu).toEqual([]);
+  expect(result.report().topFilesByLargestObservedChildRss).toEqual([]);
+});
+
+it("keeps uninstrumented files out of native launch rankings and unfinished durations unavailable", () => {
+  const result = new ResourceSummary();
+  result.accept({ kind: "case-end", runner: "vitest", case: owner("web"), wallMs: 5 });
+  result.accept({ kind: "case-start", case: owner("pending") });
+  const report = result.report();
+  expect(report.topFilesByLaunches.map(cost => cost.file)).toEqual(["pending.test.ts"]);
+  expect(report.topFilesByCallbackTimeSum.map(cost => cost.file)).toEqual(["web.test.ts"]);
+  expect(report.topFilesByLaunches[0]).toMatchObject({ nativeCases: 1, callbackReadings: 0 });
+  expect(report.topFilesByLaunches[0]).not.toHaveProperty("callbackMsSum");
+});
+
+it("uses an available total CPU reading when the driver does not report its component split", () => {
+  const result = new ResourceSummary();
+  result.accept({ kind: "exit", id: "total-only", case: owner("cpu"), usage: { totalUs: 150 } });
+  result.accept({ kind: "exit", id: "invalid-total", case: owner("cpu"), usage: { totalUs: Infinity, userUs: 20, systemUs: 5 } });
+  result.accept({ kind: "exit", id: "missing", case: owner("unknown"), usage: { userUs: 30 } });
+  expect(result.report().topByObservedChildCpu).toEqual([expect.objectContaining({ id: "cpu", observedChildCpuUs: 175, cpuReadings: 2 })]);
+  expect(result.report().topFilesByObservedChildCpu[0]).toMatchObject({ observedChildCpuUs: 175, cpuReadings: 2 });
+});

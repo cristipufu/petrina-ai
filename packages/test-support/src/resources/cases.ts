@@ -8,7 +8,8 @@ const wrappers = new WeakMap<Function, Map<string, Function>>();
 const receivers = new WeakMap<object, number>();
 let receiverSequence = 0;
 function location(): string {
-  return new Error().stack?.split("\n").map(line => /(?:\(|at )(.*?\.(?:test|spec)\.tsx?):\d+:\d+\)?$/.exec(line.trim())?.[1]).find(Boolean) ?? (/\.(?:test|spec)\.tsx?$/.test(Bun.main) ? Bun.main : "unattributed");
+  // The isolated worker knows its entry file; formatted stack frames are not filesystem paths.
+  return Bun.main || "unattributed";
 }
 function wrap(raw: Function, kind: "test" | "suite", path: string[] = [], receiver?: object): Function {
   if (receiver && !receivers.has(receiver)) receivers.set(receiver, ++receiverSequence);

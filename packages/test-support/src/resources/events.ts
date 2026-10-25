@@ -4,6 +4,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
+import { resourceUsageRecord } from "./usage.js";
 
 export interface ResourceCase { id: string; file: string; name: string }
 export const context = new AsyncLocalStorage<ResourceCase>();
@@ -72,7 +73,7 @@ if (output) {
     launched(info, child.pid);
     void child.exited.then(code => {
       let usage: unknown;
-      try { const reading = child.resourceUsage(); if (reading) usage = { userUs: Number(reading.cpuTime.user), systemUs: Number(reading.cpuTime.system), maxRssBytes: Number(reading.maxRSS) }; } catch { /* Unavailable stays absent. */ }
+      try { usage = resourceUsageRecord(child.resourceUsage()); } catch { /* Unavailable stays absent. */ }
       ended(info, code, usage);
     }, () => ended(info, null));
     return child;
