@@ -4709,9 +4709,240 @@
   "rust": [
     {
       "file": "apps/desktop/src-tauri/src/lib.rs",
-      "status": "pending",
-      "area": "contracts/desktop-host",
-      "testFunctions": 18
+      "status": "reviewed",
+      "area": "desktop-host",
+      "testFunctions": 18,
+      "currentFunctions": 30,
+      "owners": [
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src-tauri/src/engine_process.rs",
+        "apps/desktop/src-tauri/src/test_process.rs"
+      ],
+      "review": "All eighteen original functions, 56 original assertion sites and helper assertions/variants retained; policy/native ownership separated. New controls include an inert actor entry, not an additional product assertion. Root reviewed frozen source and full-crate Mac execution; other native platforms remain pending.",
+      "validation": {
+        "artifact": "workstreams/rust-native-next/root-cargo-qualification.json",
+        "command": "cargo test --offline --locked --lib",
+        "macOS": {
+          "passed": 30,
+          "failed": 0,
+          "ignored": 0,
+          "seconds": 8.34
+        },
+        "Linux": "pending",
+        "Windows": "pending"
+      },
+      "functions": [
+        {
+          "name": "recovery_replaces_only_a_live_owned_child_without_an_accepted_handoff",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 5
+        },
+        {
+          "name": "parses_only_lifecycle_handoff_lines",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "orchestration",
+          "original": true,
+          "assertionSites": 8
+        },
+        {
+          "name": "recovery_rechecks_a_handoff_arriving_during_shutdown_before_killing",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "contracts",
+          "original": true,
+          "assertionSites": 3
+        },
+        {
+          "name": "ordinary_recovery_kills_a_live_child_after_its_grace",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "contracts",
+          "original": true,
+          "assertionSites": 2
+        },
+        {
+          "name": "ordinary_quit_closes_stdin_and_reaps_a_cooperative_child",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "contracts",
+          "original": true,
+          "assertionSites": 0
+        },
+        {
+          "name": "desktop_shutdown_waits_for_owned_child_or_preserves_handoff",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "contracts",
+          "original": true,
+          "assertionSites": 0
+        },
+        {
+          "name": "an_accepted_handoff_survives_beyond_the_eight_second_shutdown_grace",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "contracts",
+          "original": true,
+          "assertionSites": 1
+        },
+        {
+          "name": "opens_at_1680_by_1000_centred_when_the_screen_has_room",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 3
+        },
+        {
+          "name": "shrinks_to_the_usable_area_with_the_title_bar_inside_it",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 3
+        },
+        {
+          "name": "only_the_tight_side_shrinks",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 4
+        },
+        {
+          "name": "follows_the_usable_area_on_a_second_screen",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 2
+        },
+        {
+          "name": "never_goes_below_the_minimum_and_keeps_the_title_bar_on_screen",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 2
+        },
+        {
+          "name": "a_click_finds_its_notification_and_never_guesses",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 5
+        },
+        {
+          "name": "remembers_the_latest_notifications_only",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 3
+        },
+        {
+          "name": "the_window_sends_targets_in_plain_json",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 7
+        },
+        {
+          "name": "notification_text_is_plain_and_short",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 4
+        },
+        {
+          "name": "the_overlay_shows_the_count_up_to_99",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 7
+        },
+        {
+          "name": "works_in_physical_pixels_on_a_retina_screen",
+          "file": "apps/desktop/src-tauri/src/lib.rs",
+          "layer": "rules",
+          "original": true,
+          "assertionSites": 2
+        },
+        {
+          "name": "spawn_failure_does_not_claim_an_owned_child_or_fall_back_to_another_program",
+          "file": "apps/desktop/src-tauri/src/engine_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 3
+        },
+        {
+          "name": "force_or_observation_failures_and_missing_completion_never_confirm_cleanup",
+          "file": "apps/desktop/src-tauri/src/engine_process.rs",
+          "layer": "orchestration",
+          "original": false,
+          "assertionSites": 4
+        },
+        {
+          "name": "a_late_confirmed_exit_can_resolve_a_force_error_without_claiming_kill_success",
+          "file": "apps/desktop/src-tauri/src/engine_process.rs",
+          "layer": "orchestration",
+          "original": false,
+          "assertionSites": 3
+        },
+        {
+          "name": "only_successful_force_plus_observed_exit_reports_killed",
+          "file": "apps/desktop/src-tauri/src/engine_process.rs",
+          "layer": "orchestration",
+          "original": false,
+          "assertionSites": 2
+        },
+        {
+          "name": "completed_and_accepted_or_late_handoff_owners_are_not_forced",
+          "file": "apps/desktop/src-tauri/src/engine_process.rs",
+          "layer": "orchestration",
+          "original": false,
+          "assertionSites": 5
+        },
+        {
+          "name": "startup_actor",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "fixture-entry",
+          "original": false,
+          "assertionSites": 0
+        },
+        {
+          "name": "startup_deadline_closes_its_prepared_silent_child_without_extending_the_read_budget",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 5
+        },
+        {
+          "name": "blank_start_closes_actual_stdin_and_confirms_its_child_exit",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 3
+        },
+        {
+          "name": "eof_and_diagnostic_starts_finish_without_an_open_input_or_unbounded_join",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 2
+        },
+        {
+          "name": "successful_start_keeps_its_real_line_then_stops_cooperatively",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 1
+        },
+        {
+          "name": "an_exited_handoff_owner_cannot_keep_reusing_its_obsolete_address",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 4
+        },
+        {
+          "name": "inherited_stderr_is_bounded_and_independent_release_completes_retained_cleanup",
+          "file": "apps/desktop/src-tauri/src/test_process.rs",
+          "layer": "contracts",
+          "original": false,
+          "assertionSites": 8
+        }
+      ]
     }
   ],
   "baselineFiles": 290,

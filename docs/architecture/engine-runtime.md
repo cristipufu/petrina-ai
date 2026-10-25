@@ -242,7 +242,9 @@ The engine holds an exclusive SQLite transaction on `engine.lock` for as long as
 
 The desktop shell starts `cli.ts app` with its stdin and stdout as a private line. The engine picks a free port, writes `engine.json` for scripts, and says it is ready in one JSON line on stdout; that line, with the key, never goes to a log. Everything else the engine prints goes to `engine.log`, written only by the engine that holds the folder.
 
-When stdin closes (the app quit, crashed or was force-quit) the engine stops its agents the way pausing does, saves, removes `engine.json` and exits; the shell forces it after 8 seconds. An engine the app did not start is left alone. Started from the Dock, the engine asks the login shell for the PATH the terminal has.
+When stdin closes (the app quit, crashed or was force-quit) the engine stops its agents the way pausing does, saves, removes `engine.json` and exits; the shell requests force after an eight-second ordinary grace. An engine the app did not start is left alone. Started from the Dock, the engine asks the login shell for the PATH the terminal has.
+
+The standard-library `engine_process` boundary owns the shell's child, input and output readers. Startup has a thirty-second first-line allowance. Failed startup closes owned input and settles that child; force confirmation and pending-reader collection are bounded. An unconfirmed exit or still-held pipe retains the owner and prevents a competing launch. Accepted live lifecycle handoffs keep their existing exemption from force; a confirmed ended owner cannot keep returning an obsolete address. Tauri supplies command discovery and delegates connection work off its UI thread.
 
 ## The key
 

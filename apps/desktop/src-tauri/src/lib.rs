@@ -10,14 +10,19 @@
 // Petrina to one running copy. The window decides what to say and when; the shell only shows it.
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read};
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::process::Command;
+#[cfg(test)]
+use std::process::Stdio;
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::Arc;
+#[cfg(test)]
 use std::thread;
+#[cfg(test)]
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -27,251 +32,20 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(test)]
 mod test_process;
 
-/// How long a starting engine may take to say it is ready.
-const START_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long an ordinary desktop recovery or quit gives the owned engine to exit cleanly.
-const STOP_GRACE: Duration = Duration::from_secs(8);
-/// Keeps console windows from flashing up on Windows.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-/// The engine this app started.
-struct Started {
-    child: Child,
-    /// Closing it is how the engine learns the app is gone.
-    line: Option<ChildStdin>,
-    /// The engine's first line, passed to the window as is.
-    hello: String,
-    /// Set by the child only after it has accepted a stop/restart and saved its handoff.
-    handoff: Arc<AtomicBool>,
-}
+mod engine_process;
+#[cfg(test)]
+use engine_process::{connection_action, handoff_event, read_handoff_events, stop, stop_for_recovery_with_grace, ConnectionAction, Started, STOP_GRACE};
 
 #[derive(Default)]
 struct Shell {
-    engine: Mutex<Option<Started>>,
+    engine: engine_process::EngineConnection,
     shown: Mutex<Shown>,
 }
-
 impl Shell {
-    /// The engine's details for the window. One at a time: a window asking twice gets the same engine.
     fn connect(&self, app: &tauri::AppHandle, restart: bool) -> Result<String, String> {
-        let mut slot = self
-            .engine
-            .lock()
-            .map_err(|_| "Petrina's shell is in a bad state. Restart the app.".to_string())?;
-        if let Some(started) = slot.as_mut() {
-            let running = matches!(started.child.try_wait(), Ok(None));
-            match connection_action(running, restart, started.handoff.load(Ordering::Acquire)) {
-                ConnectionAction::Reuse => return Ok(started.hello.clone()),
-                ConnectionAction::Launch => {}
-                ConnectionAction::Recover => {
-                    let old = slot.take().expect("the owned child is still stored");
-                    match stop_for_recovery(old) {
-                        Ok(()) => {}
-                        Err(old) => {
-                            let hello = old.hello.clone();
-                            *slot = Some(old);
-                            return Ok(hello);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(started) = slot.take() {
-            stop(started);
-        }
-        let (mut child, line, hello, handoff) = start(app)?;
-        if hello.starts_with(r#"{"type":"ready""#) {
-            *slot = Some(Started {
-                child,
-                line,
-                hello: hello.clone(),
-                handoff,
-            });
-        } else {
-            // It stepped aside (or could not start) and exits by itself.
-            thread::spawn(move || {
-                drop(line);
-                let _ = child.wait();
-            });
-        }
-        Ok(hello)
+        self.engine.connect(restart, || engine_command(app))
     }
-
-    fn shutdown(&self) {
-        let started = match self.engine.lock() {
-            Ok(mut slot) => slot.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        if let Some(started) = started {
-            stop(started);
-        }
-    }
-}
-
-fn start(app: &tauri::AppHandle) -> Result<(Child, Option<ChildStdin>, String, Arc<AtomicBool>), String> {
-    let mut command = engine_command(app)?;
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Petrina could not start its engine: {error}"))?;
-    let line = child.stdin.take();
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Petrina could not talk to its engine.")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("Petrina could not talk to its engine.")?;
-
-    // The engine logs to its own file. Whatever else reaches stderr is kept short, for an error.
-    let tail = Arc::new(Mutex::new(String::new()));
-    let errors = {
-        let tail = Arc::clone(&tail);
-        thread::spawn(move || keep_tail(stderr, &tail))
-    };
-    let (sender, receiver) = mpsc::channel();
-    let handoff = Arc::new(AtomicBool::new(false));
-    let read_handoff = Arc::clone(&handoff);
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut first = String::new();
-        let _ = reader.read_line(&mut first);
-        let _ = sender.send(first);
-        read_handoff_events(reader, read_handoff);
-    });
-
-    match receiver.recv_timeout(START_TIMEOUT) {
-        Ok(first) if !first.trim().is_empty() => Ok((child, line, first.trim().to_string(), handoff)),
-        Err(RecvTimeoutError::Timeout) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err("Petrina's engine did not start within 30 seconds.".into())
-        }
-        _ => {
-            let _ = child.wait();
-            let _ = errors.join();
-            let said = tail
-                .lock()
-                .map(|text| text.trim().to_string())
-                .unwrap_or_default();
-            Err(if said.is_empty() {
-                "Petrina's engine stopped while starting.".into()
-            } else {
-                format!("Petrina's engine stopped while starting: {said}")
-            })
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ConnectionAction { Reuse, Recover, Launch }
-
-fn connection_action(child_running: bool, restart: bool, handoff: bool) -> ConnectionAction {
-    if !child_running { ConnectionAction::Launch }
-    else if !restart || handoff { ConnectionAction::Reuse }
-    else { ConnectionAction::Recover }
-}
-
-fn handoff_event(line: &str) -> Option<bool> {
-    match line.trim() {
-        r#"{"type":"handoff","active":true}"# => Some(true),
-        r#"{"type":"handoff","active":false}"# => Some(false),
-        _ => None,
-    }
-}
-
-fn read_handoff_events(mut reader: impl BufRead, handoff: Arc<AtomicBool>) {
-    let mut line = String::new();
-    while reader.read_line(&mut line).unwrap_or(0) > 0 {
-        if let Some(active) = handoff_event(&line) { handoff.store(active, Ordering::Release); }
-        line.clear();
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StopResult { Exited, Handoff, Killed }
-
-fn wait_or_kill(child: &mut Child, handoff: &AtomicBool, grace: Duration) -> StopResult {
-    let deadline = Instant::now() + grace;
-    loop {
-        if handoff.load(Ordering::Acquire) { return StopResult::Handoff; }
-        match child.try_wait() {
-            Ok(Some(_)) => return StopResult::Exited,
-            Err(_) => break,
-            Ok(None) => {}
-        }
-        if Instant::now() >= deadline { break; }
-        thread::sleep(Duration::from_millis(50));
-    }
-    // The engine can accept a lifecycle operation while it is noticing stdin closing. Recheck
-    // after the grace period so a marker already in the pipe wins over a forced termination.
-    thread::sleep(Duration::from_millis(50));
-    if handoff.load(Ordering::Acquire) { return StopResult::Handoff; }
-    match child.try_wait() {
-        Ok(Some(_)) => return StopResult::Exited,
-        Ok(None) | Err(_) => {}
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    StopResult::Killed
-}
-
-/// Stop an owned child after a failed connection. If it accepted a lifecycle handoff while
-/// settling, keep following that owner instead of killing it or starting a competitor.
-fn stop_for_recovery(started: Started) -> Result<(), Started> {
-    stop_for_recovery_with_grace(started, STOP_GRACE)
-}
-
-fn stop_for_recovery_with_grace(mut started: Started, grace: Duration) -> Result<(), Started> {
-    drop(started.line.take());
-    match wait_or_kill(&mut started.child, &started.handoff, grace) {
-        StopResult::Handoff => Err(started),
-        StopResult::Exited | StopResult::Killed => Ok(()),
-    }
-}
-
-/// An app exit gives ordinary shutdown a bounded chance to finish. Accepted lifecycle
-/// handoffs are exempt: their launcher must drain and transfer ownership without interruption.
-fn stop(mut started: Started) {
-    drop(started.line.take());
-    // RunEvent::Exit is about to end this process. Keep the ordinary bounded cleanup here,
-    // rather than on a thread the OS will discard with the shell. An accepted lifecycle
-    // handoff deliberately leaves the child alive to finish its drain and transfer ownership.
-    if wait_or_kill(&mut started.child, &started.handoff, STOP_GRACE) == StopResult::Handoff {
-        // In a test or an embedding host that stays alive, reap the child after its handoff.
-        // If the desktop process itself exits, this waiter goes away while the engine continues.
-        thread::spawn(move || { let _ = started.child.wait(); });
-    }
-}
-
-
-fn keep_tail(mut stream: impl Read, tail: &Mutex<String>) {
-    let mut buffer = [0u8; 4096];
-    while let Ok(read) = stream.read(&mut buffer) {
-        if read == 0 {
-            break;
-        }
-        if let Ok(mut text) = tail.lock() {
-            text.push_str(&String::from_utf8_lossy(&buffer[..read]));
-            if text.len() > 600 {
-                let cut = text.len() - 600;
-                let cut = (cut..text.len())
-                    .find(|&at| text.is_char_boundary(at))
-                    .unwrap_or(text.len());
-                text.drain(..cut);
-            }
-        }
-    }
+    fn shutdown(&self) { self.engine.shutdown(); }
 }
 
 /// Development builds run the engine from the source folder they were built from.
@@ -726,6 +500,23 @@ mod tests {
             Arc::clone(&state),
         );
         assert!(!state.load(Ordering::Acquire));
+        read_handoff_events(std::io::Cursor::new(b"{\"type\":\"handoff\",\"active\":true}\n"), Arc::clone(&state));
+        assert!(state.load(Ordering::Acquire));
+        read_handoff_events(std::io::Cursor::new(b"ignored\n"), Arc::clone(&state));
+        assert!(state.load(Ordering::Acquire));
+        read_handoff_events(std::io::Cursor::new(b"{\"type\":\"handoff\",\"active\":false}\n"), Arc::clone(&state));
+        assert!(!state.load(Ordering::Acquire));
+        struct Unavailable;
+        impl std::io::Read for Unavailable {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> { Err(std::io::Error::other("private read failure")) }
+        }
+        impl std::io::BufRead for Unavailable {
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> { Err(std::io::Error::other("private read failure")) }
+            fn consume(&mut self, _: usize) {}
+        }
+        state.store(true, Ordering::Release);
+        read_handoff_events(Unavailable, Arc::clone(&state));
+        assert!(state.load(Ordering::Acquire), "an unavailable reader must not invent a cleared handoff");
         assert_eq!(handoff_event(r#"{"type":"handoff","active":true}"#), Some(true));
         assert_eq!(handoff_event(r#"{"type":"handoff","active":false}"#), Some(false));
         assert_eq!(handoff_event(r#"{"type":"handoff","active":true,"requestId":"private"}"#), None);
@@ -737,8 +528,8 @@ mod tests {
     fn recovery_rechecks_a_handoff_arriving_during_shutdown_before_killing() {
         let (started, mut control) = controlled_child("handoff");
         let old = stop_for_recovery_with_grace(started, Duration::from_secs(1)).expect_err("accepted handoff must preserve child");
-        assert!(old.handoff.load(Ordering::Acquire));
-        let mut child = OwnedOuter(old.child);
+        assert!(old.owner.handoff.load(Ordering::Acquire));
+        let mut child = OwnedOuter(old.owner.child);
         assert!(child.0.try_wait().unwrap().is_none());
         control.ping();
         control.quit();
@@ -748,7 +539,9 @@ mod tests {
     #[test]
     fn ordinary_recovery_kills_a_live_child_after_its_grace() {
         let (started, mut control) = controlled_child("hold");
+        let began = Instant::now();
         assert!(stop_for_recovery_with_grace(started, Duration::from_millis(100)).is_ok());
+        assert!(began.elapsed() < Duration::from_secs(3), "native force cleanup cannot wait for the fixture safety exit");
         control.stopped();
     }
 
@@ -756,20 +549,25 @@ mod tests {
     fn ordinary_quit_closes_stdin_and_reaps_a_cooperative_child() {
         if child_entry() { return; }
         let (started, mut control) = controlled_child("cooperative");
-        stop(started);
+        stop(started).unwrap_or_else(|_| panic!("owned child cleanup must be confirmed"));
         control.stopped();
     }
 
     fn outer_exit_probe(mode: &str) -> Control {
         let listener = Listener::new();
+        let ready = Listener::new();
         let mut outer = OwnedOuter(Command::new(std::env::current_exe().expect("test executable path"))
             .args(["--exact", "tests::desktop_shutdown_waits_for_owned_child_or_preserves_handoff", "--nocapture"])
             .env("PETRINA_OUTER_EXIT_CHILD_CASE", mode)
             .env("PETRINA_OUTER_CONTROL_ADDRESS", listener.address())
+            .env("PETRINA_OUTER_READY_ADDRESS", ready.address())
             .env_remove("PETRINA_TEST_SHELL_CHILD").env_remove("PETRINA_TEST_SHELL_CONTROL")
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
             .spawn().expect("outer shell test process starts"));
         let control = listener.accept().expect("outer shell's child connects to its fixture owner");
+        let mut receipt = ready.accept().expect("outer completed startup before shutdown timing");
+        assert_eq!(receipt.pid, outer.0.id());
+        receipt.ready();
         let deadline = Instant::now() + Duration::from_secs(12);
         let status = loop {
             if let Some(status) = outer.0.try_wait().expect("outer test process can be checked") { break status; }
@@ -785,7 +583,8 @@ mod tests {
         if let Ok(mode) = std::env::var("PETRINA_OUTER_EXIT_CHILD_CASE") {
             let address = std::env::var("PETRINA_OUTER_CONTROL_ADDRESS").unwrap();
             let started = start_child(if mode == "handoff" { "handoff" } else { "hold" }, &address);
-            stop(started);
+            test_process::announce_outer_ready(&std::env::var("PETRINA_OUTER_READY_ADDRESS").unwrap());
+            stop(started).unwrap_or_else(|_| panic!("owned child cleanup must be confirmed"));
             std::process::exit(0);
         }
 
@@ -801,8 +600,8 @@ mod tests {
     fn an_accepted_handoff_survives_beyond_the_eight_second_shutdown_grace() {
         assert_eq!(STOP_GRACE, Duration::from_secs(8));
         let (started, mut control) = controlled_child("hold");
-        started.handoff.store(true, Ordering::Release);
-        stop(started);
+        started.owner.handoff.store(true, Ordering::Release);
+        stop(started).unwrap_or_else(|_| panic!("owned child cleanup must be confirmed"));
         thread::sleep(Duration::from_millis(8_100));
         control.ping();
         control.quit();
