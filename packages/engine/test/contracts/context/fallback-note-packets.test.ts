@@ -1,12 +1,12 @@
+import { coordinatorPacketState } from "../../fixtures/coordinator-packets.js";
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { BUILT_IN_ROLES, createDemoState, type BuilderContext, type Task } from "@petrina/core";
-import { builderContext } from "../src/builder-context.js";
-import { coordinatorNotes } from "../src/context.js";
-import type { MTask } from "../src/kernel.js";
-import { executionFor, repositoryView, restoreRepositoryState } from "@petrina/orchestrator";
-import { removeDir, tempDir } from "./fixtures.js";
+import { type BuilderContext, type Task } from "@petrina/core";
+import { builderContext } from "../../../src/builder-context.js";
+import { coordinatorNotes } from "../../../src/context.js";
+import { repositoryView } from "@petrina/orchestrator";
+import { removeDir, tempDir } from "../../fixtures.js";
 
 type Note = NonNullable<Task["notes"]>[number];
 const note = (id: string | undefined, text: string): Note => ({ id, text, at: 1, origin: { stageId: "build", stageTitle: "Build", roleName: "Builder", kind: "design" } });
@@ -15,13 +15,10 @@ const hash = (body: string) => createHash("sha256").update(body).digest("hex");
 
 function fixture(identity: "missing" | "duplicate" | "complete") {
   const root = tempDir("coordinator-note-fallback-");
-  const task = structuredClone(createDemoState(1_000_000_000).tasks[0]!) as unknown as MTask;
-  restoreRepositoryState(task);
+  const { task, scope, role } = coordinatorPacketState();
   task.notes = [note("first", "FIRST PRODUCT DECISION"), note(identity === "missing" ? undefined : identity === "duplicate" ? "first" : "middle", "MIDDLE PRODUCT DECISION"), note("last", "LAST PRODUCT DECISION")];
   task.queued = [{ id: "first", text: task.notes[0]!.text, at: 1, recipients: { main: true, peer: false }, deliveries: { main: { state: "applied", via: "prompt", sessionId: "own-conversation" } } }];
   task.stepNotes = [];
-  const scope = executionFor(task);
-  const role = BUILT_IN_ROLES.find(entry => entry.result === "build")!;
   const sections = () => [{ title: "Current step assignment", body: "SAME" }, ...coordinatorNotes(scope)];
   const prepare = (previous?: BuilderContext) => builderContext(root, repositoryView(scope), role, "own-conversation", sections(), previous);
   const notes = () => sections().find(section => section.title.startsWith(notesTitle))!;

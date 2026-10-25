@@ -1,12 +1,12 @@
+import { coordinatorPacketState } from "../../fixtures/coordinator-packets.js";
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { BUILT_IN_ROLES, createDemoState, type BuilderContext, type Task } from "@petrina/core";
-import { builderContext } from "../src/builder-context.js";
-import { coordinatorNotes, type Section } from "../src/context.js";
-import type { MTask } from "../src/kernel.js";
-import { executionFor, repositoryView, restoreRepositoryState } from "@petrina/orchestrator";
-import { removeDir, tempDir } from "./fixtures.js";
+import { type BuilderContext, type Task } from "@petrina/core";
+import { builderContext } from "../../../src/builder-context.js";
+import { coordinatorNotes, type Section } from "../../../src/context.js";
+import { repositoryView } from "@petrina/orchestrator";
+import { removeDir, tempDir } from "../../fixtures.js";
 
 type Note = NonNullable<Task["notes"]>[number];
 const note = (id: string, text: string): Note => ({ id, text, at: 1, origin: { stageId: "review", stageTitle: "Original review", roleName: "Reviewer", kind: "design" } });
@@ -14,11 +14,8 @@ const opening = (sections: readonly Section[]) => sections.map(section => `## ${
 
 function fixture() {
   const root = tempDir("coordinator-note-earlier-attempt-");
-  const task = structuredClone(createDemoState(1_000_000_000).tasks[0]!) as unknown as MTask;
-  restoreRepositoryState(task);
+  const { task, scope, role } = coordinatorPacketState();
   task.notes = []; task.queued = []; task.stepNotes = [];
-  const scope = executionFor(task);
-  const role = BUILT_IN_ROLES.find(entry => entry.result === "build")!;
   const prepare = (previous?: BuilderContext, earlierCarried = true, sessionId = "saved-review-conversation", member?: string) =>
     builderContext(root, repositoryView(scope), role, sessionId, coordinatorNotes(scope, member, earlierCarried), previous);
   return { root, task, scope, prepare };

@@ -1,89 +1,38 @@
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
+import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
+import { expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "./engine.js";
-import { Turns } from "../src/turn.js";
-import { ToolChecks } from "../src/tool-checks.js";
-import { Sources } from "../src/sources.js";
-import { Connections } from "../src/connection.js";
-import { BuildResult } from "../src/roles.js";
+import { Engine } from "../../engine.js";
+import { BuildResult } from "../../../src/roles.js";
 import { executionFor } from "@petrina/orchestrator";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
-import type { Scenario } from "./fake-agent.js";
-import { standInBrowser } from "./message-browser.js";
-import { holdUnconfirmed, MESSAGE_RECOVERY_OPTIONS, recoverMessages, routeMessages, takeMessages } from "../src/messages.js";
-import type { MTask } from "../src/kernel.js";
+import { waitFor } from "../../fixtures.js";
+import type { Scenario } from "../../fake-agent.js";
+import { holdUnconfirmed, MESSAGE_RECOVERY_OPTIONS } from "../../../src/messages.js";
 
-const roots: string[] = [];
-const browser = standInBrowser();
-afterAll(() => { browser.mockRestore(); roots.forEach(removeDir); });
 const rows = (path: string): Record<string, any>[] => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
-it("keeps older saved reviewer receipts after their transcript bubble is pruned", () => {
-  const task = { queued: [{ id: "older-message", at: 1, text: "Keep the guest view", recipients: { first: true, second: false } }], session: [] } as unknown as MTask;
-  recoverMessages(task);
-  routeMessages(task, ["second"]);
-  expect(takeMessages(task, "first")).toEqual([]);
-  const batch = takeMessages(task, "second");
-  expect(batch).toHaveLength(1);
-  expect(batch[0]!.firstDelivery).toBe(false);
-  expect(task.queued[0]!.recipients?.first).toBe(true);
-});
-
-it("restarts an ordinary prompt without resending it or freezing a live acceptance", () => {
-  const task = {
-    queued: [
-      { id: "reserved", at: 1, text: "Still waiting", recipients: { main: false }, deliveries: { main: { state: "sending", via: "prompt" } } },
-      { id: "handed", at: 2, text: "Already in the prompt", recipients: { main: false }, deliveries: { main: { state: "sending", via: "prompt", sessionId: "session-1" } } },
-      { id: "live", at: 3, text: "Maybe accepted", recipients: { main: false }, deliveries: { main: { state: "sending", via: "live", sessionId: "session-1", toolId: "codex" } } },
-      { id: "accepted-live", at: 4, text: "Accepted into the turn", recipients: { main: false }, deliveries: { main: { state: "accepted", via: "live", sessionId: "session-1" } } },
-    ],
-    session: [],
-    journey: [{ agentInputs: [{ updates: [{ delivery: "sending", messageId: "live" }] }] }],
-  } as unknown as MTask;
-  recoverMessages(task);
-  expect(task.queued[0]!.deliveries?.main).toBeUndefined();
-  expect(task.queued[0]!.recipients?.main).toBe(false);
-  expect(task.queued[1]!.deliveries?.main?.state).toBe("applied");
-  expect(task.queued[1]!.recipients?.main).toBe(true);
-  expect(task.queued[2]!.deliveries?.main).toMatchObject({ state: "unconfirmed", reason: "unknown", toolId: "codex" });
-  expect(task.queued[3]!.deliveries?.main).toMatchObject({ state: "accepted", reason: "unknown" });
-  expect(task.journey![0]!.agentInputs![0]!.updates![0]!.delivery).toBe("unconfirmed");
-  // The reserved note can go out again. The handed one is not repeated, and the live one blocks anything after it.
-  expect(takeMessages(task).map((message) => message.id)).toEqual(["reserved"]);
-  expect(takeMessages(task)).toEqual([]);
-});
-
 async function fixture(live: Scenario["live"], toolId = "codex", ackHeld = false, extra: Partial<Scenario> = {}, startingMessage?: string) {
-  const root = tempDir("petrina-live-messages-"); roots.push(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ builder: "plain", controlled: true, live, liveAckHeld: ackHeld, ...extra });
-  const command = [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir];
-  const engine = new Engine(join(root, "data"), { agentCommand: () => command, usageCommands: { codex: null, grok: null, antigravity: null } });
-  engine.setPoolPaused(true);
-  const scheduling = spyOn(engine, "schedule").mockImplementation(() => {});
-  const product = await makeProduct(root);
-  const productId = await engine.addProduct(product);
-  const task = engine.task(engine.addTask({ productId, title: "Add a greeting", backlog: true }))!;
-  const profile = engine.s.profiles.find(profile => profile.toolId === toolId)!;
-  for (const tool of engine.s.tools) tool.status = "ready";
-  task.plan = { rationale: "Build only", plannerProfileId: profile.id, stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: [profile.id] }] };
-  task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
-  task.agent = { roleId: "builder", profileId: profile.id, since: Date.now(), step: 0 };
-  const scope = executionFor(task);
-  scope.work.worktree = product; scope.work.branch = "main"; scope.work.base = "main";
-  engine.s.pool.paused = false;
+  const { root, fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-live-messages-", "Add a greeting", { builder: "plain", controlled: true, live, liveAckHeld: ackHeld, ...extra });
   const controller = new AbortController();
-  const turns = new Turns(engine, new ToolChecks(engine), new Sources(engine, new Connections(engine)));
-  const start = (signal = controller.signal, profileId = profile.id) => turns.turn(scope, "builder", profileId, () => [], BuildResult, signal, { ...(startingMessage ? { started: () => { engine.sendMessage(task.id, startingMessage); } } : {}) });
-  const pending = start(); pending.catch(() => {});
-  await waitFor(() => fakes.received("builder")[0], "the focused Builder prompt to start");
-  const session = fakes.received("builder")[0]!.session;
-  const release = () => writeFileSync(join(fakes.dir, `release-${session}`), "go");
-  const acknowledge = () => writeFileSync(join(fakes.dir, `ack-${session}`), "go");
-  const liveRows = () => rows(join(fakes.dir, "live.jsonl"));
-  const dispose = async () => { controller.abort(); release(); acknowledge(); await pending.catch(() => {}); scheduling.mockRestore(); await engine.shutdown(); };
-  return { engine, task, scope, fakes, pending, release, acknowledge, liveRows, controller, dispose, start, root, session };
+  let pending: Promise<unknown> | undefined;
+  try {
+    const profile = engine.s.profiles.find(profile => profile.toolId === toolId)!;
+    task.plan = { rationale: "Build only", plannerProfileId: profile.id, stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: [profile.id] }] };
+    task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
+    task.agent = { roleId: "builder", profileId: profile.id, since: Date.now(), step: 0 };
+    const start = (signal = controller.signal, profileId = profile.id) => engine["turns"].turn(scope, "builder", profileId, () => [], BuildResult, signal, { ...(startingMessage ? { started: () => { engine.sendMessage(task.id, startingMessage); } } : {}) });
+    const running = start(); pending = running; running.catch(() => {});
+    await waitFor(() => fakes.received("builder")[0], "the focused Builder prompt to start", undefined, { during: running });
+    const session = fakes.received("builder")[0]!.session;
+    const release = () => writeFileSync(join(fakes.dir, "release-" + session), "go");
+    const acknowledge = () => writeFileSync(join(fakes.dir, "ack-" + session), "go");
+    const liveRows = () => rows(join(fakes.dir, "live.jsonl"));
+    const dispose = async () => { controller.abort(); release(); acknowledge(); await running.catch(() => {}); await close(); };
+    return { engine, task, scope, fakes, pending: running, release, acknowledge, liveRows, controller, dispose, start, root, session };
+  } catch (error) {
+    controller.abort(); await pending?.catch(() => {}); await close(); throw error;
+  }
 }
 
 for (const tool of ["codex", "claude-code"]) it(`delivers ordered guidance inside the ${tool} prompt without another turn or Builder return`, async () => {
@@ -92,7 +41,7 @@ for (const tool of ["codex", "claude-code"]) it(`delivers ordered guidance insid
     const step = f.task.journey!.at(-1)!.id;
     const first = f.engine.sendMessage(f.task.id, "Keep the guest view");
     f.engine.sendMessage(f.task.id, "Then check the signed-in view");
-    await waitFor(() => f.liveRows().length === 2 && f.task.queued.every(message => message.deliveries?.main?.state === "accepted"), "two live acknowledgements");
+    await waitFor(() => f.liveRows().length === 2 && f.task.queued.every(message => message.deliveries?.main?.state === "accepted"), "two live acknowledgements", undefined, { during: f.pending });
     expect(f.liveRows().map(row => row.text)).toEqual(["Keep the guest view", "Then check the signed-in view"]);
     expect(f.task.journey!.at(-1)!.id).toBe(step);
     expect(f.fakes.received("builder")).toHaveLength(1);
@@ -112,10 +61,10 @@ for (const result of ["refused", "failed", "null", "promptRequired"] as const) i
   const f = await fixture(result, result === "promptRequired" ? "claude-code" : "codex", result === "promptRequired");
   try {
     f.engine.sendMessage(f.task.id, "Check the guest view too");
-    await waitFor(() => f.liveRows().length === 1, "the live attempt");
+    await waitFor(() => f.liveRows().length === 1, "the live attempt", undefined, { during: f.pending });
     if (result === "promptRequired") { f.release(); f.acknowledge(); }
     else {
-      await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "waiting", "a rejected acknowledgement to leave the message waiting");
+      await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "waiting", "a rejected acknowledgement to leave the message waiting", undefined, { during: f.pending });
       expect(f.fakes.received("builder")).toHaveLength(1);
       expect(rows(join(f.fakes.dir, "cancelled.jsonl"))).toEqual([]);
       f.release();
@@ -134,9 +83,9 @@ for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance
   const f = await fixture(tool === "grok" ? "queued" : "startedNewTurn", tool, tool === "codex");
   try {
     const messageId = f.engine.sendMessage(f.task.id, "Check the guest view too")!;
-    await waitFor(() => f.liveRows().length === 1, "a live attempt");
+    await waitFor(() => f.liveRows().length === 1, "a live attempt", undefined, { during: f.pending });
     f.release(); f.acknowledge();
-    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "an actionable delivery decision");
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "an actionable delivery decision", undefined, { during: f.pending });
     expect(decision.options).toEqual([...MESSAGE_RECOVERY_OPTIONS]);
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("accepted");
     expect(f.task.journey!.at(-1)!.agentResults).toBeUndefined();
@@ -148,7 +97,7 @@ for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance
     f.controller.abort(); await f.pending.catch(() => {});
     f.engine.commitNow(f.scope);
     await f.engine.shutdown();
-    const replacement = new Engine(join(f.root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
+    const replacement = new Engine(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
     replacement.setPoolPaused(true);
     try {
       const saved = replacement.task(f.task.id)!;
@@ -187,7 +136,7 @@ for (const tool of ["codex", "antigravity", "grok"]) it(`waits when ${tool} cann
   const f = await fixture(tool === "antigravity" ? "injected" : undefined, tool, false, tool === "grok" ? { liveProbe: "null" } : {});
   try {
     f.engine.sendMessage(f.task.id, "Check the guest view too");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.reason === "unsupported", "the capability fallback");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.reason === "unsupported", "the capability fallback", undefined, { during: f.pending });
     expect(f.liveRows()).toEqual([]);
     f.release(); await f.pending;
     expect(f.fakes.received("builder").filter(row => row.text.includes("Check the guest view too"))).toHaveLength(1);
@@ -199,12 +148,12 @@ it("retains possibly accepted input when a different tool takes over", async () 
   const replacement = new AbortController();
   try {
     f.engine.sendMessage(f.task.id, "Check the guest view too");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance before failover");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance before failover", undefined, { during: f.pending });
     f.controller.abort(); f.release(); await f.pending.catch(() => {});
     const opens = f.fakes.opens().length;
     const profile = f.engine.s.profiles.find(profile => profile.toolId === "claude-code")!;
     const next = f.start(replacement.signal, profile.id); next.catch(() => {});
-    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "failover to offer a delivery decision");
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "failover to offer a delivery decision", undefined, { during: next });
     expect(decision.options).toEqual([...MESSAGE_RECOVERY_OPTIONS]);
     expect(f.fakes.opens()).toHaveLength(opens);
     expect(f.fakes.received("builder")).toHaveLength(1);
@@ -231,9 +180,9 @@ it("delivers during a permission wait without cancelling or replacing the reques
   const f = await fixture("injected", "claude-code", false, { livePermission: true });
   try {
     f.release();
-    const permission = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "permission"), "the live permission request");
+    const permission = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "permission"), "the live permission request", undefined, { during: f.pending });
     f.engine.sendMessage(f.task.id, "Keep the guest view");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "guidance accepted beside the permission");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "guidance accepted beside the permission", undefined, { during: f.pending });
     expect(f.engine.s.inbox.some(item => item.id === permission.id)).toBe(true);
     expect(rows(join(f.fakes.dir, "cancelled.jsonl"))).toEqual([]);
     f.engine.allow(permission.id, "once"); await f.pending;
@@ -269,7 +218,7 @@ it("preserves a screen request even when Grok has not confirmed hearing live gui
   const f = await fixture("queued", "grok", false, { screen: "ask" });
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok to accept guidance");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok to accept guidance", undefined, { during: f.pending });
     f.release(); await f.pending.catch(() => {});
     expect(f.task.screen).toBeDefined();
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("accepted");
@@ -282,7 +231,7 @@ it("hears a message that joined the turn when that turn is stopped, and still de
   const f = await fixture("injected", "codex", false, { cancelHeld: true });
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "the live message to join the turn");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "the live message to join the turn", undefined, { during: f.pending });
     f.engine.sendMessage(f.task.id, "Mention the signed-in view", "queue");
     f.engine.sendMessage(f.task.id, "Use the shorter greeting", "interrupt");
     const result = await f.pending;
@@ -300,7 +249,7 @@ it("hears a joined message when the turn is paused before it reports back", asyn
   const f = await fixture("injected");
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "the tool to accept it");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "the tool to accept it", undefined, { during: f.pending });
     f.engine.messageTurns.get(f.task.id)!.get("main")!.dispose();
     expect(f.task.queued).toEqual([]);
     expect(f.task.journey!.at(-1)!.agentInputs![0]!.updates![0]!.delivery).toBe("applied");
@@ -315,12 +264,12 @@ it("does not send a live message taken back while an earlier one is still being 
   const f = await fixture("injected", "codex", true);
   try {
     f.engine.sendMessage(f.task.id, "First guidance");
-    await waitFor(() => f.liveRows().length === 1, "the first acknowledgement to be in flight");
+    await waitFor(() => f.liveRows().length === 1, "the first acknowledgement to be in flight", undefined, { during: f.pending });
     const second = f.engine.sendMessage(f.task.id, "Second guidance")!;
     f.engine.removeQueued(f.task.id, second);
     f.engine.sendMessage(f.task.id, "Third guidance");
     f.acknowledge();
-    await waitFor(() => f.task.queued.find(message => message.text === "Third guidance")?.deliveries?.main?.state === "accepted", "the later message to be accepted");
+    await waitFor(() => f.task.queued.find(message => message.text === "Third guidance")?.deliveries?.main?.state === "accepted", "the later message to be accepted", undefined, { during: f.pending });
     expect(f.liveRows().map(row => row.text)).toEqual(["First guidance", "Third guidance"]);
     expect(f.task.session.some(line => line.text === "Second guidance")).toBe(false);
     expect(f.task.queued.some(message => message.text === "Second guidance")).toBe(false);
@@ -334,11 +283,11 @@ it("recovers a lost acknowledgement as unconfirmed instead of sending it again",
   const f = await fixture("injected", "codex", true);
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
-    await waitFor(() => f.liveRows().length === 1, "the in-flight request before the connection is lost");
+    await waitFor(() => f.liveRows().length === 1, "the in-flight request before the connection is lost", undefined, { during: f.pending });
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("sending");
     f.controller.abort(); f.release(); await f.pending.catch(() => {});
     f.engine.commitNow(f.scope); await f.engine.shutdown();
-    const recovered = new Engine(join(f.root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
+    const recovered = new Engine(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
     recovered.setPoolPaused(true);
     try {
       const message = recovered.task(f.task.id)!.queued[0]!;
@@ -355,9 +304,9 @@ for (const choice of MESSAGE_RECOVERY_OPTIONS) it(`recovers Grok's accepted mess
   const f = await fixture("queued", "grok");
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok acceptance");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok acceptance", undefined, { during: f.pending });
     f.release();
-    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "delivery recovery");
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "delivery recovery", undefined, { during: f.pending });
     expect(f.task.journey!.at(-1)!.agentResults).toBeUndefined();
     f.engine.answer(decision.id, choice);
     const result = await f.pending;
@@ -375,12 +324,12 @@ it("requires an explicit resend choice and keeps later messages ordered", async 
   const f = await fixture("queued", "grok");
   try {
     f.engine.sendMessage(f.task.id, "First guidance");
-    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance");
+    await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance", undefined, { during: f.pending });
     f.engine.sendMessage(f.task.id, "Later guidance", "queue");
     f.release();
-    const first = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "recovery");
+    const first = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "recovery", undefined, { during: f.pending });
     f.engine.answer(first.id, "I am unsure");
-    const second = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question" && item.id !== first.id), "explicit choices again");
+    const second = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question" && item.id !== first.id), "explicit choices again", undefined, { during: f.pending });
     expect(f.fakes.received("builder")).toHaveLength(1);
     f.engine.answer(second.id, MESSAGE_RECOVERY_OPTIONS[1]);
     await f.pending;
@@ -388,30 +337,4 @@ it("requires an explicit resend choice and keeps later messages ordered", async 
     expect(follow.indexOf("First guidance")).toBeLessThan(follow.indexOf("Later guidance"));
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
-});
-
-it("resolves one reviewer's uncertain receipt without consuming its peer's decision", async () => {
-  const f = await fixture(undefined);
-  const controller = new AbortController();
-  try {
-    f.task.queued = [{ id: "parallel-note", at: Date.now(), text: "Check both views", recipients: { "review-0": false, "review-1": false }, deliveries: {
-      "review-0": { state: "accepted", via: "live", toolId: "grok" },
-      "review-1": { state: "accepted", via: "live", toolId: "codex" },
-    } }];
-    const first = holdUnconfirmed(f.engine, f.scope, "review-0", controller.signal, "reviewer:0");
-    const second = holdUnconfirmed(f.engine, f.scope, "review-1", controller.signal, "reviewer:1");
-    const decisions = f.engine.s.inbox.filter(item => item.taskId === f.task.id && item.kind === "question");
-    expect(decisions).toHaveLength(2);
-    const firstDecision = decisions.find(item => item.reviewKey === "reviewer:0")!;
-    const secondDecision = decisions.find(item => item.reviewKey === "reviewer:1")!;
-    f.engine.answer(firstDecision.id, MESSAGE_RECOVERY_OPTIONS[0]);
-    await first;
-    expect(f.task.queued[0]?.deliveries?.["review-0"]?.state).toBe("skipped");
-    expect(f.task.queued[0]?.deliveries?.["review-1"]?.state).toBe("accepted");
-    expect(f.engine.s.inbox.some(item => item.id === secondDecision.id)).toBe(true);
-    f.engine.answer(secondDecision.id, MESSAGE_RECOVERY_OPTIONS[1]);
-    await second;
-    expect(takeMessages(f.task, "review-0")).toEqual([]);
-    expect(takeMessages(f.task, "review-1").map(message => message.id)).toEqual(["parallel-note"]);
-  } finally { controller.abort(); await f.dispose(); }
 });

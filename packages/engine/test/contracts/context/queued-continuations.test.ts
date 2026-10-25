@@ -1,58 +1,48 @@
+import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckId, ConversationNote } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { executionFor } from "@petrina/orchestrator";
-import { BuildResult, ReviewResult } from "../src/roles.js";
-import { MESSAGE_RECOVERY_OPTIONS, routeMessages } from "../src/messages.js";
-import { EARLIER_ATTEMPT } from "../src/prompts.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import type { ConversationNote } from "@petrina/core";
+import { BuildResult, ReviewResult } from "../../../src/roles.js";
+import { routeMessages } from "@petrina/core";
+import { MESSAGE_RECOVERY_OPTIONS } from "../../../src/messages.js";
+import { EARLIER_ATTEMPT } from "../../../src/prompts.js";
+import { makeProduct, waitFor } from "../../fixtures.js";
 
 async function fixture() {
-  const root = tempDir("petrina-queued-continuation-");
-  const repo = await makeProduct(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ builder: "plain", reopen: "resume", controlled: true });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
-  engine.schedule = () => {};
-  engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));
-  engine.s.tools.forEach(tool => { tool.status = "ready"; });
-  engine.s.pool.paused = false;
-  engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
-  const task = engine.task(engine.addTask({ productId: "p", title: "Keep queued instructions", backlog: true }))!;
-  task.plan = { rationale: "Build only", plannerProfileId: "sol-high", stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] }] };
-  task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
-  task.brief = { summary: "UNCHANGED-BACKGROUND", forUsers: [], areas: [], acceptance: [], risks: [] };
-  const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main" });
-  const controllers: AbortController[] = [];
-  const pending: Promise<unknown>[] = [];
-  const start = (resume?: ConversationNote, given = () => engine["context"].sectionsFor(scope, "builder")) => {
-    const controller = new AbortController(); controllers.push(controller);
-    task.state = "running"; task.holdsSlot = true;
-    task.agent = { roleId: "builder", profileId: "sol-high", since: Date.now(), step: 0 };
-    const result = engine["turns"].turn(scope, "builder", "sol-high", given, BuildResult, controller.signal, { ...(resume ? { resume } : {}) });
-    pending.push(result); result.catch(() => {});
-    return result;
-  };
-  const first = async () => {
-    engine.sendMessage(task.id, "ALREADY-HEARD", "queue");
-    const receipt = task.queued[0]!;
-    const running = start();
-    const prompt = await waitFor(() => fakes.received("builder")[0], "the first opening");
-    writeFileSync(join(fakes.dir, `release-${prompt.session}`), "go");
-    await running;
-    expect(receipt.deliveries?.main?.state).toBe("applied");
-    expect(task.queued).toEqual([]);
-    return structuredClone(scope.work.conversation!);
-  };
-  const dispose = async () => {
-    controllers.forEach(controller => controller.abort());
-    await Promise.allSettled(pending);
-    await engine.shutdown(); removeDir(root);
-  };
-  return { engine, task, scope, fakes, start, first, dispose, root, controllers, pending };
+  const { root, fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-queued-continuation-", "Keep queued instructions", { builder: "plain", reopen: "resume", controlled: true });
+  try {
+    task.plan = { rationale: "Build only", plannerProfileId: "sol-high", stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] }] };
+    task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
+    task.brief = { summary: "UNCHANGED-BACKGROUND", forUsers: [], areas: [], acceptance: [], risks: [] };
+    const controllers: AbortController[] = [];
+    const pending: Promise<unknown>[] = [];
+    const start = (resume?: ConversationNote, given = () => engine["context"].sectionsFor(scope, "builder")) => {
+      const controller = new AbortController(); controllers.push(controller);
+      task.state = "running"; task.holdsSlot = true;
+      task.agent = { roleId: "builder", profileId: "sol-high", since: Date.now(), step: 0 };
+      const result = engine["turns"].turn(scope, "builder", "sol-high", given, BuildResult, controller.signal, { ...(resume ? { resume } : {}) });
+      pending.push(result); result.catch(() => {});
+      return result;
+    };
+    const first = async () => {
+      engine.sendMessage(task.id, "ALREADY-HEARD", "queue");
+      const receipt = task.queued[0]!;
+      const running = start();
+      const prompt = await waitFor(() => fakes.received("builder")[0], "the first opening", undefined, { during: running });
+      writeFileSync(join(fakes.dir, `release-${prompt.session}`), "go");
+      await running;
+      expect(receipt.deliveries?.main?.state).toBe("applied");
+      expect(task.queued).toEqual([]);
+      return structuredClone(scope.work.conversation!);
+    };
+    const dispose = async () => {
+      controllers.forEach(controller => controller.abort());
+      await Promise.allSettled(pending);
+      await close();
+    };
+    return { engine, task, scope, fakes, start, first, dispose, root, controllers, pending };
+  } catch (error) { await close(); throw error; }
 }
 
 for (const path of ["fresh start", "earlier conversation"] as const) it(`shows opening instructions in the recorded input (${path})`, async () => {
@@ -64,7 +54,7 @@ for (const path of ["fresh start", "earlier conversation"] as const) it(`shows o
     f.engine.sendMessage(f.task.id, text, "queue");
     const receipt = f.task.queued[0]!;
     const next = f.start(saved);
-    const opening = await waitFor(() => f.fakes.received("builder")[saved ? 1 : 0], "the opening with new guidance");
+    const opening = await waitFor(() => f.fakes.received("builder")[saved ? 1 : 0], "the opening with new guidance", undefined, { during: next });
     writeFileSync(join(f.fakes.dir, `release-${opening.session}`), "go");
     await next;
     const input = f.task.journey!.at(-1)!.agentInputs!.at(-1)!;
@@ -104,7 +94,7 @@ for (const path of ["earlier conversation", "fresh fallback", "same step", "duri
     });
     const late = "Also preserve the latest clarification.";
     if (path === "during preparation") {
-      await prepared.promise;
+      await waitFor(() => prepared.promise.then(() => true), "the prepared context boundary", undefined, { during: next });
       expect(queued.every(message => message.deliveries?.main === undefined)).toBe(true);
       f.engine.sendMessage(f.task.id, late, "queue");
       queued.push(f.task.queued.at(-1)!);
@@ -162,7 +152,7 @@ it("removes withdrawn guidance from the actual opening and its complete context 
       captured.resolve(); await release.promise;
       return sections;
     });
-    await captured.promise;
+    await waitFor(() => captured.promise.then(() => true), "the captured context boundary", undefined, { during: next });
     f.engine.removeQueued(f.task.id, id);
     f.engine.sendMessage(f.task.id, "KEEP-THE-NEW-INSTRUCTION", "queue");
     release.resolve(); await next;
@@ -193,7 +183,7 @@ for (const mode of ["queue", "interrupt"] as const) it(`records guidance arrivin
     };
     f.engine.resume(f.task.id);
     const next = f.start(saved);
-    await reserved.promise;
+    await waitFor(() => reserved.promise.then(() => true), "the reserved context boundary", undefined, { during: next });
     expect(normal.deliveries?.main).toEqual({ state: "sending", via: "prompt" });
     const text = "ARRIVED-WHILE-SAVING-THE-PACKET";
     f.engine.sendMessage(f.task.id, text, mode);
@@ -351,7 +341,7 @@ for (const [peerWaiting, attempts] of [[true, 0], [false, 0], [true, 2]] as cons
     message.deliveries = Object.fromEntries(Object.keys(message.recipients!).map(member => [member, { state: "accepted" as const, via: "live" as const, toolId: "grok", sessionId: `old-${member}` }]));
     if (attempts) f.scope.work.stepAttempts = attempts;
     const reviewing = run(0);
-    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "the reviewer's delivery-recovery decision");
+    const decision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "the reviewer's delivery-recovery decision", undefined, { during: reviewing });
     expect(f.fakes.received("code reviewer")).toEqual([]);
     expect(message.deliveries["review-0"]?.state).toBe("accepted");
     f.engine.answer(decision.id, MESSAGE_RECOVERY_OPTIONS[0]);
@@ -380,7 +370,7 @@ for (const [peerWaiting, attempts] of [[true, 0], [false, 0], [true, 2]] as cons
       expect(message.recipients?.["review-1"]).toBe(false);
       expect(message.deliveries["review-1"]?.state).toBe("accepted");
       const peer = run(1);
-      const peerDecision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "the peer's independent delivery-recovery decision");
+      const peerDecision = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "question"), "the peer's independent delivery-recovery decision", undefined, { during: peer });
       f.engine.answer(peerDecision.id, MESSAGE_RECOVERY_OPTIONS[1]);
       await peer;
       expect(f.fakes.received("code reviewer")[2]!.text.split(text)).toHaveLength(2);

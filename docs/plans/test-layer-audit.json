@@ -2634,53 +2634,146 @@
       "status": "pending"
     },
     {
-      "file": "packages/engine/test/coordinator-messages.test.ts",
+      "file": "packages/core/test/rules/messages/recovery.test.ts",
       "declarations": 19,
       "assertionSites": 111,
       "baselineDigest": "1f2d6fee1198dc47ea8e46e9bdf847f4a13d75e3186abd15285fa759684d9f97",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-messages.test.ts",
+      "splitFiles": [
+        "packages/core/test/rules/messages/recovery.test.ts",
+        "packages/engine/test/contracts/coordination/live-messages.test.ts",
+        "packages/engine/test/contracts/coordination/message-recovery-decisions.test.ts"
+      ],
+      "layer": "rules",
+      "area": "messages",
+      "review": "All 27 current-original runtime identities and 111 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
-      "file": "packages/engine/test/coordinator-note-context.test.ts",
+      "file": "packages/engine/test/contracts/context/note-packets.test.ts",
       "declarations": 18,
       "assertionSites": 134,
       "baselineDigest": "9de4ff8512e89851547a441e8dd25b9aa5146fb577e38497de0f8c0e9a78fa20",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-note-context.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/note-packets.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 22 current-original runtime identities and 138 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
-      "file": "packages/engine/test/coordinator-note-continuation.test.ts",
+      "file": "packages/engine/test/contracts/context/managed-note-continuations.test.ts",
       "declarations": 7,
       "assertionSites": 112,
       "baselineDigest": "063d175facfa20779358828c91755851a539cbc76e63aa3d5be17bcdebd21091",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-note-continuation.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/managed-note-continuations.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 12 current-original runtime identities and 118 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
-      "file": "packages/engine/test/coordinator-note-earlier-attempt.test.ts",
+      "file": "packages/engine/test/contracts/context/earlier-note-packets.test.ts",
       "declarations": 3,
       "assertionSites": 10,
       "baselineDigest": "5315f0f2b47b980e76b8e8632cc605ff78670da6071e57d4a56b55cb85b47bca",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-note-earlier-attempt.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/earlier-note-packets.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 6 current-original runtime identities and 14 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
-      "file": "packages/engine/test/coordinator-note-earlier-managed.test.ts",
+      "file": "packages/engine/test/contracts/context/earlier-managed-notes.test.ts",
       "declarations": 1,
       "assertionSites": 19,
       "baselineDigest": "e22f26b4de0fbd3f39f85baf65e7550372fa19eadd701af4c9c5d77717285fd5",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-note-earlier-managed.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/earlier-managed-notes.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 1 current-original runtime identities and 19 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
-      "file": "packages/engine/test/coordinator-note-empty.test.ts",
+      "file": "packages/engine/test/contracts/context/empty-note-packets.test.ts",
       "declarations": 4,
       "assertionSites": 22,
       "baselineDigest": "8327f9955f5d280d05c7ad3045061acbb82f89865d9186d6080fb2822d4adc3c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-note-empty.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/empty-note-packets.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 7 current-original runtime identities and 22 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
-      "file": "packages/engine/test/coordinator-note-fallback.test.ts",
+      "file": "packages/engine/test/contracts/context/fallback-note-packets.test.ts",
       "declarations": 3,
       "assertionSites": 44,
       "baselineDigest": "68629969cdcc490c6c6302ec40779cc2fe2530621418e2d036d6390bc17bbc3c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordinator-note-fallback.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/fallback-note-packets.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 7 current-original runtime identities and 44 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
       "file": "packages/engine/test/delivery-reliability.test.ts",
@@ -4127,11 +4220,24 @@
       ]
     },
     {
-      "file": "packages/engine/test/queued-continuation.test.ts",
+      "file": "packages/engine/test/contracts/context/queued-continuations.test.ts",
       "declarations": 8,
       "assertionSites": 112,
       "baselineDigest": "59156d2ec9b3a8542f21bd52dcb3f9987bc32c2d364dc36212bb28e0f51fffd7",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/queued-continuation.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/context/queued-continuations.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "context",
+      "review": "All 16 current-original runtime identities and 114 matcher ASTs retained exactly. Coordinator message rules use the actual pure state algorithms; immutable packet filesystem/hash and managed-session/reopen/receipt/permission behavior keep real owned native boundaries. Private canonical task data replaces unrelated demo/workflow setup; owner completion prevents impossible readiness waits. Independent review verifies all frozen28path hashes, literal production parity and complete preservation.",
+      "validation": {
+        "artifact": "workstreams/coordinator-context-next/{preservation.json,runtime-reconciliation.json,case-audit.json,scope.json}",
+        "independentReview": "workstreams/coordinator-context-review/{review.md,review.json,evidence.json,assertions.json}",
+        "qualification": "Original core2 and native96 cases pass; native96/1717 expectations/7.87s at normal14workers, zero skips/failures. Ten shared owner/file controls also pass. Integrated root qualification and final supported-platform evidence remain due; the adjacent pending-predicate deadline correction is tracked separately.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
       "file": "packages/agent-runtime/test/contracts/lifecycle/startup-stop.test.ts",
@@ -5493,11 +5599,30 @@
       ]
     },
     {
-      "file": "packages/engine/test/terminal.test.ts",
+      "file": "packages/agent-runtime/test/rules/terminal/launch-plan.test.ts",
       "declarations": 20,
       "assertionSites": 79,
       "baselineDigest": "21d9b9f7e4b1450e7415b54fd2d0d81904859f3eac6bcbfb0a4e5ffe9fef3a0e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/terminal.test.ts",
+      "splitFiles": [
+        "packages/agent-runtime/test/rules/terminal/launch-plan.test.ts",
+        "packages/agent-runtime/test/rules/terminal/detection.test.ts",
+        "packages/agent-runtime/test/contracts/terminal/provider-arguments.test.ts",
+        "packages/agent-runtime/test/contracts/terminal/process-records.test.ts",
+        "packages/agent-runtime/test/contracts/terminal/launcher-races.test.ts",
+        "packages/agent-runtime/test/contracts/terminal/help-mode.test.ts",
+        "packages/engine/test/contracts/coordination/terminal-actions.test.ts"
+      ],
+      "layer": "rules",
+      "area": "terminal",
+      "review": "All42 original runtime cases/20 registrations/79 matcher sites retained. All11 native bodies, seven pure bodies after explicit formatter binding and three provider formatters are equivalent; independent review verifies75 exact matcher ASTs plus three equivalent fully drained stdout reads and a private missing-help path. Script/detection rules are pure; native terminal contracts keep actual process identity, permission modes, eight four-copy race rounds, dead/late lock owners, barriers and close signals. Actors use independent leases and canonical command ownership; actual API dispatch keeps its private Engine. Setup and failure cleanup/readiness are owned. New failure-path cleanup control is additional, not an original-case replacement.",
+      "validation": {
+        "artifact": "workstreams/root-api-next/terminal-reconciliation.json",
+        "independentReview": "workstreams/terminal-review/{review.md,review.json,static-parity.json}",
+        "qualification": "Original42 plus newcleanup1 pass43/0/464 expectations/12.93s before final native ownership move and readiness delta; current-source qualification pending. Native output helper's unchanged ownership gap remains explicitly tracked before final system qualification.",
+        "rootQualification": "Integrated final-source158cases/0fail/0skip/2229expectations/19exactowners/11.92s, plus movedcore2/0/120ms. All9types/conventions pass. Full suite/resource and supported-platform qualification remain due."
+      }
     },
     {
       "file": "packages/engine/test/contracts/testing/deadlines.test.ts",

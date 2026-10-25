@@ -1,9 +1,9 @@
 export { defunctProcess } from "@petrina/test-support/defunct-process";
 export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
-import { tempDir, removeDir } from "@petrina/test-support/fixtures";
+import { removeDir } from "@petrina/test-support/fixtures";
 export { tempDir, removeDir, waitFor, waitForFile, firstLine, testBrowserRoot } from "@petrina/test-support/fixtures";
 // Lightweight private repositories, processes and fake-agent records. No Engine dependency.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State } from "@petrina/core";
 import type { Scenario } from "./fake-agent.js";
@@ -12,7 +12,6 @@ import type { MachineRecords } from "../src/check-interruption.js";
 import { runChecks as runProductChecks } from "../src/checks.js";
 import { PromptReader, type PromptRecord } from "./prompt-records.js";
 import { commitAt } from "@petrina/test-support/commands";
-import { currentSlow } from "@petrina/test-support/slow";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 export { testGitEnv } from "@petrina/test-support/test-git-env";
 export { SLOW, currentSlow } from "@petrina/test-support/slow";
@@ -24,39 +23,7 @@ export const HARNESS = join(import.meta.dir, "harness.ts");
 
 
 
-/**
- * Stops at once, saying why, when this machine holds back programs written a moment ago. Take-over
- * tests write small stand-ins for the launcher and the agent's app and run them. macOS checks each
- * new program before its first run, and when that check hangs, every one of those tests would
- * otherwise wait out its timeout.
- */
-export function newProgramsStart(): Promise<void> {
-  return (checked ??= startsNewProgram(10_000));
-}
-
-let checked: Promise<void> | undefined;
-
-async function startsNewProgram(ms: number): Promise<void> {
-  if (process.platform === "win32") return;
-  const dir = tempDir("petrina-new-program-");
-  const file = join(dir, "new-program");
-  writeFileSync(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  const proc = Bun.spawn([file], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  const startedAt = Date.now();
-  let started = false;
-  while (!started && Date.now() - startedAt <= ms * currentSlow()) {
-    started = await Promise.race([proc.exited.then(() => true), Bun.sleep(50).then(() => false)]);
-  }
-  if (!started) proc.kill("SIGKILL");
-  removeDir(dir);
-  if (!started) {
-    throw new Error(
-      `This machine did not start a program written a moment ago within ${ms / 1000} seconds, so these tests can't run here. ` +
-        "On macOS that is its check of new programs not finishing: allow the app the tests run from (your terminal) in " +
-        "System Settings > Privacy & Security > Developer Tools, or restart the Mac, and run them again.",
-    );
-  }
-}
+export { newProgramsStart } from "@petrina/test-support/new-program";
 
 /** Leave context before a test's own timeout, without changing what it waits for or its deadline. */
 export async function traceTaskWait<T>(label: string | undefined, state: () => State | Promise<State>, taskId: string, wait: () => Promise<T>): Promise<T> {

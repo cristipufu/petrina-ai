@@ -1,33 +1,20 @@
+import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckId, ConversationNote } from "@petrina/core";
-import { executionFor } from "@petrina/orchestrator";
-import { BuildResult } from "../src/roles.js";
-import { Engine } from "./engine.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import type { ConversationNote } from "@petrina/core";
+import { BuildResult } from "../../../src/roles.js";
+import { waitFor } from "../../fixtures.js";
 
 it("records an older conversation's retry without resupplying guidance actually delivered after its saved snapshot", async () => {
-  const root = tempDir("petrina-earlier-note-managed-");
-  const repo = await makeProduct(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ builder: "plain", reopen: "resume", controlled: true });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
+  const { fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-earlier-note-managed-", "Keep earlier-attempt guidance", { builder: "plain", reopen: "resume", controlled: true });
   const controllers: AbortController[] = [];
   const pending: Promise<unknown>[] = [];
   try {
-    engine.schedule = () => {};
-    engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));
-    engine.s.tools.forEach(tool => { tool.status = "ready"; });
-    engine.s.pool.paused = false;
-    engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
-    const task = engine.task(engine.addTask({ productId: "p", title: "Keep earlier-attempt guidance", backlog: true }))!;
     task.plan = { rationale: "Build only", plannerProfileId: "sol-high", stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] }] };
     task.stageIndex = 0;
     task.notes = [{ id: "old", at: 1, text: "ORIGINAL DECISION SAVED BEFORE THE MESSAGE", origin: { stageTitle: "Original decision", roleName: "Coordinator" } }];
-    const scope = executionFor(task);
-    Object.assign(scope.work, { worktree: repo, branch: "main", base: "main" });
     const run = async (resume?: ConversationNote) => {
       const index = fakes.received("builder").length;
       const controller = new AbortController(); controllers.push(controller);
@@ -35,7 +22,7 @@ it("records an older conversation's retry without resupplying guidance actually 
       task.agent = { roleId: "builder", profileId: "sol-high", since: Date.now(), step: 0 };
       const result = engine["turns"].turn(scope, "builder", "sol-high", () => engine["context"].sectionsFor(scope, "builder"), BuildResult, controller.signal, { ...(resume ? { resume } : {}) });
       pending.push(result); result.catch(() => {});
-      const opening = await waitFor(() => fakes.received("builder")[index], "the earlier-guidance recording");
+      const opening = await waitFor(() => fakes.received("builder")[index], "the earlier-guidance recording", undefined, { during: result });
       writeFileSync(join(fakes.dir, `release-${opening.session}`), "go");
       await result;
       const input = task.journey!.at(-1)!.agentInputs!.at(-1)!;
@@ -75,7 +62,6 @@ it("records an older conversation's retry without resupplying guidance actually 
   } finally {
     controllers.forEach(controller => controller.abort());
     await Promise.allSettled(pending);
-    await engine.shutdown();
-    removeDir(root);
+    await close();
   }
 });

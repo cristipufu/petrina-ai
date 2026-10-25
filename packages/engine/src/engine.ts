@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { stat, mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { combinedBacklogInput } from "@petrina/core";
-import { recoverMessages, routeMessages } from "./messages.js";
+import { recoverMessages, routeMessages } from "@petrina/core";
 import { messageRemovable } from "@petrina/core";
 import {
   AFTER_WORDS,

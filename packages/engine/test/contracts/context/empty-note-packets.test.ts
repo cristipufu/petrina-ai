@@ -1,11 +1,11 @@
+import { coordinatorPacketState } from "../../fixtures/coordinator-packets.js";
 import { expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { BUILT_IN_ROLES, createDemoState, type BuilderContext, type Task } from "@petrina/core";
-import { builderContext } from "../src/builder-context.js";
-import { coordinatorNotes, type Section } from "../src/context.js";
-import type { MTask } from "../src/kernel.js";
-import { executionFor, repositoryView, restoreRepositoryState } from "@petrina/orchestrator";
-import { removeDir, tempDir } from "./fixtures.js";
+import { type BuilderContext, type Task } from "@petrina/core";
+import { builderContext } from "../../../src/builder-context.js";
+import { coordinatorNotes, type Section } from "../../../src/context.js";
+import { repositoryView } from "@petrina/orchestrator";
+import { removeDir, tempDir } from "../../fixtures.js";
 
 const notesTitle = "The coordinator's notes on this task";
 type Note = NonNullable<Task["notes"]>[number];
@@ -13,11 +13,8 @@ const note: Note = { id: "decision", text: "THE COORDINATOR'S ORIGINAL DECISION"
 
 function fixture() {
   const root = tempDir("coordinator-note-empty-");
-  const task = structuredClone(createDemoState(1_000_000_000).tasks[0]!) as unknown as MTask;
-  restoreRepositoryState(task);
+  const { task, scope, role } = coordinatorPacketState();
   task.notes = []; task.queued = []; task.stepNotes = [];
-  const scope = executionFor(task);
-  const role = BUILT_IN_ROLES.find(entry => entry.result === "build")!;
   const prepare = (assignment: string, previous?: BuilderContext, extra: Section[] = [], member?: string) => builderContext(root, repositoryView(scope), role, "own-conversation", [
     { title: "Current step assignment", body: assignment }, ...extra, ...coordinatorNotes(scope, member),
   ], previous);

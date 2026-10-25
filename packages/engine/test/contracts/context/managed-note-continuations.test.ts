@@ -1,16 +1,15 @@
+import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckId, ConversationNote, JourneyAgentInput, StepNote } from "@petrina/core";
+import type { ConversationNote, JourneyAgentInput, StepNote } from "@petrina/core";
 import type { z } from "zod";
-import { Engine } from "./engine.js";
-import { executionFor } from "@petrina/orchestrator";
-import { BriefResult, BuildResult, ObjectionsResult, ReviewResult } from "../src/roles.js";
-import { routeMessages } from "../src/messages.js";
-import { prepareReviewInput, type ReviewInput } from "../src/review-context.js";
-import { historyGuidance } from "../src/review-history.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "./fixtures.js";
+import { BriefResult, BuildResult, ObjectionsResult, ReviewResult } from "../../../src/roles.js";
+import { routeMessages } from "@petrina/core";
+import { prepareReviewInput, type ReviewInput } from "../../../src/review-context.js";
+import { historyGuidance } from "../../../src/review-history.js";
+import { makeProduct, waitFor } from "../../fixtures.js";
 
 const notesTitle = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
 const note = (id: string, text = `EXACT-DECISION-${id}: keep the agreed product behaviour.`) => ({
@@ -20,69 +19,59 @@ const oldNotes = () => [note("n1"), note("n2"), note("n3"), note("n4")];
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
 async function fixture(builtIn: "builder" | "architect" | "design-reviewer" | "code-reviewer" = "builder", peer = false, initialNotes = oldNotes()) {
-  const root = tempDir("petrina-note-continuation-");
-  const repo = await makeProduct(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ builder: "plain", architect: "plain", reopen: "resume", controlled: true });
-  const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] });
-  engine.schedule = () => {};
-  engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready" }));
-  engine.s.tools.forEach(tool => { tool.status = "ready"; });
-  engine.s.pool.paused = false;
-  engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
-  // Added role ids must obey the same result contract as their built-in counterparts.
-  const role = { ...engine.role(builtIn)!, id: `notes-${builtIn}` };
-  engine.s.roles.push(role);
-  const schema: z.ZodType<unknown> = role.result === "build" ? BuildResult : role.result === "brief" ? BriefResult : role.result === "objections" ? ObjectionsResult : ReviewResult;
-  const design = role.result === "brief" || role.result === "objections";
-  const parallel = role.result === "findings";
-  const copies = [repo, ...(peer ? [await makeProduct(join(root, "peer"))] : [])];
-  const task = engine.task(engine.addTask({ productId: "p", title: "Keep every coordinator decision", description: "ORIGINAL-NOTE-TASK", backlog: true }))!;
-  task.plan = { rationale: "Exercise the assigned role", plannerProfileId: "sol-high", stages: [{ id: "work", title: "Current work", kind: "do", roleId: role.id, profileIds: ["sol-high"] }] };
-  task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
-  task.brief = { summary: "UNCHANGED-NOTE-BRIEF", forUsers: [], areas: [], acceptance: [{ text: "Preserve every decision" }], risks: [] };
-  task.notes = initialNotes;
-  const scope = executionFor(task);
-  Object.assign(scope.work, { worktree: repo, branch: "main", base: "main" });
-  if (parallel) task.hunt = { stageId: "work", round: 1, reported: {}, profiles: { "0": "sol-high", ...(peer ? { "1": "astra-xhigh" } : {}) } };
-  const controllers: AbortController[] = [];
-  const pending: Promise<unknown>[] = [];
-  let completed: ConversationNote | undefined;
-  let review: ReviewInput | undefined;
-  const given = async (member?: string) => [
-    ...await engine["context"].sectionsFor(scope, role.id, member, undefined, undefined, review),
-    ...(design ? [{ title: "Objections from the design reviewer", body: "UNCHANGED-DESIGN-OBJECTION" }, { title: "The coordinator's call", body: "UNCHANGED-DESIGN-CALL" }] : []),
-  ];
-  const run = async (resume?: ConversationNote, seat = 0, earlier: readonly StepNote[] = []) => {
-    if (!parallel && fakes.received().length) engine.finishStep(scope);
-    if (earlier.length) {
-      task.stepNotes = earlier.map(entry => ({ ...entry }));
-      scope.work.stepAttempts = 1;
-    }
-    const index = fakes.received().length;
-    const controller = new AbortController(); controllers.push(controller);
-    const profile = seat ? "astra-xhigh" : "sol-high";
-    task.state = "running"; task.holdsSlot = true;
-    task.agent = { roleId: role.id, profileId: "sol-high", since: Date.now(), step: 0 };
-    const result = parallel
-      ? engine["turns"].parallel(scope, role.id, profile, copies[seat]!, () => given(`review-${seat}`), schema, controller.signal,
-        { key: String(seat), member: `review-${seat}`, reviewerKey: String(seat), seat: profile, reviewContext: true, ...(review ? { reviewFindings: review.findings } : {}), ...(resume ? { resume } : {}), completed: saved => { completed = structuredClone(saved); } })
-      : engine["turns"].turn(scope, role.id, "sol-high", () => given(), schema, controller.signal, { ...(resume ? { resume } : {}), ...(design ? { designContext: true } : {}) });
-    pending.push(result); result.catch(() => {});
-    const opening = await waitFor(() => fakes.received()[index], "the recorded note opening");
-    writeFileSync(join(fakes.dir, `release-${opening.session}`), "go");
-    await result;
-    const saved = structuredClone(parallel ? completed! : scope.work.conversation!);
-    const input = task.journey!.at(-1)!.agentInputs!.at(-1)!;
-    expect(readFileSync(input.exact!.file, "utf8")).toBe(opening.text);
-    return { opening, saved, input };
-  };
-  const dispose = async () => {
-    controllers.forEach(controller => controller.abort());
-    await Promise.allSettled(pending);
-    await engine.shutdown(); removeDir(root);
-  };
-  return { engine, task, scope, fakes, run, dispose, role, data: join(root, "data"), setReview: (input: ReviewInput) => { review = input; } };
+  const { root, repo, fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-note-continuation-", "Keep every coordinator decision", { builder: "plain", architect: "plain", reopen: "resume", controlled: true }, "ORIGINAL-NOTE-TASK");
+  try {
+    // Added role ids must obey the same result contract as their built-in counterparts.
+    const role = { ...engine.role(builtIn)!, id: `notes-${builtIn}` };
+    engine.s.roles.push(role);
+    const schema: z.ZodType<unknown> = role.result === "build" ? BuildResult : role.result === "brief" ? BriefResult : role.result === "objections" ? ObjectionsResult : ReviewResult;
+    const design = role.result === "brief" || role.result === "objections";
+    const parallel = role.result === "findings";
+    const copies = [repo, ...(peer ? [await makeProduct(join(root, "peer"))] : [])];
+    task.plan = { rationale: "Exercise the assigned role", plannerProfileId: "sol-high", stages: [{ id: "work", title: "Current work", kind: "do", roleId: role.id, profileIds: ["sol-high"] }] };
+    task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
+    task.brief = { summary: "UNCHANGED-NOTE-BRIEF", forUsers: [], areas: [], acceptance: [{ text: "Preserve every decision" }], risks: [] };
+    task.notes = initialNotes;
+    if (parallel) task.hunt = { stageId: "work", round: 1, reported: {}, profiles: { "0": "sol-high", ...(peer ? { "1": "astra-xhigh" } : {}) } };
+    const controllers: AbortController[] = [];
+    const pending: Promise<unknown>[] = [];
+    let completed: ConversationNote | undefined;
+    let review: ReviewInput | undefined;
+    const given = async (member?: string) => [
+      ...await engine["context"].sectionsFor(scope, role.id, member, undefined, undefined, review),
+      ...(design ? [{ title: "Objections from the design reviewer", body: "UNCHANGED-DESIGN-OBJECTION" }, { title: "The coordinator's call", body: "UNCHANGED-DESIGN-CALL" }] : []),
+    ];
+    const run = async (resume?: ConversationNote, seat = 0, earlier: readonly StepNote[] = []) => {
+      if (!parallel && fakes.received().length) engine.finishStep(scope);
+      if (earlier.length) {
+        task.stepNotes = earlier.map(entry => ({ ...entry }));
+        scope.work.stepAttempts = 1;
+      }
+      const index = fakes.received().length;
+      const controller = new AbortController(); controllers.push(controller);
+      const profile = seat ? "astra-xhigh" : "sol-high";
+      task.state = "running"; task.holdsSlot = true;
+      task.agent = { roleId: role.id, profileId: "sol-high", since: Date.now(), step: 0 };
+      const result = parallel
+        ? engine["turns"].parallel(scope, role.id, profile, copies[seat]!, () => given(`review-${seat}`), schema, controller.signal,
+          { key: String(seat), member: `review-${seat}`, reviewerKey: String(seat), seat: profile, reviewContext: true, ...(review ? { reviewFindings: review.findings } : {}), ...(resume ? { resume } : {}), completed: saved => { completed = structuredClone(saved); } })
+        : engine["turns"].turn(scope, role.id, "sol-high", () => given(), schema, controller.signal, { ...(resume ? { resume } : {}), ...(design ? { designContext: true } : {}) });
+      pending.push(result); result.catch(() => {});
+      const opening = await waitFor(() => fakes.received()[index], "the recorded note opening", undefined, { during: result });
+      writeFileSync(join(fakes.dir, `release-${opening.session}`), "go");
+      await result;
+      const saved = structuredClone(parallel ? completed! : scope.work.conversation!);
+      const input = task.journey!.at(-1)!.agentInputs!.at(-1)!;
+      expect(readFileSync(input.exact!.file, "utf8")).toBe(opening.text);
+      return { opening, saved, input };
+    };
+    const dispose = async () => {
+      controllers.forEach(controller => controller.abort());
+      await Promise.allSettled(pending);
+      await close();
+    };
+    return { engine, task, scope, fakes, run, dispose, role, data: join(root, "data"), setReview: (input: ReviewInput) => { review = input; } };
+  } catch (error) { await close(); throw error; }
 }
 
 function completeNotes(saved: ConversationNote, notes: readonly ReturnType<typeof note>[]) {

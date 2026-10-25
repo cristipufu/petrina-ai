@@ -24,7 +24,7 @@ import type { DeveloperToolsResult, Which } from "@petrina/repositories/tool-rea
 import type { MachineRecords } from "./check-interruption.js";
 import { Store } from "@petrina/storage/store";
 import { stopCheckProgress, type HistoryQuery, type HistoryPage } from "@petrina/core";
-import { detectTerminals, type FoundTerminal, thisMachine } from "./terminal.js";
+import { detectTerminals, type FoundTerminal, thisMachine } from "@petrina/agent-runtime/terminal";
 import { restoreProfileCatalog } from "@petrina/core";
 import { ADAPTERS, detectTools, ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import type { ModelAtCapacity, UsageInfo, UsageLimited } from "@petrina/agent-runtime/usage";

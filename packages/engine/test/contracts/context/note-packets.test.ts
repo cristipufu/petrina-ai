@@ -1,13 +1,13 @@
+import { coordinatorPacketState } from "../../fixtures/coordinator-packets.js";
 import { expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import * as files from "node:fs/promises";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { BUILT_IN_ROLES, createDemoState, type BuilderContext, type Role, type Task } from "@petrina/core";
-import { builderContext } from "../src/builder-context.js";
-import { coordinatorNotes, type Section } from "../src/context.js";
-import type { MTask } from "../src/kernel.js";
-import { executionFor, repositoryView, restoreRepositoryState } from "@petrina/orchestrator";
-import { removeDir, tempDir } from "./fixtures.js";
+import { type BuilderContext, type Role, type Task } from "@petrina/core";
+import { builderContext } from "../../../src/builder-context.js";
+import { coordinatorNotes, type Section } from "../../../src/context.js";
+import { repositoryView } from "@petrina/orchestrator";
+import { removeDir, tempDir } from "../../fixtures.js";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 type Note = NonNullable<Task["notes"]>[number];
@@ -17,14 +17,11 @@ const noteSection = (sections: readonly Section[]) => sections.find(section => s
 
 function fixture() {
   const root = tempDir("coordinator-note-context-");
-  const task = structuredClone(createDemoState(1_000_000_000).tasks[0]!) as unknown as MTask;
-  restoreRepositoryState(task);
+  const { task, scope, role } = coordinatorPacketState();
   task.notes = []; task.queued = []; task.stepNotes = [];
-  const scope = executionFor(task);
-  const role = BUILT_IN_ROLES.find(entry => entry.result === "build")!;
   const sections = (member?: string, earlierCarried = false) => coordinatorNotes(scope, member, earlierCarried);
   const prepare = (previous?: BuilderContext, options: { sessionId?: string; role?: Role; member?: string; earlierCarried?: boolean; design?: boolean } = {}) => builderContext(root, repositoryView(scope), options.role ?? role, options.sessionId ?? "own-conversation", sections(options.member, options.earlierCarried), previous, { design: options.design });
-  const setNotes = (notes: readonly Note[]) => { task.notes = structuredClone(notes) as NonNullable<MTask["notes"]>; };
+  const setNotes = (notes: readonly Note[]) => { task.notes = structuredClone(notes) as NonNullable<typeof task.notes>; };
   return { root, task, scope, role, sections, prepare, setNotes };
 }
 

@@ -12,7 +12,7 @@ import type { Role } from "@petrina/core";
 import type { RuntimeTask } from "@petrina/orchestrator";
 import type { RelatedCheckEvidenceHost } from "./related-check-evidence.js";
 import type { GuideKeeper } from "./guide-keeper.js";
-import { backgroundMessage } from "./messages.js";
+import { backgroundMessage } from "@petrina/core";
 import { currentSourcePointers } from "@petrina/repositories/source-pointers";
 import type { ReviewInput } from "./review-context.js";
 import * as git from "@petrina/repositories/git";

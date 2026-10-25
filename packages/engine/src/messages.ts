@@ -1,111 +1,8 @@
 // Coordinator instructions belong to durable participant seats, never a process or profile.
-import { addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
+import { messageMember, settleInterruptedMessageDeliveries, unresolvedMessage, removeHeardMessages, addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
 import { Aborted, type Kernel, type MTask } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import type { TurnResult, AgentSession } from "@petrina/orchestrator";
-
-export const messageMember = (member?: string) => member ?? "main";
-
-/** A resolved delivery decision preserves task guidance without certifying it was heard. */
-export function backgroundMessage(task: MTask, id: string | undefined, member?: string): boolean {
-  const message = task.queued.find(message => message.id === id);
-  const key = messageMember(member);
-  const state = message?.deliveries?.[key]?.state;
-  return !message || (message.recipients?.[key] === true && (state === undefined || state === "applied" || state === "skipped"));
-}
-
-const unresolved = (message: QueuedMessage, member: string) => {
-  const state = message.deliveries?.[member]?.state;
-  return state === "sending" || state === "accepted" || state === "unconfirmed";
-};
-
-/**
- * A prompt reservation is not a live acceptance. One the agent was already given counts as heard.
- * One that never started can go out with the next prompt. Live input still in flight stays
- * unconfirmed and is not sent again. `member` limits this to one participant, so a peer's
- * reservation for a prompt it is about to send is left alone.
- */
-function settleInterruptedDeliveries(task: MTask, member?: string): boolean {
-  let changed = false;
-  for (const message of task.queued) {
-    for (const [key, receipt] of Object.entries(message.deliveries ?? {})) {
-      if (member !== undefined && key !== member) continue;
-      if (receipt.state !== "sending") continue;
-      if (receipt.via === "prompt") {
-        if (receipt.sessionId) {
-          receipt.state = "applied";
-          (message.recipients ??= {})[key] = true;
-        } else delete message.deliveries![key];
-      } else {
-        receipt.state = "unconfirmed";
-        receipt.reason ??= "unknown";
-      }
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-export function recoverMessages(task: MTask): void {
-  for (const message of task.queued) {
-    // Older grouped messages already wrote the first delivery to the transcript.
-    if (message.recorded === undefined && Object.values(message.recipients ?? {}).some(Boolean)) message.recorded = true;
-  }
-  // No prompt is still running: every leftover reservation belongs to the attempt that died.
-  settleInterruptedDeliveries(task);
-  for (const message of task.queued) {
-    for (const receipt of Object.values(message.deliveries ?? {})) {
-      if (receipt.state === "accepted" || receipt.state === "unconfirmed") receipt.reason ??= "unknown";
-    }
-  }
-  for (const step of task.journey ?? []) for (const input of step.agentInputs ?? []) for (const update of input.updates ?? []) {
-    if (update.delivery === "sending") update.delivery = "unconfirmed";
-  }
-}
-
-export function routeMessages(task: MTask, members: readonly string[]): void {
-  if (!members.length) return;
-  for (const message of task.queued) {
-    const recipients = message.recipients ??= {};
-    for (const [member, heard] of Object.entries(recipients)) {
-      if (!heard && !unresolved(message, member) && !members.includes(member)) {
-        delete recipients[member];
-        if (message.deliveries) delete message.deliveries[member];
-      }
-    }
-    for (const member of members) recipients[member] ??= false;
-  }
-}
-
-function removeHeard(task: MTask): void {
-  task.queued = task.queued.filter(message => !message.recipients || !Object.values(message.recipients).every(Boolean));
-}
-
-/** Skipped seats can retire only instructions the provider does not own. */
-export function finishMessageGroup(task: MTask, members: readonly string[]): void {
-  for (const message of task.queued) for (const member of members) {
-    if (message.recipients && !unresolved(message, member)) delete message.recipients[member];
-  }
-  removeHeard(task);
-}
-
-/** Reserve ordinary prompt input. Keep it durable until that tracked prompt acknowledges it. */
-export function takeMessages(task: MTask, member?: string, limit = 12_000): (QueuedMessage & { firstDelivery: boolean })[] {
-  const key = messageMember(member);
-  const batch: (QueuedMessage & { firstDelivery: boolean })[] = [];
-  let size = 0;
-  for (const message of task.queued) {
-    if (!message.recipients && member === undefined) message.recipients = { [key]: false };
-    if (message.recipients?.[key] !== false) continue;
-    if (unresolved(message, key)) break;
-    if (batch.length && size + message.text.length > limit) break;
-    const firstDelivery = !message.recorded && !task.session.some(line => line.coordinatorMessageId === message.id);
-    (message.deliveries ??= {})[key] = { state: "sending", via: "prompt" };
-    batch.push({ ...message, firstDelivery });
-    size += message.text.length;
-  }
-  return batch;
-}
 
 export function recordMessage(k: Kernel, scope: RepositoryContext, message: QueuedMessage, via: "prompt" | "live" = "prompt"): void {
   const saved = scope.task.queued.find(entry => entry.id === message.id);
@@ -127,9 +24,9 @@ export async function holdUnconfirmed(k: Kernel, scope: RepositoryContext, membe
   const { task } = scope;
   const key = messageMember(member);
   // Only this participant. A peer may still be reserving its own prompt.
-  if (settleInterruptedDeliveries(task, key)) k.commitNow(scope);
+  if (settleInterruptedMessageDeliveries(task, key)) k.commitNow(scope);
   for (const message of task.queued) {
-    if (!unresolved(message, key)) continue;
+    if (!unresolvedMessage(message, key)) continue;
     const receipt = message.deliveries![key]!;
     const work = reviewKey ? task.hunt?.work?.[reviewKey] : undefined;
     const by = reviewKey ? [task.agent, ...(task.helpers ?? [])].find(agent => agent?.reviewKey === reviewKey) : task.agent;
@@ -192,7 +89,7 @@ export async function holdUnconfirmed(k: Kernel, scope: RepositoryContext, membe
       k.commitNow(scope);
     }
   }
-  removeHeard(task);
+  removeHeardMessages(task);
 }
 
 /** A queued instruction on the live task, writable the same way ordinary prompt handoff writes it. */
@@ -245,7 +142,7 @@ export class MessageTurn {
     this.run.onPromptStarted = undefined;
     // Pause and stop still know which messages joined. A crash never gets here, so that acceptance stays unconfirmed.
     const heard = this.hearJoined();
-    if (settleInterruptedDeliveries(this.scope.task, this.member) || heard) this.k.commitNow(this.scope);
+    if (settleInterruptedMessageDeliveries(this.scope.task, this.member) || heard) this.k.commitNow(this.scope);
     const lanes = this.k.messageTurns.get(this.scope.task.id);
     if (lanes?.get(this.member) === this) lanes.delete(this.member);
     if (!lanes?.size) this.k.messageTurns.delete(this.scope.task.id);
@@ -265,7 +162,7 @@ export class MessageTurn {
       const prior = message.deliveries?.[this.member];
       if (prior?.state === "sending" && prior.via === "prompt") continue;
       if (this.joined.has(message.id)) continue;
-      if (unresolved(message, this.member)) return;
+      if (unresolvedMessage(message, this.member)) return;
       // A waiting earlier instruction must not be overtaken by a later live one.
       if (message.mode !== "now" || this.attempted.has(message.id)) return;
       return message;
@@ -328,7 +225,7 @@ export class MessageTurn {
         if (!receipt || !this.joined.has(message.id)) continue;
         this.markHeard(message);
       }
-      removeHeard(this.scope.task);
+      removeHeardMessages(this.scope.task);
       this.joined.clear();
       this.k.commitNow(this.scope);
     }
@@ -355,7 +252,7 @@ export class MessageTurn {
       heard = true;
     }
     this.joined.clear();
-    if (heard) removeHeard(this.scope.task);
+    if (heard) removeHeardMessages(this.scope.task);
     return heard;
   }
 }

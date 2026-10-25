@@ -19,7 +19,7 @@ import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
 import type { Learnings } from "./learnings.js";
-import { finishMessageGroup, routeMessages } from "./messages.js";
+import { finishMessageGroup, routeMessages } from "@petrina/core";
 import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBases, reviewBaseUpdates, reviewContextIntact, reviewScopeKey, type ReviewInput } from "./review-context.js";
 import { participantConversation, ParticipantUnavailable } from "./participant-conversation.js";

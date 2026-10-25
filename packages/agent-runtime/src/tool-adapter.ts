@@ -54,7 +54,7 @@ export interface ToolAdapter {
     /** Native startup reads may have a different refresh cadence. */
     startGapMs?: number;
   };
-  terminalArgs?: (input: { session: string; model: string; effort: string; mode: string }) => string[];
+  terminalArgs?: import("./terminal-arguments.js").TerminalArgumentFormatter;
   id: string;
   name: string;
   /** The adapter's entry point, resolved from node_modules. Unset when `command` is the agent itself. */

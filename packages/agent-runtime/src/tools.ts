@@ -1,4 +1,5 @@
 import { grokToolMetadata } from "./grok-report.js";
+import { claudeTerminalArguments, codexTerminalArguments, grokTerminalArguments } from "./terminal-arguments.js";
 import { createRequire } from "node:module";
 import type { AgentProfile, Tool } from "@petrina/core";
 import type { ToolAdapter } from "./tool-adapter.js";
@@ -30,7 +31,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
       const claude = meta.claudeCode as { options?: Record<string, unknown> } | undefined;
       return { ...meta, claudeCode: { ...claude, options: { ...claude?.options, ...await claudeBackground(cwd) } } };
     },
-    terminalArgs: ({ session, model, effort, mode }) => ["--resume", session, "--model", model, "--effort", effort, "--permission-mode", mode],
+    terminalArgs: claudeTerminalArguments,
     id: "claude-code",
     name: "Claude Code",
     entry: "@agentclientprotocol/claude-agent-acp/dist/index.js",
@@ -57,7 +58,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
       env.CODEX_PATH = env.PETRINA_CODEX_WRAPPER = join(import.meta.dir, "codex-background.ts");
     },
     usageReader: { command: () => CODEX_USAGE_COMMAND, create: options => new CodexUsage(options), startGapMs: 0 },
-    terminalArgs: ({ session, model, effort }) => ["resume", session, "--model", model, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=user", "--no-daemon"],
+    terminalArgs: codexTerminalArguments,
     id: "codex",
     name: "Codex",
     entry: "@agentclientprotocol/codex-acp/dist/index.js",
@@ -79,7 +80,7 @@ export const ADAPTERS: Readonly<Record<string, ToolAdapter>> = {
     parseTurnReport: grokTurnReport,
     toolMetadata: grokToolMetadata,
     usageReader: { command: () => ADAPTERS.grok!.command!, create: options => new GrokUsage(options) },
-    terminalArgs: ({ session, model, effort }) => ["--resume", session, "--model", model, "--effort", effort],
+    terminalArgs: grokTerminalArguments,
     id: "grok",
     name: "Grok",
     cli: "grok",
