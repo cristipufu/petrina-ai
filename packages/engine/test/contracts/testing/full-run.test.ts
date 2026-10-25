@@ -79,6 +79,25 @@ it("resolves the copied runner's dependencies from the engine's own install", as
     expect(realpathSync.native(dirname(Bun.resolveSync(`${name}/package.json`, copy)))).toBe(folder);
   }
 });
+it("keeps inherited resource settings from profiling or overwriting a nested runner fixture", async () => {
+  const root = await fixture(), resources = tempDir("petrina-resource-parent-"); roots.push(resources);
+  const result = await runCommand(command(root), { cwd: root, env: { ...environment(), PETRINA_TEST_RESOURCE_DIR: resources, PETRINA_TEST_RESOURCE_PARENT: "0" } });
+  expect(result.code, result.stderr).toBe(0);
+  expect(recorded(root, result.stdout).report.mode).toBe("observation");
+  expect(existsSync(join(resources, "expected-files.json"))).toBe(false);
+  expect(existsSync(join(resources, "source.json"))).toBe(false);
+});
+it("marks a directly requested resource run as diagnostic without publishing required timing updates", async () => {
+  const root = await fixture(), resources = tempDir("petrina-resource-direct-"); roots.push(resources);
+  const result = await runCommand(command(root), { cwd: root, env: { ...environment(), PETRINA_TEST_RESOURCE_DIR: resources, PETRINA_TEST_RESOURCE_PARENT: String(process.pid) } });
+  expect(result.code, result.stderr).toBe(0);
+  const evidence = recorded(root, result.stdout);
+  expect(evidence.report).toMatchObject({ mode: "resource-diagnostic", deliveryEligible: false, scope: "complete", stableInputs: true });
+  expectRuns(evidence.ran, true);
+  expect(JSON.parse(readFileSync(join(resources, "expected-files.json"), "utf8"))).toHaveLength(TEST_WORKSPACES.length);
+  expect(JSON.parse(readFileSync(join(resources, "source.json"), "utf8")).fingerprint).toBe(evidence.report.source.fingerprint);
+  expect(existsSync(join(evidence.folder, "timing-cache-updates.json"))).toBe(false);
+});
 it("runs every package with one native execution, complete manifests and a private environment", async () => {
   const { ran, report, summary, environments } = await run({}, 0); expectRuns(ran, true);
   expect({ mode: report.mode, scope: report.scope, stableInputs: report.stableInputs, interrupted: report.interrupted }).toEqual({ mode: "observation", scope: "complete", stableInputs: true, interrupted: undefined });

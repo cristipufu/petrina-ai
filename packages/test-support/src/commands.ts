@@ -90,6 +90,8 @@ export interface CommandOptions {
   processList?: ProcessListRead;
   /** Observe decoded output while the command runs. Callbacks stay synchronous. */
   onOutput?: (text: string, stream: "stdout" | "stderr") => undefined;
+  /** Stream to onOutput without also retaining a second unbounded copy. Requires the observer. */
+  retainOutput?: boolean;
   /** Capture and observe output, or inherit the caller's descriptors without buffering. Default: capture. */
   output?: "capture" | "inherit";
 }
@@ -100,6 +102,7 @@ export interface CommandResult {
   signal?: string;
   stdout: string;
   stderr: string;
+  outputRetained?: false;
 }
 
 /**
@@ -136,6 +139,7 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
   if (!(timeoutMs > 0 && timeoutMs <= 2_147_483_647)) return Promise.reject(new RangeError(`${what} needs a deadline between 1 and 2147483647 ms, not ${timeoutMs}`));
   if (options.output !== undefined && options.output !== "capture" && options.output !== "inherit") return Promise.reject(new RangeError(`${what} needs capture or inherit output`));
   if (options.output === "inherit" && options.onOutput) return Promise.reject(new RangeError(`${what} needs captured output for an output observer`));
+  if (options.retainOutput === false && !options.onOutput) return Promise.reject(new RangeError(`${what} needs an output observer when output is not retained`));
   if (options.signal?.aborted) return Promise.reject(new CommandFailure(`${what} was cancelled before it started, in ${where}`, "cancelled"));
   const windows = !host.groups;
   let child: Started;
@@ -159,7 +163,7 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
     const finish = () => {
       if (settled || exit === undefined || !closed.every(Boolean)) return;
       settle();
-      resolve({ code: exit, ...(child.signalCode ? { signal: child.signalCode } : {}), stdout: output[0]!, stderr: output[1]! });
+      resolve({ code: exit, ...(child.signalCode ? { signal: child.signalCode } : {}), stdout: output[0]!, stderr: output[1]!, ...(options.retainOutput === false ? { outputRetained: false as const } : {}) });
     };
     const fail = (reason: FailureReason, detail: string) => {
       if (settled) return;
@@ -189,7 +193,7 @@ export function runCommand(argv: readonly string[], options: CommandOptions = {}
       const decoder = new TextDecoder();
       void (async () => {
         const append = (text: string) => {
-          output[index] += text;
+          if (options.retainOutput !== false) output[index] += text;
           if (text) options.onOutput?.(text, index ? "stderr" : "stdout");
         };
         for (;;) {

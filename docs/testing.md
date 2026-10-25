@@ -52,6 +52,8 @@ This selector belongs to Petrina's Bun/Vitest repository. The generic engine doe
 
 ## Shared-host load diagnostics
 
+For repeatable resource diagnostics, see [measuring test cost](testing/resources.md). `bun run test:resources` observes the unchanged full selection and normal workers; its reports cannot authorize delivery.
+
 Ordinary focused tests and diagnostics, Petrina's required checks and the normal parallel full run need no extra permission. Deliberate host stress does: CPU busy loops, memory or disk fillers, process floods or many concurrent copies of a test can disrupt every task on the computer, even when investigating one focused test and bounded in time. The default test run must never deliberately saturate the host. A test needing real contention uses an isolated environment with hard CPU, memory and process limits (and relevant disk/I/O limits), or an explicit opt-in like the native browser tests' `PETRINA_BROWSER_CHECK`; opting in does not authorize host stress.
 
 Prefer controlled release signals, fault injection or that hard-limited isolation when they prove the same behavior. Keep real native deadline and process-cleanup coverage where it is needed; fake-only success cannot replace it. If only real load on this computer can prove the behavior, ask through the existing `needsInput` Inbox question and wait for the coordinator to arrange a suitable window. State what resources will be loaded, the load and process caps, duration, cleanup, what else could slow down and what the safer approaches cannot prove. Never poll other tasks' processes to claim spare capacity or treat a quiet process list or low load as permission.

@@ -49,6 +49,12 @@ const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).tri
 const [head, tree] = revision.split("\n");
 const source = { head, tree, fingerprint: plan.fingerprint, clean: !(await readGit(ROOT, ["status", "--porcelain=v1", "--untracked-files=normal"])).trim() };
 const environment = { platform: process.platform, arch: process.arch, bun: Bun.version };
+// Nested runner fixtures inherit diagnostic variables, but only the command's direct child is profiled.
+const resources = process.env.PETRINA_TEST_RESOURCE_PARENT === String(process.ppid) ? process.env.PETRINA_TEST_RESOURCE_DIR : undefined;
+if (resources) {
+  writeFixtureJson(join(resources, "expected-files.json"), expectedFiles, 2);
+  writeFixtureJson(join(resources, "source.json"), source, 2);
+}
 console.log(`Affected-test observation: ${plan.selected.length}/${plan.total} candidates; it never changes which tests run. Order: ${PRELIMINARY.map(workspace => suite(workspace.path)).join(" and ")}, then one native pool only if they pass. Reports: ${relative(ROOT, folder)}`);
 const coordinator = new SuiteCoordinator(REQUIRED_EXECUTIONS, { revision, fingerprint: plan.fingerprint });
 const details = new Map<string, { durationHints?: TimingHintUse }>();
@@ -70,6 +76,7 @@ try {
     }
     return executeTests(execution, { root: ROOT, folder, expectedFiles, env: owned.env, signal: controller.signal,
       ...(native ? { timings } : {}),
+      ...(resources ? { resources } : {}),
     });
   }, controller.signal);
   finished = true;
@@ -80,8 +87,8 @@ try {
     const executions = records.executions.map(execution => ({ ...execution, ...details.get(execution.id) }));
     const results = records.results;
     const { complete, stableInputs: stable, successful } = coordinator.conclusion({ fingerprint: fingerprint(await inputs(ROOT)), revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() }, interrupted !== undefined);
-    writeFixtureJson(join(folder, "results.json"), { mode: "observation", scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), executions, results }, 2);
-    if (successful) {
+    writeFixtureJson(join(folder, "results.json"), { mode: resources ? "resource-diagnostic" : "observation", ...(resources ? { deliveryEligible: false } : {}), scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), executions, results }, 2);
+    if (successful && !resources) {
       const updates = timingOutput ? [{ executionId: NATIVE_SCOPE.id, ...keepTestTimings(ROOT, NATIVE_SCOPE, timingOutput, expectedFiles) }] : [];
       try { writeFixtureJson(join(folder, "timing-cache-updates.json"), updates, 2); }
       catch (error) { console.error(`Could not record optional duration-hint updates: ${error instanceof Error ? error.message : String(error)}`); }

@@ -26,7 +26,7 @@ Do not add Petrina security or sandboxing mechanisms unless the task is about th
 - Use portable fixture APIs. Keep behavior specific to an OS behind shared adapters with native contract tests; workflow tests reuse those adapters.
 - Test the smallest owner that proves the behavior, under `test/<layer>/<area>/` as defined in [test layers](docs/testing/layers.md). Rules use data; controllers use scripted effects; boundary tests exercise the real adapter; representative journeys prove integration. Use `test/scripted-agents.ts` for workflow responses and `test/scripted-probes.ts` for explicit readiness observations when probing is unrelated. Native ACP/process fixtures retain transport, login, permissions and cleanup coverage. Split mixed responsibilities; omit unrelated workflow setup.
 - Reuse immutable fixture data through existing helpers, with separate writable repositories and engine state per test. Use controlled clocks, signals or release events for time-independent decisions; keep real waits for assertions about deadlines and process termination. Progress waits must observe the owning operation when available, so a failed or completed operation cannot leave a fixture waiting for impossible progress.
-- Measure expensive new tests and fixture changes in the fully parallel suite. Preserve assertions, isolation and worker counts; do not hide costs or flakes with retries, skips or shorter production deadlines.
+- Measure expensive new tests and fixture changes in the fully parallel suite; `bun run test:resources` provides opt-in diagnostics ([metric limits](docs/testing/resources.md)). Preserve assertions, isolation and worker counts; do not hide costs or flakes with retries, skips or shorter production deadlines.
 
 ## Keeping instructions useful
 

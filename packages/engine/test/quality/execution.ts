@@ -6,6 +6,7 @@ import { runProcess, SUITE_RUN_TIMEOUT_MS } from "@petrina/test-support/run-proc
 import { testCommand } from "@petrina/test-support/run";
 import { CommandFailure } from "@petrina/test-support/commands";
 import { NATIVE_SCOPE } from "./required-plan.js";
+import { fileURLToPath } from "node:url";
 
 export interface TestExecution {
   root: string;
@@ -17,6 +18,8 @@ export interface TestExecution {
   files?: readonly string[];
   /** Only the complete run owns required-suite duration hints. */
   timings?: string;
+  /** Opt-in observers; diagnostic results never establish delivery evidence. */
+  resources?: string;
 }
 
 /** Native execution and complete report verification, shared without sharing delivery policy. */
@@ -36,12 +39,14 @@ export async function executeTests(execution: SuiteExecution, options: TestExecu
   const selectors = options.files ? options.files.map(selector)
     : native ? execution.workspaces.map(workspace => selector(`${workspace}/test`)) : [];
   const command = native ? testCommand([...selectors, "--reporter=junit", `--reporter-outfile=${output}`,
+    ...(options.resources ? ["--preload", fileURLToPath(import.meta.resolve("@petrina/test-support/resources/preload"))] : []),
     ...(options.timings ? [`--timings=${options.timings}`, "--update-timings"] : [])])
-    : [process.execPath, "--no-env-file", "run", "test", ...selectors, "--reporter=json", `--outputFile=${output}`];
+    : [process.execPath, "--no-env-file", "run", "test", ...selectors, "--reporter=json", `--outputFile=${output}`,
+      ...(options.resources ? [`--reporter=${fileURLToPath(import.meta.resolve("@petrina/test-support/resources/vitest-reporter"))}`, "--logHeapUsage"] : [])];
   const start = performance.now();
   let code: number | null = null, executionError: string | undefined;
   try {
-    const outcome = await runProcess(command, { cwd, env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal, output: "inherit" });
+    const outcome = await runProcess(command, { cwd, env: options.resources ? { ...env, PETRINA_TEST_RESOURCE_DIR: options.resources } : env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal, output: "inherit" });
     code = outcome.result.code;
   } catch (error) {
     if (!(error instanceof CommandFailure)) throw error;
