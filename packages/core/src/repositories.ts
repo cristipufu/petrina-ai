@@ -23,6 +23,11 @@ export function taskProductIds(task: Pick<Task, "productId" | "repositories" | "
   return [...new Set(ids.filter(Boolean))];
 }
 
+/** Source hints name retained approved owners, never an unapproved product proposal. */
+export function hintProducts(task: Pick<Task, "productId" | "repositories">): Id[] {
+  return task.repositories ? task.repositories.filter((work) => !work.removed).map((work) => work.productId) : [task.productId];
+}
+
 export function involvesProduct(task: Parameters<typeof taskProductIds>[0], productId: Id): boolean {
   return taskProductIds(task).includes(productId);
 }

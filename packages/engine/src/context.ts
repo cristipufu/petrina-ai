@@ -2,7 +2,7 @@ import { repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
 // contract (roles.ts) says which parts it reads, and they always appear in the same order.
 
-import { builderFindings, dueAnswers, exhaustedAcceptanceFailure, followingCall, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
+import { builderFindings, dueAnswers, exhaustedAcceptanceFailure, followingCall, hintProducts, openFollowUpCards, workSummary, type Id, type StepNote, type Task } from "@petrina/core";
 import { formatFindings, formatObjections } from "./prompts.js";
 import { checksFor, commandText } from "./checks.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
@@ -10,7 +10,7 @@ import { CONTEXT_PARTS, contractFor, type ContextPart } from "./roles.js";
 import type { Kernel } from "./kernel.js";
 import type { GuideKeeper } from "./guide-keeper.js";
 import { backgroundMessage } from "./messages.js";
-import { currentSourcePointers, hintProducts } from "./source-pointers.js";
+import { currentSourcePointers } from "./source-pointers.js";
 import type { ReviewInput } from "./review-context.js";
 import * as git from "./git.js";
 import { verificationContext } from "./verification-context.js";

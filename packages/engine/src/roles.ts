@@ -4,11 +4,9 @@
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
 import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, stepOf, followingCall, VERIFIER_RULES, type Role, type Task } from "@petrina/core";
+import { ACCEPTANCE_EVIDENCE_RULE, workflowRoles, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, hintProducts, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, stepOf, followingCall, VERIFIER_RULES, type Role, type Task } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
-import { ADAPTERS } from "./tools.js";
 import { WorkChoiceSchema } from "./source-schema.js";
-import { hintProducts } from "./source-pointers.js";
 
 const acceptanceStart = ({ task }: PromptContext) => {
   const owed = owedAcceptanceTest(task);
@@ -291,7 +289,7 @@ export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
     instructions: ctx => ROLE_CONTRACTS.planner!.withInstructions!(ctx, ctx.role.instructions),
     withInstructions: (ctx, wording) => {
       const roles = plannerRoles(ctx.roles);
-      const toolName = (toolId: string) => ADAPTERS[toolId]?.name ?? toolId;
+      const toolName = (toolId: string) => ctx.tools.find(tool => tool.id === toolId)?.name ?? toolId;
       const profiles = ctx.profiles.filter((profile) => !profile.standby).map((profile) => `- ${profile.id}: ${toolName(profile.toolId)} running ${profile.model} at ${profile.effort} effort`).join("\n");
       const tools = [...new Set(ctx.profiles.map((profile) => profile.toolId))];
       const oneTool = tools.length === 1 ? `\n- Only ${toolName(tools[0]!)} is set up on this machine: put every stage on its profiles, reviewers included, even where a rule above asks for different tools.` : "";

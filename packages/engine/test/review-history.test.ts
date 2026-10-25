@@ -62,7 +62,7 @@ async function supplied(f: Awaited<ReturnType<typeof fixture>>, input: ReviewInp
   const sections = await f.context.sectionsFor(f.scope, role.id, member, undefined, undefined, input);
   return (await f.engine["turns"]["prepareTurnPrompt"](f.scope, role, `fresh-${member}`, sections, undefined, { packet: true, findings: input.findings })).sections;
 }
-const opening = (f: Awaited<ReturnType<typeof fixture>>, sections: readonly Section[]) => buildPrompt({ task: repositoryView(f.scope), product: f.engine.s.products[0]!, role, roles: f.engine.s.roles, profiles: f.engine.s.profiles, worktree: f.repo, branch: "task", base: "main", defaultBranch: "main", sections });
+const opening = (f: Awaited<ReturnType<typeof fixture>>, sections: readonly Section[]) => buildPrompt({ task: repositoryView(f.scope), product: f.engine.s.products[0]!, role, roles: f.engine.s.roles, profiles: f.engine.s.profiles, tools: f.engine.s.tools, worktree: f.repo, branch: "task", base: "main", defaultBranch: "main", sections });
 function journeyCharacters(f: Awaited<ReturnType<typeof fixture>>, before: readonly Section[], after: readonly Section[], mode = "fresh") {
   const step = f.task.journey!.at(-1)!;
   const inputs = (supplied: readonly Section[]) => [0, 1, 2].map(i => ({ mode, roleId: role.id, profileId: stage.profileIds[i]!, reviewerKey: String(i), taskTitle: f.task.title, reviewInput: step.reviewInput, sections: supplied.map(({ title, body }) => ({ title, body })) }));
@@ -78,7 +78,7 @@ function measure(name: string, f: Awaited<ReturnType<typeof fixture>>, sections:
   return { before, after };
 }
 function measureWarm(name: string, f: Awaited<ReturnType<typeof fixture>>, beforeSections: readonly Section[], afterSections: readonly Section[]) {
-  const ctx = { task: repositoryView(f.scope), product: f.engine.s.products[0]!, role, roles: f.engine.s.roles, profiles: f.engine.s.profiles, worktree: f.repo, branch: "task", base: "main", defaultBranch: "main" };
+  const ctx = { task: repositoryView(f.scope), product: f.engine.s.products[0]!, role, roles: f.engine.s.roles, profiles: f.engine.s.profiles, tools: f.engine.s.tools, worktree: f.repo, branch: "task", base: "main", defaultBranch: "main" };
   const before = continuePrompt({ ...ctx, sections: beforeSections }).length, after = continuePrompt({ ...ctx, sections: afterSections }).length;
   const saved = journeyCharacters(f, beforeSections, afterSections, "continued");
   console.log(`History characters ${name}: opening ${before} -> ${after}; serialized journey round (3 fixture seats) ${saved.before} -> ${saved.after}; complete packet available, no shortened entries supplied. Tokens, cost and time unmeasured.`);

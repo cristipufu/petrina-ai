@@ -1,3 +1,4 @@
+import { hintProducts } from "@petrina/core";
 import { executionFor, repositoryView } from "@petrina/orchestrator";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -9,7 +10,7 @@ import { Engine } from "./engine.js";
 import type { GuideKeeper } from "../src/guide-keeper.js";
 import type { MTask } from "../src/kernel.js";
 import { BriefResult, BuildResult, contractFor, PlanResult } from "../src/roles.js";
-import { checkSourceHints, currentSourcePointers, hintProducts } from "../src/source-pointers.js";
+import { checkSourceHints, currentSourcePointers } from "../src/source-pointers.js";
 import { Fakes, git, makeProduct, removeDir, tempDir } from "./fixtures.js";
 
 it("carries only bounded current source locations to design or a first builder, never independent reviewers", async () => {
@@ -85,7 +86,7 @@ it("names the exact registered product ids to built-in, renamed and added design
   const state = createDemoState(1_000_000_000);
   const base: Task = { ...state.tasks[0]!, productId: "petrina-ai", repositories: undefined, selectedProducts: [{ productId: "petrina-ai", startFrom: { kind: "default" }, delivery: "pull-request" }] };
   const shared: Task = { ...base, repositories: ["shop", "site", "gone"].map((productId) => ({ productId, delivery: "local", completedStages: [], ...(productId === "gone" ? { removed: true } : {}) })) };
-  const job = (role: Role, task: Task) => contractFor(role).instructions({ task, product: state.products[0]!, role, roles: BUILT_IN_ROLES, profiles: state.profiles, worktree: "/w", branch: "b", base: "origin/main", defaultBranch: "main", sections: [] });
+  const job = (role: Role, task: Task) => contractFor(role).instructions({ task, product: state.products[0]!, role, roles: BUILT_IN_ROLES, profiles: state.profiles, tools: state.tools, worktree: "/w", branch: "b", base: "origin/main", defaultBranch: "main", sections: [] });
   const architect = BUILT_IN_ROLES.find((role) => role.id === "architect")!;
   for (const role of [architect, { ...architect, name: "Designer", instructions: "Design the change." }, { ...architect, id: "added-designer", name: "Designer", added: true, instructions: "Design the change." }]) {
     expect(job(role, base)).toContain(`productId: "petrina-ai" (this task's registered product id)`);

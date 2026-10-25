@@ -32,7 +32,8 @@ import type { ContextOmission } from "./coordinator-note-context.js";
 import { recordToolActivity } from "./record-tool-activity.js";
 import { discardParticipant, ParticipantUnavailable } from "./participant-conversation.js";
 import type { ReadinessRecheck, ReadinessWait } from "@petrina/core";
-import { inputManifest, numberInputManifest, saveExactMessage } from "./exact-input.js";
+import { saveExactMessage } from "./exact-input.js";
+import { inputManifest, numberInputManifest } from "./input-manifest.js";
 
 /** Turns a valid but incomplete result into what the agent is asked to repair, or undefined when it is complete. */
 type Check<T> = (value: T) => string | undefined | Promise<string | undefined>;
@@ -547,7 +548,7 @@ export class Turns {
           findings: options.reviewFindings,
         });
         const sections = prepared.sections;
-        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole, recordJob: (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); } });
+        opening = continuePrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), tools: this.k.s.tools, worktree, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, { refreshRole: prepared.refreshRole, recordJob: (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "continued", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); } });
       } else if (picked) {
         // One line about the restart (or the hand back, or that it may now use the screen), then only what the conversation
         // has not heard: the answer to its open question, and messages still in line.
@@ -583,7 +584,7 @@ export class Turns {
         if (role.result === "findings" || (role.result === "build" || options.designContext || options.reviewContext) && repository.conversation) {
           sections = (await this.prepareTurnPrompt(scope, role, run.sessionId, sections, repository.conversation, { packet: true, findings: options.reviewFindings })).sections;
         }
-        opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); });
+        opening = buildPrompt({ task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), tools: this.k.s.tools, worktree: workingCopy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", access, sections, ...(screenWords ? { screen: screenWords } : {}) }, (job, supplied) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, "fresh", options.requestedProfileId ?? plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); });
       }
       if (screen) screen.heard = true;
       // What it is about to hear is on disk first: a restart after this does not hand it over again.
@@ -839,7 +840,7 @@ export class Turns {
       const note: ConversationNote = { ...(this.repositoryCopies.get(copy) ? { repositoryCopies: this.repositoryCopies.get(copy) } : {}), step: stepKey(task), roleId, profileId, role, access: { canEdit: role.canEdit }, toolId: profile.toolId, model: profile.modelId ?? profile.model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt: Date.now(), briefed: true };
       const prepared = await this.prepareTurnPrompt(scope, role, run.sessionId, givenSections, note, { packet: options.reviewContext, previous: wentBack ? offered?.context : undefined, findings: options.reviewFindings, supplyHistory: !capacityBack });
       const sections = prepared.sections;
-      const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
+      const promptContext = { task: repositoryView(scope), product: product as Product, role, roles: this.k.s.roles as Role[], profiles: this.usableProfiles(), tools: this.k.s.tools, worktree: copy, branch: repository.branch ?? "planning", base: repository.baseSha ?? repository.base ?? "", defaultBranch: repository.source?.start.branch ?? product.defaultBranch ?? "main", sections };
       let pending: PendingInput | undefined;
       const freshReason = wentBack || capacityBack ? undefined : offered || held ? (opened.reopenFailure ?? "the earlier review conversation was not reopened") : options.freshReason;
       const recordJob = (job: string, supplied: readonly Section[]) => { pending = this.recordJourneyInput(scope, roleId, profileId, sections, wentBack ? "continued" : "fresh", options.plannedId, options.selectionReason, options.reviewerKey, run.settings, job, { supplied, omitted: prepared.omitted, ...(freshReason ? { freshReason } : {}), sessionId: run.sessionId, ...(options.place !== undefined ? { place: options.place } : {}), ...(options.readiness ? { readiness: options.readiness } : {}) }); };

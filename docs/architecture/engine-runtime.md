@@ -27,6 +27,7 @@ Portable controllers are being extracted into `@petrina/orchestrator`, which dep
 | `turn.ts` | Agent turns and parallel members, sharing startup, callbacks, reopen fallback, context packets and screen persistence; admission remains specific to the seat owner |
 | `tool-activity.ts`, `native-tool-activity.ts`, `check-log-read.ts`, `evidence-read.ts` | Pure public descriptions with provider metadata composed at the native boundary, verified diagnostic-file reading and bounded evidence pages |
 | `roles.ts`, `context.ts`, `prompts.ts` | Role contracts, what each role is shown, and the prompt around them |
+| `input-manifest.ts`, `exact-input.ts` | Pure input-section identities/occurrences, and separately the native persistence and reading of exact messages |
 | `product-checks.ts`, `checks.ts`, `check-queue.ts` | The product's checks, check-start preparation and the shared check line |
 | `guide-keeper.ts`, `points.ts` | The review guide, and the files of points it shares with the learnings |
 | `learnings.ts`, `accepted-points.ts` | Lessons offered at delivery, written to AGENTS.md, and accepted instructions retired from the pending queue once incorporated |

@@ -3,7 +3,7 @@
 // restarts, hand backs and repairs.
 
 import { z } from "zod";
-import type { AgentProfile, Finding, Objection, Product, Role, StepNote, Task } from "@petrina/core";
+import type { AgentProfile, Finding, Objection, Product, Role, StepNote, Task, Tool } from "@petrina/core";
 import { contractFor, shapeFor } from "./roles.js";
 
 export const NeedsInput = z.object({
@@ -61,6 +61,8 @@ export interface PromptContext {
   role: Role;
   roles: readonly Role[];
   profiles: readonly AgentProfile[];
+  /** Declared display data; formatting never opens the native provider registry. */
+  tools: readonly Pick<Tool, "id" | "name">[];
   worktree: string;
   branch: string;
   base: string;

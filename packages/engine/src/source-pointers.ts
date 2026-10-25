@@ -9,11 +9,6 @@ export const SourcePointerEntry = z.object({
   path: z.string().trim().min(1).max(180).refine((path) => !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes(".."), "Use a repository-relative location"),
 }).strict();
 
-/** The products a task's hints may name now: its approved products still on it, or its one product. */
-export function hintProducts(task: Pick<Task, "productId" | "repositories">): Id[] {
-  return task.repositories ? task.repositories.filter((work) => !work.removed).map((work) => work.productId) : [task.productId];
-}
-
 /**
  * Keep the valid hints of an optional list, in order: at most eight distinct locations and versions, each naming one of
  * `productIds` exactly. Ids are never derived from a repository address or a name. Absent or null means none.

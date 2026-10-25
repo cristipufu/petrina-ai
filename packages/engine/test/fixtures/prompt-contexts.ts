@@ -1,17 +1,16 @@
-// Stable situations for comparing built-in role contracts. `today-prompts.json` retains the
+import { promptTask } from "./prompt-context.js";
+// Stable situations for comparing built-in role contracts. `role-contracts.json` retains the
 // role-editing baseline with deliberate shared-policy updates; assertions separately cover
 // newer planning and screen behavior rather than regenerating every fixture on each change.
-import { BUILT_IN_ROLES, createDemoState, DEFAULT_PROFILES, DEMO_PRODUCTS, type DeliveryMode, type Role, type Task } from "@petrina/core";
-import type { PromptContext } from "../src/prompts.js";
+import { BUILT_IN_ROLES, DEFAULT_PROFILES, DEMO_PRODUCTS, KNOWN_TOOLS, type DeliveryMode, type Role, type Task } from "@petrina/core";
+import type { PromptContext } from "../../src/prompts.js";
 
-const base: Task = {
-  ...createDemoState(1_000_000_000).tasks[0]!,
-  // The prompt fixture keeps its task wording when main changes the demo's order.
+const base = promptTask({
   title: "Guest checkout",
   description: "Let people buy without creating an account. Ask for an email so they get the receipt.",
   kind: "feature",
   risk: { level: "medium", why: "New behaviour in one part of the product." },
-};
+});
 const role = (id: string): Role => BUILT_IN_ROLES.find((entry) => entry.id === id)!;
 const SECTIONS = [{ title: "Design brief", body: "A greeting file.\n\nAcceptance checklist:\n- A greeting file exists" }];
 
@@ -22,6 +21,7 @@ function context(roleId: string, task: Task = base, sections: PromptContext["sec
     role: role(roleId),
     roles: BUILT_IN_ROLES,
     profiles: DEFAULT_PROFILES,
+    tools: KNOWN_TOOLS,
     worktree: "/tmp/worktree",
     branch: "petrina/task",
     base: "abc1234",

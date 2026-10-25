@@ -15,7 +15,7 @@ import { findingReviewCases } from "./finding-review-cases.js";
 
 const state = createDemoState(1_000_000_000);
 const task = state.tasks[0]!;
-const ctx = (overrides: Partial<PromptContext["task"]> = {}): PromptContext => ({ task: { ...task, ...overrides }, product: state.products[0]!, role: BUILT_IN_ROLES[0]!, roles: BUILT_IN_ROLES, profiles: state.profiles, worktree: "/w", branch: "b", base: "origin/main", defaultBranch: "main", sections: [] });
+const ctx = (overrides: Partial<PromptContext["task"]> = {}): PromptContext => ({ task: { ...task, ...overrides }, product: state.products[0]!, role: BUILT_IN_ROLES[0]!, roles: BUILT_IN_ROLES, profiles: state.profiles, tools: state.tools, worktree: "/w", branch: "b", base: "origin/main", defaultBranch: "main", sections: [] });
 
 describe("every role's contract", () => {
   it("supplies the approved requirements, coordinator decisions and proof rules to findings and votes roles", async () => {

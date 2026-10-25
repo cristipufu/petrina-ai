@@ -6,13 +6,13 @@ export { designConversationScope } from "./participant-conversation.js";
 // Design convergence: the architect writes the brief and a design reviewer objects, round after round,
 // until nothing blocking is left; and following the coordinator's call when the architects disagree.
 
-import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, JOURNEY_WORDS as W, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type SourcePointer, type Stage } from "@petrina/core";
+import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, hintProducts, JOURNEY_WORDS as W, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type SourcePointer, type Stage } from "@petrina/core";
 import { formatObjections } from "./prompts.js";
 import { BriefResult, ObjectionsResult } from "./roles.js";
 import { Kernel, type MStage, type MTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
-import { checkSourceHints, hintProducts } from "./source-pointers.js";
+import { checkSourceHints } from "./source-pointers.js";
 
 export class Design {
   constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
