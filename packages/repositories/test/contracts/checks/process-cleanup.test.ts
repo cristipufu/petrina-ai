@@ -138,10 +138,12 @@ setInterval(() => {}, 1000);`);
       expect(alive(sentinel.pid!)).toBe(true);
       if (outcome === "recovers") {
         expect(run!.cleanupIncomplete).toBeUndefined();
+        expect(run!.execution?.cleanup).toBe("confirmed");
         expect(run!.output).not.toContain(CLEANUP_INCOMPLETE);
         expect(captured.every((pid) => !alive(pid))).toBe(true);
       } else {
         expect(run!.cleanupIncomplete).toBe(true);
+        expect(run!.execution?.cleanup).toBe("unconfirmed");
         expect(run!.output).toContain(CLEANUP_INCOMPLETE);
         expect(captured.every(alive)).toBe(true);
       }
@@ -187,6 +189,7 @@ it.skipIf(process.platform === "win32")("settles within the grace as unknown, ke
       expect(run!.cleanupIncomplete).toBeUndefined();
       expect(run!.output).not.toContain(CLEANUP_INCOMPLETE);
       expect(run!.logComplete).toBe(true);
+      expect(run!.execution).toMatchObject({ exit: { status: "unreported" }, stdout: "eof", stderr: "eof", failure: { kind: "exit", message: CHECK_EXIT_UNREPORTED }, cleanup: "confirmed" });
     } finally {
       spawning.mockRestore();
       await defunct.release();

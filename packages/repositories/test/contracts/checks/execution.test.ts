@@ -10,6 +10,7 @@ import { childState } from "@petrina/platform/process-tree";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
 import { runChecks, checkCommandOutcome, powerLogSleep, heldMachineRecords } from "../../fixtures/check-runner.js";
+import { checkExecutionFixture } from "../../fixtures/check-execution.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 const root = (prefix: string) => { const dir = tempDir(prefix); roots.push(dir); return dir; };
@@ -66,6 +67,10 @@ it("reports what really happened: passed, failed, or could not start", async () 
     ]);
     expect(results[0]!.output).toContain("git version");
     expect(results[2]!.output).toStartWith("Could not start");
+    expect(results[0]!.execution).toMatchObject({ started: true, exit: { status: "reported", code: 0 }, stdout: "eof", stderr: "eof", cleanup: "not-requested" });
+    expect(results[1]!.execution?.exit.status).toBe("reported");
+    expect(results[1]!.execution!.exit.code).toBeGreaterThan(0);
+    expect(results[2]!.execution).toMatchObject({ started: false, exit: { status: "unreported" }, failure: { kind: "start" }, cleanup: "not-requested" });
   });
 });
 
@@ -147,21 +152,18 @@ for (const code of [0, 7]) it(`keeps the output and exit code ${code} when the c
 
 originalDescribe("a product's checks", () => {
 it("records a cancelled check without starting an environment investigation", async () => {
-    const stop = new AbortController();
-    const child = {
-      exited: Promise.resolve(1), stdout: new Response("Original diagnostic\n").body!, stderr: new Response("").body!,
-    } as Bun.Subprocess<"ignore", "pipe", "pipe">;
-    const spawning = spyOn(Bun, "spawn").mockImplementation(() => { stop.abort(); return child; });
+    const owner = await checkExecutionFixture("cancelled-before-return"), spawning = owner.spawning;
     const reads: (AbortSignal | undefined)[] = [];
     try {
-      const runs = await runChecks(root("petrina-checks-cancelled-"), [{ name: "Stopped", argv: ["stopped-check"] }, { name: "Pending", argv: ["pending-check"] }], process.env, 30_000, stop.signal, undefined, undefined, undefined, async (signal) => { reads.push(signal); return ""; });
+      const runs = await owner.run(async signal => { reads.push(signal); return ""; }, true);
       expect(runs).toHaveLength(1);
       expect(runs[0]!.ok).toBe(false);
       expect(runs[0]!.interrupted).toBe(true);
       expect(runs[0]!.output).toBe("Original diagnostic\n");
+      expect(runs[0]!.execution?.cancelled).toBe(true);
       expect(reads).toEqual([]);
       expect(spawning).toHaveBeenCalledTimes(1);
-    } finally { spawning.mockRestore(); }
+    } finally { await owner.close(); }
   });
 });
 
@@ -201,6 +203,7 @@ it("reports a check that exceeds its deadline as timed out", async () => {
     const [run] = await runChecks(dir, [{ name: "Too slow", argv: [process.execPath, "-e", "await Bun.sleep(120000)"] }], process.env, 200 * SLOW, undefined, join(dir, "logs"));
     expect(run!.ok).toBe(false);
     expect(run!.timedOut).toBe(true);
+    expect(run!.execution?.timedOut).toBe(true);
     expect(existsSync(run!.logPath!)).toBe(true);
     expect(run!.logError).toBeUndefined();
   });

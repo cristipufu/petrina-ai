@@ -82,6 +82,8 @@ it("reports a log write failure without changing whether a command passed or fai
     expect(results[1]!.output).toContain("real error");
     for (const run of results) {
       expect(run.logError).toBeTruthy();
+      expect(run.execution).toMatchObject({ stdout: "eof", stderr: "eof", cleanup: "not-requested", outputCleanup: "not-requested" });
+      expect(run.execution?.failure).toBeUndefined();
       expect(run.logPath).toBeUndefined();
       expect(run.logFileIdentity).toBeUndefined();
       expect(run.logFileLength).toBeUndefined();

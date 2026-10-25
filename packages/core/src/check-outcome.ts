@@ -1,4 +1,13 @@
-import type { CheckRun } from "./model.js";
+import type { CheckExecution, CheckRun } from "./model.js";
+
+/** Success needs complete native observations; absent or contradictory facts establish no pass. */
+export function checkExecutionPassed(execution: CheckExecution | undefined): boolean {
+  return execution !== undefined && execution.started === true && execution.exit?.status === "reported" && execution.exit.code === 0
+    && !execution.exit.signal && execution.stdout === "eof" && execution.stderr === "eof"
+    && execution.timedOut === false && execution.cancelled === false && !execution.failure
+    && (execution.cleanup === "not-requested" || execution.cleanup === "confirmed")
+    && (execution.outputCleanup === "not-requested" || execution.outputCleanup === "confirmed");
+}
 
 export const CHECK_EXIT_UNREPORTED = "The check ended, but the system did not report its exit, so whether it passed is unknown.";
 

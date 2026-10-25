@@ -1157,6 +1157,20 @@ export interface ProductCheck {
   why?: string;
 }
 
+/** Native execution observations; a diagnostic file is separate from the command's own completion. */
+export interface CheckExecution {
+  started: boolean;
+  exit: { status: "unreported" | "reported" | "rejected" | "invalid"; code?: number; signal?: string };
+  stdout: "incomplete" | "eof" | "read-error";
+  stderr: "incomplete" | "eof" | "read-error";
+  timedOut: boolean;
+  cancelled: boolean;
+  failure?: { kind: "start" | "observer" | "read" | "output" | "exit"; message: string };
+  /** Not requested on an ordinary exit: that is not proof that every descendant ended. */
+  cleanup: "not-requested" | "confirmed" | "unconfirmed";
+  outputCleanup: "not-requested" | "confirmed" | "unconfirmed";
+}
+
 /** What really happened when Petrina ran a check. */
 export interface CheckRun {
   name: string;
@@ -1166,6 +1180,8 @@ export interface CheckRun {
   startedAt?: number;
   endedAt?: number;
   source?: { stepId: Id; attemptId: string; checkId: string };
+  /** Present on newly executed commands only. Missing historical facts are never inferred from prose. */
+  execution?: CheckExecution;
   /** Confirmed machine event overlapping this execution, not an inferred failure cause. */
   interruption?: { source: "macOS power log"; at: number; event: string };
   /** The end of the command's output, as plain text. */

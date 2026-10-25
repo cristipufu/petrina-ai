@@ -3,8 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { processHost } from "@petrina/platform/process-host";
 import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { CheckRun, ProductCheck } from "@petrina/core";
-import { commandText, staticCheck, tidyOutput, CHECK_EXIT_UNREPORTED } from "@petrina/core";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
+import type { CheckExecution, CheckRun, ProductCheck } from "@petrina/core";
+import { checkExecutionPassed, commandText, staticCheck, tidyOutput, CHECK_EXIT_UNREPORTED } from "@petrina/core";
 import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit, waitForProcessesToEnd } from "@petrina/platform/process-tree";
 import { livePowerRecords, machineInterruption, type MachineRecords } from "@petrina/platform/power-log";
 
@@ -56,7 +57,7 @@ export async function runChecks(
       ].filter(Boolean).join("\n");
       const finished: CheckRun = {
         ...result,
-        ok: !run.error && run.postStartError === undefined && !run.timedOut && !signal?.aborted && run.code === 0,
+        ok: !signal?.aborted && checkExecutionPassed(run.execution), execution: run.execution,
         ...(log ? { logComplete: run.outputComplete && !result.logError } : {}),
         ...(signal?.aborted || run.postStartError !== undefined ? { interrupted: true } : {}),
         ...(run.timedOut ? { timedOut: true } : {}),
@@ -142,129 +143,175 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }> {
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; execution: CheckExecution; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }> {
   return new Promise((resolve) => {
     const windows = !processHost.groups;
-    let kept = "";
-    let cut = false;
-    let timedOut = false;
-    let done = false;
-    let outputComplete = false;
-    let exitSeen = false;
-    let exitUnreported = false;
-    let endedPipes = 0;
+    const execution: CheckExecution = { started: false, exit: { status: "unreported" }, stdout: "incomplete", stderr: "incomplete", timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested" };
+    let kept = "", cut = false, settling = false, exitSeen = false, exitUnreported = false;
     let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
+    let completion: Promise<number> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
-    // Ends the watch for a lost exit once the exit is reported or the check is settled.
     const watch = new AbortController();
     let stopping: Promise<boolean> | undefined;
-    const readers: { cancel(): Promise<void> }[] = [];
-    const finish = (code: number | null, error?: string) => {
-      if (done) return;
-      done = true;
-      // A callback or observation can fail after spawn succeeded. That is owned work
-      // with an unknown outcome: stop it before returning, preserving the actual error.
-      const afterLaunch = error !== undefined && child !== undefined;
-      if (afterLaunch) stopping ??= stopAll(child!.pid, windows, processList);
-      clearTimeout(timer);
-      clearTimeout(grace);
-      watch.abort();
+    const pipes: { stream?: ReadableStream<Uint8Array>; reader?: ReadableStreamDefaultReader<Uint8Array>; errored?: boolean }[] = [{}, {}];
+    const fields = ["stdout", "stderr"] as const;
+    const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+    const stopWork = () => stopping ??= child ? stopAll(child, windows, processList).catch(() => false) : Promise.resolve(true);
+    const closeOutput = async (): Promise<boolean> => {
+      if (!child || fields.every(field => execution[field] === "eof")) return true;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          Promise.all(pipes.map(async (pipe, index) => {
+            if (execution[fields[index]!] === "eof") return true;
+            try {
+              if (pipe.reader) {
+                // Only an error observed before this cancellation independently proves closure.
+                // cancel() can close the logical reader and still fail to release its resource.
+                const alreadyErrored = pipe.errored === true;
+                try { await pipe.reader.cancel(); return true; }
+                catch { return alreadyErrored; }
+              }
+              // A locked pipe is not owned by us and cancellation cannot prove it closed.
+              if (pipe.stream) { await pipe.stream.cancel(); return true; }
+            } catch { /* Unavailable output closure remains unconfirmed. */ }
+            return false;
+          })).then(closed => closed.every(Boolean)),
+          new Promise<boolean>(done => { timer = setTimeout(() => done(false), 5_000); }),
+        ]);
+      } finally { clearTimeout(timer); }
+    };
+    const finish = (code: number | null, error?: string, kind: NonNullable<CheckExecution["failure"]>["kind"] = "observer") => {
+      if (settling) return;
+      settling = true;
+      if (error !== undefined) execution.failure ??= { kind: execution.started ? kind : "start", message: tidyOutput(error) };
+      // Both reader and child ownership settle before this result can release the worktree.
+      if (error !== undefined && child) stopWork();
+      clearTimeout(timer); clearTimeout(grace); watch.abort();
       signal?.removeEventListener("abort", stop);
-      for (const reader of readers) void reader.cancel().catch(() => undefined);
-      const result = { code, ...(child?.signalCode ? { exitSignal: child.signalCode } : {}), output: `${cut ? "…\n" : ""}${kept}`, timedOut, outputComplete, ...(exitUnreported ? { exitUnreported: true } : {}), ...(error !== undefined ? afterLaunch ? { postStartError: error } : { error } : {}) };
-      // The parent can exit before detached workers. Do not release the working copy until their stop settles.
-      void (stopping ?? Promise.resolve(true)).then((clean) => resolve({ ...result, ...(!clean ? { cleanupIncomplete: true } : {}) }));
+      const needsOutputCleanup = child !== undefined && !fields.every(field => execution[field] === "eof");
+      void Promise.allSettled([stopping ?? Promise.resolve(true), closeOutput()]).then(([processes, output]) => {
+        const clean = processes.status === "fulfilled" && processes.value;
+        let closed = output.status === "fulfilled" && output.value;
+        for (const pipe of pipes) try { pipe.reader?.releaseLock(); } catch { closed = false; }
+        if (stopping) execution.cleanup = clean ? "confirmed" : "unconfirmed";
+        if (needsOutputCleanup || !closed) execution.outputCleanup = closed ? "confirmed" : "unconfirmed";
+        execution.cancelled ||= signal?.aborted ?? false;
+        const exitSignal = execution.exit.signal;
+        const afterLaunch = error !== undefined && execution.started;
+        const facts = { ...execution, exit: { ...execution.exit }, ...(execution.failure ? { failure: { ...execution.failure } } : {}) };
+        resolve({ code, execution: facts, output: `${cut ? "…\n" : ""}${kept}`, timedOut: execution.timedOut,
+          outputComplete: fields.every(field => execution[field] === "eof"),
+          ...(exitSignal ? { exitSignal } : {}), ...(exitUnreported ? { exitUnreported: true } : {}),
+          ...(!clean || !closed ? { cleanupIncomplete: true } : {}),
+          ...(error !== undefined ? afterLaunch ? { postStartError: error } : { error } : {}),
+        });
+      });
     };
     const stop = () => {
-      stopping ??= stopAll(child?.pid, windows, processList);
+      execution.cancelled ||= signal?.aborted ?? false;
+      stopWork();
       grace ??= setTimeout(() => finish(null), 5000);
     };
     const timer = setTimeout(() => {
-      timedOut = true;
+      execution.timedOut = true;
       stop();
-      // Out of time, it is settled a moment later whatever the process reports, so one check never holds the rest.
-      grace ??= setTimeout(() => finish(null), 5000);
     }, timeoutMs);
+    const validExit = (code: number) => Number.isSafeInteger(code) && code >= 0;
+    const observeExit = (code: number) => {
+      exitSeen = true; watch.abort();
+      const exitSignal = child?.signalCode;
+      execution.exit = { status: validExit(code) ? "reported" : "invalid", ...(validExit(code) ? { code } : {}), ...(exitSignal ? { signal: exitSignal } : {}) };
+      if (!validExit(code)) { finish(null, "The system reported an invalid check exit.", "exit"); return; }
+      // A held pipe is incomplete execution, not a successful check with a shortened log.
+      if (!settling) grace ??= setTimeout(() => finish(code, "The check exited before its output finished.", "output"), 5000);
+    };
+    let startupError: unknown, startFailed = false;
     try {
       child = Bun.spawn([...argv], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !windows, windowsHide: true });
+      execution.started = true;
+      // Observe completion even when registration or acquiring an output reader fails.
+      completion = child.exited;
+      void completion.then(observeExit, error => {
+        execution.exit = { status: "rejected" };
+        finish(null, message(error), "exit");
+      });
       onSpawn?.(child.pid);
-    } catch (error) {
-      finish(null, error instanceof Error ? error.message : String(error));
-      return;
+    } catch (error) { startupError = error; startFailed = true; }
+    // Acquire each pipe independently: failure on the first never leaves the second unowned.
+    let readError: unknown, readFailed = false;
+    if (child) for (const [index, field] of fields.entries()) {
+      const pipe = pipes[index]!;
+      try {
+        pipe.stream = child[field];
+        const reader = pipe.stream.getReader(); pipe.reader = reader;
+        // Observe errors immediately, independently from a later cancellation attempt.
+        pipe.errored = false;
+        void reader.closed.then(() => undefined, () => { pipe.errored = true; });
+      } catch (error) { execution[field] = "read-error"; if (!readFailed) readError = error; readFailed = true; }
     }
+    if (startFailed || !child) { finish(null, message(startupError)); return; }
+    if (readFailed) { finish(null, message(readError), "read"); return; }
     signal?.addEventListener("abort", stop, { once: true });
     if (signal?.aborted) stop();
     const keep = (text: string) => {
       kept += text;
-      if (kept.length > OUTPUT_KEPT * 2) {
-        kept = kept.slice(-OUTPUT_KEPT * 2);
-        cut = true;
-      }
+      if (kept.length > OUTPUT_KEPT * 2) { kept = kept.slice(-OUTPUT_KEPT * 2); cut = true; }
     };
-    const drain = async (stream: ReadableStream<Uint8Array>) => {
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      readers.push(reader);
+    const drain = async (index: number) => {
+      const reader = pipes[index]!.reader!, field = fields[index]!, decoder = new TextDecoder();
       try {
-        while (!done) {
+        while (!settling) {
           const next = await reader.read();
-          if (next.done) endedPipes += 1;
-          if (next.done || done) break;
+          if (settling) break;
+          if (next.done) { execution[field] = "eof"; break; }
           keep(decoder.decode(next.value, { stream: true }));
           await log?.write(next.value);
         }
-        if (!done) keep(decoder.decode());
-      } catch {
-        // A timeout or stop closes the pipes too.
-      } finally {
-        reader.releaseLock();
+        if (!settling) keep(decoder.decode());
+      } catch (error) {
+        if (!settling) { execution[field] = "read-error"; finish(null, message(error), "read"); }
       }
     };
-    // Bun can emit node:child_process exit/close inside spawn(), losing both the result and buffered output.
-    // Its native handle retains the exit promise and stream bytes even when the command has already ended.
-    const output = Promise.all([drain(child.stdout), drain(child.stderr)]).then(() => { outputComplete = endedPipes === 2; });
-    // A background program can keep the pipes open after the check exits: don't wait on it for long.
-    void child.exited.then((code) => {
-      exitSeen = true;
-      watch.abort();
-      if (!done) grace ??= setTimeout(() => finish(code), 5000);
-    }, () => undefined);
-    // The mirror case: the output closed, but under load the system may never report the exit. Closed
-    // output alone proves nothing (a check can redirect its output and keep working within its deadline),
-    // so bounded state reads watch the child: only one observed gone or defunct without a reported exit
-    // settles as unknown, instead of holding until its deadline. A still-running check keeps its allowance.
+    const output = Promise.all([drain(0), drain(1)]);
     const pid = child.pid;
     void output.then(() => {
-      // A child without a process number (a test stand-in that already ended) has no state to read.
-      if (done || exitSeen || typeof pid !== "number") return;
-      return lostExit(pid, watch.signal, processList).then((state) => {
-        if (state !== "lost" || done || exitSeen) return;
+      if (settling || exitSeen || typeof pid !== "number") return;
+      return lostExit(pid, watch.signal, processList).then(state => {
+        if (state !== "lost" || settling || exitSeen) return;
         exitUnreported = true;
-        // The check itself is gone or defunct: stop what it started, without waiting on the defunct leader.
-        stopping ??= stopAll(pid, windows, processList, true);
+        execution.failure ??= { kind: "exit", message: CHECK_EXIT_UNREPORTED };
+        stopping ??= stopAll(child!, windows, processList, true).catch(() => false);
         finish(null);
       });
     }, () => undefined);
-    void Promise.all([child.exited, output]).then(
-      ([code]) => finish(code),
-      (error) => finish(null, error instanceof Error ? error.message : String(error)),
-    );
+    void Promise.all([completion!, output]).then(([code]) => {
+      if (validExit(code)) finish(code);
+    }, () => undefined);
   });
 }
 
 /** End a check and everything it started. `leaderEnded`: the check itself was observed gone or defunct, so only what it started is waited for. */
-async function stopAll(pid: number | undefined, windows: boolean, processList?: (timeout: number) => Promise<string | undefined>, leaderEnded = false): Promise<boolean> {
-  if (!pid) return true;
+async function stopAll(child: Bun.Subprocess<"ignore", "pipe", "pipe">, windows: boolean, processList?: (timeout: number) => Promise<string | undefined>, leaderEnded = false): Promise<boolean> {
+  const pid = child.pid;
+  const collected = () => child.exitCode !== undefined && child.exitCode !== null || Boolean(child.signalCode);
+  // Once collected, a saved PID/group is no longer stop authority. In particular, output held
+  // by an unknown descendant after this exit cannot be turned into a confirmed tree cleanup.
+  if (!pid || collected()) return false;
   if (windows) {
     return processHost.stopTree?.(pid, 3000) ?? false;
   }
   // Detached workers outlive both the check and its process group, so take a bounded snapshot
   // while the parent is still alive. Failure must remain distinguishable from an empty process tree.
   const workers = await descendantsKnown([pid], 3_200, processList);
-  const targets = [-pid, ...(workers ?? []).reverse(), pid];
-  for (const target of targets) {
+  if (collected()) return false;
+  // Detached workers first: killing the leader must not collect its identity before those signals.
+  const targets = [...(workers ?? []).reverse(), -pid, pid];
+  for (const target of targets.filter(target => target !== pid)) {
+    if (collected()) return false;
     try { process.kill(target, "SIGKILL"); } catch { /* Already gone. */ }
   }
+  if (!collected()) try { child.kill("SIGKILL"); } catch { /* An owned signal is not completion evidence. */ }
   // A signal being accepted does not mean the worker has exited. Keep the copy reserved until
   // the group and the captured detached workers are gone, or report that cleanup is incomplete.
   // A defunct leader and its group retain their numbers. Confirm every remaining member from
