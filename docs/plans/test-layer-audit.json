@@ -1507,7 +1507,7 @@
           "review": "The removed variant repeated the complete nonmixed failure sequence solely with a missing initial gate. Its gate insertion position, unchanged allowances, review-before-decision route, exact milestone text, proofDeliveryGate identity and checkpoint are tested on the actual extracted controller; native report/context/restart/delivery guarantees remain in the two retained richer journeys."
         }
       ],
-      "review": "Existing scripted acceptanceAgents already removes ACP. Keep real shared Git, actual independent seats/input packets and durable route/decision integration; no fake workflow controller. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
+      "review": "All15 original runtime variants and142 literal matcher-site oracles reviewed against actual owners. Ten complete native variants retain actual shared Git, native review inputs/seats, check races, approval/landing and restart. Five repeated permutations use actual AcceptanceResults/routeAcceptance/WorkCompletion plus Context/ReviewReports/checkReviewEvidence and one real Store legacy-shape roundtrip; future pass/fail routing stays in two distinct controller cases. Original native-only conjunctions transfer explicitly to matching retained native cases, without synthetic landed/check/current flags. New completion controls cover ordering, receivers, rejection and execution binding across an awaited version effect.",
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
         "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
@@ -1515,7 +1515,12 @@
       },
       "from": "packages/engine/test/acceptance-repair-reviews.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/acceptance/repair-reviews.test.ts"
+        "packages/engine/test/journeys/acceptance/repair-reviews.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/repair-sequence.test.ts",
+        "packages/orchestrator/test/orchestration/steps/work-completion.test.ts",
+        "packages/engine/test/contracts/context/held-acceptance.test.ts",
+        "packages/engine/test/contracts/context/legacy-acceptance.test.ts",
+        "packages/storage/test/contracts/acceptance/repair-recovery.test.ts"
       ],
       "layer": "journeys",
       "area": "acceptance",
@@ -1533,7 +1538,29 @@
       "reviewedOriginalRuntimePasses": 15,
       "currentRuntimePasses": 15,
       "reviewedOriginalAssertionSites": 142,
-      "currentAssertionSites": 142
+      "currentAssertionSites": 142,
+      "costQualification": {
+        "status": "focused qualification passed; final integrated full/resource/platform remains pending",
+        "before": {
+          "source": "2565e17af329edf95650d315a049939fab346b0b",
+          "artifact": "workstreams/acceptance-cost-next/root-before",
+          "cases": 15,
+          "launches": 4502,
+          "git": 4453,
+          "bun": 49,
+          "ms": 24995.711
+        },
+        "after": {
+          "artifact": "workstreams/acceptance-cost-next",
+          "nativeVariants": 10,
+          "launches": 3158,
+          "git": 3125,
+          "bun": 33,
+          "scope": "Prior14 candidate cost-bearing native cases passed; corrected small owners observed zero launches. R3 adds observed operation settlement and passed12 controls plus the held-check case. No post-R3 full cost measurement is claimed."
+        },
+        "oracleDisposition": "workstreams/acceptance-cost-next/oracle-map.json",
+        "fixtureOwnership": "Public FixtureOperations publishes ownership before starters and close before stop, waits all real operations, retains resources on error/timeout and requires confirmed disposal. Root and independent review closed R3a/b/c; paired controlled and real-folder cases passed."
+      }
     },
     {
       "file": "packages/engine/test/contracts/guidance/accepted-points.test.ts",

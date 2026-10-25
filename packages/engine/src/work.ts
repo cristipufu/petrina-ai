@@ -1,4 +1,4 @@
-import { AcceptanceResults } from "@petrina/orchestrator";
+import { AcceptanceResults, WorkCompletion } from "@petrina/orchestrator";
 import { routeAcceptance, type AcceptanceRoutingHost, type RepositoryContext } from "@petrina/orchestrator";
 import { versionsOf, committedCodeOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
 import { openProofs, refreshProofs } from "@petrina/core";
@@ -28,12 +28,21 @@ function tooLong(value: { description?: string | undefined }): string | undefine
 export class Work {
   private readonly acceptanceHost: AcceptanceRoutingHost;
   private readonly acceptanceResults: AcceptanceResults;
+  private readonly completion: WorkCompletion;
   constructor(private readonly k: Kernel, private readonly turns: Pick<Turns, "turn">, private readonly context: Pick<Context, "sectionsFor">, private readonly guide: Pick<GuideKeeper, "proposeGuideLine">, private readonly updates: Pick<Updates, "reopen" | "fold" | "message" | "patch">, private readonly learnings: Pick<Learnings, "note">, private readonly checks: Pick<ProductChecks, "repairVersion">) {
     this.acceptanceResults = new AcceptanceResults({
       id: task => k.id(task.id), now: () => Date.now(),
       note: (scope, tone, text, roleId, profileId) => k.log(scope, tone, text, roleId, profileId),
       noteLearnings: (scope, lessons, roleId, profileId) => learnings.note(scope, lessons, roleId, profileId),
       acceptancePatch: async (scope, versions) => (await acceptanceVersion(scope.task, versions)) ?? (await updates.patch(scope)),
+    });
+    this.completion = new WorkCompletion({
+      finishStep: scope => k.finishStep(scope),
+      endStage: scope => k.tracking.endStage(scope, "done"),
+      rerun: task => k.rerun(task),
+      invalidateAcceptance: (scope, versions) => invalidateAcceptance(scope.task, versions).then(() => undefined),
+      checkpoint: () => k.commitNow(),
+      changed: () => k.commit(),
     });
     this.acceptanceHost = {
       role: (id, task) => k.role(id, task),
@@ -247,38 +256,6 @@ export class Work {
         return "stop";
       }
     }
-    this.k.finishStep(scope);
-    this.k.tracking.endStage(scope, "done");
-    if (this.k.rerun(task)) return "continue";
-    if (task.repositories && role?.canEdit) {
-
-      await invalidateAcceptance(task, testedVersions);
-      const own = task.repositories.find((work) => work.productId === repository.productId)!;
-      if (!task.repair) own.completedStages = [...new Set([...own.completedStages, stage.id])];
-      if (task.repair) {
-        task.repair.index += 1;
-        if (task.repair.index < task.repair.products.length) {
-          const next = task.repair.products[task.repair.index]!;
-          task.activeProductId = next;
-          task.fixing = !task.repair.portProducts?.includes(next);
-          this.k.commitNow();
-          return "continue";
-        }
-        // A repair of final testing goes back to it; an earlier one is checked by ordinary acceptance testing.
-        if (task.repair.kind === "acceptance" && task.repair.final) task.retest = true;
-        else if (task.repair.kind === "acceptance") task.repairCheck = true;
-        task.stageIndex = task.repair.returnStage;
-        delete task.repair;
-        task.sub = 0;
-        this.k.commitNow();
-        return "continue";
-      }
-      const next = task.repositories.find((work) => !work.completedStages.includes(stage.id));
-      if (next) { task.activeProductId = next.productId; this.k.commitNow(); return "continue"; }
-    }
-    task.stageIndex += 1;
-    task.sub = 0;
-    this.k.commit();
-    return "continue";
+    return this.completion.complete(scope, { stageId: stage.id, canEdit: !!role?.canEdit, ...(testedVersions ? { testedVersions } : {}) });
   }
 }

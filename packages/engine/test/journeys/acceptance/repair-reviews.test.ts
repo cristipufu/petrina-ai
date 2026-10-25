@@ -1,114 +1,12 @@
-import { resolve as testFixturePath } from "node:path";
-const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
-import { acceptanceAgents } from "../../fixtures/acceptance-agents.js";
-import { afterAll, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { expect, it } from "bun:test";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { journeyView, nextLine, type DeepMutable, type Product, type Task, type WorkflowEvent } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { journeyView, nextLine } from "@petrina/core";
+import { waitFor } from "@petrina/test-support/fixtures";
 import { commandText } from "../../../src/checks.js";
-import { Coordination } from "../../../src/coordination.js";
+import { fixture, GREETING, PHONE, UNAVAILABLE, failing, passed, blocked, REPAIR_CHECK, FINAL_TEST, STILL_FAILS, ALL_SEATS } from "../../fixtures/acceptance-repairs.js";
 
-/** The parts of a review's completion report these cases read. */
-type ReviewReport = WorkflowEvent & { openImportant: string[]; stillOpen: string[]; reopened: unknown[]; heldForDecision?: string[]; reportCounts: { closing: { open: { important: number } } } };
-
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-
-const GREETING = "People see the greeting on the welcome page";
-const PHONE = "The greeting reads well on a phone";
-const UNAVAILABLE = "The phone simulator is unavailable, so the page could not be opened on a phone.";
-const failing = (productIds: string[], text = GREETING) => ({ text, result: "fail" as const, evidence: "Opened the welcome page: no greeting appears; expected it at the top.", productIds });
-const passed = (productIds: string[], text = GREETING) => ({ text, result: "pass" as const, evidence: `Opened the welcome page and saw: ${text}`, productIds });
-const blocked = (productIds: string[], text = PHONE) => ({ text, result: "blocked" as const, reason: UNAVAILABLE, evidence: "Tried to start the phone simulator twice; it never opened.", productIds });
-
-const REPAIR_CHECK = "Checking the builder's repair of the failed acceptance checks; the planned reviews follow";
-const FINAL_TEST = "Final acceptance testing after review: the final code needs current acceptance evidence";
-const STILL_FAILS = "Acceptance still fails: the builder returns are unavailable or used up. The remaining reviews run first, then the decision goes to you at your delivery check";
-/** Every planned review seat, once: the code review's two seats and the security review. */
-const ALL_SEATS = ["review:1:code-reviewer:opus-high", "review:1:code-reviewer:sol-high", "security:1:security-reviewer:opus-high"];
-
-/**
- * A shared task past its build, on two products: acceptance testing, a code review with two seats, a security review,
- * then publishing, with or without a delivery check planned from the start. The coding tools are the scripted stand-ins.
- */
-async function fixture(options: { gate: boolean; checklist?: readonly string[]; custom?: boolean }) {
-  const root = tempDir("petrina-acceptance-repair-"); roots.push(root);
-  const responses = acceptanceAgents();
-  const engineOptions = { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "unconfigured-service.ts"), "acceptance fixture"], startAgentSession: responses.start, terminals: () => [] };
-  const engine = new Engine(join(root, "data"), engineOptions);
-  engine.schedule = () => {};
-  await engine.waitUntilReady();
-  engine.setPoolPaused(false);
-  const products: DeepMutable<Product>[] = [];
-  for (let i = 0; i < 2; i++) {
-    const dir = join(root, `product-${i}`); mkdirSync(dir);
-    const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
-    const id = await engine.addProduct(repo);
-    engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: options.gate });
-    engine.setProductChecks(id, [{ name: "Test", command: commandText([process.execPath, "-e", "process.exit(0)"]) }]);
-    products.push(engine.s.products.find(product => product.id === id)!);
-  }
-  const task = engine.task(engine.addTask({ productId: products[0]!.id, title: "Show the greeting", backlog: true }))!;
-  const owners = [];
-  for (const [i, product] of products.entries()) {
-    const worktree = join(root, `work-${i}`), baseSha = await git(product.path!, "rev-parse", "HEAD"), branch = `greeting-${i}`;
-    await git(product.path!, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
-    writeFileSync(join(worktree, "greeting.txt"), "Hello\n");
-    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Add the greeting");
-    owners.push({ productId: product.id, worktree, baseSha, base: baseSha, branch, delivery: "local" as const, completedStages: ["build"], preparation: "ready" as const,
-      source: { product, start: { kind: "default" as const, branch: "main" }, destination: { mode: "local" as const, kind: "branch" as const, repo: product.repo, branch: "main" }, confirmed: true } });
-  }
-  delete task.repository; task.repositories = owners; task.activeProductId = products[0]!.id;
-  const build = { id: "build", title: "Build", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] };
-  const tester = { id: "test", title: "Acceptance", kind: "do" as const, roleId: "tester", profileIds: ["opus-high"] };
-  // Petrina finds the acceptance role by its checks result, whatever it is called.
-  if (options.custom) { engine.s.roles.push({ ...engine.role("tester")!, id: "quality-partner", name: "Quality partner" }); tester.roleId = "quality-partner"; }
-  const review = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"], maxRounds: 2 };
-  const security = { id: "security", title: "Security review", kind: "review-chain" as const, roleId: "security-reviewer", profileIds: ["opus-high"], maxRounds: 2 };
-  const gate = { id: "gate", title: "Your delivery check", kind: "gate" as const, gate: "delivery" as const, roleId: "release-manager", profileIds: [] };
-  const ship = { id: "ship", title: "Ship", kind: "do" as const, roleId: "release-manager", profileIds: ["opus-high"] };
-  task.plan = { rationale: "Focused shared acceptance workflow", plannerProfileId: "sol-high", stages: [build, tester, review, security, ...(options.gate ? [gate] : []), ship] };
-  task.approveDelivery = options.gate;
-  task.brief = { summary: "Show the greeting", areas: [], forUsers: [], risks: [], acceptance: (options.checklist ?? [GREETING]).map(text => ({ text })) };
-  task.state = "running"; task.stageIndex = 1;
-  const f = {
-    root, responses, engine, task, products, ids: products.map(product => product.id) as [string, string], review, security, tester: tester.roleId,
-    mains: () => Promise.all(products.map(product => git(product.path!, "rev-parse", "main"))),
-    /** Runs the task until it waits, stops, or (with `stop`) is about to admit an agent while `stop` holds. */
-    drive: async (stop?: (task: Task) => boolean) => {
-      const admit = spyOn(f.engine["driver"] as unknown as { admitNext: () => Promise<boolean> }, "admitNext").mockImplementation(async () => !stop?.(f.task as Task));
-      try { f.task.state = "running"; await f.engine["driver"]["drive"](f.task.id); if (f.engine.task(f.task.id)?.state === "failed") throw new Error(f.task.error); }
-      finally { admit.mockRestore(); }
-    },
-    decisions: () => f.engine.s.inbox.filter(item => item.taskId === f.task.id && item.kind === "delivery"),
-    /** Finished agent steps of one role, in the order they ran. */
-    runs: (roleId: string) => f.task.journey!.filter(step => step.kind === "agent" && step.roleId === roleId && step.endedAt !== undefined),
-    /** Which planned review seats actually handed back a result: review stage, round, role and profile. */
-    seats: () => f.task.journey!.filter(step => step.kind === "agent" && (step.stageId === review.id || step.stageId === security.id))
-      .flatMap(step => (step.agentResults ?? []).filter(result => result.roleId === "code-reviewer" || result.roleId === "security-reviewer").map(result => `${step.stageId}:${step.round}:${result.roleId}:${result.profileId}`)).sort(),
-    /** The work as it happened: each agent step's stage (with the Builder's product) and each delivery decision. */
-    order: () => f.task.journey!.flatMap(step => step.kind === "agent" && step.roleId !== "verifier" ? [step.builderReturn ? `build:${f.ids.indexOf(step.builderReturn.productId) + 1}` : step.stageId!]
-      : step.kind === "you" && step.waitsFor === "delivery" ? ["decision"] : []),
-    heldFailure: () => f.task.findings.filter(finding => finding.text === `Failed acceptance check: ${GREETING}`),
-    /** The reviews' completion reports, as a coordinator watching the task reads them. */
-    reviewReports: async () => ((await new Coordination(f.engine).call("watch.events", { taskIds: [f.task.id], kinds: ["review.finished"], from: "oldest", timeoutMs: 0 })).events as WorkflowEvent[]).filter(event => event.kind === "review.finished") as unknown as ReviewReport[],
-    /** Petrina quits and starts again on the same saved state. */
-    restart: async () => {
-      f.engine.setPoolPaused(true); await f.engine.shutdown();
-      f.engine = new Engine(f.engine.dataDir, engineOptions);
-      f.engine.schedule = () => {};
-      await f.engine.waitUntilReady(); f.engine.setPoolPaused(false);
-      // A returning Builder waits for its tool's check, which a start runs again.
-      await waitFor(() => !f.engine.s.setup?.checks.some(check => check.checking), "the tool checks after the restart");
-      f.task = f.engine.task(task.id)!;
-    },
-  };
-  return f;
-}
-
-for (const [gate, custom] of [[true, false], [false, false], [true, true]] as const) it(`runs every owed review after a successful early acceptance repair, then ${gate ? "asks at the planned delivery check" : "ships on its own as the task's settings allow"}${custom ? " (custom acceptance role)" : ""}`, async () => {
+for (const [gate, custom] of [[false, false], [true, true]] as const) it(`runs every owed review after a successful early acceptance repair, then ${gate ? "asks at the planned delivery check" : "ships on its own as the task's settings allow"}${custom ? " (custom acceptance role)" : ""}`, async () => {
   const f = await fixture({ gate, custom });
   try {
     const [first] = f.ids;
@@ -139,10 +37,10 @@ for (const [gate, custom] of [[true, false], [false, false], [true, true]] as co
     expect(f.task.repositories!.every(work => work.landed)).toBe(true);
     expect((await f.mains()).every((sha, index) => sha !== before[index])).toBe(true);
     expect(f.runs(f.tester)).toHaveLength(2);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
-for (const gate of [true, false]) it(`repairs a real failure while another required item stays unavailable, runs every owed review, then asks one decision at ${gate ? "the planned" : "an added"} delivery check`, async () => {
+for (const gate of [false]) it(`repairs a real failure while another required item stays unavailable, runs every owed review, then asks one decision at ${gate ? "the planned" : "an added"} delivery check`, async () => {
   const f = await fixture({ gate, checklist: [GREETING, PHONE] });
   try {
     const [first, second] = f.ids;
@@ -168,7 +66,7 @@ for (const gate of [true, false]) it(`repairs a real failure while another requi
     expect(f.task.repositories!.every(work => work.landed)).toBe(true);
     expect(f.task.brief!.acceptance.map(item => item.verification)).toEqual(["passed", "blocked"]);
     expect(f.runs("tester")).toHaveLength(2);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 // The controller owns the failure-only added-gate variant. Keep full planned-gate and mixed-evidence journeys.
@@ -225,27 +123,7 @@ for (const [gate, mixed] of [[true, false], [false, true]] as const) it(`keeps u
     expect(f.task.repositories!.every(work => work.landed)).toBe(true);
     expect((await f.mains()).every((sha, index) => sha !== before[index])).toBe(true);
     expect(f.order()).toEqual(["test", "build:1", "test", "build:1", "test", "review", "security", "decision"]);
-  } finally { await f.engine.shutdown(); }
-});
-
-it("never asks reviewers to confirm a used-up acceptance failure, so reviewers who confirm what they are shown neither answer twice nor count it", async () => {
-  const f = await fixture({ gate: true });
-  try {
-    const [first] = f.ids;
-    // These reviewers confirm every finding they are shown in their first round.
-    f.responses.configure({ builder: "plain", fixes: "change", reviewer: "confirm", testerChecks: [failing([first])] });
-    await f.drive();
-    expect(f.order()).toEqual(["test", "build:1", "test", "build:1", "test", "review", "security", "decision"]);
-    const [held] = f.heldFailure();
-    // Each code reviewer answered once: nothing it was shown needed fresh proof, and the held failure gained no support.
-    expect(f.responses.prompts("code-reviewer").filter(text => text.includes("Current evidence is required"))).toEqual([]);
-    expect(f.responses.prompts("code-reviewer").filter(text => text.includes(held!.id))).toEqual([]);
-    expect(held!.confirmedBy).toEqual([]);
-    const review = f.task.journey!.filter(step => step.kind === "agent" && step.stageId === f.review.id);
-    expect(review.flatMap(step => [...step.result?.findings ?? [], ...(step.agentResults ?? []).flatMap(result => result.findings ?? [])]).some(finding => finding.id === held!.id)).toBe(false);
-    expect(f.task.timeline.some(entry => /confirmed \d/.test(entry.text))).toBe(false);
-    expect(f.decisions()).toHaveLength(1);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 for (const continued of [false, true]) it(`repairs an independent review finding on its own product only, without handing over a used-up acceptance failure${continued ? " to a Builder continuing its conversation" : ""}`, async () => {
@@ -291,7 +169,7 @@ for (const continued of [false, true]) it(`repairs an independent review finding
     expect(f.seats()).toEqual([...ALL_SEATS, "review:2:code-reviewer:opus-high", "review:2:code-reviewer:sol-high"].sort());
     expect(f.decisions()).toHaveLength(1);
     expect(f.task.statusLine).toBe("Acceptance still fails after the builder's returns. Your call");
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("keeps an early acceptance repair on its route through the owed reviews across a restart and a retry", async () => {
@@ -327,46 +205,7 @@ it("keeps an early acceptance repair on its route through the owed reviews acros
     expect(f.seats()).toEqual(ALL_SEATS);
     expect(f.task.repositories!.map(work => work.acceptanceReturns)).toEqual([1, undefined]);
     expect(f.decisions()).toHaveLength(1);
-  } finally { await f.engine.shutdown(); }
-});
-
-for (const repaired of [true, false]) it(`still runs the owed reviews for a task the previous version saved between an early repair and its test, at an added delivery check, ${repaired ? "when the repair passes" : "when its repairs are then used up"}`, async () => {
-  const f = await fixture({ gate: false, checklist: [GREETING, PHONE] });
-  try {
-    const [first, second] = f.ids;
-    f.responses.configure({ builder: "plain", fixes: "change", testerChecks: [failing([first]), blocked([second])], ...(repaired ? { testerChecksFixed: [passed([first]), blocked([second])] } : {}) });
-    await f.drive(task => task.repairCheck === true);
-    expect(f.order()).toEqual(["test", "build:1"]);
-    expect(f.task.proofDeliveryGate).toBeDefined();
-    // Saved as the previous version saved a finished repair: marked as final testing, with no record of its route.
-    delete f.task.repairCheck; f.task.retest = true;
-    f.engine.commitNow();
-    await f.restart();
-    expect(f.task.retest).toBe(true);
-    // Before its test starts, the plan and Next line already show the reviews after it, as Petrina routes it.
-    f.engine.pause(f.task.id);
-    const state = f.engine.getState(), shown = state.tasks.find(task => task.id === f.task.id)!;
-    expect(nextLine(state, shown)).toBe("Next: acceptance testing of the repair (Claude Code · Opus 5.5), then code review (Codex · sol and Claude Code · Opus 5.5)");
-    f.engine.resume(f.task.id);
-    await f.drive();
-    // The added check does not skip the reviews that never ran, also when the repaired test keeps failing until the
-    // returns are used up: all three seats, then one decision.
-    expect(f.order()).toEqual(repaired ? ["test", "build:1", "test", "review", "security", "decision"] : ["test", "build:1", "test", "build:1", "test", "review", "security", "decision"]);
-    expect(f.seats()).toEqual(ALL_SEATS);
-    expect(f.task.repositories!.map(work => work.acceptanceReturns)).toEqual([repaired ? 1 : 2, undefined]);
-    // That test checks the repair before review, as its step and the Tester's instructions say.
-    expect(f.runs("tester")[1]!.trigger?.reason).toBe(REPAIR_CHECK);
-    expect(f.responses.openings("tester")[1]!).toContain("This acceptance run checks the builder's repair of an earlier run that did not pass, before review.");
-    expect(f.responses.openings("tester")[1]!).not.toContain("final acceptance");
-    if (!repaired) {
-      expect(f.heldFailure().map(finding => finding.status)).toEqual(["open"]);
-      expect(f.task.timeline.filter(entry => entry.text === STILL_FAILS)).toHaveLength(1);
-    }
-    expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
-    expect(f.decisions()).toHaveLength(1);
-    expect(f.decisions()[0]!.body).toContain(`• ${PHONE} (Product 2) — ${UNAVAILABLE}`);
-    expect(f.task.repositories!.every(work => !work.landed)).toBe(true);
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });
 
 it("shows the repair's acceptance test next while product checks run before it and while a failed check is repaired first", async () => {
@@ -392,7 +231,8 @@ if (fs.existsSync("welcome.txt") && !fs.existsSync(${JSON.stringify(failed)})) {
       return [nextLine(state, shown), journeyView(shown, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox }).nodes.filter(node => ["now", "next", "ahead"].includes(node.state)).map(node => `${node.name}: ${node.state}`)];
     };
     const driving = f.drive(task => task.repair?.kind === "checks");
-    await waitFor(() => existsSync(held), "the product check before the repair's acceptance test");
+    void driving.catch(() => undefined);
+    await waitFor(() => existsSync(held), "the product check before the repair's acceptance test", undefined, { during: driving });
     // Petrina's own checks run before the repair's test: that test is still next, then the owed reviews.
     expect(f.task.repairCheck).toBe(true);
     expect(read()).toEqual(["Next: acceptance testing of the repair (Claude Code · Opus 5.5), then code review (Codex · sol and Claude Code · Opus 5.5)",
@@ -412,7 +252,7 @@ if (fs.existsSync("welcome.txt") && !fs.existsSync(${JSON.stringify(failed)})) {
     expect(f.seats()).toEqual(ALL_SEATS);
     expect(f.task.repositories!.map(work => work.acceptanceReturns)).toEqual([1, undefined]);
     expect(f.decisions()).toHaveLength(1);
-  } finally { writeFileSync(release, ""); await f.engine.shutdown(); }
+  } finally { try { writeFileSync(release, ""); } finally { await f.close(); } }
 });
 
 it("returns final testing's repair straight to the same delivery check after the reviews, across a restart, without another review round", async () => {
@@ -440,5 +280,5 @@ it("returns final testing's repair straight to the same delivery check after the
     expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
     expect(f.decisions()).toHaveLength(1);
     expect(f.decisions()[0]!.title).toBe("Ready to ship “Show the greeting”");
-  } finally { await f.engine.shutdown(); }
+  } finally { await f.close(); }
 });

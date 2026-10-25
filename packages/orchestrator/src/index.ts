@@ -52,3 +52,5 @@ export * from "./follow-up-links.js";
 export * from "./ports/follow-up-links.js";
 export * from "./workflow-events.js";
 export * from "./ports/workflow-events.js";
+export { WorkCompletion } from "./work-completion.js";
+export type { WorkCompletionHost, WorkCompletionInput } from "./ports/work-completion.js";
