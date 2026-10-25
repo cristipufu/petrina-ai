@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkProblem } from "@petrina/core";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { executionFor } from "@petrina/orchestrator";
 import { ExtraFixtures } from "../../extra-fixtures.js";
 
@@ -33,7 +34,7 @@ describe.skipIf(process.platform === "win32")("required extra validation shares 
   it("keeps extra passes and failures independent of ordinary checks, findings, approvals and repair allowance", async () => {
     const f = await fixture();
     const work = executionFor(f.task).work;
-    work.checks = { at: 1, current: true, results: [{ name: "Configured suite", command: "configured", ok: false, output: "failure", ms: 2 }] };
+    work.checks = { at: 1, current: true, results: [{ name: "Configured suite", command: "configured", ok: false, execution: completeCheckExecution(7), output: "failure", ms: 2 }] };
     work.checkReturns = 2; work.approvedSha = "approval";
     f.engine.s.inbox.push({ id: "ordinary-delivery", taskId: f.task.id, kind: "delivery", title: "Delivery", at: Date.now(), blocking: false });
     const before = JSON.stringify({ checks: work.checks, returns: work.checkReturns, approved: work.approvedSha, findings: f.task.findings, stage: f.task.stageIndex });

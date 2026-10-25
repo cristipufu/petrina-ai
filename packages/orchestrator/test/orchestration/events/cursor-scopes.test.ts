@@ -1,4 +1,5 @@
 import type { WorkflowEvent } from "@petrina/core";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { expect, it, describe } from "vitest";
 import { eventFixture, kinds, all } from "../../fixtures/workflow-events.js";
 
@@ -11,7 +12,7 @@ it("captures rapid transitions inside one change, batches with explicit continua
     task.state = "running";
     task.journey = [
       { id: "j1", kind: "agent", roleId: "builder", profileId: "sol-xhigh", round: 1, sub: 0, startedAt: 10, endedAt: 20, end: "done", outcome: "Change ready", reason: "ready for review", trigger: { reason: "Task started" }, agentInputs: [{ at: 11, roleId: "builder", profileId: "sol-xhigh", requestedProfileId: "sol-xhigh", taskTitle: "Many steps", sections: [], mode: "fresh" }], agentResults: [{ roleId: "builder", profileId: "sol-xhigh", at: 20, value: { summary: "Built", changes: [] } }] },
-      { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 21, endedAt: 40, end: "done", outcome: "The check passes", reason: "checks passed", trigger: { after: "j1", reason: "ready for review" }, productChecks: [{ id: "check-0", attemptId: "run-0", name: "Tests", result: "pass", queuedAt: 21, startedAt: 22, endedAt: 40, run: { name: "Tests", command: "bun test", ok: true, ms: 18, output: "" } }] },
+      { id: "j2", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: 21, endedAt: 40, end: "done", outcome: "The check passes", reason: "checks passed", trigger: { after: "j1", reason: "ready for review" }, productChecks: [{ id: "check-0", attemptId: "run-0", name: "Tests", result: "pass", queuedAt: 21, startedAt: 22, endedAt: 40, run: { name: "Tests", command: "bun test", ok: true, execution: completeCheckExecution(0), ms: 18, output: "" } }] },
       { id: "j3", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", round: 1, sub: 0, startedAt: 41, trigger: { after: "j2", reason: "checks passed" } },
     ];
     f.observe(task);

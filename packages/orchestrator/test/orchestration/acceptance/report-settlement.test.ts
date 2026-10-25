@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { ACCEPTANCE_RESTORED } from "@petrina/core";
 import { routeAcceptance } from "../../../src/acceptance-routing.js";
 import { acceptanceHost } from "../../fixtures/acceptance.js";
@@ -8,7 +9,7 @@ it("keeps an invalidated run's reported failures as history, without a defect, a
   const f = acceptanceResultsFixture(), request = f.request();
   const earlier = { id: "earlier-failure", text: "Failed acceptance check: A greeting file exists", severity: "blocking" as const, raisedBy: "opus-high", confirmedBy: [], status: "fixed" as const, answer: { fixed: true, text: "Added the greeting", at: 1 } };
   f.task.findings.push(structuredClone(earlier));
-  f.scope.work.checks = { at: 1, sha: "observed-head", tree: f.versions[f.task.productId]!, current: true, results: [{ name: "Test", command: "test", ok: true, output: "passed", ms: 1 }] };
+  f.scope.work.checks = { at: 1, sha: "observed-head", tree: f.versions[f.task.productId]!, current: true, results: [{ name: "Test", command: "test", ok: true, execution: completeCheckExecution(0), output: "passed", ms: 1 }] };
   const checks = structuredClone(f.scope.work.checks);
   f.task.retest = true; f.task.stageIndex = 1;
   f.run.restored = { at: 120, products: [{ productId: f.task.productId, edits: true, files: ["tester-edit.txt"] }] };

@@ -1,4 +1,5 @@
 import { expectRejection } from "@petrina/test-support/rejections";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
@@ -28,7 +29,7 @@ it("leaves coordinator messages queued when a parallel context read fails", asyn
       const productId = registerProduct(engine);
       const taskId = engine.addTask({ productId, title: "Keep messages through a failed preparation", backlog: true });
       const scope = executionFor(engine.task(taskId)!);
-      scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
+      scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, execution: completeCheckExecution(0), ms: 1, output: "passed" }] };
       const context = new Context(engine, { pendingPoints: async () => [] }, async () => { throw new Error("Could not inspect check freshness"); });
       const reading = context.sectionsFor(scope, "code-reviewer");
       engine.sendMessage(taskId, "Keep this instruction for the successful retry.");
@@ -52,7 +53,7 @@ for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check 
       const productId = registerProduct(engine);
       const taskId = engine.addTask({ productId, title: "Keep live notes while reading context", backlog: true });
       const scope = executionFor(engine.task(taskId)!);
-      scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, ms: 1, output: "passed" }] };
+      scope.work.checks = { at: 1, results: [{ name: "Quick", command: "check", ok: true, execution: completeCheckExecution(0), ms: 1, output: "passed" }] };
       const guide = { pendingPoints: () => { started.push("guide"); return guideRead; } };
       const context = new Context(engine, guide, () => { started.push("checks"); return checkRead; });
       reading = mode === "sections" ? context.sectionsFor(scope, "code-reviewer") : context.captureReview(scope).then((review) => context.sectionsFor(scope, "code-reviewer", undefined, undefined, undefined, review));

@@ -1,4 +1,5 @@
 import { executionFor } from "@petrina/orchestrator";
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "@petrina/repositories/git";
 import { removeDir, type World } from "../../support.js";
@@ -114,8 +115,8 @@ describe("shared check repair episodes", () => {
       task.plan = plan(); task.stageIndex = 2;
       const first = executionFor(task, "first").work, second = executionFor(task, "second").work;
       first.landed = { branch: "main", sha: "delivered" };
-      first.checks = { at: 1, current: true, sha: "delivered", tree: "first-tree", results: [{ name: "Tests", command: "tests", ok: true, ms: 1, output: "Passed" }] };
-      second.checks = { at: 2, current: true, sha: "pending", tree: "second-tree", results: [{ name: "Tests", command: "tests", ok: false, ms: 1, output: "Failed" }] };
+      first.checks = { at: 1, current: true, sha: "delivered", tree: "first-tree", results: [{ name: "Tests", command: "tests", ok: true, execution: completeCheckExecution(0), ms: 1, output: "Passed" }] };
+      second.checks = { at: 2, current: true, sha: "pending", tree: "second-tree", results: [{ name: "Tests", command: "tests", ok: false, execution: completeCheckExecution(7), ms: 1, output: "Failed" }] };
       second.checkReturns = 2;
       engine["checks"].blocked(task);
       const item = engine.s.inbox.find((item) => item.taskId === task.id && item.kind === "delivery")!;
@@ -168,7 +169,7 @@ describe("shared check repair episodes", () => {
       await checks.runProductChecks(second, [command("Tests", "console.log('(fail) greeting > says hello'); console.error('error: expected Hello'); process.exit(1)")], signal);
       first.work.checkReturns = 2;
       second.work.checkReturns = 1;
-      // A run that did not finish (the Mac slept, say) is a failure of the same episode, and says so.
+      // Incomplete execution stays unverified in the same spent episode; a Builder explanation alone establishes no interruption.
       setChecks(engine, "first", [failing]);
       first.work.checks!.results = [{ ...first.work.checks!.results[0]!, timedOut: true }];
       expect(await checks.failing(first, signal)).toBe(true);
@@ -178,17 +179,19 @@ describe("shared check repair episodes", () => {
       answered.answers = { second: answered.answer };
       expect(checks.blocked(task)).toBe("stop");
       const item = engine.s.inbox.find((entry) => entry.taskId === id && entry.kind === "delivery")!;
-      expect(item.title).toBe(`Your call on “${task.title}”: checks still fail (First: Welcome page, Second: Tests)`);
-      expect(item.body).toContain("First: still failing after 2 automatic Builder turns.\n• Welcome page did not finish: The welcome page is missing");
+      expect(item.title).toBe(`Your call on “${task.title}”: a check still fails (Second: Tests); unverified (First: Welcome page)`);
+      expect(item.body).toContain("First: Checks unverified. Unavailable or incomplete execution does not use an automatic Builder turn.\n• Welcome page did not finish: The welcome page is missing");
       expect(item.body).toContain("Second: still failing after 1 automatic Builder turn.\n• Tests failed: (fail) greeting > says hello\nerror: expected Hello\n  The Builder's last answer: “The suite timed out while the Mac slept.”");
       expect(item.body).toContain("Stopped before acceptance testing.");
       expect(item.body).toContain("Approving does not ship while checks fail or remain unverified.");
       expect(task.statusLine).toBe("Checks still fail. Your call");
       expect(task.stageIndex).toBe(1);
-      expect(task.timeline.map((line) => line.text)).toContain("Checks still fail after their automatic Builder turns (First: Welcome page, Second: Tests), so Petrina waits for you before acceptance testing");
-      // Asking for changes at acceptance testing repairs both products, then returns there and on through review.
+      expect(task.timeline.map((line) => line.text)).toContain("Checks still fail after their automatic Builder turns (Second: Tests); unverified (First: Welcome page), so Petrina waits for you before acceptance testing");
+      // Asking for changes repairs the reproduced failure, then returns through testing and review.
+      // The incomplete product remains unverified and does not acquire another automatic repair.
       engine.requestChanges(item.id, "Fix both checks");
-      expect(task.repair).toEqual({ products: ["first", "second"], index: 0, returnStage: 1, kind: "review" });
+      expect(task.repair).toEqual({ products: ["second"], index: 0, returnStage: 1, kind: "review" });
+      expect(task.findings.find(finding => finding.productIds?.includes("first"))?.status).toBe("unverified");
       expect(task.stageIndex).toBe(0);
       expect(first.work.checkReturns).toBe(2);
       expect(second.work.checkReturns).toBe(1);
