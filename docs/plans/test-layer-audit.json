@@ -1485,7 +1485,8 @@
       "currentAssertionSites": 171,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -1509,7 +1510,8 @@
       "review": "Existing scripted acceptanceAgents already removes ACP. Keep real shared Git, actual independent seats/input packets and durable route/decision integration; no fake workflow controller. All original cases, helpers and variants reconciled; root and independent review corrected typed native process observations and method-backed effect ownership.",
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       },
       "from": "packages/engine/test/acceptance-repair-reviews.test.ts",
       "splitFiles": [
@@ -1815,7 +1817,8 @@
       "currentAssertionSites": 11,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -1891,7 +1894,8 @@
       "currentAssertionSites": 30,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -1917,7 +1921,8 @@
       "currentAssertionSites": 22,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2000,7 +2005,8 @@
       "currentAssertionSites": 318,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2027,7 +2033,8 @@
       "currentAssertionSites": 13,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2058,7 +2065,8 @@
       "currentAssertionSites": 28,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2085,7 +2093,8 @@
       "currentAssertionSites": 37,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2112,7 +2121,8 @@
       "currentAssertionSites": 24,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2146,7 +2156,8 @@
       "currentAssertionSites": 48,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2191,7 +2202,8 @@
       "currentAssertionSites": 2,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2245,7 +2257,8 @@
       "currentAssertionSites": 169,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2439,7 +2452,8 @@
       "currentAssertionSites": 90,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2709,7 +2723,8 @@
       "currentAssertionSites": 24,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2742,7 +2757,8 @@
       "currentAssertionSites": 86,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2777,7 +2793,8 @@
       "currentAssertionSites": 176,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2809,7 +2826,8 @@
       "currentAssertionSites": 108,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2844,7 +2862,8 @@
       "currentAssertionSites": 66,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Root native361pass/7unchanged skips/52files52.29s, full core1110/controller290, types/conventions pass. Follow-up reused-row controls pass in the actual controller; combined required full remains pending."
+        "qualification": "Root native361pass/7unchanged skips/52files52.29s, full core1110/controller290, types/conventions pass. Follow-up reused-row controls pass in the actual controller; combined required full remains pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2875,7 +2894,8 @@
       "currentAssertionSites": 85,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2908,7 +2928,8 @@
       "currentAssertionSites": 87,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2942,7 +2963,8 @@
       "currentAssertionSites": 90,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -2970,7 +2992,8 @@
       "currentAssertionSites": 23,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -3885,7 +3908,8 @@
       "currentAssertionSites": 106,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -4695,7 +4719,8 @@
       "currentAssertionSites": 8,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -4752,7 +4777,8 @@
       "currentAssertionSites": 76,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -4803,7 +4829,8 @@
       "currentAssertionSites": 48,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -4833,7 +4860,8 @@
       "currentAssertionSites": 71,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -4999,7 +5027,8 @@
       "currentAssertionSites": 9,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -5029,7 +5058,8 @@
       "currentAssertionSites": 115,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending."
+        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "fullQualification": "8f7e2893"
       }
     },
     {
@@ -5694,5 +5724,13 @@
     }
   ],
   "baselineFiles": 290,
-  "baselineDeclarations": 2947
+  "baselineDeclarations": 2947,
+  "qualifications": {
+    "8f7e2893": {
+      "revision": "8f7e2893805015d7281900d9fa3d6a96dedbab6f",
+      "platform": "macOS arm64 /Bun 1.4.2",
+      "result": "5,026 pass /11 explicit skips /0 fail; 575 exact files; 307,643 ms",
+      "artifact": "full-8f7e2893/manifest-verification.json"
+    }
+  }
 }
