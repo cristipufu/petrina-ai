@@ -11,5 +11,5 @@
     "test": "vitest run --reporter=verbose --testTimeout=20000"
   },
   "dependencies": { "@petrina/core": "workspace:*" },
-  "devDependencies": { "typescript": "7.0.2", "vitest": "4.1.11" }
+  "devDependencies": { "@petrina/test-support": "workspace:*", "typescript": "7.0.2", "vitest": "4.1.11" }
 }

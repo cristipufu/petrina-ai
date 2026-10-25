@@ -53,6 +53,7 @@
       "name": "@petrina/core",
       "version": "0.1.0",
       "devDependencies": {
+        "@petrina/test-support": "workspace:*",
         "typescript": "7.0.2",
         "vitest": "4.1.11",
       },
@@ -91,6 +92,7 @@
         "@petrina/core": "workspace:*",
       },
       "devDependencies": {
+        "@petrina/test-support": "workspace:*",
         "typescript": "7.0.2",
         "vitest": "4.1.11",
       },
