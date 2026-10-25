@@ -7372,9 +7372,9 @@
   },
   "resourceAudit": {
     "status": "in progress",
-    "source": "1d8c8e90cf4aab8856f69c0ef71c967d3cb23cf4",
-    "report": ".test-results/resources/2026-10-25T18-08-07-116Z-471b771c/summary.json",
-    "remainingMeasuredProblem": "100352 Git launches in last fully measured source; targeted acceptance/admission cost slices integrated, current complete-run/resource reduction not yet measured",
+    "source": "98f9d6b818ae7ccb2289a53b68f193675f0fb3f4",
+    "report": ".test-results/resources/2026-10-25T21-53-01-085Z-16996c9d/summary.json",
+    "remainingMeasuredProblem": "94099 Git launches in latest fully measured source (-6.2% from100352); required full233024ms/5430passes atnormal14workers. Reviewer-input20cases remain3316launches (2751Git) in both full and focused caller evidence. Actual cost exit remains open.",
     "exitCriteria": [
       "Trace every top20 expensive case to actual fixture/production callers",
       "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",
