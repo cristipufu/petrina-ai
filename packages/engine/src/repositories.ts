@@ -1,7 +1,12 @@
-import { scopesFor } from "@petrina/orchestrator";
+import { observeCommittedCode, scopesFor } from "@petrina/orchestrator";
 import { assignedProducts, type Task } from "@petrina/core";
 import * as git from "./git.js";
 import type { MTask } from "./kernel.js";
+import { repositoryObservationQueries } from "./repository-observations.js";
+
+export function committedCodeOf(task: MTask) {
+  return observeCommittedCode(task, repositoryObservationQueries);
+}
 
 export async function versionsOf(task: MTask): Promise<Record<string, string>> {
   return Object.fromEntries(await Promise.all(scopesFor(task).map(async ({ work }) =>

@@ -2829,6 +2829,22 @@
       "area": "fixtures",
       "review": "Seven native fixture/schema contracts cover fresh/resumed identity, repairs, explicit check ordering, normalized independent findings, refusal of unsupported work, awaited caller effects, frozen per-turn proof/configuration, concurrent admission order and propagated work failure. Private folders and canonical session fixture; no installed agent or account. Effects use explicit barriers; added cases have bounded deadlines.",
       "validation": "acceptance-fixture-0a70f683/contracts-first.xml: seven pass / 29 assertions. neighborhood.xml: all 27 session/acceptance-repair contracts pass / 304 assertions. native-tester.xml: original ACP/final-pass/Git line-ending journey passes / 14 assertions. Six migrated proof variants pass / 156 assertions; all types and conventions pass. contracts-reviewed.xml repeats all seven cases after explicit test deadlines. types-reviewed.log and conventions-reviewed.log pass. Full changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/orchestrator/test/orchestration/repositories/observations.test.ts",
+      "status": "reviewed",
+      "layer": "orchestration",
+      "area": "repositories",
+      "review": "Fourteen typed-effect controller cases cover paired commit/tree/fingerprint identity, moving refs and bases, fresh observations, single/shared ownership, approved order, empty/excluded maps, missing data and empty changes. Bind, commit and fingerprint failures all wait for a pending peer. Production-created canonical data and scripted finite readers; no Engine, Git, filesystem, database, subprocess or native clock. Existing repair fixtures retain their exact data through the extracted common repository factory.",
+      "validation": "repository-observations-11dc2080/orchestrator.json: all 242 orchestrator cases pass. native-neighborhood.xml: 16 relevant native/acceptance cases pass with 295 assertions. Reviewed workspace types and conventions pass. Combined full-suite qualification remains due."
+    },
+    {
+      "file": "packages/engine/test/contracts/repositories/observations.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "repositories",
+      "review": "Three real-Git contracts retain SHA-1/SHA-256 version pairs, fingerprints pinned across later commits, stable workspace bindings and untouched tracked/untracked edits. Unprepared, non-repository, unborn and missing/invalid-base observations cannot invent unchanged code. Private writable repositories copied from the canonical immutable seed; no Engine, agent, account or persistence. Portable failure/peer ordering remains in the controller layer.",
+      "validation": "repository-observations-11dc2080/native-reviewed.xml: 3 pass / 32 assertions / 2.29s. Sixteen neighboring native/acceptance cases pass / 295 assertions. Reviewed workspace types and conventions pass. comparison.json preserves one selected existing case and all 76 report identities while observed Git launches fall 92 to 88; no whole-suite timing claim. Combined full-suite qualification remains due."
     }
   ],
   "rust": [

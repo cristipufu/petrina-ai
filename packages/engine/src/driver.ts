@@ -2,7 +2,7 @@ import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orches
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 
-import { changesOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
+import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { acceptanceGap, openProofs, proofDecision, proofGap, proofTestNeeded, refreshProofs, requiredUnverified, sameVersions } from "@petrina/core";
 import { join } from "node:path";
 import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, withdrawAsks, type AgentProfile, type Candidate, type Id, type InboxItem, type Task } from "@petrina/core";
@@ -473,13 +473,14 @@ export class Driver {
 
             }
             if (sentBack) continue;
-            const versions = await invalidateAcceptance(current) ?? await versionsOf(current);
+            const hasProofs = !!current.proofRequests?.length;
+            const observed = hasProofs ? await committedCodeOf(current) : undefined;
+            const versions = await invalidateAcceptance(current, observed?.versions) ?? observed?.versions ?? await versionsOf(current);
             refreshProofs(current, versions);
             // The tester tried an earlier version of the change: the final code gets one more pass first.
             const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId, current)?.result === "checks");
             const acceptanceFailed = current.acceptancePassed === false;
-            const hasProofs = !!current.proofRequests?.length;
-            const changes = hasProofs ? await changesOf(current) : undefined;
+            const changes = observed?.changes;
             const mainOnly = hasProofs && sameVersions(current.testedChanges, changes) && !sameVersions(current.testedVersions, versions);
             const ordinaryRetest = current.testedPatch !== undefined && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch);
             const requestedRetest = hasProofs && proofTestNeeded(current, mainOnly);

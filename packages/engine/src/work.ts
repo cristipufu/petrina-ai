@@ -1,5 +1,5 @@
 import { routeAcceptance, type AcceptanceRoutingHost, type RepositoryContext } from "@petrina/orchestrator";
-import { productsFor, versionsOf, changesOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
+import { productsFor, versionsOf, committedCodeOf, acceptanceVersion, invalidateAcceptance } from "./repositories.js";
 import { openProofs, refreshProofs, restorationReason, sameVersions } from "@petrina/core";
 // "do" stages: one role on one profile. The builder answers findings, brings work up to date and writes a pull
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
@@ -179,9 +179,9 @@ export class Work {
         const interrupted = openStep(task);
         const lost = interrupted?.kind === "agent" ? interrupted.proofRun?.restored : undefined;
         if (lost) endAgentStep(task, { outcome: "Stopped before a result", reason: `${lost.products.length ? "Petrina undid changes during this attempt" : "Petrina could not confirm what this attempt's cleanup undid"}; the next run starts fresh`, tone: "back" }, Date.now());
-        const versions = await versionsOf(task);
-        refreshProofs(task, versions);
-        task.acceptanceRun = { versions, changes: await changesOf(task), requestIds: openProofs(task).map(request => request.id) };
+        const observed = await committedCodeOf(task);
+        refreshProofs(task, observed.versions);
+        task.acceptanceRun = { ...observed, requestIds: openProofs(task).map(request => request.id) };
         this.k.commitNow();
       }
       const run = task.acceptanceRun;
