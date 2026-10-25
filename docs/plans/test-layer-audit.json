@@ -358,11 +358,16 @@
       "status": "pending"
     },
     {
-      "file": "packages/core/test/flow.test.ts",
+      "file": "packages/core/test/rules/workflow/rounds.test.ts",
       "declarations": 11,
       "assertionSites": 60,
       "baselineDigest": "25a783398df5bdbf2fd9d4e7377b213504fe4ff2fe15ffb52e2b0f5bd29f47cc",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/core/test/flow.test.ts",
+      "layer": "rules",
+      "area": "workflow",
+      "review": "Eleven pure workflow/round/checkpoint cases with all sixty assertion sites retain their original bodies, except a redundant unknown cast. Replaces an incidental completed historical demo task with a canonical production-created task and explicit plan plus a complete brief. Mutating cases deep-copy the private template. No simulator, engine, filesystem, database, process or native clock.",
+      "validation": "flow-rules-8ec20612/core-reviewed.json: all 1083 cases pass. review.json reconciles every runtime case identity/outcome against the full source8ec20612 core report; body-reconciliation.json proves original rule bodies retained. All workspace types and conventions pass. Full changed-batch qualification remains due."
     },
     {
       "file": "packages/core/test/follow-ups.test.ts",

@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createDemoState } from "../src/demo.js";
-import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteReproduction, noteRoundEnd, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "../src/flow.js";
-import { BUILT_IN_ROLES } from "../src/library.js";
-import type { Finding, Stage, Task } from "../src/model.js";
+import { workflowFixture } from "../../fixtures/workflow.js";
+import { afterChangesAsked, columnOf, coveredByDecision, designRoundEnd, gateStatus, gateTitle, noteReproduction, noteRoundEnd, passedOpenWords, reviewDecisionFor, reviewRoundEnd, type DeepMutable } from "../../../src/flow.js";
+import { BUILT_IN_ROLES } from "../../../src/library.js";
+import type { Finding, Stage, Task } from "../../../src/model.js";
 
-const demo = createDemoState(1_000_000_000);
-const planned = demo.tasks.find((task) => task.plan?.stages.some((stage) => stage.roleId === "builder") && task.plan.stages.some((stage) => stage.kind === "review-chain"))!;
+const { task: planned } = workflowFixture();
 const stages = planned.plan!.stages;
 const at = (match: (stage: Stage) => boolean) => stages.findIndex(match);
 const copy = (extra: Partial<Task> = {}): DeepMutable<Task> => JSON.parse(JSON.stringify({ ...planned, ...extra })) as DeepMutable<Task>;
@@ -144,7 +143,7 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
     const chain = at((stage) => stage.kind === "review-chain");
     const review = { ...stages[chain]!, maxRounds: 2 };
     const failure: Finding = { ...important(), id: "f2", text: "Failed acceptance check: People see the greeting", productIds: ["a"] };
-    const shared = { ...planned, stageIndex: chain, repositories: [], acceptanceBlocked: true } as unknown as Task;
+    const shared = { ...planned, stageIndex: chain, repositories: [], acceptanceBlocked: true };
     // Alone it neither sends the work back nor asks for a review decision; beside a review finding only that one counts.
     expect(reviewRoundEnd({ ...shared, findings: [failure] }, review, 1, BUILT_IN_ROLES)).toEqual({ kind: "passed" });
     expect(reviewRoundEnd({ ...shared, findings: [failure] }, review, 2, BUILT_IN_ROLES)).toEqual({ kind: "passed" });
