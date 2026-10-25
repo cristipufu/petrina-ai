@@ -1,28 +1,21 @@
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { Engine } from "./engine.js";
-import { Aborted } from "../src/kernel.js";
-import { Connections, CONFIRM_ADDRESS } from "../src/connection.js";
+import { coordinatorRecords } from "../../fixtures/coordinator-records.js";
+import { Aborted } from "../../../src/kernel.js";
+import { Connections, CONFIRM_ADDRESS } from "../../../src/connection.js";
 import { executionFor } from "@petrina/orchestrator";
-import * as git from "@petrina/repositories/git";
-import { removeDir, tempDir, waitFor } from "./fixtures.js";
+import { removeDir, waitFor } from "../../fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
-async function fixture() {
-  const dir = tempDir("petrina-inbox-waits-"); roots.push(dir);
-  const engine = new Engine(dir, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null } });
-  await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
-  engine.s.products.push({ id: "p", name: "Product", path: dir, repo: "acme/product", tone: "blue" });
-  const task = engine.task(engine.addTask({ productId: "p", title: "Wait safely", backlog: true }))!;
-  return { engine, task, scope: executionFor(task) };
-}
+const fixture = () => coordinatorRecords(roots, { prefix: "petrina-inbox-waits-", title: "Wait safely", productPath: true, repo: "acme/product", paused: false });
 
 it("does not ask for an address after pause during the Git lookup, and releases the product's confirmation lock", async () => {
   const { engine, task, scope } = await fixture();
-  const connections = new Connections(engine), controller = new AbortController();
   let resolve!: (address: string) => void;
-  const remote = spyOn(git, "remoteAddress").mockImplementation(() => new Promise(done => { resolve = done; }));
+  const queries = { remoteAddress: (_path: string): Promise<string | undefined> => new Promise(done => { resolve = done; }) };
+  const connections = new Connections(engine, queries), controller = new AbortController();
+  const remote = spyOn(queries, "remoteAddress");
   try {
     task.state = "waiting"; engine.drivers.set(task.id, controller);
     const pending = connections.connection(scope, controller.signal);
@@ -38,8 +31,9 @@ it("does not ask for an address after pause during the Git lookup, and releases 
 
 it("aborts a peer waiting on another task's confirmation without disrupting the original question", async () => {
   const { engine, scope } = await fixture();
-  const connections = new Connections(engine), owner = new AbortController(), peer = new AbortController();
-  const remote = spyOn(git, "remoteAddress").mockResolvedValue("https://github.com/acme/product.git");
+  const queries = { remoteAddress: async (_path: string) => "https://github.com/acme/product.git" };
+  const connections = new Connections(engine, queries), owner = new AbortController(), peer = new AbortController();
+  const remote = spyOn(queries, "remoteAddress");
   const ownerListener = spyOn(owner.signal, "removeEventListener");
   try {
     const pending = connections.connection(scope, owner.signal);

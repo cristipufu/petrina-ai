@@ -1,21 +1,26 @@
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { Engine } from "./engine.js";
-import { serve } from "../src/server.js";
-import { removeDir, tempDir, waitFor } from "./fixtures.js";
+import { Engine } from "../../engine.js";
+import { serve } from "../../../src/server.js";
+import { removeDir, tempDir, waitFor } from "../../fixtures.js";
 
-const dir = tempDir("petrina-server-");
-const engine = new Engine(join(dir, "data"));
-const token = randomBytes(24).toString("base64url");
-const server = serve(engine, { port: 0, token });
-const http = `http://127.0.0.1:${server.port}`;
-const ws = `ws://127.0.0.1:${server.port}/ws`;
+let dir: string, engine: Engine, token: string, server: ReturnType<typeof serve>, http: string, ws: string;
 const OWN = "tauri://localhost";
-
-afterAll(async () => {
-  server.stop(true);
-  await engine.shutdown();
+beforeEach(async () => {
+  dir = tempDir("petrina-server-");
+  engine = new Engine(join(dir, "data"));
+  try {
+    await engine.waitUntilReady();
+    token = randomBytes(24).toString("base64url");
+    server = serve(engine, { port: 0, token });
+    http = `http://127.0.0.1:${server.port}`;
+    ws = `ws://127.0.0.1:${server.port}/ws`;
+  } catch (error) { await engine.shutdown(); removeDir(dir); throw error; }
+});
+afterEach(async () => {
+  server?.stop(true);
+  await engine?.shutdown();
   removeDir(dir);
 });
 

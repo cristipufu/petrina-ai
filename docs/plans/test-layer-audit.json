@@ -3193,11 +3193,26 @@
       }
     },
     {
-      "file": "packages/engine/test/fixture-trace.test.ts",
+      "file": "packages/test-support/test/contracts/tracing/progress.test.ts",
       "declarations": 6,
       "assertionSites": 35,
       "baselineDigest": "b9ea363cb19e663b7eb22d04539f2d76e577abca95ed4a759d0d83cbf5d05443",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/fixture-trace.test.ts",
+      "splitFiles": [
+        "packages/test-support/test/contracts/tracing/progress.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "tracing",
+      "review": "Every original assertion and runtime variant reviewed. Actual HTTP/WebSocket server, Engine/SQLite/archive/inbox/account recording remain native contracts. Each server case owns an independent Engine, database and ephemeral port; address reads use an explicit native query port. Worker-global timer interception moved into bounded owned real children; test-only progress diagnostics have a single public test-support owner. One login/selection rule uses the actual portable selector. Review caught and fixed a nonzero-exit acceptance gap; native negative control retains valid data with failed execution.",
+      "reviewedCurrentOriginalRuntimePasses": 7,
+      "reviewedCurrentOriginalAssertionSites": 35,
+      "currentOriginalAssertionSites": 35,
+      "validation": {
+        "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
+        "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/follow-ups.test.ts",
@@ -3349,11 +3364,26 @@
       ]
     },
     {
-      "file": "packages/engine/test/inbox-waits.test.ts",
+      "file": "packages/engine/test/contracts/inbox/waiters.test.ts",
       "declarations": 5,
       "assertionSites": 43,
       "baselineDigest": "7774efcbf7421e947107364a3f2609a266fd1b24efa8ea9ec1e61d3ed34aa93c",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/inbox-waits.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/inbox/waiters.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Every original assertion and runtime variant reviewed. Actual HTTP/WebSocket server, Engine/SQLite/archive/inbox/account recording remain native contracts. Each server case owns an independent Engine, database and ephemeral port; address reads use an explicit native query port. Worker-global timer interception moved into bounded owned real children; test-only progress diagnostics have a single public test-support owner. One login/selection rule uses the actual portable selector. Review caught and fixed a nonzero-exit acceptance gap; native negative control retains valid data with failed execution.",
+      "reviewedCurrentOriginalRuntimePasses": 5,
+      "reviewedCurrentOriginalAssertionSites": 43,
+      "currentOriginalAssertionSites": 43,
+      "validation": {
+        "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
+        "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/independence.test.ts",
@@ -4399,11 +4429,32 @@
       ]
     },
     {
-      "file": "packages/engine/test/runtime-edge-cases.test.ts",
+      "file": "packages/engine/test/contracts/runtime/background-work.test.ts",
       "declarations": 13,
       "assertionSites": 71,
       "baselineDigest": "5167fb31efa84ce37c1801ba74ab66ca983fc114be01330c7f036c6df43c36d1",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/runtime-edge-cases.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/runtime/background-work.test.ts",
+        "packages/engine/test/contracts/state/archive-ownership.test.ts",
+        "packages/engine/test/contracts/inbox/retry.test.ts",
+        "packages/engine/test/contracts/runtime/step-clocks.test.ts",
+        "packages/engine/test/contracts/screen/stopped-handoff.test.ts",
+        "packages/engine/test/contracts/usage/model-groups.test.ts",
+        "packages/orchestrator/test/orchestration/selection/no-usable-tool.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Every original assertion and runtime variant reviewed. Actual HTTP/WebSocket server, Engine/SQLite/archive/inbox/account recording remain native contracts. Each server case owns an independent Engine, database and ephemeral port; address reads use an explicit native query port. Worker-global timer interception moved into bounded owned real children; test-only progress diagnostics have a single public test-support owner. One login/selection rule uses the actual portable selector. Review caught and fixed a nonzero-exit acceptance gap; native negative control retains valid data with failed execution.",
+      "reviewedCurrentOriginalRuntimePasses": 13,
+      "reviewedCurrentOriginalAssertionSites": 71,
+      "currentOriginalAssertionSites": 71,
+      "validation": {
+        "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
+        "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/runtime-wait-boundaries.test.ts",
@@ -4612,11 +4663,26 @@
       }
     },
     {
-      "file": "packages/engine/test/server.test.ts",
+      "file": "packages/engine/test/contracts/server/connection-key.test.ts",
       "declarations": 8,
       "assertionSites": 26,
       "baselineDigest": "94dac37186e0b13130feb0b714154da06a84ab68928cd9dea069b9d6114eae3a",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/server.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/server/connection-key.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Every original assertion and runtime variant reviewed. Actual HTTP/WebSocket server, Engine/SQLite/archive/inbox/account recording remain native contracts. Each server case owns an independent Engine, database and ephemeral port; address reads use an explicit native query port. Worker-global timer interception moved into bounded owned real children; test-only progress diagnostics have a single public test-support owner. One login/selection rule uses the actual portable selector. Review caught and fixed a nonzero-exit acceptance gap; native negative control retains valid data with failed execution.",
+      "reviewedCurrentOriginalRuntimePasses": 8,
+      "reviewedCurrentOriginalAssertionSites": 26,
+      "currentOriginalAssertionSites": 26,
+      "validation": {
+        "artifact": "workstreams/root-coordinator-next/reconciliation.json; workstreams/root-coordinator-review/",
+        "preservation": "All33original runtime names and175matcher sites retained:167exact text/AST subjects,8explicit actual-owner/counter equivalents. One new real failed-child control adds4assertions.",
+        "qualification": "Root native32pass/0fail/9files495ms; portable1pass; changedtimerreader5pass; all9types/conventions pass. Independent review closed no open findings. Full integrated qualification pending."
+      }
     },
     {
       "file": "packages/core/test/rules/session/log-retention.test.ts",

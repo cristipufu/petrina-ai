@@ -24,7 +24,7 @@ export class Connections {
   /** A product whose GitHub address the coordinator is being asked to confirm. */
   private readonly confirming = new Map<Id, Promise<void>>();
 
-  constructor(private readonly k: Kernel) {}
+  constructor(private readonly k: Kernel, private readonly queries: Pick<typeof git, "remoteAddress"> = git) {}
 
   /** One step in the product's line: it starts when the steps before it have finished, whatever they did. */
   serial<T>(productId: Id, step: () => Promise<T>): Promise<T> {
@@ -128,7 +128,7 @@ export class Connections {
     const { task, work: repository } = scope;
     const product = this.k.s.products.find((entry) => entry.id === productId)!;
     const name = product.name;
-    const address = await git.remoteAddress(product.path!);
+    const address = await this.queries.remoteAddress(product.path!);
     if (signal.aborted) throw new Aborted();
     if (!address) return { ok: false, reason: `${name} has no GitHub address`, missing: true };
     if (!git.sameRepo(address, product.repo)) return { ok: false, reason: `${name}'s address ${address} is not ${product.repo} on GitHub` };

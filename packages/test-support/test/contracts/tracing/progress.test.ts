@@ -1,6 +1,6 @@
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { expect, it } from "bun:test";
-import { FixtureTrace } from "./fixture-trace.js";
+import { FixtureTrace } from "../../../src/fixture-trace.js";
 
 it("records a stalled nested phase before it finishes, including work still owned during shutdown", async () => {
   const lines: string[] = [];
