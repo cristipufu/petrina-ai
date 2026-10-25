@@ -19,7 +19,7 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
   const root = tempDir("petrina-proof-requests-"); roots.push(root);
   const lifetime = directDrivers(root); fixtures.add(lifetime);
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
-  return setupWithCleanup(async () => {
+  return setupWithCleanup(() => lifetime.prepare(async () => {
     const engine = lifetime.open(join(root, "data"), { agentCommand: () => fakes ? [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir] : undefined, terminals: () => [], ...options });
     engine.schedule = () => {};
     await engine.waitUntilReady();
@@ -84,7 +84,7 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
       finally { admit.mockRestore(); }
     };
     return { root, engine, task, scope, owners, products, build, tester, review, gate, ship, advance, request, recordPass, drive, close, open: lifetime.open, stop: lifetime.stop, run: lifetime.run };
-  }, close);
+  }), close);
 }
 function testerReply(f: Awaited<ReturnType<typeof fixture>>, answers: (ids: readonly string[]) => unknown[], before?: () => void | Promise<void>, checklist?: unknown[]) {
   return spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, profileId, _given, schema, _signal, options) => {

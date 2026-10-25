@@ -34,7 +34,7 @@ async function fixture(options: { shared?: boolean; checklist?: readonly string[
   const root = tempDir("petrina-acceptance-gap-"); roots.push(root);
   const lifetime = directDrivers(root); fixtures.add(lifetime);
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
-  return setupWithCleanup(async () => {
+  return setupWithCleanup(() => lifetime.prepare(async () => {
     const native = options.native ? new Fakes(join(root, "fake")) : undefined;
     const replies = acceptanceAgents();
     const fakes = native ?? {
@@ -121,7 +121,7 @@ async function fixture(options: { shared?: boolean; checklist?: readonly string[
       },
     };
     return f;
-  }, close);
+  }), close);
 }
 
 
