@@ -24,19 +24,25 @@ export interface AcceptanceScript {
   reviewer?: "confirm" | "important";
   affectedProducts?: string[];
   reopen?: "resume";
+  buildReport?: { summary?: string; title?: string; answer?: { fixed: boolean; text: string } };
 }
 
 /** Caller-owned work finishes before the report. A turn keeps its starting recipe while that work runs. */
-export function acceptanceAgents(effects: { beforeChecks?(prompt: ScriptedPrompt, signal: AbortSignal): void | Promise<void> } = {}) {
+export function acceptanceAgents(effects: {
+  beforeChecks?(prompt: ScriptedPrompt, signal: AbortSignal): void | Promise<void>;
+  beforeReply?(prompt: ScriptedPrompt, signal: AbortSignal): void | Promise<void>;
+} = {}) {
   let configured: AcceptanceScript = { builder: "plain" }, repairs = 0, testerRun = 0;
-  const agents = new ScriptedAgents(async (prompt, signal) => {
+  const respond = async (prompt: ScriptedPrompt, signal: AbortSignal): Promise<string> => {
     const script = configured;
     const { result, text, cwd } = prompt;
+    await effects.beforeReply?.(prompt, signal);
     switch (result) {
       case "build":
         writeFileSync(join(cwd, "greeting.txt"), "Hello\n");
         if (script.fixes === "change" && text.includes("You are fixing the review findings")) writeFileSync(join(cwd, "welcome.txt"), `Hello repair ${++repairs}\n`);
-        return scriptedResult({ summary: "Added the greeting.", changes: ["People see a greeting"], tests: "Petrina runs the product checks.", answers: answersTo(text) });
+        return scriptedResult({ summary: script.buildReport?.summary ?? "Added the greeting.", ...(script.buildReport?.title ? { title: script.buildReport.title } : {}),
+          changes: ["People see a greeting"], tests: "Petrina runs the product checks.", answers: answersTo(text, script.buildReport?.answer) });
       case "checks": {
         const runs = script.testerRuns;
         const run = runs?.length ? Math.min(testerRun++, runs.length - 1) : undefined;
@@ -62,7 +68,8 @@ export function acceptanceAgents(effects: { beforeChecks?(prompt: ScriptedPrompt
       case "votes": return scriptedResult({ verdicts: findingIds(text, "Important findings to check (a verdict on every one, by id)").map(id => ({ id, verdict: "real", reason: "The scripted welcome page has no greeting." })) });
       default: throw new Error(`Unexpected participant in the acceptance fixture: ${result}`);
     }
-  });
+  };
+  const agents = new ScriptedAgents(respond);
   const start: StartAgentSession = (options, role) => {
     // Match the native stand-in's declared capability; default scenarios deliberately start fresh.
     if (options.reopen && configured.reopen !== "resume") return Promise.reject(new ReopenFailed("This acceptance scenario does not reopen conversations"));
@@ -70,8 +77,10 @@ export function acceptanceAgents(effects: { beforeChecks?(prompt: ScriptedPrompt
   };
   return {
     start,
+    // Other workflow fixtures compose these same replies with their own explicit prerequisite participants.
+    respond,
     configure(next: AcceptanceScript) {
-      const supported = new Set(["builder", "fixes", "testerChecks", "testerChecksFixed", "testerRuns", "testerProofAnswers", "reviewer", "affectedProducts", "reopen"]);
+      const supported = new Set(["builder", "fixes", "testerChecks", "testerChecksFixed", "testerRuns", "testerProofAnswers", "reviewer", "affectedProducts", "reopen", "buildReport"]);
       for (const key of Object.keys(next)) if (!supported.has(key)) throw new Error(`Unsupported acceptance fixture option: ${key}`);
       configured = structuredClone(next);
     },

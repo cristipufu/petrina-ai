@@ -916,6 +916,15 @@
         ],
         "review": "Moved the one declaration containing two complete workflows into direct wording rules plus a real-turn composition control. Seven assertion sites / 13 runtime assertions preserved. All twenty remaining current declaration bodies are byte unchanged; native check executions, reuse, restart, pause, hooks, final-tree validation and delivery blocking retain their real boundaries. The mixed file remains pending.",
         "validation": "prompt-layers-e19eb144/reconciliation.json; native-neighborhood.xml (115 pass / 1392 assertions across five files); focused fixture launches and elapsed time are in before/summary.json and after/summary.json."
+      },
+      "costAudit": {
+        "base": "4a6dd436",
+        "review": "Reviewed all 34 current runtime variants for machinery under test. Replaced provider IPC/probes with canonical scripted sessions and explicit release events while retaining real checks, Git, hooks, SQLite, restarts, interruption and publishing. Two independent native composition cases moved to their own owners; remaining mixed workflow/hook layer migration is pending. No additional baseline file is marked complete.",
+        "owners": [
+          "packages/engine/test/contracts/checks/evidence-context.test.ts",
+          "packages/engine/test/contracts/workflow/planner-checkpoint.test.ts"
+        ],
+        "validation": "check-workflows-4a6dd436/reconciliation.json: all 26 declarations, 331 assertion sites, 34 runtime case identities and 424 runtime assertions retained. The actual check program is byte identical. Final measured run launches 5306 direct Git / 5463 unique Git starts, 75 Bun and one process scan, with all starts settled, three file-end records and no observer errors; prior was 5387 / 5538 Git, 399 Bun and 324 process scans. Focused times 7.63s versus 14.76s; no whole-suite improvement or aggregate memory claim. Earlier incomplete/error observations are retained."
       }
     },
     {
@@ -2860,8 +2869,8 @@
       "status": "reviewed",
       "layer": "contracts",
       "area": "fixtures",
-      "review": "Seven native fixture/schema contracts cover fresh/resumed identity, repairs, explicit check ordering, normalized independent findings, refusal of unsupported work, awaited caller effects, frozen per-turn proof/configuration, concurrent admission order and propagated work failure. Private folders and canonical session fixture; no installed agent or account. Effects use explicit barriers; added cases have bounded deadlines.",
-      "validation": "acceptance-fixture-0a70f683/contracts-first.xml: seven pass / 29 assertions. neighborhood.xml: all 27 session/acceptance-repair contracts pass / 304 assertions. native-tester.xml: original ACP/final-pass/Git line-ending journey passes / 14 assertions. Six migrated proof variants pass / 156 assertions; all types and conventions pass. contracts-reviewed.xml repeats all seven cases after explicit test deadlines. types-reviewed.log and conventions-reviewed.log pass. Full changed-batch qualification remains due."
+      "review": "Seven native fixture/schema contracts cover fresh/resumed identity, repairs, explicit check ordering, normalized independent findings, refusal of unsupported work, awaited caller effects, frozen per-turn proof/configuration, concurrent admission order and propagated work failure. Private folders and canonical session fixture; no installed agent or account. Effects use explicit barriers; added cases have bounded deadlines. Two further controls prove held Builder report/title/answer snapshots survive script changes, and cancellation ends a held reply without promised file writes.",
+      "validation": "acceptance-fixture-0a70f683/contracts-first.xml: seven pass / 29 assertions. neighborhood.xml: all 27 session/acceptance-repair contracts pass / 304 assertions. native-tester.xml: original ACP/final-pass/Git line-ending journey passes / 14 assertions. Six migrated proof variants pass / 156 assertions; all types and conventions pass. contracts-reviewed.xml repeats all seven cases after explicit test deadlines. types-reviewed.log and conventions-reviewed.log pass. Full changed-batch qualification remains due. check-workflows-4a6dd436/fixture-reviewed.xml: all nine cases / 34 assertions pass."
     },
     {
       "file": "packages/orchestrator/test/orchestration/repositories/observations.test.ts",
@@ -2937,6 +2946,36 @@
       "assertionSites": 2,
       "review": "Three allowed-usage variants exercise actual native quota/readiness and ballot recording through the same production factory as Reviews, using private SQLite and canonical single-product records with explicit scripted readiness. No repository, agent or native account dependency. Actual fresh admission remains covered by the strengthened real-session control.",
       "validation": "verifier-selection-9651ee88/selection-ready.xml: three pass/six assertions; native-neighborhood.xml: 187 pass/2044 assertions; native-admission-reviewed.xml: one pass/nine assertions. Complete changed-batch qualification remains due."
+    },
+    {
+      "file": "packages/engine/test/contracts/checks/evidence-context.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "checks",
+      "declarations": 1,
+      "assertionSites": 10,
+      "review": "Actual native check/context version binding with private Git and SQLite. Uncommitted/committed changes, restored versions, changed command definitions, timed-out evidence, empty results and extra requirements retain all ten original assertions. No planning, review, acceptance, delivery or agent run.",
+      "validation": "check-workflows-4a6dd436/final/cases.xml; reconciliation.json proves every original assertion unchanged."
+    },
+    {
+      "file": "packages/engine/test/contracts/workflow/planner-checkpoint.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "workflow",
+      "declarations": 1,
+      "assertionSites": 3,
+      "review": "Actual Planner/driver/checkpoint and pool-pause composition with private SQLite and a controlled scripted session, before a working copy exists. Retains all three original no-slot/no-Builder/no-check assertions and the actual check invocation log.",
+      "validation": "check-workflows-4a6dd436/planner-first.xml and final/cases.xml; reconciliation.json."
+    },
+    {
+      "file": "packages/engine/test/contracts/runtime/shutdown.test.ts",
+      "status": "reviewed",
+      "layer": "contracts",
+      "area": "runtime",
+      "declarations": 2,
+      "assertionSites": 10,
+      "review": "Four controlled ownership variants cover background work, review-copy work, nested registration during shutdown, rejection propagation and an independent unfinished owner. Real isolated Engine/SQLite and private files, no agents or repository prerequisites. Explicit releases and the native event-loop boundary control completion; no elapsed-time assertions.",
+      "validation": "check-workflows-4a6dd436/shutdown-before.xml: all three initial controls reproduce premature completion. shutdown-fixed.xml passes; shutdown-neighborhood.xml: all 102 cleanup/recovery/follow-up contracts pass / 1226 assertions. Complete changed-batch qualification remains due."
     }
   ],
   "rust": [

@@ -341,7 +341,15 @@ export class Engine extends Kernel implements Commands {
     this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(() => undefined);
+    this.shutdownDone = Promise.allSettled([this.startupReady, this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(async () => {
+      // A driver can hand file handling to the background while it settles. Re-read ownership after
+      // each group, including work registered by that cleanup, before callers may remove its folders.
+      for (;;) {
+        const pending = [...this.backgroundWork, ...this.copyCleanups.values()];
+        if (!pending.length) return;
+        await Promise.allSettled(pending);
+      }
+    });
     const saveAndCloseLog = () => {
       // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
       this.s.now = Date.now();
@@ -694,7 +702,7 @@ export class Engine extends Kernel implements Commands {
       this.log(combined, "you", `You combined ${sources.length} backlog requests and queued them as one task`);
       this.renumberQueue();
       this.commitNow();
-      for (const source of sources) void this.cleanup.removeCaptures(source.id);
+      for (const source of sources) void this.trackWork(this.cleanup.removeCaptures(source.id));
       this.schedule();
       return id;
     } finally { release(); await rm(temp, { recursive: true, force: true }).catch(() => undefined); }
@@ -925,7 +933,7 @@ export class Engine extends Kernel implements Commands {
     this.log(task, "you", "You cancelled it");
     this.commit(task);
     // Pictures need no delivery lookup or agent shutdown before they can be discarded.
-    void this.cleanup.removeCaptures(taskId);
+    void this.trackWork(this.cleanup.removeCaptures(taskId));
     // Stopped mid-delivery with no step running (it failed, say): what went out is looked up now, then the copy goes.
     // With an agent still stopping, its driver removes the copy once it has let go of it.
     void this.trackWork(this.shipping.monitor.settleCancelled(taskId).then(() => this.tidy(taskId)));

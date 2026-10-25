@@ -2,70 +2,18 @@ import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decisionEvidence, displayTask, journeyProblems, journeyView, type DeepMutable, type State, type Task, type WorkflowEvent } from "@petrina/core";
-import { Engine } from "./engine.js";
-import { commandText } from "../src/checks.js";
-import { Store } from "@petrina/storage/store";
-import type { Scenario } from "./fake-agent.js";
-import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, tempDir, taskOf, traceTaskWait, until, waitFor } from "./support.js";
+import { decisionEvidence, journeyProblems, journeyView, type State, type Task, type WorkflowEvent } from "@petrina/core";
+import type { Engine } from "./engine.js";
+import type { CheckScript } from "./fixtures/check-agents.js";
+import { checkWorkflow } from "./fixtures/check-workflow.js";
+import { coordinator, git, itemOf, removeDir, tempDir, taskOf, until, waitFor } from "./support.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-async function fixture(approveDelivery = true, scenario: Scenario = { planner: "short" }, extra?: { checkArgs?: string[] } | string) {
-  // Check-command options, or a trace label when a wait needs one.
-  const checkOptions = typeof extra === "string" || extra == null ? {} : extra;
-  const trace = typeof extra === "string" ? extra : undefined;
-  const root = tempDir("petrina-check-failure-");
-  roots.push(root);
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario(scenario);
-  const file = join(root, "check.ts");
-  const log = join(root, "runs.txt");
-  // Count actual command invocations outside the working copy, where restoring tracked files cannot hide one.
-  // "--sequence=PFFP": the nth actual run passes or fails by its letter; later runs repeat the last one.
-  writeFileSync(file, `import { appendFileSync, existsSync, readFileSync } from "node:fs";
-const sequence = process.argv.find((arg) => arg.startsWith("--sequence="))?.slice(11);
-const earlier = existsSync(process.argv[2]) ? readFileSync(process.argv[2], "utf8").split("\\n").filter((line) => line === "passed" || line === "failed").length : 0;
-const ok = sequence ? sequence[Math.min(earlier, sequence.length - 1)] === "P" : process.argv.includes("--pass") || existsSync("welcome.txt");
-if (process.argv.includes("--hold")) {
-  appendFileSync(process.argv[2], "started\\n");
-  setInterval(() => {}, 1000);
-  await new Promise(() => {});
-}
-appendFileSync(process.argv[2], ok ? "passed\\n" : "failed\\n");
-console.log(ok ? "The welcome page works" : "The welcome page is missing (captured failure)");
-process.exit(ok ? 0 : 1);
-`);
-  const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "fake-agent.ts"), fakes.dir] };
-  let engine = new Engine(join(root, "data"), options);
-  const repo = await makeProduct(root);
-  const productId = await engine.addProduct(repo);
-  engine.setProductDelivery(productId, "local", approveDelivery);
-  const command = (...args: string[]) => commandText([process.execPath, file, log, ...args]);
-  const setCheck = (...args: string[]) => engine.setProductChecks(productId, [{ name: "Welcome", command: command(...args) }]);
-  setCheck(...(checkOptions.checkArgs ?? []));
-  const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
-  let deliveryWaits = 0;
-  return {
-    fakes, repo, taskId, productId, root, log, command, setCheck,
-    get engine() { return engine; },
-    runs: () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [],
-    delivery: () => traceTaskWait(trace ? `${trace}: delivery ${++deliveryWaits}` : undefined, () => engine.getState(), taskId,
-      () => until(engine, (state) => !!itemOf(state, taskId, "delivery"), coordinator(["plan"])).then((state) => taskOf(state, taskId))),
-    async restart(edit?: (state: DeepMutable<State>) => void) {
-      await engine.shutdown();
-      if (edit) {
-        const store = new Store(join(root, "data", "petrina.db"));
-        const loaded = store.load()!;
-        const state = { ...loaded, tasks: loaded.tasks.map(displayTask) };
-        edit(state as DeepMutable<State>);
-        store.save(state);
-        store.close();
-      }
-      engine = new Engine(join(root, "data"), options);
-    },
-  };
+async function fixture(approveDelivery = true, scenario: CheckScript = { planner: "short" }, extra?: { checkArgs?: string[] } | string) {
+  const root = tempDir("petrina-check-failure-"); roots.push(root);
+  return checkWorkflow(root, approveDelivery, scenario, extra);
 }
 
 const lines = (task: Task) => task.timeline.map((entry) => entry.text);
@@ -86,7 +34,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(f.runs()).toEqual(["failed"]);
       const step = checkSteps(task)[0]!;
       expect(step.productChecks!.map((check) => [check.name, check.result])).toEqual([["Tests", "skipped"], ["Type check", "fail"]]);
-      expect(f.fakes.openings("code reviewer")).toEqual([]);
+      expect(f.agents.openings("code reviewer")).toEqual([]);
       await f.restart();
       expect(await f.engine["checks"].current(executionFor(f.engine.task(f.taskId)!))).toBe(true);
       expect(f.runs()).toEqual(["failed"]);
@@ -101,18 +49,18 @@ describe.concurrent("failed checks are evidence until something changes", () => 
   });
   it("finishes the current reviewer but starts no delivery preparation while the pool is paused", async () => {
     const f = await fixture(true, { planner: "short", builder: "plain", controlled: true });
-    const release = (session: string) => writeFileSync(join(f.fakes.dir, `release-${session}`), "go");
+    const release = f.agents.release;
     try {
       f.setCheck("--pass");
       await waitFor(() => {
-        for (const prompt of f.fakes.received()) if (prompt.role !== "code reviewer") release(prompt.session);
+        for (const prompt of f.agents.received()) if (prompt.role !== "code reviewer") release(prompt.session);
         coordinator(["plan"])(f.engine, f.engine.getState());
-        return f.fakes.received("code reviewer").length > 0;
+        return f.agents.received("code reviewer").length > 0;
       }, "the final reviewer to start");
       expect(f.runs()).toEqual(["passed"]);
       f.engine.setPoolPaused(true);
       f.setCheck("--pass", "--new-definition");
-      for (const prompt of f.fakes.received("code reviewer")) release(prompt.session);
+      for (const prompt of f.agents.received("code reviewer")) release(prompt.session);
       const waiting = await until(f.engine, (state) => taskOf(state, f.taskId).state === "waiting");
       expect(taskOf(waiting, f.taskId).statusLine).toBe("Waiting for the pool to resume");
       expect(taskOf(waiting, f.taskId).holdsSlot).toBe(false);
@@ -121,23 +69,10 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       f.engine.setPoolPaused(false);
       await f.delivery();
       expect(f.runs()).toEqual(["passed", "passed"]);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(1);
     } finally { await f.engine.shutdown(); }
   });
 
-  it("still presents a finished plan checkpoint while the pool is paused", async () => {
-    const f = await fixture(true, { planner: "short", controlled: true });
-    try {
-      const planner = await waitFor(() => f.fakes.received("planner")[0], "the planner to start");
-      f.engine.task(f.taskId)!.approvePlan = true;
-      f.engine.setPoolPaused(true);
-      writeFileSync(join(f.fakes.dir, `release-${planner.session}`), "go");
-      const state = await until(f.engine, (state) => !!itemOf(state, f.taskId, "plan"));
-      expect(taskOf(state, f.taskId).holdsSlot).toBe(false);
-      expect(f.fakes.received("builder")).toHaveLength(0);
-      expect(f.runs()).toEqual([]);
-    } finally { await f.engine.shutdown(); }
-  });
 
   it("reuses one passing run through read-only reviewers, acceptance and delivery without dropping an acceptance pass", async () => {
     const f = await fixture(true, { planner: "tester-first", builder: "plain" });
@@ -145,16 +80,16 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       f.setCheck("--pass");
       const task = await f.delivery();
       expect(f.runs()).toEqual(["passed"]);
-      expect(f.fakes.openings("tester")).toHaveLength(1);
-      expect(f.fakes.openings("tester")[0]).toContain("Current product checks, run by Petrina itself");
-      expect(f.fakes.openings("tester")[0]).toContain("do not rerun the full checks");
-      expect(f.fakes.openings("code reviewer").length).toBeGreaterThan(0);
-      expect(f.fakes.openings("code reviewer").every((prompt) => prompt.includes("Current product checks, run by Petrina itself"))).toBe(true);
+      expect(f.agents.openings("tester")).toHaveLength(1);
+      expect(f.agents.openings("tester")[0]).toContain("Current product checks, run by Petrina itself");
+      expect(f.agents.openings("tester")[0]).toContain("do not rerun the full checks");
+      expect(f.agents.openings("code reviewer").length).toBeGreaterThan(0);
+      expect(f.agents.openings("code reviewer").every((prompt) => prompt.includes("Current product checks, run by Petrina itself"))).toBe(true);
       expect(checkSteps(task)).toHaveLength(1);
       f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["passed"]);
-      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.agents.openings("tester")).toHaveLength(1);
     } finally { await f.engine.shutdown(); }
   });
 
@@ -163,8 +98,8 @@ describe.concurrent("failed checks are evidence until something changes", () => 
     try {
       const task = await f.delivery();
       expect(f.runs()).toEqual(["failed"]);
-      expect(f.fakes.openings("tester")).toHaveLength(0);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+      expect(f.agents.openings("tester")).toHaveLength(0);
+      expect(f.agents.openings("code reviewer")).toHaveLength(0);
       expect(task.journey?.some((step) => step.roleId === "tester")).toBe(false);
       expect(journeyProblems(task as Task)).toEqual([]);
       expect(task.checkReturns).toBe(2);
@@ -181,8 +116,8 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       f.setCheck("--pass");
       const original = await f.delivery();
       const testedPatch = original.testedPatch;
-      const reviewers = f.fakes.openings("code reviewer").length;
-      expect(f.fakes.openings("tester")).toHaveLength(1);
+      const reviewers = f.agents.openings("code reviewer").length;
+      expect(f.agents.openings("tester")).toHaveLength(1);
       expect(original.acceptancePassed).toBe(true);
 
       // A later fix changes the patch after acceptance has already passed. The earlier
@@ -200,65 +135,29 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(failed.checks!.results.some((run) => !run.ok)).toBe(true);
       expect(failed.checkReturns).toBe(2);
       expect(failed.testedPatch).toBe(testedPatch);
-      expect(f.fakes.openings("tester")).toHaveLength(1);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(reviewers);
+      expect(f.agents.openings("tester")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(reviewers);
       expect(failed.statusLine).toBe("Checks still fail. Your call");
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain("Automated checks: 1 of 1 failed (Welcome)");
       expect(journeyProblems(failed)).toEqual([]);
 
       await f.restart();
-      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.agents.openings("tester")).toHaveLength(1);
       expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(failed.checks);
 
       // A coordinator-authorized real fix still goes through checks, review and
       // final acceptance. Escalating must not mark the unfinished review complete.
-      f.fakes.scenario({ planner: "tester-first", builder: "plain", fixes: "change" });
+      f.agents.scenario({ planner: "tester-first", builder: "plain", fixes: "change" });
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the failed welcome check");
       const fixed = await f.delivery();
       expect(fixed.checks!.results.every((run) => run.ok)).toBe(true);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(reviewers * 2);
-      expect(f.fakes.openings("tester")).toHaveLength(2);
+      expect(f.agents.openings("code reviewer")).toHaveLength(reviewers * 2);
+      expect(f.agents.openings("tester")).toHaveLength(2);
       expect(fixed.testedPatch).not.toBe(testedPatch);
       expect(journeyProblems(fixed)).toEqual([]);
     } finally { await f.engine.shutdown(); }
   });
 
-  it("tells acceptance testing whether saved checks really cover the code and required commands", async () => {
-    const f = await fixture();
-    try {
-      f.setCheck("--pass");
-      await f.delivery();
-      const task = f.engine.task(f.taskId)!;
-      const saved = structuredClone(executionFor(task).work.checks!);
-      const evidence = async () => (await f.engine["context"].sectionsFor(executionFor(task), "tester")).find((section) => section.title.includes("product checks"));
-      expect(await evidence()).toEqual(expect.objectContaining({ title: "Current product checks, run by Petrina itself", body: expect.stringContaining("do not rerun the full checks") }));
-
-      writeFileSync(join(executionFor(task).work.worktree!, "greeting.txt"), "Uncommitted change\n");
-      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      await git(executionFor(task).work.worktree!, "add", "greeting.txt");
-      await git(executionFor(task).work.worktree!, "commit", "-q", "-m", "A real change");
-      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      await git(executionFor(task).work.worktree!, "reset", "--hard", saved.sha!);
-      expect((await evidence())?.title).toBe("Current product checks, run by Petrina itself");
-
-      f.setCheck("--pass", "--changed");
-      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      f.setCheck("--pass");
-      executionFor(task).work.checks!.results = [{ ...saved.results[0]!, ok: false, timedOut: true }];
-      expect((await evidence())?.body).toContain("not passing acceptance evidence");
-      expect((await evidence())?.body).not.toContain("Use them for automated acceptance");
-      executionFor(task).work.checks!.results = [];
-      expect(await evidence()).toBeUndefined();
-      executionFor(task).work.checks = structuredClone(saved);
-      f.engine.setProductChecks(f.productId, [
-        { name: "Welcome", command: f.command("--pass") },
-        { name: "Extra", command: f.command("--pass", "--extra") },
-      ]);
-      expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
-      // Building context reads evidence; it never runs checks to make the evidence current.
-      expect(f.runs()).toEqual(["passed"]);
-    } finally { await f.engine.shutdown(); }
-  });
 
   it("returns unchanged work twice without using a review round, keeps the failure after restart, and checks a real fix", async () => {
     const f = await fixture();
@@ -271,8 +170,8 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(task.rounds[review.id] ?? 1).toBe(1);
       expect(task.blockingAfter?.[review.id]).toBeUndefined();
       expect(task.reviewedSha).toBeUndefined();
-      expect(f.fakes.openings("builder")).toHaveLength(3);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+      expect(f.agents.openings("builder")).toHaveLength(3);
+      expect(f.agents.openings("code reviewer")).toHaveLength(0);
       expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(false);
       expect(lines(task)).not.toContain("Reviewers wait until the checks pass");
       expect(task.statusLine).toBe("Checks still fail. Your call");
@@ -292,7 +191,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(task.journey!.filter((step) => step.work === "check-reuse").every((step) => step.productChecks?.[0]?.run?.source?.stepId === recordedChecks[0]!.id)).toBe(true);
       expect(task.journey!.at(-1)!.productChecks?.[0]?.reusedAt).toBeNumber();
       expect(failure.evidence).toContain("captured failure");
-      expect(f.fakes.prompts("builder").filter((text) => text.includes("captured failure"))).toHaveLength(2);
+      expect(f.agents.prompts("builder").filter((text) => text.includes("captured failure"))).toHaveLength(2);
       // Rereading the saved failure keeps its diagnostics: the saved log, the journey's run and the check problem.
       const run = task.checks!.results[0]!;
       expect(readFileSync(run.logPath!, "utf8")).toContain("captured failure");
@@ -335,7 +234,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(blockedEvents.find((event) => event.kind === "coordinator.request" && event.requestKind === "delivery")).toMatchObject({ title: blocker.title });
       expect(journeyProblems(task)).toEqual([]);
 
-      f.fakes.scenario({ planner: "short", fixes: "change" });
+      f.agents.scenario({ planner: "short", fixes: "change" });
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Make the actual fix");
       task = await f.delivery();
       expect(f.runs()).toEqual(["failed", "passed"]);
@@ -345,7 +244,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(task.findings.find((finding) => finding.id === failure.id)?.status).toBe("fixed");
       expect(task.rounds[review.id] ?? 1).toBe(1);
       expect(task.blockingAfter?.[review.id]).toEqual([0]);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(1);
       expect(checkSteps(task)).toHaveLength(2);
       expect((({ reuses: _reuses, ...step }) => step)(checkSteps(task)[0]!)).toEqual((({ reuses: _reuses, ...step }) => step)(recordedChecks[0]!));
       expect(checkSteps(task)[1]).toEqual(expect.objectContaining({ outcome: "The check passes", reason: "checks passed", end: "done" }));
@@ -366,7 +265,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
     try {
       // Start with passing checks and a real review that uses up its sole round.
       f.setCheck("--pass");
-      f.fakes.scenario({ planner: "short", reviewer: "important" });
+      f.agents.scenario({ planner: "short", reviewer: "important" });
       let task = await f.delivery();
       const review = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
       expect(task.blockingAfter?.[review.id]).toEqual([1]);
@@ -393,9 +292,9 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(task.blockingAfter?.[review.id]).toEqual([1]);
       expect(task.rounds[review.id] ?? 1).toBe(1);
       expect(lines(task).filter((line) => line.startsWith("Review rounds used up"))).toHaveLength(1);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(1);
 
-      f.fakes.scenario({ planner: "short", fixes: "change" });
+      f.agents.scenario({ planner: "short", fixes: "change" });
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the welcome page");
       task = await f.delivery();
       expect(f.runs()).toEqual(["passed", "failed", "passed"]);
@@ -451,7 +350,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
       expect(f.runs()).toEqual(["failed", "failed", "passed"]);
       // The passing run continued at the review the checks had held back; nothing shipped unreviewed.
-      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(1);
     } finally {
       await f.engine.shutdown();
     }
@@ -509,7 +408,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       expect(f.runs()).toEqual(["passed"]);
       const tree = task.checks!.tree;
       expect(task.checks!.results.find((run) => run.name === "Commit message hook")?.ok).toBe(false);
-      f.fakes.scenario({ planner: "short", title: "Fix: Add a greeting" });
+      f.agents.scenario({ planner: "short", title: "Fix: Add a greeting" });
       f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Correct the title");
       task = await f.delivery();
       expect(task.checks!.tree).toBe(tree);
@@ -717,7 +616,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         expect(failed.checks!.results.at(-1)!.ok).toBe(true);
         expect(failed.checks!.definition).toMatch(/^[a-f0-9]{64}$/);
 
-        f.fakes.scenario({ planner: "short", fixes: "change" });
+        f.agents.scenario({ planner: "short", fixes: "change" });
         f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the failed product check");
         const fixed = await f.delivery();
         expect(f.runs()).toEqual(["failed", "passed"]);
@@ -734,7 +633,7 @@ describe.concurrent("failed checks are evidence until something changes", () => 
       try {
         f.setCheck("--pass");
         await f.delivery();
-        expect(f.fakes.openings("code reviewer")).toHaveLength(2);
+        expect(f.agents.openings("code reviewer")).toHaveLength(2);
         if (exhausted) await f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
         // Main overlaps the already reviewed work. The builder must port greeting.txt by hand.
         writeFileSync(join(f.repo, "greeting.txt"), "A greeting on main\n");
@@ -742,20 +641,20 @@ describe.concurrent("failed checks are evidence until something changes", () => 
         await git(f.repo, "commit", "-q", "-m", "A greeting on main");
         f.setCheck();
         // The port resolves greeting.txt; the later check fix changes welcome.txt, outside the port.
-        f.fakes.scenario({ fixes: "change" });
+        f.agents.scenario({ fixes: "change" });
         f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
         if (exhausted) {
           const failed = await f.delivery();
           expect(f.runs()).toEqual(["passed", "failed"]);
           expect(failed.portReview).toBeUndefined();
-          expect(f.fakes.openings("code reviewer")).toHaveLength(2);
+          expect(f.agents.openings("code reviewer")).toHaveLength(2);
           f.engine.requestChanges(itemOf(f.engine.getState(), f.taskId, "delivery")!.id, "Fix the failed welcome check");
         }
         const task = await f.delivery();
         expect(lines(task)).toContain("Brought up to date with main: Added a greeting.");
         expect(f.runs()).toEqual(["passed", "failed", "passed"]);
         expect(existsSync(join(task.worktree!, "welcome.txt"))).toBe(true);
-        const reviews = f.fakes.openings("code reviewer").slice(2);
+        const reviews = f.agents.openings("code reviewer").slice(2);
         expect(reviews).toHaveLength(2);
         for (const prompt of reviews) {
           expect(prompt).not.toContain("Review only the port");
@@ -779,9 +678,9 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(f.runs()).toEqual(["failed", "failed", "passed"]);
       expect(sentBack(task)).toBe(2);
       expect(task.checkReturns).toBeUndefined();
-      expect(f.fakes.openings("builder")).toHaveLength(3);
-      expect(f.fakes.openings("tester")).toHaveLength(1);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(2);
+      expect(f.agents.openings("builder")).toHaveLength(3);
+      expect(f.agents.openings("tester")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(2);
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
 
       // A changed check fails on what was about to ship: the new episode has its own two returns again.
@@ -791,10 +690,10 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(f.runs()).toEqual(["failed", "failed", "passed", "failed", "failed", "passed"]);
       expect(sentBack(task)).toBe(4);
       expect(task.checkReturns).toBeUndefined();
-      expect(f.fakes.openings("builder")).toHaveLength(5);
+      expect(f.agents.openings("builder")).toHaveLength(5);
       // The fix made after review passed is reviewed again and tried once more before the delivery check; nothing shipped.
-      expect(f.fakes.openings("code reviewer")).toHaveLength(4);
-      expect(f.fakes.openings("tester")).toHaveLength(2);
+      expect(f.agents.openings("code reviewer")).toHaveLength(4);
+      expect(f.agents.openings("tester")).toHaveLength(2);
       expect(task.state).toBe("needs-you");
       expect(task.approvedSha).toBeUndefined();
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
@@ -818,8 +717,8 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(task.blockingAfter?.[stage.id]).toEqual([1]);
       expect(task.checkReturns).toBe(2);
       expect(sentBack(task)).toBe(2);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(2);
-      expect(f.fakes.openings("tester")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(2);
+      expect(f.agents.openings("tester")).toHaveLength(1);
       const anchor = task.reviewedSha;
       expect(anchor).toBeDefined();
       const item = itemOf(f.engine.getState(), f.taskId, "delivery")!;
@@ -844,7 +743,7 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(f.runs()).toEqual(["passed", "failed", "failed", "failed", "passed"]);
       expect(task.checkReturns).toBeUndefined();
       // Round 2 ran on the changes since round 1, kept its number, then acceptance was tried on the final code.
-      const second = f.fakes.openings("code reviewer").slice(2);
+      const second = f.agents.openings("code reviewer").slice(2);
       expect(second).toHaveLength(2);
       for (const prompt of second) {
         expect(prompt).toContain("This is review round 2:");
@@ -852,7 +751,7 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       }
       expect(task.rounds[stage.id]).toBe(2);
       expect(task.blockingAfter?.[stage.id]).toEqual([1, 0]);
-      expect(f.fakes.openings("tester")).toHaveLength(2);
+      expect(f.agents.openings("tester")).toHaveLength(2);
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
       expect(journeyProblems(task)).toEqual([]);
     } finally { await f.engine.shutdown(); }
@@ -860,17 +759,17 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
 
   it("keeps the episode count across a restart, the blocker and its position after one, and the cleared count after a pass", async () => {
     const f = await fixture(true, { planner: "short", builder: "plain", controlled: true });
-    const release = (session: string) => writeFileSync(join(f.fakes.dir, `release-${session}`), "go");
+    const release = f.agents.release;
     const releaseAll = (engine: Engine, state: State) => {
       coordinator(["plan"])(engine, state);
-      for (const prompt of f.fakes.received()) release(prompt.session);
+      for (const prompt of f.agents.received()) release(prompt.session);
     };
     try {
       // Hold the first automatic repair while it works, then restart in the middle of the episode.
       await waitFor(() => {
         coordinator(["plan"])(f.engine, f.engine.getState());
-        const builders = f.fakes.received("builder");
-        for (const prompt of f.fakes.received()) if (prompt.role !== "builder" || prompt.session === builders[0]?.session) release(prompt.session);
+        const builders = f.agents.received("builder");
+        for (const prompt of f.agents.received()) if (prompt.role !== "builder" || prompt.session === builders[0]?.session) release(prompt.session);
         return builders.length >= 2;
       }, "the first automatic repair to start");
       expect(executionFor(f.engine.task(f.taskId)!).work.checkReturns).toBe(1);
@@ -894,16 +793,16 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(task.checkReturns).toBe(2);
 
       // The coordinator's turn is not a fresh allowance: a still-failing run returns straight to the blocker.
-      const builders = f.fakes.openings("builder").length;
+      const builders = f.agents.openings("builder").length;
       f.engine.requestChanges(item.id, "Try once more");
       state = await until(f.engine, (state) => !!itemOf(state, f.taskId, "delivery"), releaseAll);
       task = taskOf(state, f.taskId);
-      expect(f.fakes.openings("builder").length).toBe(builders + 1);
+      expect(f.agents.openings("builder").length).toBe(builders + 1);
       expect(task.checkReturns).toBe(2);
       expect(sentBack(task)).toBe(2);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+      expect(f.agents.openings("code reviewer")).toHaveLength(0);
 
-      f.fakes.scenario({ planner: "short", builder: "plain", controlled: true, fixes: "change" });
+      f.agents.scenario({ planner: "short", builder: "plain", controlled: true, fixes: "change" });
       f.engine.requestChanges(itemOf(state, f.taskId, "delivery")!.id, "Make the actual fix");
       state = await until(f.engine, (state) => itemOf(state, f.taskId, "delivery")?.title.startsWith("Ready to ship") ?? false, releaseAll);
       expect(f.runs()).toEqual(["failed", "passed"]);
@@ -937,7 +836,7 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       const failure = task.findings.find((finding) => finding.text.startsWith("Check failed"))!;
       expect(failure).toEqual(expect.objectContaining({ status: "open", answer: expect.objectContaining({ fixed: false, text: claim }) }));
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain(`The Builder's last answer: “${claim}”`);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(0);
+      expect(f.agents.openings("code reviewer")).toHaveLength(0);
       expect(task.journey!.filter((step) => step.fixing && step.roleId === "builder").every((step) => step.outcome === "No code changes; checks still failing")).toBe(true);
       expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.body).toContain("not independently confirmed");
     } finally { await f.engine.shutdown(); }
@@ -954,12 +853,12 @@ describe.concurrent("automatic check repairs belong to one failure episode", () 
       expect(f.runs()).toEqual(["failed", "failed"]);
       expect(second.checkReturns).toBe(2);
       expect(second.approvedFor).toBeUndefined();
-      expect(f.fakes.openings("builder")).toHaveLength(3);
+      expect(f.agents.openings("builder")).toHaveLength(3);
       expect(checkSteps(second)).toHaveLength(2);
       f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       const passing = await f.delivery();
       expect(f.runs()).toEqual(["failed", "failed", "passed"]);
-      expect(f.fakes.openings("code reviewer")).toHaveLength(1);
+      expect(f.agents.openings("code reviewer")).toHaveLength(1);
       expect(passing.approvedFor).toBeUndefined();
       expect(passing.checkReturns).toBeUndefined();
       expect(checkSteps(passing)).toHaveLength(3);

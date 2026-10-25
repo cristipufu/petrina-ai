@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILT_IN_ROLES, DEFAULT_PROFILES, type Role } from "@petrina/core";
 import type { AgentSessionOptions } from "@petrina/orchestrator";
@@ -8,7 +8,8 @@ import { removeDir, tempDir } from "../../fixtures.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { SLOW } from "@petrina/test-support/slow";
 import { parseResult } from "../../../src/prompts.js";
-import { ReviewResult, TestResult } from "../../../src/roles.js";
+import { BuildResult, ReviewResult, TestResult } from "../../../src/roles.js";
+import { ReleaseEvents } from "../../release-events.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -128,4 +129,40 @@ it("propagates failed check effects instead of returning the configured successf
   const session = await responses.start(options(), role("checks"));
   try { await expectRejection(session.prompt("Check this copy"), "Could not change this private workspace"); }
   finally { await session.stop(); }
+}, 30_000 * SLOW);
+
+it("keeps a held Builder's report, title and answer bound to its starting script", async () => {
+  let enter!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; }), releases = new ReleaseEvents();
+  const responses = acceptanceAgents({ beforeReply: (prompt, signal) => { enter(); return releases.wait(prompt.sessionId, signal); } });
+  const answer = { fixed: false, text: "The original claim" };
+  responses.configure({ builder: "plain", buildReport: { summary: "The original summary", title: "Fix: Original title", answer } });
+  const launch = options(), session = await responses.start(launch, role("build"));
+  const work = session.prompt("## Review findings (answer every one by id; fix every Important one)\n- [finding] Important: check failed");
+  try {
+    await Promise.race([entered, work.then(() => { throw new Error("The Builder did not wait for release"); })]);
+    answer.text = "Changed by caller";
+    responses.configure({ builder: "plain", buildReport: { summary: "Later summary", title: "Later title" } });
+    releases.release(session.sessionId);
+    expect(parseResult((await work).text, BuildResult)).toMatchObject({ ok: true, value: {
+      summary: "The original summary", title: "Fix: Original title", answers: [{ id: "finding", fixed: false, text: "The original claim" }],
+    } });
+  } finally { releases.release(session.sessionId); await session.stop(); await work.catch(() => undefined); }
+}, 30_000 * SLOW);
+
+it("cancels a held reply without writing its promised Builder changes", async () => {
+  let enter!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; }), releases = new ReleaseEvents();
+  const responses = acceptanceAgents({ beforeReply: (prompt, signal) => { enter(); return releases.wait(prompt.sessionId, signal); } });
+  responses.configure({ builder: "plain", fixes: "change" });
+  const launch = options(), session = await responses.start(launch, role("build"));
+  const work = session.prompt("You are fixing the review findings");
+  const outcome = work.then(() => undefined, error => error);
+  try {
+    await Promise.race([entered, work.then(() => { throw new Error("The Builder did not wait for cancellation"); })]);
+    expect(await session.stop()).toBe(true);
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(existsSync(join(launch.cwd, "greeting.txt"))).toBe(false);
+    expect(existsSync(join(launch.cwd, "welcome.txt"))).toBe(false);
+  } finally { await session.stop(); await outcome; }
 }, 30_000 * SLOW);
