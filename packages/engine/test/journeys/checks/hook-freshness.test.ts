@@ -170,7 +170,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
     });
 
     for (const originallyPassed of [false, true]) {
-      it.skipIf(process.platform === "win32")(`refreshes an older saved ${hookName} ${originallyPassed ? "pass" : "failure"} without retrying unchanged product checks`, async () => {
+      it.skipIf(process.platform === "win32")(`reruns product checks before refreshing a saved ${hookName} ${originallyPassed ? "pass" : "failure"} with no recorded definition`, async () => {
         const f = await fixture(true, { planner: "short" }, originallyPassed ? undefined : `Legacy ${hookName} failure`);
         try {
           f.setCheck("--pass");
@@ -181,6 +181,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
           expect(original.results.at(-1)!.ok).toBe(originallyPassed);
           writeFileSync(hook, `#!/bin/sh\necho "Changed hook"\nexit ${originallyPassed ? 1 : 0}\n`);
           await f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
+          expect(taskOf(f.engine.getState(), f.taskId).checks!.definition).toBeUndefined();
           const item = itemOf(f.engine.getState(), f.taskId, "delivery")!;
           if (originallyPassed) f.engine.approve(item.id);
           else f.engine.requestChanges(item.id, "The hook has been corrected");
@@ -189,7 +190,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
           expect(refreshed.results.at(-1)!.ok).toBe(!originallyPassed);
           expect(refreshed.results.at(-1)!.output).toContain("Changed hook");
           expect(refreshed.definition).toMatch(/^[a-f0-9]{64}$/);
-          expect(f.runs()).toEqual(["passed"]);
+          expect(f.runs()).toEqual(["passed", "passed"]);
 
           // A failure remains evidence; a pass must revalidate the hook's opaque implementation.
           await f.restart();
@@ -211,7 +212,8 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
             expect(again.definition).toBe(refreshed.definition);
             expect(again.tree).toBe(refreshed.tree);
           }
-          expect(f.runs()).toEqual(["passed"]);
+          // The fresh definition now binds the product pass: later hook validation reuses it.
+          expect(f.runs()).toEqual(["passed", "passed"]);
         } finally {
           await f.engine.shutdown();
         }
