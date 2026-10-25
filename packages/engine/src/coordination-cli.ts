@@ -3,6 +3,11 @@ import { z } from "zod";
 import { EngineClient } from "./engine-client.js";
 import { OPERATIONS, operation } from "./operations.js";
 import type { Result } from "./coordination.js";
+
+/** The CLI needs request/reply transport, not a concrete engine client's filesystem and lifecycle state. */
+export interface CoordinationClient {
+  call(name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<Result>;
+}
 const kebab = (text: string) => text.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 const camel = (text: string) => text.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 export const exitCode = (outcome: string) =>
@@ -112,7 +117,7 @@ export function commandHelp(group?: string, verb?: string): string {
  * cursor, and an explicit final result when the connection is lost, continuity is lost or the arguments
  * are refused. Interruption and a closed output pipe end the stream without cancelling any task work.
  */
-export async function followEvents(client: EngineClient, args: Record<string, unknown>, write: (line: string) => boolean = (line) => process.stdout.write(line)): Promise<number> {
+export async function followEvents(client: CoordinationClient, args: Record<string, unknown>, write: (line: string) => boolean = (line) => process.stdout.write(line)): Promise<number> {
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once("SIGINT", stop);
@@ -162,7 +167,7 @@ export async function followEvents(client: EngineClient, args: Record<string, un
   }
 }
 
-export async function coordinationCli(argv: string[], client = new EngineClient()): Promise<number> {
+export async function coordinationCli(argv: string[], client: CoordinationClient = new EngineClient()): Promise<number> {
   const [group, verb, ...rest] = argv;
   if (!group || group === "help" || group === "--help" || group === "-h") {
     console.log(commandHelp());

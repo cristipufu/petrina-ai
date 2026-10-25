@@ -2,13 +2,14 @@
 import { expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FAKE_GH, makeWorld, removeDir, runCommand, waitForFile } from "./support.js";
+import { FAKE_GH, makeWorld, removeDir, runCommand, waitForFile } from "../../support.js";
 
 it("parallel GitHub checks preserve a teammate's update and every recorded call", async () => {
   const w = await makeWorld("github-concurrent");
   const path = join(w.dir, "github.json");
   const hold = join(w.dir, "update-hold");
   const writer = join(w.dir, "update.mjs");
+  const reader = join(w.dir, "read.mjs");
   w.setGitHub((github) => github.prs.push({ number: 1, url: "https://github.com/acme/demo/pull/1", headRefName: "task", baseRefName: "main", headRefOid: w.initial, state: "OPEN", isCrossRepository: false, title: "Greeting", body: "" }));
   writeFileSync(hold, "");
   writeFileSync(writer, `import { updateGitHub } from ${JSON.stringify(FAKE_GH)};
@@ -18,24 +19,32 @@ it("parallel GitHub checks preserve a teammate's update and every recorded call"
       while (existsSync(${JSON.stringify(hold)})) Bun.sleepSync(10);
       github.prs[0].state = "CLOSED";
     });`);
-  const update = Bun.spawn([process.execPath, writer], { stdout: "ignore", stderr: "pipe", windowsHide: true });
-  const check = () => Bun.spawn([process.execPath, FAKE_GH, path, w.remote, "pr", "view", "1", "--json", "state", "--jq", ".state", "--repo", "acme/demo"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true });
-  const lookups: ReturnType<typeof check>[] = [];
+  writeFileSync(reader, `import { runFakeGitHub } from ${JSON.stringify(FAKE_GH)};
+    import { writeFixtureJson } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-json"))};
+    const [state, remote, receipt, ...args] = process.argv.slice(2);
+    await runFakeGitHub([state, remote, ...args], () => writeFixtureJson(receipt, { blocked: true }));`);
+  const controller = new AbortController();
+  const update = runCommand([process.execPath, writer], { signal: controller.signal });
+  const receipts = Array.from({ length: 24 }, (_, index) => join(w.dir, `reader-${index}.json`));
+  const check = (receipt: string) => runCommand([process.execPath, reader, path, w.remote, receipt, "pr", "view", "1", "--json", "state", "--jq", ".state", "--repo", "acme/demo"], { signal: controller.signal });
+  let lookups: ReturnType<typeof check>[] = [];
   try {
-    await waitForFile(`${hold}.reached`);
-    for (let index = 0; index < 24; index += 1) lookups.push(check());
-    await Bun.sleep(100);
+    await waitForFile(`${hold}.reached`, { during: update });
+    const pending = receipts.map(receipt => check(receipt));
+    lookups = pending;
+    await Promise.all(receipts.map((receipt, index) => waitForFile(receipt, { during: pending[index]! })));
     rmSync(hold);
-    expect(await update.exited).toBe(0);
-    const results = await Promise.all(lookups.map(async (lookup) => ({ code: await lookup.exited, out: await new Response(lookup.stdout).text() })));
+    expect((await update).code).toBe(0);
+    const completed = await Promise.all(pending);
+    const results = completed.map(result => ({ code: result.code, out: result.stdout }));
     expect(results).toEqual(Array.from({ length: 24 }, () => ({ code: 0, out: "CLOSED\n" })));
     expect(w.github().prs[0]!.state).toBe("CLOSED");
     expect(w.github().calls).toHaveLength(24);
     expect(existsSync(`${path}.lock`)).toBe(false);
   } finally {
     rmSync(hold, { force: true });
-    await update.exited;
-    await Promise.all(lookups.map((lookup) => lookup.exited));
+    controller.abort();
+    await Promise.allSettled([update, ...lookups]);
     removeDir(w.dir);
   }
 });

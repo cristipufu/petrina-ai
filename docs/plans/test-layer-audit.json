@@ -2457,11 +2457,27 @@
       }
     },
     {
-      "file": "packages/engine/test/coordination-cli.test.ts",
+      "file": "packages/engine/test/contracts/coordination/cli.test.ts",
       "declarations": 8,
       "assertionSites": 44,
       "baselineDigest": "db23478d0d641b5f632f6a04f54d979c60cd4fad23500e329f5d72d82fb72fae",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/coordination-cli.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/coordination/cli.test.ts",
+        "packages/engine/test/contracts/documentation/coordinator-guide.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "coordination",
+      "review": "Actual CLI/catalog/argument/output-listener contracts retain all schema, JSON, boolean, cursor, backpressure and cleanup variants; real repository documentation contract separated. Narrow request/reply type removes incomplete native-client casts; runtime defaults unchanged.",
+      "reviewedOriginalRuntimePasses": 8,
+      "currentRuntimePasses": 8,
+      "reviewedOriginalAssertionSites": 44,
+      "currentAssertionSites": 44,
+      "validation": {
+        "artifact": "workstreams/root-fixture-cli/reconciliation.json; workstreams/root-fixture-cli-review/",
+        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/coordination-desktop-handoff.test.ts",
@@ -2997,11 +3013,26 @@
       }
     },
     {
-      "file": "packages/engine/test/fake-gh.test.ts",
+      "file": "packages/engine/test/contracts/fixtures/github-peer.test.ts",
       "declarations": 2,
       "assertionSites": 13,
       "baselineDigest": "7ea4d067a69f49dc20e197b00283e77f15a8342d685fd8ae53ccc51869e5def4",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/fake-gh.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/fixtures/github-peer.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "fixtures",
+      "review": "Actual private Git/GitHub fixture contract retains24parallel readers and every result/call assertion; all readers prove actual lock contention through atomic receipts before writer release. Canonical owned command cleanup replaces unmanaged children; no elapsed100ms coordination sleep.",
+      "reviewedOriginalRuntimePasses": 2,
+      "currentRuntimePasses": 2,
+      "reviewedOriginalAssertionSites": 13,
+      "currentAssertionSites": 13,
+      "validation": {
+        "artifact": "workstreams/root-fixture-cli/reconciliation.json; workstreams/root-fixture-cli-review/",
+        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending."
+      }
     },
     {
       "file": "packages/platform/test/contracts/filesystem/operations.test.ts",
@@ -3080,11 +3111,27 @@
       }
     },
     {
-      "file": "packages/engine/test/fixture-repositories.test.ts",
+      "file": "packages/engine/test/contracts/fixtures/repositories.test.ts",
       "declarations": 6,
       "assertionSites": 46,
       "baselineDigest": "3df7213336645a7eab63d5306a8e0089f7ac64810ee9caa6374fe5e50025bd5e",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/fixture-repositories.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/fixtures/repositories.test.ts",
+        "packages/test-support/test/contracts/repositories/fixture-state.test.ts"
+      ],
+      "layer": "contracts",
+      "area": "fixtures",
+      "review": "Actual World/product repository seed, configuration, line-ending, concurrency and writable-isolation contracts retained. Generic seed-failure/nativeHEAD helpers have package-owned test-support contracts; nativeHEAD body moved byte-identically with legacy fixture re-export.",
+      "reviewedOriginalRuntimePasses": 6,
+      "currentRuntimePasses": 6,
+      "reviewedOriginalAssertionSites": 46,
+      "currentAssertionSites": 46,
+      "validation": {
+        "artifact": "workstreams/root-fixture-cli/reconciliation.json; workstreams/root-fixture-cli-review/",
+        "qualification": "All16cases/103matcher sites preserved;102normalized AST-identical/1equivalent exit-codeowner. Native16pass/0fail/5files1.452s; all9types pass. Combined full qualification pending."
+      }
     },
     {
       "file": "packages/engine/test/fixture-trace.test.ts",

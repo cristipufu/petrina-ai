@@ -81,15 +81,17 @@ export function writeGitHub(path: string, state: FakeGitHub): void {
 }
 
 /** Fake gh processes and the test change the same file. A read followed by a write must be one operation. */
-function lockGitHub(path: string): () => void {
+function lockGitHub(path: string, onWait?: () => void): () => void {
   const lock = `${path}.lock`;
   const deadline = Date.now() + 30_000;
+  let reportedWait = false;
   for (;;) {
     try {
       mkdirSync(lock);
       return () => rmSync(lock, { recursive: true, force: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) throw error;
+      if (!reportedWait) { onWait?.(); reportedWait = true; }
       Bun.sleepSync(10);
     }
   }
@@ -106,9 +108,9 @@ export function updateGitHub(path: string, change: (state: FakeGitHub) => void):
   }
 }
 
-async function main(): Promise<void> {
-  const [statePath, remote, ...args] = process.argv.slice(2);
-  let unlock = lockGitHub(statePath!);
+export async function runFakeGitHub(input: readonly string[], onLockWait?: () => void): Promise<void> {
+  const [statePath, remote, ...args] = input;
+  let unlock = lockGitHub(statePath!, onLockWait);
   // Unexpected exits also release this process's lock. Waiting calls release it first below.
   process.on("exit", () => unlock());
   const state = readGitHub(statePath!);
@@ -295,7 +297,7 @@ async function main(): Promise<void> {
 }
 
 // A failed Git lookup fails the call with Git's own words, never as a confirmed "not found".
-if (import.meta.main) await main().catch((error: unknown) => {
+if (import.meta.main) await runFakeGitHub(process.argv.slice(2)).catch((error: unknown) => {
   process.stderr.write(`fake gh could not answer: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 });
