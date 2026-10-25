@@ -56,6 +56,28 @@ describe("explicit repository execution contexts", () => {
     } finally { read.mockRestore(); await engine.shutdown(); }
   });
 
+  it("captures check status, pinned tree and hook paths with two Git launches and no persistent cache", async () => {
+    const { engine, task } = await fixture("check-input-budget", { git: ["first"] });
+    try {
+      const scope = executionFor(task), path = scope.work.worktree!;
+      const sha = await git(path, "rev-parse", "HEAD"), tree = await git(path, "rev-parse", "HEAD^{tree}");
+      let calls = 0;
+      const native = Bun.spawn, watch = spyOn(Bun, "spawn").mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+        if (args[0][0] === "git") calls++;
+        return Reflect.apply(native, Bun, args);
+      }) as typeof Bun.spawn);
+      try {
+        const first = await engine["checks"]["captureState"](scope, []);
+        expect(first).toMatchObject({ sha, tree, trackedChanged: false, hooks: [] });
+        expect(calls).toBe(2);
+        writeFileSync(join(path, "README.md"), "Tracked work changed after observation\n");
+        const second = await engine["checks"]["captureState"](scope, []);
+        expect(second).toMatchObject({ sha, tree, trackedChanged: true, hooks: [] });
+        expect(calls).toBe(4);
+      } finally { watch.mockRestore(); }
+    } finally { await engine.shutdown(); }
+  });
+
   for (const current of [false, true]) it(`keeps check evidence ${current ? "honest after an agent commits its own edits" : "stale without re-reading an unchanged tree"}`, async () => {
     const { engine, task } = await fixture(`save-role-evidence-${current}`, { git: ["first"] });
     const scope = executionFor(task), path = scope.work.worktree!;

@@ -588,10 +588,11 @@ export class ProductChecks {
   /** Reuse one observation within this operation, never as a persistent freshness flag. */
   private async captureState(scope: RepositoryContext, checks: readonly ProductCheck[]): Promise<CheckState> {
     const path = scope.work.worktree!;
-    const [status, files] = await Promise.all([git.worktreeStatus(path), git.commitHookFiles(path)]);
+    const status = await git.worktreeStatus(path);
+    const { tree, hooks: files } = await git.checkInputFiles(path, status.head);
     const hooks = await this.noteHooks(scope, files.map((hook) => hook.name));
     // The reusable tree and message must belong to the same observed commit.
-    const [tree, definition] = await Promise.all([status.head ? git.treeOf(path, status.head) : undefined, this.definition(scope, checks, files, status.head)]);
+    const definition = await this.definition(scope, checks, files, status.head);
     return { sha: status.head, tree, trackedChanged: status.trackedChanged, hooks, ...definition };
   }
 

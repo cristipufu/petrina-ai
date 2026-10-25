@@ -450,11 +450,29 @@ export async function commitHooks(path: string): Promise<CommitHook[]> {
 export async function commitHookFiles(path: string): Promise<{ name: CommitHook; path: string }[]> {
   const where = await run(["git", "rev-parse", "--path-format=absolute", ...COMMIT_HOOKS.flatMap((name) => ["--git-path", `hooks/${name}`])], path, undefined, { ownHooks: true });
   if (where.code !== 0) return [];
-  const paths = where.stdout.split("\n");
+  return executableHookFiles(where.stdout.split("\n"));
+}
+
+/** Pinned check inputs share one query; an unreadable input cannot establish a current pass. */
+export async function checkInputFiles(path: string, commit?: string): Promise<{ tree?: string; hooks: { name: CommitHook; path: string }[] }> {
+  if (commit !== undefined && !SHA.test(commit)) throw new Error("Not a commit");
+  const result = await run(["git", "rev-parse", "--path-format=absolute", ...COMMIT_HOOKS.flatMap((name) => ["--git-path", `hooks/${name}`]), ...(commit ? ["--verify", "--quiet", `${commit}^{tree}`] : [])], path, undefined, { ownHooks: true });
+  const paths = result.stdout.split("\n");
+  const tree = commit ? paths.pop() : undefined;
+  if (result.code !== 0 || paths.length !== COMMIT_HOOKS.length || paths.some(file => !file) || (commit && (!tree || !SHA.test(tree)))) {
+    throw new Error("The check's repository inputs could not be read");
+  }
+  return { ...(tree ? { tree } : {}), hooks: await executableHookFiles(paths, true) };
+}
+
+async function executableHookFiles(paths: readonly string[], strict = false): Promise<{ name: CommitHook; path: string }[]> {
   const hooks = await Promise.all(COMMIT_HOOKS.map(async (name, index) => {
     const file = paths[index];
     if (!file) return [];
-    const mode = await stat(file).then(info => info.isFile() ? info.mode : undefined).catch(() => undefined);
+    const mode = await stat(file).then(info => info.isFile() ? info.mode : undefined).catch(error => {
+      if (strict && !["ENOENT", "ENOTDIR"].includes(systemCode(error) ?? "")) throw error;
+      return undefined;
+    });
     // Git requires executable hooks, except on Windows where its shell runs them.
     return mode !== undefined && (process.platform === "win32" || (mode & 0o111) !== 0) ? [{ name, path: file }] : [];
   }));
