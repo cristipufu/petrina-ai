@@ -1,9 +1,9 @@
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckRun } from "@petrina/core";
+import type { CheckRun, DeepMutable, ProductCheck } from "@petrina/core";
 import type { MachineRecords } from "../../../src/check-interruption.js";
 import type { CheckProgress } from "../../../src/checks.js";
 import { Aborted } from "../../../src/kernel.js";
@@ -11,6 +11,10 @@ import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "../../engine.js";
 import { git, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "../../fixtures.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
+import { FixtureOperations } from "@petrina/test-support/fixture-operations";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { CLEANUP_MS } from "@petrina/test-support/commands";
+import { waitFor } from "../../fixtures.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -85,23 +89,42 @@ for (const source of ["the fixture's default", "an explicit source"] as const) i
 });
 
 it("keeps two direct check runs' evidence apart, and cancelling one leaves the other's collection and result unaffected", async () => {
-  const dir = root("petrina-machine-records-direct-");
-  const commands = powerLogCommands();
+  const dir = tempDir("petrina-machine-records-direct-");
+  const stopFirst = new AbortController(), stopSecond = new AbortController();
+  let commands: ReturnType<typeof powerLogCommands> | undefined;
+  let firstRecords: ReturnType<typeof heldMachineRecords> | undefined, secondRecords: ReturnType<typeof heldMachineRecords> | undefined;
+  const operations = new FixtureOperations({
+    stop() {
+      stopFirst.abort(); stopSecond.abort();
+      firstRecords?.answer(""); secondRecords?.answer("");
+    },
+    dispose() {
+      removeDir(dir);
+      try { lstatSync(dir); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+      throw new Error(`The direct-check fixture could not remove ${dir}`);
+    },
+    allowanceMs: CLEANUP_MS * SLOW, label: `Direct-check fixture at ${dir}`,
+    arm(expired, ms) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
+  });
   try {
+    commands = powerLogCommands();
     // A direct run's default reads nothing.
-    const [quiet] = await runChecks(dir, [failing("Quiet failure")], process.env, 30_000 * SLOW);
+    const [quiet] = await operations.run(() => runChecks(dir, [failing("Quiet failure")], process.env, 30_000 * SLOW, stopFirst.signal));
     expect([quiet!.ok, quiet!.interruption, quiet!.output.trim()]).toEqual([false, undefined, "Quiet failure"]);
     // Each run's records cover both executions: only the run that receives them may use them.
     const sleep = powerLogSleep(Date.now() - 60_000, 3600);
-    const first = heldMachineRecords(sleep), second = heldMachineRecords();
-    const stopFirst = new AbortController(), stopSecond = new AbortController();
+    const first = firstRecords = heldMachineRecords(sleep), second = secondRecords = heldMachineRecords();
     const firstProgress: CheckProgress[] = [];
     const later = { name: "Build", argv: [process.execPath, "-e", "process.exit(0)"] };
     const runs = [
-      runChecks(dir, [failing("First failure"), later], process.env, 30_000 * SLOW, stopFirst.signal, undefined, undefined, (event) => firstProgress.push(event), first.source),
-      runChecks(dir, [failing("Second failure")], process.env, 30_000 * SLOW, stopSecond.signal, undefined, undefined, undefined, second.source),
+      operations.run(() => runChecks(dir, [failing("First failure"), later], process.env, 30_000 * SLOW, stopFirst.signal, undefined, undefined, (event) => firstProgress.push(event), first.source)),
+      operations.run(() => runChecks(dir, [failing("Second failure")], process.env, 30_000 * SLOW, stopSecond.signal, undefined, undefined, undefined, second.source)),
     ];
-    await Promise.all([first.started(), second.started()]);
+    await Promise.all([
+      waitFor(() => first.reads.length === 1, "the first direct check's evidence read", 30_000, { during: runs[0] }),
+      waitFor(() => second.reads.length === 1, "the second direct check's evidence read", 30_000, { during: runs[1] }),
+    ]);
     expect([first.reads, second.reads]).toEqual([[stopFirst.signal], [stopSecond.signal]]);
     stopFirst.abort();
     const firstRuns = await runs[0]!;
@@ -117,19 +140,49 @@ it("keeps two direct check runs' evidence apart, and cancelling one leaves the o
     expect([interrupted!.ok, interrupted!.interrupted, interrupted!.output.trim(), interrupted!.ms]).toEqual([false, undefined, "Second failure", interrupted!.endedAt! - interrupted!.startedAt!]);
     expect(interrupted!.interruption).toEqual({ source: "macOS power log", at: Date.parse(sleep.slice(0, 25)), event: expect.stringContaining("Entering Sleep state") });
     expect(commands.started).toEqual([]);
-  } finally { commands.restore(); }
+  } finally {
+    try { await operations.close(); }
+    finally { commands?.restore(); }
+  }
 });
 
-it("keeps two engines' evidence apart through failure reuse, and stopping one leaves the other's collection and result unaffected", async () => {
-  const now = Date.now();
-  const checks = [{ name: "Tests", argv: ["test"] }];
-  const saved = (output: string): CheckRun[] => [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 60_000, output, startedAt: now - 120_000, endedAt: now - 60_000 }];
-  const sleep = powerLogSleep(now - 100_000, 30);
-  const start = async (name: string, held: ReturnType<typeof heldMachineRecords>) => {
-    const dir = root(`petrina-machine-records-${name}-`);
-    const engine = new Engine(join(dir, "data"), { agentCommand: () => undefined, terminals: () => [], machineRecords: held.source });
+interface FailureOwner {
+  root: string;
+  engine: Engine;
+  task: NonNullable<ReturnType<Engine["task"]>>;
+  scope: ReturnType<typeof executionFor>;
+  controller: AbortController;
+  operations: FixtureOperations;
+  close(): Promise<void>;
+}
+
+async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachineRecords>, checks: DeepMutable<ProductCheck>[], saved: CheckRun[], effects: {
+  prepareRepository?(root: string, engine: Engine): Promise<string>;
+  beforeHandoff?(owner: FailureOwner): Promise<void>;
+} = {}): Promise<FailureOwner> {
+  const dir = tempDir(`petrina-machine-records-${name}-`);
+  const controller = new AbortController();
+  let current: Engine | undefined;
+  const operations = new FixtureOperations({
+    async stop() {
+      controller.abort();
+      const stopped = current?.shutdown();
+      held.answer("");
+      await stopped;
+    },
+    dispose() {
+      removeDir(dir);
+      try { lstatSync(dir); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+      throw new Error(`The failure-reuse fixture could not remove ${dir}`);
+    },
+    allowanceMs: CLEANUP_MS * SLOW, label: `Failure-reuse fixture at ${dir}`,
+    arm(expired, ms) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
+  });
+  return setupWithCleanup(async () => {
+    const engine = current = new Engine(join(dir, "data"), { agentCommand: () => undefined, terminals: () => [], machineRecords: held.source });
     engine.schedule = () => {};
-    const repo = await makeProduct(dir);
+    const repo = await (effects.prepareRepository ? effects.prepareRepository(dir, engine) : makeProduct(dir));
     engine.s.products.push({ id: "product", name: "Shop", repo: "local/shop", path: repo, tone: "blue", delivery: "local", checksBy: "coordinator", checks });
     const task = engine.task(engine.addTask({ productId: "product", title: `${name} engine's failure` }))!;
     const scope = executionFor(task);
@@ -137,19 +190,41 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
     scope.work.checkReturns = 2;
     task.plan = { stages: [{ id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] }], rationale: "Saved failure", plannerProfileId: "opus-high" };
     task.stageIndex = 0;
-    await engine["checks"]["runPreparedChecks"](scope, checks, new AbortController().signal, saved(`Original ${name} failure`));
-    return { engine, task, scope };
-  };
+    await operations.run(() => engine["checks"]["runPreparedChecks"](scope, checks, controller.signal, saved));
+    const owner = { root: dir, engine, task, scope, controller, operations, close: () => operations.close() };
+    await effects.beforeHandoff?.(owner);
+    return owner;
+  }, () => operations.close());
+}
+
+it("keeps two engines' evidence apart through failure reuse, and stopping one leaves the other's collection and result unaffected", async () => {
+  const now = Date.now();
+  const checks = [{ name: "Tests", argv: ["test"] }];
+  const saved = (output: string): CheckRun[] => [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 60_000, output, startedAt: now - 120_000, endedAt: now - 60_000 }];
+  const sleep = powerLogSleep(now - 100_000, 30);
   // A stopped read answers with the same sleep: arriving after the stop, it must not count.
   const stoppedRecords = heldMachineRecords(sleep), continuingRecords = heldMachineRecords();
-  const stopped = await start("stopped", stoppedRecords), continuing = await start("continuing", continuingRecords);
-  const stop = new AbortController(), keepGoing = new AbortController();
+  let stopped: FailureOwner | undefined, continuing: FailureOwner | undefined;
   try {
-    const reuse = [stopped.engine["checks"].failing(stopped.scope, stop.signal, checks), continuing.engine["checks"].failing(continuing.scope, keepGoing.signal, checks)];
-    await Promise.all([stoppedRecords.started(), continuingRecords.started()]);
+    stopped = await savedFailureWorld("stopped", stoppedRecords, checks, saved("Original stopped failure"));
+    continuing = await savedFailureWorld("continuing", continuingRecords, checks, saved("Original continuing failure"));
+    const stop = stopped.controller, keepGoing = continuing.controller;
+    const stoppedOwner = stopped;
+    let first!: Promise<boolean>;
+    const observedFirst = stopped.operations.run(() => {
+      first = stoppedOwner.engine["checks"].failing(stoppedOwner.scope, stop.signal, checks);
+      return rejectionOf(first);
+    });
+    const continuingOwner = continuing;
+    const reuse = [first, continuing.operations.run(() => continuingOwner.engine["checks"].failing(continuingOwner.scope, keepGoing.signal, checks))];
+    await Promise.all([
+      waitFor(() => stoppedRecords.reads.length === 1, "the stopped Engine's evidence read", 30_000, { during: first }),
+      waitFor(() => continuingRecords.reads.length === 1, "the continuing Engine's evidence read", 30_000, { during: reuse[1] }),
+    ]);
     expect([stoppedRecords.reads, continuingRecords.reads]).toEqual([[stop.signal], [keepGoing.signal]]);
     stop.abort();
     expect(await rejectionOf(reuse[0]!)).toBeInstanceOf(Aborted);
+    await observedFirst;
     expect(continuingRecords.reads[0]!.aborted).toBe(false);
     continuingRecords.answer(sleep);
     expect(await reuse[1]).toBe(true);
@@ -162,7 +237,58 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
     expect(continuing.task.repair).toBeUndefined();
     expect([stopped.scope.work.checkReturns, continuing.scope.work.checkReturns]).toEqual([2, 2]);
   } finally {
-    stop.abort(); keepGoing.abort(); stoppedRecords.answer(""); continuingRecords.answer("");
-    await Promise.all([stopped.engine.shutdown(), continuing.engine.shutdown()]);
+    const outcomes = await Promise.allSettled([stopped?.close(), continuing?.close()]);
+    const errors = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Failure-reuse fixtures could not finish cleanup");
+  }
+});
+
+it("stops the actual Engine when repository setup rejects before fixture handoff", async () => {
+  const failure = new Error("Repository setup failed before handoff");
+  let observed: { root: string; engine: Engine } | undefined;
+  const outcome = await rejectionOf(savedFailureWorld("setup-failure", heldMachineRecords(), [], [], {
+    prepareRepository: async (root, engine) => { observed = { root, engine }; throw failure; },
+  }));
+  expect(outcome).toBe(failure);
+  expect(observed!.engine.stopped).toBe(true);
+  expect(existsSync(observed!.root)).toBe(false);
+});
+
+it("keeps setup cleanup pending until its actual direct check and inspected cancellation settle", async () => {
+  const failure = new Error("Fixture setup failed after starting a direct check");
+  const held = heldMachineRecords(), release = Promise.withResolvers<void>();
+  const checks = [{ name: "Tests", argv: ["test"] }];
+  const at = Date.now() - 120_000;
+  const saved = [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 60_000, output: "Saved failure", startedAt: at, endedAt: at + 60_000 }];
+  let observed: FailureOwner | undefined, direct: Promise<void> | undefined, cancelled = false, settled = false;
+  const setup = savedFailureWorld("pending-handoff", held, checks, saved, {
+    beforeHandoff: async owner => {
+      observed = owner;
+      let reading!: Promise<boolean>;
+      direct = owner.operations.run(async () => {
+        reading = owner.engine["checks"].failing(owner.scope, owner.controller.signal, checks);
+        const result = await rejectionOf(reading);
+        if (!(result instanceof Aborted)) throw result;
+        cancelled = true;
+        await release.promise;
+      });
+      await waitFor(() => held.reads.length === 1, "setup to start its direct evidence read", 30_000, { during: reading });
+      throw failure;
+    },
+  });
+  const outcome = rejectionOf(setup).then(result => { settled = true; return result; });
+  try {
+    await waitFor(() => cancelled, "the actual direct check to observe fixture cancellation", 30_000, { during: setup });
+    expect(observed!.controller.signal.aborted).toBe(true);
+    expect(settled).toBe(false);
+    expect(existsSync(observed!.root)).toBe(true);
+    release.resolve();
+    expect(await outcome).toBe(failure);
+    expect(observed!.engine.stopped).toBe(true);
+    expect(existsSync(observed!.root)).toBe(false);
+  } finally {
+    release.resolve(); held.answer("");
+    await outcome;
+    await direct;
   }
 });
