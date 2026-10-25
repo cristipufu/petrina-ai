@@ -28,6 +28,8 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
     for (const line of facts.blockingCalls) errors.push(`${file}:${line}: run test programs with runCommand or git from @petrina/test-support/commands; a synchronous child call holds the whole test worker until its exit is reported`);
     if (native) for (const { line, name } of facts.unfinished) errors.push(`${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`);
     if (native) for (const line of facts.asyncCallbacks) errors.push(`${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`);
+    if (native && facts.concurrentTests.length) for (const line of facts.environmentMutations)
+      errors.push(`${file}:${line}: concurrent tests cannot change process.env in their worker; pass an environment to the boundary or use an owned child process`);
     for (const line of facts.exclusiveTests) errors.push(`${file}:${line}: remove the exclusive test selection before handoff`);
   }
   return [...errors, ...layerBoundaries(files), ...packageBoundaries(files)].sort();

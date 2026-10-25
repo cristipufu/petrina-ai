@@ -3,16 +3,15 @@
 // (in the fake agent's conversation files), stays open while the hold file exists, and changes the
 // working copy the way dir/cli.json says: some files committed by hand, some left unsaved.
 //
-// bun fake-cli.ts <dir> <the tool's arguments...>
+// Invoked only through the takeover fixture's independently leased private entrypoint.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "@petrina/test-support/commands";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 
 export interface CliScript {
   /** Stay open while this file exists. */
   hold?: string;
-  /** The test worker that owns this fake terminal session. The fake exits if the suite is interrupted. */
-  ownerPid?: number;
   /** Files to commit, one commit each, as the coordinator would by hand. */
   commit?: Record<string, string>;
   /** Files to leave changed but not committed. */
@@ -36,17 +35,10 @@ if (session && existsSync(file)) {
   const conversation = JSON.parse(readFileSync(file, "utf8"));
   conversation.history.push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Typed in the terminal: make it blue" } });
   conversation.terminal = (conversation.terminal ?? 0) + 1;
-  writeFileSync(file, JSON.stringify(conversation));
+  writeFixtureJson(file, conversation);
 }
 
 while (script.hold && existsSync(script.hold)) {
-  if (script.ownerPid !== undefined) {
-    try {
-      process.kill(script.ownerPid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
-    }
-  }
   await Bun.sleep(50);
 }
 for (const [name, text] of Object.entries(script.commit ?? {})) {

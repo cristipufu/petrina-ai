@@ -6092,11 +6092,32 @@
       }
     },
     {
-      "file": "packages/engine/test/takeover.test.ts",
+      "file": "packages/engine/test/contracts/takeover/terminal-ownership.test.ts",
       "declarations": 11,
       "assertionSites": 129,
       "baselineDigest": "8db976ec8b6a2461087b086f1cb0797a0910d483d0d06b60c483cb05b2230452",
-      "status": "pending"
+      "status": "reviewed",
+      "from": "packages/engine/test/takeover.test.ts",
+      "splitFiles": [
+        "packages/engine/test/contracts/takeover/terminal-ownership.test.ts",
+        "packages/engine/test/journeys/takeover/builder-handoff.test.ts",
+        "packages/engine/test/journeys/takeover/reviewer-handoff.test.ts",
+        "packages/engine/test/journeys/takeover/review-order.test.ts",
+        "packages/engine/test/journeys/takeover/design-handoff.test.ts",
+        "packages/engine/test/contracts/takeover/handback-state.test.ts",
+        "packages/engine/test/journeys/takeover/restart.test.ts",
+        "packages/engine/test/contracts/takeover/branch-refusal.test.ts",
+        "packages/engine/test/contracts/takeover/reopen-races.test.ts",
+        "packages/engine/test/journeys/takeover/save-failure.test.ts",
+        "packages/engine/test/contracts/takeover/unavailable.test.ts"
+      ],
+      "layer": "contracts/journeys",
+      "area": "takeover",
+      "review": "All 11 original runtime cases, 129 matcher sites and 13 rejection assertions retained; 126 same-case matcher ASTs exact and three explicit environment/process/drained-output equivalents independently reviewed. Actual Git, SQLite, ACP and terminal sessions remain native. No-agent availability uses metadata-only state. Worker environment writes move to an owned child; independent process leases, canonical drained completion and observation-only fallback retain roots on unknown cleanup. Independent correction review closed both launcher-lifetime and acquisition findings.",
+      "validation": {
+        "artifact": "workstreams/takeover-next/root-qualification.json",
+        "qualification": "Root current-source 66 native cases passed across 17 exact owners, including all 13 takeover cases and 53 neighboring guard controls; all nine types pass. Complete integrated suite and native Linux/Windows remain pending."
+      }
     },
     {
       "file": "packages/engine/test/contracts/state/simulator-parity.test.ts",

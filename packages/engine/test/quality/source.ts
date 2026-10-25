@@ -14,6 +14,9 @@ export interface SourceFacts {
   uncertain: boolean;
   promiseMatchers: number[];
   exclusiveTests: number[];
+  /** Same-file concurrency cannot share mutations of the worker's inherited environment. */
+  concurrentTests: number[];
+  environmentMutations: number[];
   /** Synchronous child process calls: each holds the whole test worker until the child's exit is reported. */
   blockingCalls: number[];
   /** The fixtures' asynchronous commands and repository helpers, or local wrappers of them, that nothing waits for. */
@@ -42,25 +45,29 @@ const CALLS = new Set(["CallExpression", "OptionalCallExpression"]);
 
 /** Parse syntax rather than searching prose, comments or template strings for code. Never executes a module. */
 export function sourceFacts(source: string, filename: string): SourceFacts {
-  const facts: SourceFacts = { imports: [], fullModuleMocks: [], invalidModuleMocks: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [], childPrograms: [] };
+  const facts: SourceFacts = { imports: [], fullModuleMocks: [], invalidModuleMocks: [], uncertain: false, promiseMatchers: [], exclusiveTests: [], concurrentTests: [], environmentMutations: [], blockingCalls: [], unfinished: [], asyncCallbacks: [], effectAccess: [], childPrograms: [] };
   const ast = parse(source, { sourceType: "unambiguous", sourceFilename: filename, plugins: filename.endsWith("x") ? ["typescript", "jsx"] : ["typescript"], attachComment: false });
   facts.childPrograms = childPrograms(ast.program as unknown as Node, filename);
   const mocks = moduleMocks(ast.program as unknown as Node);
   facts.fullModuleMocks = mocks.full; facts.invalidModuleMocks = mocks.invalid;
   const testNames = new Set(["it", "test", "describe"]);
   for (const statement of ast.program.body) if (statement.type === "ImportDeclaration" && ["bun:test", "vitest"].includes(statement.source.value)) {
-    for (const specifier of statement.specifiers) if (specifier.type === "ImportSpecifier" && testNames.has(specifier.imported.type === "Identifier" ? specifier.imported.name : specifier.imported.value)) testNames.add(specifier.local.name);
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === "ImportNamespaceSpecifier" || specifier.type === "ImportSpecifier" && testNames.has(specifier.imported.type === "Identifier" ? specifier.imported.name : specifier.imported.value)) testNames.add(specifier.local.name);
+    }
   }
   const rootName = (value: unknown): string | undefined => !node(value) ? undefined : name(value)
     ?? (value.type === "MemberExpression" ? rootName(value.object) : value.type === "CallExpression" ? rootName(value.callee) : undefined);
   const line = (value: Node) => (value.loc as { start: { line: number } }).start.line;
   const property = (value: Node) => value.computed ? text(value.property) : name(value.property);
-  const accessPath = (value: unknown): (string | undefined)[] => !node(value) ? [] : value.type === "Identifier" ? [name(value)]
+  const accessPath = (value: unknown): (string | undefined)[] => !node(value) ? [] : WRAPPERS.has(value.type) ? accessPath(value.expression) : value.type === "Identifier" ? [name(value)]
     : value.type === "MemberExpression" || value.type === "OptionalMemberExpression" ? [...accessPath(value.object), property(value)] : [];
   const globalPath = (value: unknown) => {
     const parts = accessPath(value);
     return parts[0] === "globalThis" ? parts.slice(1) : parts;
   };
+  const environment = environmentConcurrency(ast.program as unknown as Node);
+  facts.concurrentTests = environment.concurrent; facts.environmentMutations = environment.mutations;
   function visit(value: unknown, factory = false): void {
     if (!node(value)) return;
     factory ||= mocks.factories.has(value);
@@ -111,6 +118,105 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
   visit(ast);
   unfinishedWork(ast.program as unknown as Node, facts);
   return facts;
+}
+
+/** Direct syntax and lexical bindings only: arbitrary environment/test-function aliases are not evaluated. */
+function environmentConcurrency(program: Node): { concurrent: number[]; mutations: number[] } {
+  type Binding = "test" | "namespace" | "process" | "other";
+  interface Scope { parent?: Scope; bindings: Map<string, Binding>; function?: true }
+  const scopes = new Map<Node, Scope>(), root: Scope = { bindings: new Map(), function: true };
+  const lookup = (scope: Scope, id: string): Binding | undefined => scope.bindings.get(id) ?? (scope.parent ? lookup(scope.parent, id) : undefined);
+  const unwrap = (value: unknown): unknown => node(value) && WRAPPERS.has(value.type) ? unwrap(value.expression) : value;
+  const property = (value: Node) => value.computed ? text(unwrap(value.property)) : name(value.property);
+  const members = new Set(["MemberExpression", "OptionalMemberExpression"]);
+  const tests = new Set(["it", "test", "describe"]), builders = new Set(["each", "for", "skipIf", "runIf", "extend"]);
+  const modifiers = new Set(["only", "skip", "todo", "failing", "fails", "concurrent", "sequential", ...builders]);
+  const children = (value: Node, visit: (child: Node) => void) => {
+    for (const [key, child] of Object.entries(value)) {
+      if (["start", "end", "loc"].includes(key)) continue;
+      if (Array.isArray(child)) { for (const entry of child) if (node(entry)) visit(entry); }
+      else if (node(child)) visit(child);
+    }
+  };
+  const bind = (scope: Scope, pattern: unknown, binding: Binding = "other"): void => {
+    if (!node(pattern)) return;
+    if (pattern.type === "Identifier") scope.bindings.set(name(pattern)!, binding);
+    else if (pattern.type === "ObjectPattern") for (const entry of pattern.properties as Node[]) bind(scope, entry.type === "RestElement" ? entry.argument : entry.value);
+    else if (pattern.type === "ArrayPattern") for (const entry of pattern.elements as unknown[]) bind(scope, entry);
+    else if (pattern.type === "AssignmentPattern") bind(scope, pattern.left);
+    else if (pattern.type === "RestElement") bind(scope, pattern.argument);
+    else if (pattern.type === "TSParameterProperty") bind(scope, pattern.parameter);
+  };
+  const scan = (value: Node, outer: Scope, parent?: Node): void => {
+    if (["FunctionDeclaration", "ClassDeclaration", "TSEnumDeclaration", "TSModuleDeclaration", "TSImportEqualsDeclaration"].includes(value.type)) bind(outer, value.id);
+    const scope: Scope = FUNCTIONS.has(value.type) || ["BlockStatement", "ClassDeclaration", "ClassExpression", "StaticBlock", "TSModuleBlock", "CatchClause", "ForStatement", "ForOfStatement", "ForInStatement", "SwitchStatement"].includes(value.type)
+      ? { parent: outer, bindings: new Map(), ...(FUNCTIONS.has(value.type) || ["StaticBlock", "TSModuleBlock"].includes(value.type) ? { function: true as const } : {}) } : outer;
+    scopes.set(value, scope);
+    if (FUNCTIONS.has(value.type)) for (const param of value.params as unknown[]) bind(scope, param);
+    if (value.type === "FunctionExpression" || value.type === "ClassExpression") bind(scope, value.id);
+    if (value.type === "CatchClause") bind(scope, value.param);
+    if (value.type === "VariableDeclarator") {
+      let owner = scope; if (parent?.kind === "var") while (!owner.function && owner.parent) owner = owner.parent;
+      bind(owner, value.id);
+    }
+    if (value.type === "ImportDeclaration") for (const entry of value.specifiers as Node[]) {
+      const runtime = value.importKind !== "type" && entry.importKind !== "type", source = text(value.source);
+      const imported = name(entry.imported) ?? text(entry.imported);
+      bind(scope, entry.local, runtime && ["bun:test", "vitest"].includes(source ?? "")
+        ? entry.type === "ImportNamespaceSpecifier" ? "namespace" : tests.has(imported ?? "") ? "test" : "other"
+        : runtime && ["node:process", "process"].includes(source ?? "") && ["ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(entry.type) ? "process" : "other");
+    }
+    children(value, child => scan(child, scope, value));
+  };
+  scan(program, root);
+  const path = (input: unknown): (string | undefined)[] => {
+    const value = unwrap(input); if (!node(value)) return [];
+    const id = name(value);
+    if (id) {
+      const binding = lookup(scopes.get(value)!, id);
+      return binding === "process" ? ["process"] : !binding && ["process", "Object", "Reflect", "globalThis"].includes(id) ? [id] : [];
+    }
+    if (!members.has(value.type)) return [];
+    const owner = path(value.object); return owner.length ? [...owner, property(value)] : [];
+  };
+  const globalPath = (value: unknown) => { const parts = path(value); return parts[0] === "globalThis" ? parts.slice(1) : parts; };
+  const environment = (value: unknown) => { const parts = globalPath(value); return parts[0] === "process" && parts[1] === "env"; };
+  type TestApi = { namespace?: true; concurrent?: boolean };
+  const api = (input: unknown): TestApi | undefined => {
+    const value = unwrap(input); if (!node(value)) return;
+    const id = name(value);
+    if (id) {
+      const binding = lookup(scopes.get(value)!, id);
+      return binding === "namespace" ? { namespace: true } : binding === "test" || !binding && tests.has(id) ? {} : undefined;
+    }
+    if (members.has(value.type)) {
+      const owner = api(value.object), member = property(value);
+      return owner?.namespace ? tests.has(member ?? "") ? {} : undefined
+        : owner && modifiers.has(member ?? "") ? { concurrent: owner.concurrent || member === "concurrent" } : undefined;
+    }
+    // These calls return another test declaration function; a registered test's return is not an API.
+    if (CALLS.has(value.type)) {
+      const callee = unwrap(value.callee);
+      return node(callee) && members.has(callee.type) && builders.has(property(callee) ?? "") ? api(callee) : undefined;
+    }
+  };
+  const concurrent: number[] = [], mutations: number[] = [];
+  const line = (value: Node) => (value.loc as { start: { line: number } }).start.line;
+  const visit = (value: Node): void => {
+    if ((value.type === "AssignmentExpression" && environment(value.left))
+      || (["UpdateExpression", "UnaryExpression"].includes(value.type) && (value.type === "UpdateExpression" || value.operator === "delete") && environment(value.argument))) mutations.push(line(value));
+    if (CALLS.has(value.type)) {
+      const callee = unwrap(value.callee);
+      if (api(callee)?.concurrent && !(node(callee) && members.has(callee.type) && builders.has(property(callee) ?? ""))) concurrent.push(line(value));
+      const [owner, method] = globalPath(callee);
+      if ((owner === "Object" && ["assign", "defineProperty", "defineProperties"].includes(method ?? "")
+        || owner === "Reflect" && ["set", "deleteProperty", "defineProperty"].includes(method ?? ""))
+        && environment((value.arguments as unknown[])[0])) mutations.push(line(value));
+    }
+    children(value, visit);
+  };
+  visit(program);
+  return { concurrent, mutations };
 }
 
 /** Only a real, top-level Vitest call with a complete explicit factory can replace an edge. */
