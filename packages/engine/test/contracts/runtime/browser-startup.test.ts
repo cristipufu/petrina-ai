@@ -1,5 +1,6 @@
 import { completeAll } from "@petrina/core";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { directDrivers, removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterEach } from "bun:test";
@@ -22,7 +23,9 @@ const cases = engineProcessCases();
 const inProcessClosers = new Set<() => Promise<void>>(), retainedRecoveries = new Set<string>();
 afterEach(() => completeAll([...inProcessClosers].map(close => close()).concat(cases.close())).then(() => undefined));
 const root = tempDir("petrina-browser-startup-");
+registerFixtureRoot(root);
 const browsers = testBrowserRoot();
+registerFixtureRoot(browsers);
 afterAll(() => { removeDir(root); if (!cases.retained.size && !retainedRecoveries.size) removeDir(browsers); });
 const notePattern = (fields: string) => new RegExp(`^${`${CLEANUP_NOTE} ${fields}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("elapsed=\\?", "elapsed=\\d+ms")}\n?$`);
 
@@ -223,6 +226,7 @@ for (const mode of ["not observed", "failed", "bypassed"] as const) it(`restores
   const error = new Error("Startup recovery failed before the held point");
   let checked = false;
   const work = tempDir("petrina-browser-startup-failure-");
+  registerFixtureRoot(work);
   const registry = join(work, "registry");
   const stale = mkdtempSync(join(browsers, "petrina-browser-"));
   mkdirSync(registry);

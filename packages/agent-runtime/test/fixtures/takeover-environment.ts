@@ -4,6 +4,7 @@ import { createLeasedProgramRecords, type LeasedProgramRecords } from "@petrina/
 import { runCommand, type CommandResult } from "@petrina/test-support/commands";
 import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { gitCommand, writeGitProgram } from "@petrina/test-support/git-program";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { childState } from "@petrina/platform/process-tree";
@@ -30,6 +31,7 @@ async function readNativeEnvironment(root: string): Promise<EnvironmentObservati
 /** Parent-owned leases survive assertion/startup failure; no process-global environment mutation. */
 export async function takeoverEnvironmentFixture() {
   const root = tempDir("petrina-terminal-env-"), p = paths(root);
+  registerFixtureRoot(root);
   const commands: { result: Promise<CommandResult>; controller: AbortController }[] = [];
   let programs: LeasedProgramRecords | undefined, closing: Promise<void> | undefined;
   const actors = () => programs?.records() ?? [];

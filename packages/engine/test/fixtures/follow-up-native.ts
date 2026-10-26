@@ -8,6 +8,7 @@ import { followUpKey, type DeepMutable, type Finding, type MatchAnswer } from "@
 import { Engine } from "../engine.js";
 import { dispatch } from "../../src/server.js";
 import { Fakes, makeProduct, removeDir, tempDir } from "../fixtures.js";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 
 /** Original private repositories have no remote, so addProduct selects local delivery. */
 export function recordedFollowUpProduct(engine: Engine, id: string, name: string): string {
@@ -174,6 +175,7 @@ export function createFollowUpFixtures() {
   const engines = new Map<Engine, { root: RootOwner; stopping?: Promise<void> }>();
   const createRoot = (prefix: string) => {
     const root = tempDir(prefix);
+    registerFixtureRoot(root);
     roots.set(root, { root, engines: new Set(), errors: [] });
     return root;
   };

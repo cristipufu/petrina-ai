@@ -11,6 +11,7 @@ import { runCommand, type CommandResult } from "@petrina/test-support/commands";
 import { FALLBACK_TIMEOUT } from "@petrina/test-support/run";
 import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { gitCommand, writeGitProgram } from "@petrina/test-support/git-program";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { childState } from "@petrina/platform/process-tree";
@@ -24,6 +25,7 @@ export function takeoverFixtures() {
   const owners: { close(): Promise<void> }[] = [];
   const start = async (scenario: Scenario, description = "", native: { launcherEnv?: Record<string, string>; observeLauncher?(pid: number, state: Awaited<ReturnType<typeof childState>>): void } = {}) => {
     const root = tempDir("petrina-takeover-"), actors = join(root, "actors"), drainedCommands = join(root, "drained-terminal-commands");
+    registerFixtureRoot(root);
     const engines: Engine[] = [], copies: { result: Promise<CommandResult>; controller: AbortController }[] = [];
     let agentLease: ProcessLease | undefined, terminalActors: LeasedProgramRecords | undefined, closing: Promise<void> | undefined;
     let engine: Engine | undefined, taskId: string | undefined, openingCalls = 0;
@@ -143,6 +145,7 @@ try {
 /** Independent native control: actual rm completes, then remains live while the launcher's final shell is held. */
 export async function heldLauncherCleanup() {
   const root = tempDir("petrina-launcher-rm-"), gate = join(root, "hold"), ready = join(root, "ready.json");
+  registerFixtureRoot(root);
   let programs: LeasedProgramRecords | undefined, closing: Promise<void> | undefined;
   const release = () => rmSync(gate, { force: true });
   const close = () => closing ??= (async () => {

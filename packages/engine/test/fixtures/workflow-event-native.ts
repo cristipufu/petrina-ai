@@ -8,6 +8,7 @@ import { EngineClient } from "../client.js";
 import { serve } from "../../src/server.js";
 import { writeConnection } from "../../src/instance.js";
 import { Fakes, makeProduct, removeDir, tempDir } from "../support.js";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 
 export const kinds = (result: Result) => (result.events as WorkflowEvent[]).map((event) => event.kind);
 export const all = (result: Result) => result.events as WorkflowEvent[];
@@ -31,6 +32,7 @@ export function createWorkflowEventFixtures() {
   const servers = new Map<Server, { root: RootOwner; stopping?: Promise<void> }>();
   const createRoot = (prefix: string) => {
     const root = tempDir(prefix);
+    registerFixtureRoot(root);
     roots.set(root, { root, engines: new Set(), servers: new Set(), errors: [] });
     return root;
   };

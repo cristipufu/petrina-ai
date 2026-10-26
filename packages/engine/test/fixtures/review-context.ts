@@ -1,5 +1,6 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type DeepMutable, type Finding } from "@petrina/core";
@@ -15,6 +16,7 @@ const roots = new Map<string, RootOwner>();
 const engines = new Map<Engine, { root: RootOwner; stopping?: Promise<void> }>();
 const createRoot = (prefix: string): RootOwner => {
   const root = tempDir(prefix), owner = { root, engines: new Set<Engine>(), errors: [] };
+  registerFixtureRoot(root);
   roots.set(root, owner);
   return owner;
 };
@@ -90,6 +92,7 @@ async function startRun(reopen: Scenario["reopen"], options: RunOptions) {
   // Only browser-instruction contracts need native browser ownership; keep their private folder across restarts.
   const browsers = options.browser ? testBrowserRoot() : undefined;
   owner.browsers = browsers;
+  if (browsers) registerFixtureRoot(browsers);
   const fakes = new Fakes(join(root, "fake"));
   const scenario: Scenario = { planner: options.single ? "short" : "pair", builder: "plain", reviewer: options.reviewer ?? "important", fixes: "change", controlled: true, reopen, limited: options.limited };
   fakes.scenario(scenario);

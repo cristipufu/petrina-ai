@@ -5,6 +5,7 @@ import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
@@ -24,6 +25,7 @@ const dispose = (dir: string) => {
 };
 
 export function checkOwner(dir: string, stop: () => void | Promise<void>) {
+  registerFixtureRoot(dir);
   let closing = false;
   const operations = new FixtureOperations({
     arm, allowanceMs: CLEANUP_MS * SLOW, label: `Check fixture at ${dir}`,
