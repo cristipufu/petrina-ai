@@ -7412,13 +7412,40 @@
       "behavior": "Shared product check rows use the same strict outcome labels as detailed checks; reported ok without native proof remains unverified",
       "evidence": "15purecases; root445Orchestrator/all9types/conventions0; independent parity/source review closed; actual-old red preserved",
       "limits": "No currentness or evidence authority change; no new full/platform qualification."
+    },
+    "full-f3a3120e": {
+      "source": {
+        "head": "f3a3120e3b71f5c4b71924d0c525e3d5f346e592",
+        "tree": "1900244cf06074bd61d9779a2e76d73941edb41b",
+        "fingerprint": "f2eeac1e8cf3297307a76b536afafd1f1f789f44e82547fed4815d09bb9c9c77",
+        "clean": true
+      },
+      "report": ".test-results/2026-10-25T23-49-44-056Z-f6633961/results.json",
+      "counts": {
+        "tests": 5485,
+        "passed": 5474,
+        "failed": 0,
+        "skipped": 11
+      },
+      "requiredFiles": 869,
+      "actualFiles": 869,
+      "workspaces": 9,
+      "actualExecutions": 4,
+      "normalNativeWorkers": 14,
+      "ms": 234135,
+      "preservation": "All5441prior98rawcase outcomes remain with9explicit inventory-owned reviewer file moves and44added controls; per-slice assertion/native authority review is separate.",
+      "artifacts": "full-f3a3120e/manifest-verification.json,case-reconciliation.json,resource-comparison.json",
+      "resourceReport": ".test-results/resources/2026-10-25T23-53-40-886Z-eb48bd39",
+      "resourceGit": 93344,
+      "resourceLaunches": 104560,
+      "limits": "Mac qualification only. Cost target, additional local implementation, supported-platform qualification and main-protecting delivery remain unfinished."
     }
   },
   "resourceAudit": {
     "status": "in progress",
-    "source": "98f9d6b818ae7ccb2289a53b68f193675f0fb3f4",
-    "report": ".test-results/resources/2026-10-25T21-53-01-085Z-16996c9d/summary.json",
-    "remainingMeasuredProblem": "94099 Git launches in latest fully measured source (-6.2% from100352); required full233024ms/5430passes atnormal14workers. Reviewer-input20cases remain3316launches (2751Git) in both full and focused caller evidence. Actual cost exit remains open.",
+    "source": "f3a3120e3b71f5c4b71924d0c525e3d5f346e592",
+    "report": ".test-results/resources/2026-10-25T23-53-40-886Z-eb48bd39/summary.json",
+    "remainingMeasuredProblem": "93344Git launches (-755/0.8% from98), required full234135ms/5474passes atnormal14workers. Time essentially flat; actual cost exit remains open. Next actual-policy consolidation must preserve native replacement-voter and partial-ballot restart proofs.",
     "exitCriteria": [
       "Trace every top20 expensive case to actual fixture/production callers",
       "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",
