@@ -2990,7 +2990,8 @@
       "from": "packages/engine/test/delivery-turn-recovery.test.ts",
       "splitFiles": [
         "packages/engine/test/journeys/delivery/destination-recovery.test.ts",
-        "packages/orchestrator/test/orchestration/delivery/admission.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/admission.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/workflow.test.ts"
       ],
       "layer": "journeys",
       "area": "delivery",
@@ -2998,6 +2999,19 @@
       "validation": {
         "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
         "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      },
+      "deliveryWorkflowCost": {
+        "base": "56831889",
+        "previousNativeCases": 21,
+        "retainedNativeCases": 13,
+        "removedRepeatedVariants": 8,
+        "mappedPortablePolicyVariants": 10,
+        "portableControls": 30,
+        "pairedNativeControls": "Actual PR single pause and release shared drain retained; every native Git/tree/file/check/SQLite assertion accounted for.",
+        "nativeMatrixCases": 29,
+        "nativeMatrixOwners": 3,
+        "review": "Actual sequencing and live admission shared with native host; exact receivers, raw Error/undefined identity, complete peer read settlement, root/generation fixture ownership and restart cleanup reviewed.",
+        "artifact": "workstreams/delivery-workflow-next/{handoff.json,native-oracle-reconciliation.json,original-oracle-map.json}"
       }
     },
     {
@@ -7610,6 +7624,22 @@
       "allNineTypes": "passed",
       "artifacts": "workstreams/learning-merge25-next/qualification-v3.json; workstreams/learning-assembled-review/handoff.json; learning-delivery-final-orchestrator.json; learning-delivery-final-types.log",
       "limits": "No post-change complete suite/resource/native-platform result."
+    },
+    "delivery-workflow-focused": {
+      "authorPortable": 30,
+      "authorNative": 29,
+      "failed": 0,
+      "skipped": 0,
+      "rootComposedOrchestrator": 508,
+      "allNineTypes": "passed",
+      "normalNativeWorkers": 14,
+      "observedStarts": 2412,
+      "matchedExits": 2412,
+      "git": 2369,
+      "bun": 39,
+      "ps": 4,
+      "artifacts": "workstreams/delivery-workflow-next/qualification.json; native-resources-summary.json; delivery-workflow-integrated-source.json; learning-delivery-final-*",
+      "limits": "Console334expectations and raw JUnit264assertions retained separately; no post-change complete suite/resource/native-platform result."
     }
   },
   "resourceAudit": {

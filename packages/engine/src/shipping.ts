@@ -1,5 +1,5 @@
 import { CompanionLinks } from "./companion-links.js";
-import { DeliveryAdmission } from "@petrina/orchestrator";
+import { DeliveryAdmission, DeliveryWorkflow } from "@petrina/orchestrator";
 import { ShippingVerifier, type DeliveryEvidence } from "./shipping-verifier.js";
 import { realPath } from "@petrina/repositories/paths";
 import { ReleasePrep } from "./release-prep.js";
@@ -7,7 +7,7 @@ import { PrMonitor } from "./pr-monitor.js";
 import { addDeliveryCheck, clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
 import { checkOutcome, checkOutcomeLabel, proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
-import { companionText, landingState, repositoryDelivered, syncRuntimeWait } from "@petrina/core";
+import { landingState, syncRuntimeWait } from "@petrina/core";
 // Delivering finished work, by Petrina itself, with no agent. Before anything goes out the work is one commit on
 // top of the latest main, approved for this delivery and destination, with the checks passing on it. Petrina
 // publishes the exact commit it checked, with what the builder wrote to go out with it: it pushes the branch and
@@ -19,7 +19,6 @@ import { companionText, landingState, repositoryDelivered, syncRuntimeWait } fro
 import {
   CLEANUP_WORDS,
   type Id,
-  beginPetrinaStep,
   beginYouStep,
   endAgentStep,
   endOpenStep,
@@ -88,6 +87,7 @@ export class Shipping {
   readonly verifier: ShippingVerifier;
   private readonly companions: CompanionLinks;
   private readonly admission: DeliveryAdmission;
+  private readonly workflow: DeliveryWorkflow;
 
   constructor(
     private readonly k: Kernel,
@@ -112,6 +112,30 @@ export class Shipping {
     this.releases = new ReleasePrep(k, turns, connections);
     this.companions = new CompanionLinks(k);
     this.verifier = new ShippingVerifier(k, connections);
+    this.workflow = new DeliveryWorkflow(this.admission, {
+      closedPullRequest: ({ work }) => github.prState(work.source!.product.repo, work.pr!.number, k.options.gh),
+      needGitHub: task => this.tools.needGitHub(task),
+      readyToShip: (scope, signal) => this.readyToShip(scope, signal),
+      head: scope => git.head(scope.work.worktree!),
+      prepare: (scope, stage, signal) => this.prepare(scope, stage, signal),
+      checkDelivery: (scope, signal) => this.checkDelivery(scope, signal),
+      proofApprovalCurrent: (task, signal, prepared) => this.proofApprovalCurrent(task, signal, prepared),
+      returnForDecision: (task, why) => this.returnForDecision(task, why),
+      publish: (scope, signal) => this.publish(scope, signal),
+      prepareAgain: (scope, why) => this.prepareAgain(scope, why),
+      clearUnpublishedVersion: scope => this.clearUnpublishedVersion(scope),
+      finishCompanions: task => this.companions.finish(task),
+    }, {
+      stopped: () => k.stopped, now: () => Date.now(), taskDetails: id => k.taskDetails(id),
+      hasDecision: (taskId, kinds) => k.s.inbox.some(item => item.taskId === taskId && kinds.includes(item.kind)),
+      raise: (target, kind, title, details) => { k.raise(target, kind, title, false, details); },
+      log: (task, tone, text) => k.log(task, tone, text), delivered: task => k.tracking.delivered(task),
+      done: task => k.onTaskDone?.(task), checkpoint: () => k.commitNow(), schedule: () => k.schedule(),
+    }, {
+      aborted: () => new Aborted(), waiting: reason => new WaitingForUsage(reason), prerequisiteRefresh: () => new PrerequisiteRefresh(),
+      classify: error => error instanceof DecisionNeeded ? { kind: "decision" } : error instanceof PrerequisiteRefresh ? { kind: "refresh" }
+        : error instanceof SourceMoved ? { kind: "source-moved", message: error.message } : { kind: "other" },
+    });
     this.monitor = new PrMonitor(k, this.verifier, {
       recordDelivery: (scope, evidence, signal) => this.recordDelivery(scope, evidence, signal),
       finishMany: task => this.finishMany(task),
@@ -131,133 +155,18 @@ export class Shipping {
    * moved and it gets ready again).
    */
   async deliver(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    try {
-      if (task.repositories) {
-        try { return await this.deliverMany(task, stage, signal); }
-        finally {
-          if (!this.k.stopped && ["needs-you", "paused", "failed"].includes(task.state)) await this.clearUnpublishedPreparations(task);
-        }
-      }
-      return await this.deliverOne(executionFor(task), stage, signal);
-    } catch (error) {
-      if (error instanceof DecisionNeeded || error instanceof PrerequisiteRefresh) return "continue";
-      throw error;
-    } finally {
-      // A conflict or renewed decision ends this delivery step even when the same driver carries on at a gate.
-      if (task.plan?.stages[task.stageIndex]?.id !== stage.id) this.releaseDeliveryTurn(task.id);
-    }
+    return this.workflow.deliver(task, stage, signal);
   }
 
   /** Native composition keeps the established wait and source-refresh failures. */
   private beforePublishing(scope: RepositoryContext, queuedCheck = false): void {
-    const decision = this.admission.beforePublishing(scope, queuedCheck);
-    if (decision.kind === "wait") throw new WaitingForUsage(decision.reason);
-    if (decision.kind === "refresh") throw new PrerequisiteRefresh();
+    this.workflow.beforePublishing(scope, queuedCheck);
   }
 
-  private async clearUnpublishedPreparations(task: MTask): Promise<void> {
-    for (const work of task.repositories!) {
-      const scope: RepositoryContext = { task, work };
-      if (work.pr || work.release || work.landed || work.shipping?.step || work.shipping?.pushed) continue;
-      await this.clearUnpublishedVersion(scope);
-    }
-  }
+  private clearUnpublishedPreparations(task: MTask): Promise<void> { return this.workflow.clearUnpublishedPreparations(task); }
 
-  private async deliverMany(task: MTask, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const epoch = this.admission.epoch(task);
-    const lostTurn = () => epoch !== (this.admission.epoch(task));
-    const closed = task.repositories!.filter((entry) => entry.pr?.state === "closed" && !entry.landingAccepted);
-    const states = await Promise.all(closed.map((work) => github.prState(work.source!.product.repo, work.pr!.number, this.k.options.gh)));
-    this.stopIfAsked(signal);
-    for (const [index, work] of closed.entries()) {
-      const state = states[index];
-      if (state) work.pr!.state = state;
-    }
-    if (task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) { this.finishMany(task); return "stop"; }
-    // Complete preparation everywhere before the first publication. Already delivered records are immutable.
-    for (const work of task.repositories!) {
-      const scope: RepositoryContext = { task, work };
-      if (repositoryDelivered(work)) continue;
-      this.beforePublishing(scope);
-      task.activeProductId = work.productId;
-      if (scope.work.shipping?.step) {
-        if (await this.checkDelivery(scope, signal) === "stop" && !repositoryDelivered(work)) return "stop";
 
-        if (repositoryDelivered(work)) continue;
-      }
-      if (!scope.work.shipping?.prepared) {
-        if (scope.work.delivery !== "local") await this.tools.needGitHub(task);
-        if (await this.readyToShip(scope, signal) === "back") return "continue";
-        if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
-        this.beforePublishing(scope);
-        if (scope.work.delivery !== "release" && scope.work.baseSha === await git.head(scope.work.worktree!)) {
-          work.nothingToPublish = true;
-          this.k.log(task, "done", `${scope.work.source!.product.name}: Nothing to publish`);
-          this.k.commitNow();
-          continue;
-        }
-        const result = await this.prepare(scope, stage, signal);
-        if (result !== "ready") return result;
-        // A question can release the turn while a helper is finishing. Discard its result too,
-        // then restart the preparation pass so earlier products refresh before anything publishes.
-        if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
-      }
-    }
-    // Even an unchanged product can ask a question and take the shortcut above. Every unfinished
-    // product must belong to this preparation pass before the first publication is admitted.
-    if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
-    const preview = companionText(task.repositories!);
-    if (preview) for (const work of task.repositories!) {
-
-      if (!work.nothingToPublish && (work.delivery === "pull-request" || work.source?.destination.kind === "update-pr")) work.companion ??= { text: preview, state: "pending" };
-    }
-    this.k.commitNow();
-    for (const work of task.repositories!) {
-      const scope: RepositoryContext = { task, work };
-      if (repositoryDelivered(work)) continue;
-      this.beforePublishing(scope);
-      task.activeProductId = work.productId;
-      if (scope.work.shipping?.prepared?.body && preview) scope.work.shipping.prepared.body = `${scope.work.shipping.prepared.body.replace(/\n*Part of a change across: [^\n]*$/u, "")}\n\n${preview}`;
-      const result = await this.deliverOne(scope, stage, signal);
-
-      if (!repositoryDelivered(work)) return result;
-      if (work.pr?.state === "closed" && !work.landingAccepted) { this.finishMany(task); return "stop"; }
-      if (signal.aborted || task.state === "cancelled") return "stop";
-      task.state = "running";
-      this.k.commitNow();
-    }
-    if (!await this.companions.finish(task)) return "stop";
-    this.finishMany(task);
-    return "stop";
-  }
-
-  private finishMany(task: MTask): void {
-
-    const landed = landingState(task.repositories!);
-    delete task.agent;
-    task.holdsSlot = false;
-    if (task.repositories!.every(repositoryDelivered) && task.repositories!.every((work) => !work.companion || work.companion.state === "done") && !task.deliveryRecorded) { this.k.tracking.delivered(task); task.deliveryRecorded = true; }
-    if (landed === "unfinished") {
-      task.state = "needs-you"; task.column = "ready"; task.statusLine = "Confirmed deliveries are saved. Unfinished deliveries need retry";
-      if (!this.k.s.inbox.some((item) => item.taskId === task.id && ["stuck", "shipping"].includes(item.kind))) this.k.raise(task, "stuck", "Resume the unfinished deliveries", false);
-    } else if (landed === "decision") {
-      task.state = "needs-you";
-      task.column = "ready";
-      const closed = task.repositories!.filter((work) => work.pr?.state === "closed" && !work.landingAccepted);
-      task.statusLine = `${closed.map((work) => work.source!.product.name).join(", ")}: pull request closed without merging. Your decision is needed`;
-      // The question belongs to the closed product, so the others keep their own recorded results.
-      if (!this.k.s.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) this.k.raise({ task, work: closed[0]! }, "shipping", task.statusLine, false, { body: "Confirmed deliveries remain saved. Dependent tasks stay blocked until you explicitly decide this change has landed." });
-    } else if (landed === "waiting") {
-      task.state = "pr-open"; task.column = "ready"; task.statusLine = "Waiting for every pull request to merge";
-    } else if (landed === "landed") {
-      const fresh = task.state !== "done";
-      task.state = "done"; task.column = "done"; task.statusLine = "All products have landed"; task.finishedAt ??= Date.now();
-      if (fresh) this.k.onTaskDone?.(task);
-    }
-    syncRuntimeWait(task, id => this.k.taskDetails(id), Date.now());
-    this.k.commitNow();
-    this.k.schedule();
-  }
+  private finishMany(task: MTask): void { this.workflow.finishMany(task); }
 
   /** A known-unpublished version commit is preparation, so it never reaches an editing role. */
   async clearUnpublishedVersion(scope: RepositoryContext, preserveAttempts = false): Promise<void> {
@@ -272,46 +181,6 @@ export class Shipping {
     }
   }
 
-  private async deliverOne(scope: RepositoryContext, stage: MStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const { task, work: repository } = scope;
-    if (signal.aborted) throw new Aborted();
-    this.beforePublishing(scope);
-    if (!repository.shipping?.step) {
-      // Nothing starts shipping to GitHub without a GitHub login: no half-done delivery.
-      if (repository.delivery !== "local") await this.tools.needGitHub(task);
-      if (signal.aborted) throw new Aborted();
-      if (!repository.shipping?.prepared) {
-        if ((await this.readyToShip(scope, signal)) === "back") return "continue";
-        this.beforePublishing(scope);
-        const prepared = await this.prepare(scope, stage, signal);
-        if (prepared !== "ready") return prepared;
-      }
-    }
-    // Check preparation or release notes may have finished after admissions closed. Publishing
-    // is its own step; an already-started delivery still settles all of its saved steps.
-    this.beforePublishing(scope);
-    // Petrina's own step on the journey, from its first look on GitHub until it went out.
-    beginPetrinaStep(task, "delivery", Date.now(), repository);
-    // Looked up before publishing, and first after an interruption: what is already there is recorded, not made again.
-    try {
-      if ((await this.checkDelivery(scope, signal)) === "stop") return "stop";
-      if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal, true)) {
-        await this.returnForDecision(task, "proof");
-        return "continue";
-      }
-      // After what already went out is recorded: a prepared delivery, a retry or work from before this check still asks first.
-      if (undecidedAcceptanceGap(task)) {
-        await this.returnForDecision(task, "acceptance");
-        return "continue";
-      }
-      return (await this.publish(scope, signal)) === "done" ? "stop" : "continue";
-    } catch (error) {
-      if (!(error instanceof SourceMoved)) throw error;
-      this.stopIfAsked(signal);
-      await this.prepareAgain(scope, error.message);
-      return "continue";
-    }
-  }
 
   // ── Ready to ship ──────────────────────────────────────────────────────
 

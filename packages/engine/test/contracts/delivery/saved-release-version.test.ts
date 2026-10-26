@@ -40,8 +40,8 @@ for (const route of ["failed preparation", "shared needs-you", "shared paused", 
       f.task.repositories = [Object.assign(f.task.repository!, { completedStages: [] })]; delete f.task.repository;
       const state = route.slice("shared ".length) as "needs-you" | "paused" | "failed";
       // Control the shared driver's outcome; its real finalizer must restore unpublished work.
-      const deliverMany = shipping["deliverMany"];
-      shipping["deliverMany"] = async () => {
+      const deliverMany = shipping["workflow"]["deliverMany"];
+      shipping["workflow"]["deliverMany"] = async () => {
         f.task.state = state;
         if (state === "failed") throw new Error("Delivery stopped before publication");
         return "stop";
@@ -50,7 +50,7 @@ for (const route of ["failed preparation", "shared needs-you", "shared paused", 
         const outcome = await shipping.deliver(f.task, f.task.plan.stages[2]!, new AbortController().signal).then(value => value, error => error.message);
         expect(outcome).toBe(state === "failed" ? "Delivery stopped before publication" : "stop");
         expect(f.task.state).toBe(state);
-      } finally { shipping["deliverMany"] = deliverMany; }
+      } finally { shipping["workflow"]["deliverMany"] = deliverMany; }
       f.task.state = "waiting"; // The coordinator can resume the task before requesting validation.
     } else if (route === "failed preparation") {
       expect(await shipping["preparationFailed"](scope, "Release checks failed", new AbortController().signal)).toBe("continue");

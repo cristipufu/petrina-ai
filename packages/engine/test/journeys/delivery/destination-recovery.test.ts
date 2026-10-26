@@ -1,5 +1,6 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { afterAll, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
+import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../../engine.js";
@@ -9,17 +10,15 @@ import { destination } from "../../../src/shipping.js";
 import { Aborted } from "../../../src/kernel.js";
 import { WaitingForUsage } from "../../../src/usage.js";
 import { CONFIRM_ADDRESS } from "../../../src/connection.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 type Observation = { product: string; title: string; sha: string; tree: string; files: string[] };
 
 /** Start at the approved delivery boundary; each fixture owns its repositories, check barriers and saved state. */
 async function fixture(products = ["a"], checkRuns = 2) {
-  const root = tempDir("petrina-turn-recovery-"); roots.push(root);
+  const root = tempDir("petrina-turn-recovery-"), lifetime = directDrivers(root);
   const data = join(root, "data"), log = join(root, "checks.jsonl"), check = join(root, "check.ts");
-  writeFileSync(check, `import { appendFileSync, existsSync, readdirSync } from "node:fs";
+  const program = `import { appendFileSync, existsSync, readdirSync } from "node:fs";
 const [log, root, product] = process.argv.slice(2);
 const read = (...args) => Bun.spawnSync(["git", ...args], { stdout: "pipe" }).stdout.toString().trim();
 const title = read("log", "-1", "--format=%s");
@@ -27,22 +26,24 @@ const sha = read("rev-parse", "HEAD"), tree = read("rev-parse", "HEAD^{tree}");
 const files = readdirSync(".").filter(file => file.startsWith("feature-")).sort();
 appendFileSync(log, JSON.stringify({ product, title, sha, tree, files }) + "\\n");
 if (existsSync(root + "/hold-" + title)) while (!existsSync(root + "/release-" + title)) await Bun.sleep(10);
-process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0);`);
+process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0);`;
   const open = () => {
-    const engine = new Engine(data, { agentCommand: () => { throw new Error("Approved local delivery needs no agent"); }, terminals: () => [], checkRuns });
+    const engine = lifetime.open(data, { agentCommand: () => { throw new Error("Approved local delivery needs no agent"); }, terminals: () => [], checkRuns });
     engine.schedule = () => {};
     return engine;
   };
-  let engine = open();
+  let engine!: Engine;
   const held = new Set<string>();
   let closing: Promise<void> | undefined;
-  const dispose = () => closing ??= (async () => {
-    const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-    for (const name of held) writeFileSync(join(root, `release-${name}`), "Continue");
-    await engine.shutdown();
-    removeDir(root);
-  })();
-  return setupWithCleanup(async () => {
+  const dispose = () => closing ??= Promise.resolve().then(async () => {
+    const errors: unknown[] = [];
+    for (const name of held) try { writeFileSync(join(root, `release-${name}`), "Continue"); } catch (error) { errors.push(error); }
+    try { await lifetime.close(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Destination fixture cleanup could not be confirmed");
+  });
+  return setupWithCleanup(() => lifetime.prepare(async () => {
+    writeFileSync(check, program);
+    engine = open();
     await engine.waitUntilReady(); engine.setPoolPaused(false);
     const owners: { id: string; path: string; name: string }[] = [];
     for (const name of products) {
@@ -51,10 +52,12 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
       engine.setProductChecks(id, [{ name: "Tests", command: commandText([process.execPath, check, log, root, name]) }]);
       owners.push({ id, path, name });
     }
-    const add = async (name: string, indices = [0], branch = "main") => {
+    const add = (name: string, indices = [0], branch = "main") => {
+      const current = engine;
+      return lifetime.run(current, async () => {
       const selected = indices.map(index => owners[index]!);
-      const task = engine.task(engine.addTask({ productId: selected[0]!.id, title: name, delivery: "local", backlog: true }))!;
-      task.state = "waiting"; task.startedAt = engine.s.tasks.length; task.stageIndex = 1;
+      const task = current.task(current.addTask({ productId: selected[0]!.id, title: name, delivery: "local", backlog: true }))!;
+      task.state = "waiting"; task.startedAt = current.s.tasks.length; task.stageIndex = 1;
       task.plan = { rationale: "Only approved local delivery is under test", plannerProfileId: "sol-high", stages: [
         { id: "approval", title: "Approve delivery", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] },
         { id: "ship", title: "Ship", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
@@ -65,37 +68,41 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
       }
       for (const scope of scopesFor(task)) {
         const work = scope.work;
-        work.source = { ...await engine["sources"].resolve(task, { productId: work.productId, delivery: "local", startFrom: { kind: "default" } }), confirmed: true };
+        work.source = { ...await current["sources"].resolve(task, { productId: work.productId, delivery: "local", startFrom: { kind: "default" } }), confirmed: true };
         if (branch !== "main") {
           // Source approval is already settled; the scheduler sees the resolved branch, as it does after a plan check.
           const owner = owners.find(owner => owner.id === work.productId)!;
           await git(owner.path, "branch", branch, "main");
           work.source.start.branch = branch; work.source.destination.branch = branch;
         }
-        await engine["driver"]["prepare"](scope, new AbortController().signal);
+        await current["driver"]["prepare"](scope, new AbortController().signal);
         if ("completedStages" in work) work.completedStages = ["build"];
         work.report = { title: name, summary: `Deliver ${name}`, changes: [`Added ${name}`] };
         writeFileSync(join(work.worktree!, `feature-${name}`), `${name}\n`);
         await git(work.worktree!, "add", "."); await git(work.worktree!, "commit", "-qm", name);
-        work.approvedSha = await git(work.worktree!, "rev-parse", "HEAD"); work.approvedPatch = await engine["updates"].patch(scope);
-        work.approvedFor = { by: "coordinator", mode: "local", destination: destination(work, engine.repositoryOf(scope)) };
+        work.approvedSha = await git(work.worktree!, "rev-parse", "HEAD"); work.approvedPatch = await current["updates"].patch(scope);
+        work.approvedFor = { by: "coordinator", mode: "local", destination: destination(work, current.repositoryOf(scope)) };
       }
       return task;
+      });
     };
     const evidence = (): Observation[] => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
     return {
       root, owners, add, evidence, engine: () => engine, dispose,
+      run: <T>(work: () => Promise<T>) => lifetime.prepare(work),
       hold: (name: string) => { held.add(name); writeFileSync(join(root, `hold-${name}`), "Hold this check"); },
       release: (name: string) => writeFileSync(join(root, `release-${name}`), "Continue"),
       schedule: () => engine["driver"].schedule(),
-      async restart() { await engine.shutdown(); engine = open(); await engine.waitUntilReady(); },
+      restart: () => lifetime.prepare(async () => { await lifetime.stop(engine); engine = open(); await engine.waitUntilReady(); }),
     };
-  }, dispose);
+  }), dispose);
 }
 
 it("finishes a shared delivery before later single-product requests on either destination", async () => {
-  const f = await fixture(["a", "b"]);
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture(["a", "b"]));
+  await setupWithCleanup(() => f.run(async () => {
     const first = await f.add("first-a"), shared = await f.add("shared", [0, 1]);
     const lastA = await f.add("last-a"), lastB = await f.add("last-b", [1]);
     f.hold("first-a");
@@ -122,50 +129,21 @@ it("finishes a shared delivery before later single-product requests on either de
         expect(latest.files).toEqual(owner.name === "a" ? ["feature-first-a", "feature-last-a", "feature-shared"] : ["feature-last-b", "feature-shared"]);
       }
       expect(f.engine()["checks"].preparingCount).toBe(0);
-    } finally { f.release("first-a"); await f.dispose(); }
+    } finally { f.release("first-a");  }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
-it("keeps a live driver's original destination request when it yields before delivery", async () => {
-  const f = await fixture();
-  try {
-    const first = await f.add("first"), second = await f.add("second"), third = await f.add("third");
-    // A task may reach delivery from a live driver, while a later request belongs to older work.
-    // The next scheduler pass considers older tasks first; it must still honor the asking order.
-    third.startedAt = 0;
-    try {
-      expect(f.engine()["shipping"].waitingForTurn(first)).toBeUndefined();
-      f.engine().startDriver(second.id);
-      await f.engine().settling.get(second.id);
-      expect(second.state).toBe("waiting");
-      expect(second.statusLine).toContain("first");
-      expect(f.engine().drivers.has(second.id)).toBe(false);
-      expect(f.engine().checkQueue.running).toBe(0);
-      expect(f.engine().checkQueue.waiting).toBe(0);
-      expect(f.engine()["checks"].preparingCount).toBe(0);
-      expect(f.evidence()).toEqual([]);
-      expect(f.engine()["shipping"].waitingForTurn(third)).toContain("first");
-      f.engine()["shipping"].releaseDeliveryTurn(first.id);
-      expect(f.engine()["shipping"].waitingForTurn(third)).toBe("Waiting for “second” to finish delivering to main");
-      expect(f.engine()["shipping"].waitingForTurn(second)).toBeUndefined();
-      first.state = "needs-you";
-      f.schedule();
-      await waitFor(() => second.state === "done" && !f.engine().settling.has(second.id), "the earlier destination request to finish");
-      f.schedule();
-      await waitFor(() => third.state === "done" && !f.engine().settling.has(third.id), "the later destination request to finish");
-      expect(f.evidence().map(run => [run.title, run.files])).toEqual([
-        ["second", ["feature-second"]], ["third", ["feature-second", "feature-third"]],
-      ]);
-      expect(f.engine()["shipping"]["admission"].entries()).toEqual([]);
-    } finally { await f.dispose(); }
 
-  } finally { await f.dispose(); }
-});
 
 it("checks and lands another branch while a delivery to main still owns its turn", async () => {
-  const f = await fixture();
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture());
+  await setupWithCleanup(() => f.run(async () => {
     const first = await f.add("first"), other = await f.add("other", [0], "next");
     const base = executionFor(first).work.baseSha!;
     f.hold("first");
@@ -180,15 +158,20 @@ it("checks and lands another branch while a delivery to main still owns its turn
       f.release("first"); await waitFor(() => first.state === "done" && !f.engine().settling.has(first.id), "the original branch delivery to finish");
       expect(f.evidence()).toHaveLength(2);
       expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(runs.find(run => run.title === "first")!.sha);
-    } finally { f.release("first"); await f.dispose(); }
+    } finally { f.release("first");  }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
 
 it("looks up an interrupted local publication after restart before checking and landing the next delivery", async () => {
-  const f = await fixture();
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture());
+  await setupWithCleanup(() => f.run(async () => {
     const first = await f.add("first"), second = await f.add("second");
     const firstScope = executionFor(first), signal = new AbortController().signal;
     try {
@@ -215,40 +198,21 @@ it("looks up an interrupted local publication after restart before checking and 
       const runs = f.evidence(); expect(runs.map(run => run.title)).toEqual(["first", "second"]);
       expect(runs[1]!.files).toEqual(["feature-first", "feature-second"]);
       expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(runs[1]!.sha);
-    } finally { await f.dispose(); }
+    } finally {  }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
-it("reacquires a released delivery turn before a live decision resumes publication", async () => {
-  const f = await fixture();
-  try {
-    const first = await f.add("first"), second = await f.add("second");
-    const firstScope = executionFor(first);
-    f.hold("second");
-    try {
-      expect(f.engine()["shipping"].waitingForTurn(first)).toBeUndefined();
-      // A live release-note conversation can wait on the coordinator while a shared task owns a local branch.
-      // Exercise the same publication boundary after that decision releases its destination turn.
-      const controller = new AbortController(); f.engine().drivers.set(first.id, controller);
-      first.state = "needs-you";
-      f.engine()["shipping"].syncDeliveryTurns();
-      f.schedule(); await waitFor(() => f.evidence().some(run => run.title === "second"), "the next delivery to own the branch");
-      first.state = "running";
-      expect(() => f.engine()["shipping"]["beforePublishing"](firstScope)).toThrow(WaitingForUsage);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(firstScope.work.baseSha!);
-      f.engine().drivers.delete(first.id); first.state = "waiting";
-      f.release("second"); await waitFor(() => second.state === "done" && !f.engine().settling.has(second.id), "the second delivery to finish");
-      f.schedule(); await waitFor(() => first.state === "done" && !f.engine().settling.has(first.id), "the resumed delivery to recheck and land");
-      expect(f.evidence().map(run => [run.title, run.files])).toEqual([["second", ["feature-second"]], ["first", ["feature-first", "feature-second"]]]);
-    } finally { f.engine().drivers.delete(first.id); f.release("second"); await f.dispose(); }
 
-  } finally { await f.dispose(); }
-});
 
 it("reacquires the destination outside check capacity when discovery resumes after a coordinator decision", async () => {
-  const f = await fixture();
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture());
+  await setupWithCleanup(() => f.run(async () => {
     const first = await f.add("first"), second = await f.add("second");
     const checks = f.engine()["checks"], cached = checks["cachedChecks"].bind(checks), ensure = checks.ensureChecks.bind(checks);
     const occupied = [f.engine().checkQueue.hold(), f.engine().checkQueue.hold()];
@@ -284,15 +248,20 @@ it("reacquires the destination outside check capacity when discovery resumes aft
     } finally {
       for (const finish of occupied) finish(); f.release("second");
       checks["cachedChecks"] = cached; checks.ensureChecks = ensure;
-      await f.dispose();
+
     }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
 for (const confirmation of ["own", "peer"] as const) it(`returns admitted check capacity while its ${confirmation} repository address confirmation waits`, async () => {
-  const f = await fixture(["a"], 1), task = await f.add("address"), scope = executionFor(task);
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture(["a"], 1)), task = await f.add("address"), scope = executionFor(task);
+  await setupWithCleanup(() => f.run(async () => {
     const controller = new AbortController(), occupied = f.engine().checkQueue.hold();
     const product = f.engine().s.products.find(product => product.id === scope.work.productId)!;
     const address = "https://github.com/acme/address.git";
@@ -332,15 +301,20 @@ for (const confirmation of ["own", "peer"] as const) it(`returns admitted check 
       expect(f.engine().checkQueue.running).toBe(0);
     } finally {
       occupied(); controller.abort(); if (follower) (await follower)(); await attempt?.catch(() => {}); await confirming?.catch(() => {});
-      f.engine().drivers.delete(task.id); await f.dispose();
+      f.engine().drivers.delete(task.id);
     }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
-for (const interruption of ["hold", "question"] as const) it(`refreshes every unpublished shared preparation after yielding its turn for a ${interruption}`, async () => {
-  const f = await fixture(["a", "b"]), shared = await f.add("shared", [0, 1]), second = await f.add("second");
-  try {
+for (const interruption of ["question"] as readonly ("hold" | "question")[]) it(`refreshes every unpublished shared preparation after yielding its turn for a ${interruption}`, async () => {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture(["a", "b"])), shared = await f.add("shared", [0, 1]), second = await f.add("second");
+  await setupWithCleanup(() => f.run(async () => {
     const shipping = f.engine()["shipping"], prepare = shipping["prepare"].bind(shipping), publish = shipping["publishLocal"].bind(shipping);
     const preparedA = scopesFor(shared)[0]!.work;
     let interrupted = false;
@@ -388,15 +362,20 @@ for (const interruption of ["hold", "question"] as const) it(`refreshes every un
       expect(f.engine()["shipping"]["admission"].entries()).toEqual([]);
     } finally {
       f.release("second"); shipping["prepare"] = prepare; shipping["publishLocal"] = publish;
-      await f.dispose();
+
     }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
-for (const changed of [false, true]) it(`refreshes all shared products before publishing after ${changed ? "a changed" : "an unchanged"} product confirms its address`, async () => {
-  const f = await fixture(["a", "b", "c"]), shared = await f.add("shared", [0, 2, 1]), second = await f.add("second");
-  try {
+for (const changed of [true]) it(`refreshes all shared products before publishing after ${changed ? "a changed" : "an unchanged"} product confirms its address`, async () => {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture(["a", "b", "c"])), shared = await f.add("shared", [0, 2, 1]), second = await f.add("second");
+  await setupWithCleanup(() => f.run(async () => {
     const engine = f.engine(), shipping = engine["shipping"], signal = new AbortController().signal;
     const [a, c, b] = scopesFor(shared), productB = engine.s.products.find(product => product.id === b!.work.productId)!;
     const fetch = engine["connections"].fetchDefault.bind(engine["connections"]);
@@ -460,12 +439,17 @@ for (const changed of [false, true]) it(`refreshes all shared products before pu
       await delivery?.catch(() => {}); shipping.finishDeliveryTurn(shared.id); await engine.shutdown();
     }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
-for (const mode of ["pull-request", "release"] as const) for (const stop of ["shared pool pause", "shared engine drain", "single pool pause"] as const) it(`keeps prepared ${mode} candidates through a ${stop} without local destination turns`, async () => {
-  const shared = stop.startsWith("shared"), f = await fixture(shared ? ["a", "b"] : ["a"]);
-  try {
+for (const [mode, stop] of [["pull-request", "single pool pause"], ["release", "shared engine drain"]] as const) it(`keeps prepared ${mode} candidates through a ${stop} without local destination turns`, async () => {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const shared = stop.startsWith("shared"), f = (fixtureOwner = await fixture(shared ? ["a", "b"] : ["a"]));
+  await setupWithCleanup(() => f.run(async () => {
     const task = await f.add("prepared", shared ? [0, 1] : [0]);
     const engine = f.engine(), shipping = engine["shipping"], signal = new AbortController().signal, stage = task.plan!.stages[task.stageIndex]!;
     const prepare = shipping["prepare"].bind(shipping), publish = shipping["publish"].bind(shipping), checkDelivery = shipping["checkDelivery"].bind(shipping);
@@ -534,12 +518,17 @@ for (const mode of ["pull-request", "release"] as const) for (const stop of ["sh
       await engine.shutdown();
     }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
 it("refreshes saved shared local candidates after shutdown before publishing any product", async () => {
-  const f = await fixture(["a", "c"]), task = await f.add("shared", [0, 1]);
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture(["a", "c"])), task = await f.add("shared", [0, 1]);
+  await setupWithCleanup(() => f.run(async () => {
     const engine = f.engine(), shipping = engine["shipping"], prepare = shipping["prepare"].bind(shipping);
     let stopped: Promise<void> | undefined;
     shipping["prepare"] = async (...args) => {
@@ -570,14 +559,19 @@ it("refreshes saved shared local candidates after shutdown before publishing any
         expect(runs[1]!.tree).not.toBe(runs[0]!.tree);
         expect(scopesFor(recovered).find(({ work }) => work.productId === owner.id)!.work.checks?.tree).toBe(runs[1]!.tree);
       }
-    } finally { shipping["prepare"] = prepare; await stopped; await f.dispose(); }
+    } finally { shipping["prepare"] = prepare; await stopped;  }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });
 
 for (const outcome of ["cancelled", "unavailable"] as const) it(`returns check capacity when admitted source preparation is ${outcome}`, async () => {
-  const f = await fixture(["a"], 1);
-  try {
+  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
+  await setupWithCleanup(async () => {
+  const f = (fixtureOwner = await fixture(["a"], 1));
+  await setupWithCleanup(() => f.run(async () => {
     const task = await f.add("preparing"), scope = executionFor(task);
     const controller = new AbortController();
     const occupied = f.engine().checkQueue.hold();
@@ -611,8 +605,11 @@ for (const outcome of ["cancelled", "unavailable"] as const) it(`returns check c
       expect(task.journey!.flatMap(step => step.productChecks ?? []).every(check => check.result === "stopped")).toBe(true);
     } finally {
       occupied(); release(); await attempt; if (follower) (await follower)();
-      f.engine().drivers.delete(task.id); await f.dispose();
+      f.engine().drivers.delete(task.id);
     }
 
-  } finally { await f.dispose(); }
+  }), () => f.dispose());
+  await f.dispose();
+
+  }, async () => { await fixtureOwner?.dispose(); });
 });

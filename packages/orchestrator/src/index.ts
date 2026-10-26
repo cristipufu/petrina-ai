@@ -68,3 +68,6 @@ export * from "./model-capacity.js";
 export * from "./product-context.js";
 export { keepApprovedLearnings, keptLearningsMessage } from "./learning-merge.js";
 export type { PlainInstructions, LearningRecords, LearningMergeRecords, LearningMergeRequest, LearningMergeEffects, LearningMergeResult } from "./ports/learning-merge.js";
+
+export { DeliveryWorkflow } from "./delivery-workflow.js";
+export type { DeliveryStage, DeliveryRunResult, DeliveryWorkflowAdmission, DeliveryPhaseEffects, DeliveryRecording, DeliveryFailures } from "./ports/delivery-workflow.js";
