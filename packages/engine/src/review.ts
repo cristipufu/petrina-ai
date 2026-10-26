@@ -493,7 +493,10 @@ export class Reviews {
           },
         };
       },
-      stopHelpers: () => this.k.stopHelpers(task.id), closeTaskRun: () => this.k.runs.get(task.id)?.close(), releasedStops: () => this.turns.releasedStops(),
+      stopHelpers: () => this.k.stopHelpers(task.id), closeTaskRun: () => {
+        const run = this.k.runs.get(task.id);
+        if (run) void this.k.stopAgent(task.id, run).catch(() => undefined);
+      }, releasedStops: () => this.turns.releasedStops(task.id),
       finish: async readOnly => {
         await completeAll([
           ...copyOwners.map(async (owner) => {

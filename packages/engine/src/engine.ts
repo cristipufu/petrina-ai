@@ -343,7 +343,7 @@ export class Engine extends Kernel implements Commands {
     request(() => this.usageCoordinator.stop());
     request(() => this.readiness.stop());
     request(() => this.screens.stop());
-    const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
+    const runs = [...this.runs.entries(), ...[...this.helperRuns.entries()].flatMap(([taskId, runs]) => [...runs].map(run => [taskId, run] as const))];
     for (const controller of this.drivers.values()) request(() => controller.abort());
     const observe = <T>(start: () => Promise<T>): Promise<T> => {
       try { return start(); }
@@ -353,7 +353,7 @@ export class Engine extends Kernel implements Commands {
     const owners = [this.startupReady, observe(() => this.extraValidations.shutdown()),
       observe(() => this.tools.shutdown()), observe(() => this.profileReader.stop()),
       observe(() => this.followUps.stop())];
-    const agentStops = runs.map(run => observe(() => run.stop()));
+    const agentStops = runs.map(([taskId, run]) => observe(() => this.stopAgent(taskId, run)));
     const draining = Promise.allSettled([...owners, ...agentStops, ...this.settling.values()]).then(async outcomes => {
       // A driver can hand file handling to the background while it settles. Re-read ownership after
       // each group, including work registered by that cleanup, before callers may remove its folders.
@@ -362,7 +362,10 @@ export class Engine extends Kernel implements Commands {
         if (!pending.length) break;
         await Promise.allSettled(pending);
       }
-      return { owners: outcomes.slice(1, owners.length), agents: outcomes.slice(owners.length, owners.length + agentStops.length) };
+      // Turns can release their scheduling entries before their bounded cleanup
+      // finishes. Its task-owned receipt remains authoritative after driver drain.
+      const cleanup = await this.agentCleanup.wait().then(() => undefined, error => ({ error }));
+      return { owners: outcomes.slice(1, owners.length), cleanup };
     });
     const saveAndCloseLog = () => {
       // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
@@ -388,10 +391,7 @@ export class Engine extends Kernel implements Commands {
       if (closeAfterDrain) closeStore();
       const errors = [...synchronousFailures];
       for (const outcome of outcomes.owners) if (outcome.status === "rejected") errors.push(outcome.reason);
-      for (const outcome of outcomes.agents) {
-        if (outcome.status === "rejected") errors.push(outcome.reason);
-        else if (outcome.value !== true) errors.push(new Error("Agent cleanup was not confirmed"));
-      }
+      if (outcomes.cleanup) errors.push(outcomes.cleanup.error);
       errors.push(...stateFailures);
       if (errors.length === 1) throw errors[0];
       if (errors.length) throw new AggregateError(errors, "Engine shutdown could not confirm all cleanup");

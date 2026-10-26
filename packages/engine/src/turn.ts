@@ -130,13 +130,8 @@ export class Turns {
    * Processes stopped because a parallel member yielded the screen. The seat is free at once; copy
    * cleanup still waits until these finishes so a dying process is not left in the working copy.
    */
-  private readonly yieldedStops: Promise<boolean>[] = [];
-
   /** Wait for screen yields that released their seat before their process had exited. */
-  releasedStops(): Promise<void> {
-    const pending = this.yieldedStops.splice(0);
-    return Promise.allSettled(pending).then(() => undefined);
-  }
+  releasedStops(taskId: Id): Promise<void> { return this.k.agentCleanup.wait(taskId); }
 
   /**
    * One agent, one stage: run turns until it hands back a valid result. `status` names what it starts
@@ -375,87 +370,89 @@ export class Turns {
     const notBack = opened.reopenFailure;
     if (reopen && opened.reopenFailure) again = opened.reopenFailure;
     const { run } = opened;
-    options.started?.();
-    this.k.runs.set(taskId, run);
-    // From the agent's start until its cleanup is over, the run counts on a later start only with that cleanup's record.
-    const acceptanceCleanup = role.result === "checks" && task.acceptanceRun ? this.k.beginAcceptanceCleanup(task) : undefined;
-    this.k.syncIdleSleep();
-    if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
-    const picked = run.reopened !== undefined;
-    const sandbox = this.sandboxState(scope, opened.off, roleId, profileId, picked);
-    if (task.agent) task.agent.sandbox = sandbox;
-    // Handing the same conversation back continues its work. A fresh conversation or a Petrina
-    // restart is still another attempt, so neither can enter the timing history.
-    if (picked && handback && same?.handbackBoot === this.k.boot && repository.stepAttempts > 1) repository.stepAttempts -= 1;
-    const wentBack = picked && !reopen && back !== undefined;
-    // A fix round records whether the Builder actually continued its own conversation, by result kind.
-    if (role.result === "build" && task.fixing && !same) journeyStep.builderConversation = wentBack ? "resumed" : "new";
-    const where = saved ? this.whereYouWere(scope, role, startedAt) : undefined;
-    if (wentBack) {
-      this.k.say(scope, "system", `${role.name} went back to its own conversation from the last step · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "status", "Went back to its own conversation from the last step", roleId, profileId);
-    } else if (back) {
-      this.k.log(scope, "status", `Could not go back to its own conversation (${notBack ?? "the tool did not reopen it"}), so it started a fresh one with what it reported`, roleId, profileId);
-    }
-    if (wentBack) {
-      // Said above.
-    } else if (picked && handback) {
-      this.k.say(scope, "system", `${role.name} took the step back on the same conversation · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "milestone", "Took the step back on the same conversation", roleId, profileId);
-    } else if (handback) {
-      this.k.say(scope, "system", `${role.name} carried on in a fresh conversation, with your note, because the one you drove could not be reopened · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "milestone", `Carried on in a fresh conversation: ${again}`, roleId, profileId);
-    } else if (picked) {
-      this.k.say(scope, "system", `${role.name} picked up where it left off · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "milestone", forScreen ? SCREEN_WORDS.pickedUp : "Picked up where it left off", roleId, profileId);
-    } else if (tookOver) {
-      const words = `${role.name} on ${this.k.named(profileId)} took over from ${this.k.named(tookOver.id)}, which ${refusal ? `could not continue (${refusal})` : "ran out of usage"}`;
-      this.k.say(scope, "system", words, roleId, profileId);
-      this.k.log(scope, "milestone", words, roleId, profileId);
-    } else if (saved) {
-      this.k.say(scope, "system", `${role.name} started this step again · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
-      this.k.log(scope, "milestone", `Started this step again: ${again}`, roleId, profileId);
-    }
-    // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
-    // the old note; a reopened one keeps the open question until the conversation hears the answer, and the
-    // readiness recheck it already spent until its participant completes a turn and saves its next continuation.
-    const asked = picked ? reopen?.asked : undefined;
-    const readinessWait = picked ? (reopen ?? back)?.readinessWait : undefined;
-    if (role.result !== "delivery") {
-      repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId, builderTree: options.builderTree } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}), ...(picked && same?.capacityContinue ? { capacityContinue: true } : {}), ...(readinessWait ? { readinessWait } : {}) };
-      const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
-      // Keep the latest reopened or replacement conversation when this member yields to a peer.
-      if (pending) pending.conversation = repository.conversation;
-    }
-    this.k.commitNow(scope);
     const headBefore = !role.canEdit ? head : undefined;
-    const checkSettings = async (reply?: TurnResult, result?: T) => {
-      const maintenance = task.maintenance;
-      if (maintenance?.role.id !== roleId || !run.lastTurn) return;
-      const notes = run.lastTurn;
-      const model = notes.changed.model ?? notes.modelSeen ?? run.settings.model;
-      const effort = notes.changed.effort ?? run.settings.effort;
-      if (sameModel(profile.toolId, profile.modelId ?? profile.model, model) && effort === profile.effort && !notes.rerouted) return;
-      if (!role.canEdit && headBefore) {
-        const status = await git.worktreeStatus(worktree);
-        if (status.head !== headBefore || !status.clean) maintenance.readOnlyWrites = true;
-      }
-      const requested = `${profile.model} · ${profile.effort} effort`;
-      const actual = `${model ?? "unconfirmed model"} · ${effort ?? "unconfirmed effort"} effort`;
-      const stageId = task.plan!.stages[task.stageIndex]!.id;
-      if (reply) {
-        maintenance.pendingReply = { stageId, text: reply.text, stopReason: reply.stopReason, ...(reply.streamed ? { streamed: true } : {}) };
-        delete maintenance.pendingResult;
-      } else maintenance.pendingResult = { stageId, value: result };
-      maintenance.settingsDecision = { requested, actual, at: Date.now() };
-      this.k.pauseStep(task);
-      task.state = "needs-you"; task.holdsSlot = false; delete task.agent;
-      task.statusLine = "The tool reported different settings. Choose whether to keep or stop this run.";
-      this.k.s.inbox.push({ id: `maintenance-settings-${task.id}`, taskId: task.id, kind: "maintenance-settings", title: "Unexpected maintenance agent settings", body: `Requested: ${requested}\nReported: ${actual}\nKeeping this run accepts the work as produced. Delivery still needs its usual checks and approval. The routine keeps its saved profile.`, at: Date.now(), blocking: true });
-      this.k.commitNow(task);
-      throw new Aborted();
-    };
+    let acceptanceCleanup: string | undefined;
+    let turnFailure: { error: unknown } | undefined;
     try {
+      options.started?.();
+      this.k.runs.set(taskId, run);
+      // From the agent's start until its cleanup is over, the run counts on a later start only with that cleanup's record.
+      acceptanceCleanup = role.result === "checks" && task.acceptanceRun ? this.k.beginAcceptanceCleanup(task) : undefined;
+      this.k.syncIdleSleep();
+      if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
+      const picked = run.reopened !== undefined;
+      const sandbox = this.sandboxState(scope, opened.off, roleId, profileId, picked);
+      if (task.agent) task.agent.sandbox = sandbox;
+      // Handing the same conversation back continues its work. A fresh conversation or a Petrina
+      // restart is still another attempt, so neither can enter the timing history.
+      if (picked && handback && same?.handbackBoot === this.k.boot && repository.stepAttempts > 1) repository.stepAttempts -= 1;
+      const wentBack = picked && !reopen && back !== undefined;
+      // A fix round records whether the Builder actually continued its own conversation, by result kind.
+      if (role.result === "build" && task.fixing && !same) journeyStep.builderConversation = wentBack ? "resumed" : "new";
+      const where = saved ? this.whereYouWere(scope, role, startedAt) : undefined;
+      if (wentBack) {
+        this.k.say(scope, "system", `${role.name} went back to its own conversation from the last step · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+        this.k.log(scope, "status", "Went back to its own conversation from the last step", roleId, profileId);
+      } else if (back) {
+        this.k.log(scope, "status", `Could not go back to its own conversation (${notBack ?? "the tool did not reopen it"}), so it started a fresh one with what it reported`, roleId, profileId);
+      }
+      if (wentBack) {
+        // Said above.
+      } else if (picked && handback) {
+        this.k.say(scope, "system", `${role.name} took the step back on the same conversation · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+        this.k.log(scope, "milestone", "Took the step back on the same conversation", roleId, profileId);
+      } else if (handback) {
+        this.k.say(scope, "system", `${role.name} carried on in a fresh conversation, with your note, because the one you drove could not be reopened · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+        this.k.log(scope, "milestone", `Carried on in a fresh conversation: ${again}`, roleId, profileId);
+      } else if (picked) {
+        this.k.say(scope, "system", `${role.name} picked up where it left off · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+        this.k.log(scope, "milestone", forScreen ? SCREEN_WORDS.pickedUp : "Picked up where it left off", roleId, profileId);
+      } else if (tookOver) {
+        const words = `${role.name} on ${this.k.named(profileId)} took over from ${this.k.named(tookOver.id)}, which ${refusal ? `could not continue (${refusal})` : "ran out of usage"}`;
+        this.k.say(scope, "system", words, roleId, profileId);
+        this.k.log(scope, "milestone", words, roleId, profileId);
+      } else if (saved) {
+        this.k.say(scope, "system", `${role.name} started this step again · ${this.k.describe(roleId, profileId)}`, roleId, profileId);
+        this.k.log(scope, "milestone", `Started this step again: ${again}`, roleId, profileId);
+      }
+      // On disk before the agent gets any work, so a restart from here on can reopen it. A fresh one replaces
+      // the old note; a reopened one keeps the open question until the conversation hears the answer, and the
+      // readiness recheck it already spent until its participant completes a turn and saves its next continuation.
+      const asked = picked ? reopen?.asked : undefined;
+      const readinessWait = picked ? (reopen ?? back)?.readinessWait : undefined;
+      if (role.result !== "delivery") {
+        repository.conversation = { ...(this.repositoryCopies.get(worktree) ? { repositoryCopies: this.repositoryCopies.get(worktree) } : {}), step, roleId, profileId, role, access, ...(role.result === "build" ? { plannedProfileId: plannedId, builderTree: options.builderTree } : {}), toolId: profile.toolId, model, sessionId: run.sessionId, ...(head ? { head } : {}), startedAt, ...(asked ? { asked } : {}), ...(picked ? { briefed: true } : {}), ...(picked && same?.context ? { context: same.context } : {}), ...(picked && handback ? { handback } : {}), ...(picked && same?.capacityContinue ? { capacityContinue: true } : {}), ...(readinessWait ? { readinessWait } : {}) };
+        const pending = screen?.member && task.hunt?.screenTurns?.[screen.member];
+        // Keep the latest reopened or replacement conversation when this member yields to a peer.
+        if (pending) pending.conversation = repository.conversation;
+      }
+      this.k.commitNow(scope);
+      const checkSettings = async (reply?: TurnResult, result?: T) => {
+        const maintenance = task.maintenance;
+        if (maintenance?.role.id !== roleId || !run.lastTurn) return;
+        const notes = run.lastTurn;
+        const model = notes.changed.model ?? notes.modelSeen ?? run.settings.model;
+        const effort = notes.changed.effort ?? run.settings.effort;
+        if (sameModel(profile.toolId, profile.modelId ?? profile.model, model) && effort === profile.effort && !notes.rerouted) return;
+        if (!role.canEdit && headBefore) {
+          const status = await git.worktreeStatus(worktree);
+          if (status.head !== headBefore || !status.clean) maintenance.readOnlyWrites = true;
+        }
+        const requested = `${profile.model} · ${profile.effort} effort`;
+        const actual = `${model ?? "unconfirmed model"} · ${effort ?? "unconfirmed effort"} effort`;
+        const stageId = task.plan!.stages[task.stageIndex]!.id;
+        if (reply) {
+          maintenance.pendingReply = { stageId, text: reply.text, stopReason: reply.stopReason, ...(reply.streamed ? { streamed: true } : {}) };
+          delete maintenance.pendingResult;
+        } else maintenance.pendingResult = { stageId, value: result };
+        maintenance.settingsDecision = { requested, actual, at: Date.now() };
+        this.k.pauseStep(task);
+        task.state = "needs-you"; task.holdsSlot = false; delete task.agent;
+        task.statusLine = "The tool reported different settings. Choose whether to keep or stop this run.";
+        this.k.s.inbox.push({ id: `maintenance-settings-${task.id}`, taskId: task.id, kind: "maintenance-settings", title: "Unexpected maintenance agent settings", body: `Requested: ${requested}\nReported: ${actual}\nKeeping this run accepts the work as produced. Delivery still needs its usual checks and approval. The routine keeps its saved profile.`, at: Date.now(), blocking: true });
+        this.k.commitNow(task);
+        throw new Aborted();
+      };
       if (task.maintenance?.role.id === roleId) {
         const confirmed = run.settings;
         if (confirmed.model !== (profile.modelId ?? profile.model) || confirmed.effort !== profile.effort) throw new MaintenanceProfileProblem(`The maintenance profile could not be confirmed. Requested ${profile.model} at ${profile.effort}; reported ${confirmed.model ?? "no model"} at ${confirmed.effort ?? "no effort"}. Check the tool settings, then retry this run. No maintenance instructions were sent.`);
@@ -532,43 +529,54 @@ export class Turns {
       if (repository.conversation) options.completed?.(repository.conversation, profile, role);
       return result;
     } catch (error) {
+      turnFailure = { error };
       // Logged out in the middle of a step: the same fix as any other login problem.
-      if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
+      if (isAuthRequired(error)) {
+        const problem = await this.tools.problem(profile.toolId, error);
+        turnFailure = { error: problem };
+        throw problem;
+      }
       throw error;
     } finally {
-      this.k.runs.delete(taskId);
-      this.k.syncIdleSleep();
-      // Nothing the agent started may still write in the working copy once the step is over.
-      await run.stop();
-      // Undone commits and tracked edits are saved first, so an acceptance run never counts on the restored product.
-      await completeAll([
-        ...protectedCopies.map(async (copy) => {
-          const state = await git.worktreeStatus(copy.path);
-          const commits = state.head !== copy.sha;
-          await this.k.noteRestoredAcceptance(scope, role, copy.productId, copy.path, copy.sha, { commits, edits: state.trackedChanged });
-          if (commits) await git.resetTo(copy.path, copy.sha);
-          if (!state.clean) await git.discardChanges(copy.path);
-          const why = role.canEdit ? `which may change only ${this.k.productLabel(repository.productId)} in this step` : "which is read-only";
-          if (commits) this.k.log(scope, "warn", `Undid commits in ${this.k.productLabel(copy.productId)} from ${role.name}, ${why}`);
-          if (state.trackedChanged) this.k.log(scope, "warn", `Undid changes in ${this.k.productLabel(copy.productId)} from ${role.name}, ${why}`);
-        }),
-        // A read-only role leaves its primary copy as found, including commits and tracked changes.
-        ...(!role.canEdit && headBefore ? [(async () => {
-          const state = await git.worktreeStatus(worktree);
-          if (task.maintenance?.role.id === roleId && (state.head !== headBefore || !state.clean)) task.maintenance.readOnlyWrites = true;
-          await this.k.noteRestoredAcceptance(scope, role, repository.productId, worktree, headBefore, { commits: state.head !== headBefore, edits: state.trackedChanged });
-          if (state.head !== headBefore) {
-            await git.resetTo(worktree, headBefore);
-            this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
-          }
-          if (!state.clean) {
-            await git.discardChanges(worktree);
-            this.k.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
-          }
-        })()] : []),
-      ]);
-      // Its undone changes, if any, are saved; a close since the last save keeps them in the cleanup's record.
-      if (acceptanceCleanup) this.k.endAcceptanceCleanup(scope, acceptanceCleanup);
+      try {
+        const stopped = this.k.stopAgent(taskId, run);
+        if (this.k.runs.get(taskId) === run) this.k.runs.delete(taskId);
+        this.k.syncIdleSleep();
+        // Nothing the agent started may still write in the working copy once the step is over.
+        await stopped;
+        // Undone commits and tracked edits are saved first, so an acceptance run never counts on the restored product.
+        await completeAll([
+          ...protectedCopies.map(async (copy) => {
+            const state = await git.worktreeStatus(copy.path);
+            const commits = state.head !== copy.sha;
+            await this.k.noteRestoredAcceptance(scope, role, copy.productId, copy.path, copy.sha, { commits, edits: state.trackedChanged });
+            if (commits) await git.resetTo(copy.path, copy.sha);
+            if (!state.clean) await git.discardChanges(copy.path);
+            const why = role.canEdit ? `which may change only ${this.k.productLabel(repository.productId)} in this step` : "which is read-only";
+            if (commits) this.k.log(scope, "warn", `Undid commits in ${this.k.productLabel(copy.productId)} from ${role.name}, ${why}`);
+            if (state.trackedChanged) this.k.log(scope, "warn", `Undid changes in ${this.k.productLabel(copy.productId)} from ${role.name}, ${why}`);
+          }),
+          // A read-only role leaves its primary copy as found, including commits and tracked changes.
+          ...(!role.canEdit && headBefore ? [(async () => {
+            const state = await git.worktreeStatus(worktree);
+            if (task.maintenance?.role.id === roleId && (state.head !== headBefore || !state.clean)) task.maintenance.readOnlyWrites = true;
+            await this.k.noteRestoredAcceptance(scope, role, repository.productId, worktree, headBefore, { commits: state.head !== headBefore, edits: state.trackedChanged });
+            if (state.head !== headBefore) {
+              await git.resetTo(worktree, headBefore);
+              this.k.log(scope, "warn", `Undid commits from ${role.name}, which is read-only`);
+            }
+            if (!state.clean) {
+              await git.discardChanges(worktree);
+              this.k.log(scope, "warn", `Undid changes from ${role.name}, which is read-only`);
+            }
+          })()] : []),
+        ]);
+        // Its undone changes, if any, are saved; a close since the last save keeps them in the cleanup's record.
+        if (acceptanceCleanup) this.k.endAcceptanceCleanup(scope, acceptanceCleanup);
+      } catch (cleanup) {
+        if (turnFailure) throw new AggregateError([turnFailure.error, cleanup], "The agent turn failed and its cleanup was not confirmed");
+        throw cleanup;
+      }
     }
   }
 
@@ -655,25 +663,26 @@ export class Turns {
         }
       },
     });
-    if (opened.reopenFailure) this.k.log(scope, "status", `Could not go back to its own review conversation (${opened.reopenFailure}), so it started fresh`, roleId, profileId);
     const { run, off } = opened;
-    const work = task.hunt?.work?.[options.key];
-    if (work) work.attempts = (work.attempts ?? 0) + 1;
-    options.started?.();
-    const wentBack = offered !== undefined && run.reopened !== undefined;
-    const capacityBack = held !== undefined && run.reopened !== undefined;
-    if (held) this.forgetCapacityResume(task, (entry) => entry.roleId === roleId && entry.profileId === profileId && entry.member === options.member);
-    if (wentBack) this.k.log(scope, "status", "Went back to its own review conversation from the previous round", roleId, profileId);
-    // Its group's record of it, shown in the header or among the helpers, says whether it is sandboxed.
-    const sandbox = this.sandboxState(scope, off, roleId, profileId);
-    if (options.agent) options.agent.sandbox = sandbox;
-    this.k.commit(scope);
     const runs = this.k.helperRuns.get(taskId) ?? new Set();
     this.k.helperRuns.set(taskId, runs.add(run));
-    this.k.syncIdleSleep();
-    if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
-    const head = await git.head(copy).catch(() => undefined);
+    let turnFailure: { error: unknown } | undefined;
     try {
+      if (opened.reopenFailure) this.k.log(scope, "status", `Could not go back to its own review conversation (${opened.reopenFailure}), so it started fresh`, roleId, profileId);
+      const work = task.hunt?.work?.[options.key];
+      if (work) work.attempts = (work.attempts ?? 0) + 1;
+      options.started?.();
+      const wentBack = offered !== undefined && run.reopened !== undefined;
+      const capacityBack = held !== undefined && run.reopened !== undefined;
+      if (held) this.forgetCapacityResume(task, (entry) => entry.roleId === roleId && entry.profileId === profileId && entry.member === options.member);
+      if (wentBack) this.k.log(scope, "status", "Went back to its own review conversation from the previous round", roleId, profileId);
+      // Its group's record of it, shown in the header or among the helpers, says whether it is sandboxed.
+      const sandbox = this.sandboxState(scope, off, roleId, profileId);
+      if (options.agent) options.agent.sandbox = sandbox;
+      this.k.commit(scope);
+      this.k.syncIdleSleep();
+      if (!ADAPTERS[profile.toolId]?.usageReader?.liveSession) this.k.readUsage(profile.toolId);
+      const head = await git.head(copy).catch(() => undefined);
       if (signal.aborted || !this.k.task(taskId)) throw new Aborted();
       const givenSections = [...currentStepAssignment(task, roleId), ...await given(), ...(wentBack ? offered?.continuedSections ?? [] : []), ...(repository.prBackground ? [{ title: "Pull request background", body: pullRequestBackground(repository.prBackground) }] : []), { title: OWN_COPY, body: ownCopy(head ?? "") }];
       // A parallel opening has no earlier-attempt section: a fresh one keeps the step's heard guidance as background.
@@ -701,7 +710,12 @@ export class Turns {
       options.completed?.(note, profile, role);
       return result;
     } catch (error) {
-      if (isAuthRequired(error)) throw await this.tools.problem(profile.toolId, error);
+      turnFailure = { error };
+      if (isAuthRequired(error)) {
+        const problem = await this.tools.problem(profile.toolId, error);
+        turnFailure = { error: problem };
+        throw problem;
+      }
       if (error instanceof UsageLimited && !signal.aborted && task.screen?.granted && task.screen.member === options.member) {
         this.keepWords(scope, roleId, profileId, options.reviewerKey, error);
         this.k.recordLimit(task, roleId, profileId, error);
@@ -712,7 +726,7 @@ export class Turns {
       // Asking for the screen ends this turn. The seat has to be free before the process is gone:
       // waiting out the stop kept the member "running", so a grant beside a peer never resumed it.
       if (error instanceof ScreenWait) {
-        this.yieldedStops.push(run.stop());
+        void this.k.stopAgent(taskId, run).catch(() => undefined);
         runs.delete(run);
         this.k.syncIdleSleep();
       }
@@ -720,7 +734,10 @@ export class Turns {
     } finally {
       if (runs.has(run)) {
         try {
-          await run.stop();
+          await this.k.stopAgent(taskId, run);
+        } catch (cleanup) {
+          if (turnFailure) throw new AggregateError([turnFailure.error, cleanup], "The agent turn failed and its cleanup was not confirmed");
+          throw cleanup;
         } finally {
           // Draining still counts a reviewer who is working until its process is gone and its report can be recorded.
           runs.delete(run);
@@ -1021,24 +1038,50 @@ export class Turns {
     const browser = opensBrowser(role, this.k.options);
     const browserTempRoot = this.k.options.browserTempRoot;
     const start = async (sessionId?: string): Promise<{ run: AgentSession; off?: string }> => {
-      const launch: AgentSessionOptions = { profile, cwd, browser, signal,
+      await this.k.agentCleanup.wait(task.id, cwd);
+      if (signal.aborted) throw new Aborted();
+      const launchFor = () => {
+        const cleanup = this.k.agentCleanup.opening(task.id, cwd);
+        const launch: AgentSessionOptions = { profile, cwd, browser, signal,
         ...(sessionId ? { reopen: sessionId, ...(this.k.options.reopenTimeoutMs ? { reopenTimeoutMs: this.k.options.reopenTimeoutMs } : {}) } : {}),
-        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), callbacks,
+        ...(this.k.options.startTimeoutMs ? { startTimeoutMs: this.k.options.startTimeoutMs } : {}), onGone: cleanup.onGone,
+        callbacks: { ...callbacks, onCleanupIncomplete: () => { cleanup.onCleanupIncomplete(); callbacks.onCleanupIncomplete?.(); } },
+        };
+        return { launch, cleanup };
       };
       try {
-        if (this.k.options.startAgentSession) return { run: await this.k.options.startAgentSession(launch, role) };
-        return await this.inSandbox(profile, (sandbox) => {
+        if (this.k.options.startAgentSession) {
+          const { launch, cleanup } = launchFor();
+          const run = await this.k.options.startAgentSession(launch, role);
+          cleanup.attach(run);
+          return { run };
+        }
+        return await this.inSandbox(profile, async (sandbox) => {
+          // Sandbox refusal can retry this callback without returning through start().
+          // Every actual launch must wait for the previous owner's cleanup.
+          await this.k.agentCleanup.wait(task.id, cwd);
+          if (signal.aborted) throw new Aborted();
+          const { launch, cleanup } = launchFor();
           // Resolve native launch details for each process, including a fallback or sandbox retry.
           const command = agentCommandFor(this.k.options, profile);
-          const nativeCallbacks: RunCallbacks = { ...callbacks,
+          const nativeCallbacks: RunCallbacks = { ...launch.callbacks,
             onLog: text => void this.k.agentLog(task.id, text),
             onUsage: info => this.k.recordUsage(info),
             onAccountUsage: reports => this.k.recordAccountUsage(profile.toolId, reports),
           };
-          return AgentRun.start({ ...launch, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
+          const run = await AgentRun.start({ ...launch, ...(command ? { command } : {}), env: this.envFor(), ...(sandbox ? { sandbox } : {}),
             browserRoot: join(this.k.dataDir, "browser-temp"), ...(browserTempRoot ? { browserTempRoot } : {}), callbacks: nativeCallbacks });
+          cleanup.attach(run);
+          return run;
         });
       } catch (error) {
+        // A working-copy cleanup failure is not a new login/startup problem. Do not
+        // probe or replace that provider while the earlier native owner is uncertain.
+        try { await this.k.agentCleanup.wait(task.id, cwd); }
+        catch (cleanup) {
+          if (Object.is(error, cleanup)) throw error;
+          throw new AggregateError([error, cleanup], "The agent could not open and its cleanup was not confirmed");
+        }
         if (sessionId !== undefined || signal.aborted || error instanceof SandboxUnavailable) throw error;
         throw await this.tools.problem(profile.toolId, error);
       }
@@ -1054,11 +1097,16 @@ export class Turns {
     let reopenFailure: string | undefined;
     if (options.sessionId) {
       if (!options.reselect) announce();
+      let opened: { run: AgentSession; off?: string } | undefined;
       try {
-        const opened = await start(options.sessionId);
+        opened = await start(options.sessionId);
         announce();
         return opened;
       } catch (error) {
+        if (opened) {
+          try { await this.k.stopAgent(task.id, opened.run); }
+          catch (cleanup) { throw new AggregateError([error, cleanup], "Starting the agent failed and its cleanup was not confirmed"); }
+        }
         if (signal.aborted || !(error instanceof ReopenFailed)) throw error;
         if (options.reselect) throw new ParticipantUnavailable(`the tool could not reopen its saved conversation (${error.message})`);
         reopenFailure = error.message;

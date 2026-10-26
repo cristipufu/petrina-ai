@@ -5,6 +5,7 @@ import { CheckQueue } from "./check-queue.js";
 import { localFiles, type FileOperations } from "@petrina/platform/file-operations";
 import { StateProjection } from "./state-projection.js";
 import { ScreenCoordinator } from "./screen-coordinator.js";
+import { AgentCleanup } from "./agent-cleanup.js";
 import { UsageCoordinator, type Selection } from "./usage-coordinator.js";
 import type { Readiness } from "./readiness.js";
 import { runtimeWaitHolds, runtimeWaitView, runtimeWaitWords, blockingDependencies, clearRunningTools, clearTaskStep, finishTaskStep, OTHERS_CONTINUE, stopTaskActivity } from "@petrina/core";
@@ -406,6 +407,7 @@ export abstract class Kernel {
   readonly pendingAgentAdmissions = new Map<Id, { step: string; roleId: Id; profileId: Id }>();
 
   readonly runs = new Map<Id, AgentSession>();
+  readonly agentCleanup = new AgentCleanup();
   readonly messageTurns = new Map<Id, Map<string, import("./messages.js").MessageTurn>>();
 
   /** Agents working beside a task's main one on the same step (reviewers hunting at once, voters). */
@@ -510,7 +512,7 @@ export abstract class Kernel {
   /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
   inFlight(): number {
     const agents = this.runs.size + [...this.helperRuns.values()].reduce((sum, runs) => sum + runs.size, 0);
-    return agents || inFlightWork({ agents: 0, settling: [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length, copyCleanups: this.copyCleanups.size, background: this.backgroundWork.size, terminals: this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length });
+    return agents || inFlightWork({ agents: 0, settling: [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length, copyCleanups: this.copyCleanups.size, background: this.backgroundWork.size + this.agentCleanup.size, terminals: this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length });
   }
 
   /** Keep macOS awake only while this engine still owns active work or its cleanup. */
@@ -520,7 +522,7 @@ export abstract class Kernel {
       drivers: [...this.drivers.keys()].some(id => !this.isPausedCheck(id)),
       settling: [...this.settling.keys()].some(id => !this.isPausedCheck(id)),
       agents: this.runs.size > 0,
-      helpers: [...this.helperRuns.values()].some(runs => runs.size > 0),
+      helpers: [...this.helperRuns.values()].some(runs => runs.size > 0) || this.agentCleanup.pending > 0,
       screenGroups: this.screenGroups.size > 0,
       switching: this.switching.size > 0,
       copyCleanups: this.copyCleanups.size > 0,
@@ -914,16 +916,25 @@ export abstract class Kernel {
   stopDriver(taskId: Id): void {
     this.drivers.get(taskId)?.abort();
     this.drivers.delete(taskId);
-    this.runs.get(taskId)?.close();
+    const run = this.runs.get(taskId);
+    if (run) void this.stopAgent(taskId, run).catch(() => undefined);
     this.runs.delete(taskId);
     this.stopHelpers(taskId);
   }
 
   /** Stop every agent working beside the task's main one. */
   stopHelpers(taskId: Id): void {
-    for (const run of this.helperRuns.get(taskId) ?? []) run.close();
+    for (const run of this.helperRuns.get(taskId) ?? []) void this.stopAgent(taskId, run).catch(() => undefined);
     this.helperRuns.delete(taskId);
     this.syncIdleSleep();
+  }
+
+  /** Request native cleanup once; removing a running seat never discards this receipt. */
+  stopAgent(taskId: Id, run: AgentSession): Promise<void> {
+    const stopped = this.agentCleanup.stop(taskId, run);
+    this.syncIdleSleep();
+    void stopped.then(() => this.syncIdleSleep(), () => this.syncIdleSleep()).catch(() => undefined);
+    return stopped;
   }
 
   async undoReadOnly(target: MTask | RepositoryContext, roleId: Id, worktree?: string, knownClean?: boolean): Promise<void> {

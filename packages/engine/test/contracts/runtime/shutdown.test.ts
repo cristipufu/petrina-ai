@@ -84,7 +84,7 @@ afterEach(async () => {
   if (failures.length) throw new AggregateError(failures, "Controlled shutdown fixtures could not confirm cleanup");
 });
 
-for (const mode of ["false", "reject-error", "reject-undefined", "throw-error", "throw-undefined", "both", "owner-reject", "owner-throw", "confirmed"] as const) it(`joins every actual stop and late file owner before reporting agent cleanup: ${mode}`, async () => {
+for (const released of [false, true]) for (const mode of ["false", "reject-error", "reject-undefined", "throw-error", "throw-undefined", "both", "owner-reject", "owner-throw", "confirmed"] as const) it(`joins every actual stop and late file owner before reporting agent cleanup${released ? " after the seats were released" : ""}: ${mode}`, async () => {
   const root = tempDir("shutdown-stop-authority-"), owner = directDrivers(root);
   const peer = gate(), handoff = gate(), tail = gate();
   const originals: (() => Promise<boolean>)[] = [], ownerStops: (() => Promise<void>)[] = [], restores: (() => void)[] = [], work: Promise<unknown>[] = [];
@@ -187,6 +187,15 @@ for (const mode of ["false", "reject-error", "reject-undefined", "throw-error", 
     await setup;
     const current = engine!;
     await owner.run(current, async () => {
+      if (released) {
+        const sessions = [...current.runs.entries(), ...[...current.helperRuns.entries()].flatMap(([id, runs]) => [...runs].map(run => [id, run] as const))];
+        current.runs.clear(); current.helperRuns.clear();
+        // The first stop reenters shutdown with both scheduling maps already empty;
+        // the helper receipt is registered after that shutdown's initial snapshot.
+        for (const [id, session] of sessions) void current.stopAgent(id, session).catch(() => undefined);
+        expect(current.runs.size).toBe(0);
+        expect(current.helperRuns.size).toBe(0);
+      }
       stopping = current.shutdown();
       const repeated = current.shutdown();
       const outcome = stopping.then(() => ({ kind: "value" as const, peerCompleted, tailCompleted }), error => ({ kind: "error" as const, error, peerCompleted, tailCompleted }));

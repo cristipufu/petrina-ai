@@ -37,18 +37,24 @@ export class TakeOver {
     if (how === "open" && !terminal) throw new Error(TAKE_OVER_WORDS.noTerminal);
 
     this.k.switching.set(taskId, "taking over");
+    let driverFailure: { error: unknown } | undefined;
     try {
       const tool = await this.takeOverTool(profile.toolId);
       // Every value goes through its pattern before the agent stops, so a launcher that cannot be written never strands the step.
       launchPlan(this.launchInput(task, tool, conversation.sessionId, conversation.model, profile.effort));
       task.statusLine = "Stopping the agent so you can take over";
       this.k.commitNow();
-      const run = this.k.runs.get(taskId);
       const settled = this.k.settling.get(taskId);
       this.k.stopDriver(taskId);
       // What it asked is moot now: the coordinator is in the conversation themselves.
       this.k.dropBlockingItems(taskId);
-      await Promise.all([settled, run?.stop()]);
+      try { await settled; } catch (error) { driverFailure = { error }; }
+      try { await this.k.agentCleanup.wait(taskId); }
+      catch (cleanup) {
+        if (driverFailure && !Object.is(driverFailure.error, cleanup)) throw new AggregateError([driverFailure.error, cleanup], "The agent stopped with an error and its cleanup was not confirmed");
+        throw cleanup;
+      }
+      if (driverFailure) throw driverFailure.error;
 
       const current = this.k.task(taskId);
       if (!current) throw new Error("The task is gone");
@@ -97,6 +103,11 @@ export class TakeOver {
       this.k.say(current, "system", `You took over in your terminal · ${tool.name} on the ${role.name}'s conversation`, role.id, profile.id);
       this.k.commitNow();
       return await this.launch(current, terminal, true, tool);
+    } catch (error) {
+      // A failed handoff cannot leave a ghost running seat or offer another start
+      // in the working copy whose cleanup remains uncertain.
+      if ((driverFailure || this.k.agentCleanup.has(taskId)) && this.k.task(taskId)?.state !== "failed") this.k.fail(taskId, error);
+      throw error;
     } finally {
       this.k.switching.delete(taskId);
     }

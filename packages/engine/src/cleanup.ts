@@ -198,7 +198,7 @@ export class Cleanup {
    */
   private finishedWith(task: MTask): boolean {
     const scope = executionFor(task);
-    if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || task.driving || this.k.switching.has(task.id)) return false;
+    if (this.k.drivers.has(task.id) || this.k.settling.has(task.id) || this.k.agentCleanup.has(task.id) || task.driving || this.k.switching.has(task.id)) return false;
     if (scope.work.shipping?.step !== undefined || scope.work.shipping?.carriedOver) return false;
     return copyNoLongerNeeded(task as unknown as Task);
   }

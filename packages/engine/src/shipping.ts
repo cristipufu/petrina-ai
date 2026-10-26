@@ -357,6 +357,7 @@ export class Shipping {
    * version commit from an earlier preparation goes.
    */
   private async backToWork(scope: RepositoryContext): Promise<void> {
+    await this.k.agentCleanup.wait(scope.task.id);
     const { work: repository } = scope;
     const worktree = repository.worktree!;
     await git.discardChanges(worktree);

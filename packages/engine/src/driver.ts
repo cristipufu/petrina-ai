@@ -105,6 +105,7 @@ export class Driver {
   startDriver(taskId: Id, resume = false): void { this.workflow.startDriver(taskId, resume); }
 
   private async prepareWorkspace(current: MTask, stage: MStage | undefined, signal: AbortSignal): Promise<WorkspacePreparation> {
+    await this.k.agentCleanup.wait(current.id);
     let scope = executionFor(current);
     // A restart can find the working copy detached by an interrupted commit hook. Put it back before
     // review or delivery reads that original starting version as the task's work.
@@ -189,6 +190,7 @@ export class Driver {
   }
 
   private async clearUnpublishedOnFailure(current: MTask): Promise<void> {
+    await this.k.agentCleanup.wait(current.id);
     if (current.repositories) {
       for (const work of current.repositories) {
         const scope: RepositoryContext = { task: current, work };

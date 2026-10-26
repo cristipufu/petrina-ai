@@ -81,7 +81,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
     })),
     toolChecks: engine["tools"].pending().checking, lingeringTools: engine["tools"].pending().stopping,
     profileReads: engine["profileReader"].pending().checking, lingeringProfiles: engine["profileReader"].pending().stopping,
-    yieldedStops: engine["turns"]["yieldedStops"].length,
+    pendingAgentCleanup: engine.agentCleanup.pending,
   });
   if (trace) trace.snapshot = () => ({ root, ownedWork: ownedWork() });
   trace?.mark("Configuring controlled review seats");
@@ -154,7 +154,7 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
     reviews["input"] = (...args) => trace.during(`Review round ${task.rounds[stage.id]}: preparing or reading saved evidence`, () => input(...args));
     context.captureReview = (...args) => trace.during(`Review round ${task.rounds[stage.id]}: capturing review context`, () => capture(...args));
     const turns = engine["turns"], released = turns.releasedStops.bind(turns), parallel = turns.parallel.bind(turns);
-    turns.releasedStops = () => trace.during("Waiting for yielded reviewer processes", released);
+    turns.releasedStops = (...args) => trace.during("Waiting for yielded reviewer processes", () => released(...args));
     turns.parallel = <T>(...args: Parameters<typeof turns.parallel<T>>) => trace.during(`${args[7]?.key}: conversation and process stop`, () => parallel<T>(...args));
     // The saved failure had both reports and no agent processes left. Observe the remaining
     // Git and filesystem work too, without changing it or tracing other concurrent fixtures.
