@@ -6,6 +6,7 @@ import { CommandFailure, runCommand, CLEANUP_MS, type CommandResult, type Starte
 import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { harnessGitHub as createHarnessGitHub } from "./harness-github.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { FALLBACK_TIMEOUT } from "@petrina/test-support/run";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ type NativeSpawned = Bun.Subprocess<"pipe" | "ignore", "pipe" | "ignore", "pipe"
 interface ExternalStopOrdering { afterExternalStop?(): boolean }
 export interface NativeCommandOptions extends ExternalStopOrdering { input?: "pipe" | "ignore"; output?: "pipe" | "ignore"; errors?: "pipe" | "ignore" }
 export interface EngineStartupOptions extends ExternalStopOrdering { startupTimeoutMs?: number; onProcess?: (proc: Spawned) => void }
+export interface EngineHarnessOptions extends EngineStartupOptions { entry?: string; extra?: readonly string[]; githubRegistrationGate?: string }
 
 /** Private test credentials and Git settings; never inherit a coordinator's personal Git configuration. */
 export function engineEnv(home: string): Record<string, string | undefined> {
@@ -262,6 +264,8 @@ function processFixture(root: string, resources: { stopPeers(): void | Promise<v
   const commands = new Set<OwnedCommand>(), active = new Map<EngineProcess, FixtureOperations>(), stopped = new WeakSet<EngineProcess>(), ended = new WeakSet<EngineProcess>();
   const admission = new AbortController();
   let accepting = true;
+  let github: Awaited<ReturnType<typeof createHarnessGitHub>> | undefined;
+  let githubReady: Promise<string> | undefined;
   const allowance = {
     allowanceMs: CLEANUP_MS * currentSlow(),
     arm(expired: () => void, ms: number) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
@@ -272,20 +276,36 @@ function processFixture(root: string, resources: { stopPeers(): void | Promise<v
     if (errors.length) throw new AggregateError(errors, label);
   };
   const owner = new FixtureOperations({ ...allowance, label: `App-process fixture at ${root}`,
-    stop: () => {
+    stop: async () => {
       // Request every stop, including peers, before awaiting any one of them.
       const request = (stop: () => void | Promise<unknown>): Promise<unknown> => {
         try { return Promise.resolve(stop()); } catch (error) { return Promise.reject(error); }
       };
-      return finishEvery([request(() => resources?.stopPeers()),
-        ...[...commands].map(command => request(() => command.stop())),
-        ...[...active.values()].map(generation => request(() => generation.close())),
-      ], "App-process owners could not all be stopped");
+      try {
+        await finishEvery([request(() => resources?.stopPeers()),
+          ...[...commands].map(command => request(() => command.stop())),
+          ...[...active.values()].map(generation => request(() => generation.close())),
+        ], "App-process owners could not all be stopped");
+        // Parent exit cannot dispose an interrupted helper. Released stand-ins finish
+        // their own awaited Git work before native end and lease closure authorize deletion.
+        await github?.settle();
+      } catch (error) {
+        // Worker loss or a failed/bounded natural drain still requests the independent
+        // stop. Forced helper exit is never promoted into successful disposal authority.
+        try { await github?.stop(); }
+        catch (cleanup) { throw new AggregateError([error, cleanup], "App-process cleanup failed and its GitHub lease could not close"); }
+        throw error;
+      }
     },
     dispose: () => removeFixtureRoot(root),
   });
   const closed = () => new Error("App-process fixture is closing; no new process or operation may start");
   const prepare = <T>(start: () => Promise<T>): Promise<T> => !accepting || admission.signal.aborted ? Promise.reject(closed()) : owner.run(start);
+  const harnessGitHub = (): Promise<string> => githubReady ??= prepare(async () => {
+    github = await createHarnessGitHub(root);
+    if (!accepting || admission.signal.aborted) { await github.stop(); throw closed(); }
+    return github.program;
+  });
   const app = (home: string, args: readonly string[], options: EngineStartupOptions = {}): Promise<EngineProcess> => {
     if (!accepting || admission.signal.aborted) return Promise.reject(closed());
     const ms = options.startupTimeoutMs ?? 30_000 * currentSlow();
@@ -372,7 +392,31 @@ function processFixture(root: string, resources: { stopPeers(): void | Promise<v
     return generation ? generation.close() : Promise.reject(new Error("Cannot stop an unowned app generation"));
   };
   const close = (): Promise<void> => { accepting = false; admission.abort(); return owner.close(); };
-  return { [closeAdmission]: () => { accepting = false; }, signal: admission.signal, prepare, app, harness: (home: string, dir: string, remote?: string) => app(home, [HARNESS, home, dir, ...(remote ? [remote] : [])]),
+  const harnessArgs = (home: string, dir: string, remote?: string,
+    options: Pick<EngineHarnessOptions, "entry" | "extra" | "githubRegistrationGate"> = {}): Promise<readonly string[]> => prepare(async () => {
+    const program = await harnessGitHub();
+    if (!accepting || admission.signal.aborted) throw closed();
+    return [options.entry ?? HARNESS, home, dir, ...(remote ? [remote] : []), ...options.extra ?? [], `--gh-program=${program}`,
+      ...(options.githubRegistrationGate ? [`--gh-registration-gate=${options.githubRegistrationGate}`] : [])];
+  });
+  return { [closeAdmission]: () => { accepting = false; }, signal: admission.signal, prepare, app,
+    harnessArgs,
+    harness: (home: string, dir: string, remote?: string, options: EngineHarnessOptions = {}): Promise<EngineProcess> => {
+      if (!accepting || admission.signal.aborted) return Promise.reject(closed());
+      const opening = Promise.withResolvers<EngineProcess>();
+      // Join setup/ready settlement without turning a subject's protocol rejection
+      // into an unknown native cleanup result. Registration precedes lease acquisition.
+      const settled = opening.promise.then(() => undefined, () => undefined);
+      void prepare(() => settled).catch(() => undefined);
+      void (async () => {
+        const args = await harnessArgs(home, dir, remote, options);
+        return app(home, args, options);
+      })().then(opening.resolve, opening.reject);
+      return opening.promise;
+    },
+    harnessActors: () => github?.actors() ?? [],
+    harnessStarts: () => github?.starts() ?? [],
+    harnessPending: () => github?.pending(),
     command: (home: string, args: readonly string[], env: NodeJS.ProcessEnv = {}, options: Pick<NativeCommandOptions, "input" | "afterExternalStop"> = {}) => peer(home, args, env, options, false),
     nativeCommand: (home: string, argv: readonly string[], env: NodeJS.ProcessEnv = {}, options: NativeCommandOptions = {}) => peer(home, argv, env, options, true),
     run, stop, close };

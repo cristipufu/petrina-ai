@@ -88,9 +88,10 @@ it(`starts once with saved paused scheduling after a ${previous} pause lost its 
   }
   let launches = 0;
   let child: CoordinatorProcess | undefined;
+  const harnessArgs = await lifetime.harnessArgs(home, fakes.dir);
   const client = new EngineClient(home, () => {
     launches++;
-    child = lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" });
+    child = lifetime.start(home, harnessArgs, { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" });
     return child.pid;
   });
 
@@ -129,7 +130,7 @@ it("keeps the connection key on restart even when its original launch requested 
     const home = join(root, "home"),
       fakes = new Fakes(join(root, "fakes"));
     fakes.scenario({ controlled: true });
-    const original = await lifetime.harness(home, fakes.dir, undefined, ["--new-key"]);
+    const original = await lifetime.harness(home, fakes.dir, undefined, { extra: ["--new-key"] });
     const client = new EngineClient(home);
     const before = readConnection(home)!;
 
@@ -167,10 +168,11 @@ it("distinguishes stopped, unresponsive ownership, failed startup and safe concu
     fakes.scenario({ controlled: true });
     const children: CoordinatorProcess[] = [];
     let launches = 0;
+    const harnessArgs = await lifetime.harnessArgs(home, fakes.dir);
     const client = new EngineClient(home, () => {
       launches++;
       children.push(
-        lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" }),
+        lifetime.start(home, harnessArgs, { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" }),
       );
     });
 
@@ -204,7 +206,7 @@ it("distinguishes stopped, unresponsive ownership, failed startup and safe concu
       const occupied = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("stand-in") });
       try {
         // This is the explicitly requested startup, not another desktop reconnect following it.
-        const child = lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: String(occupied.port) }, { input: "ignore" });
+        const child = lifetime.start(home, harnessArgs, { PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: String(occupied.port) }, { input: "ignore" });
         expect(await child.exited).toBe(1);
       } finally {
         await occupied.stop(true);

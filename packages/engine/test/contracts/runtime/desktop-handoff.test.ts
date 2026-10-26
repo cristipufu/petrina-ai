@@ -56,11 +56,12 @@ if (process.env.PETRINA_LIFECYCLE_REPLACEMENT) {
 }
 await import(${JSON.stringify(HARNESS)});
 `);
-  const original = await lifetime.app(home, [wrapper, home, fakes.dir, `--agent-program=${lifetime.actor}`]);
+  const harnessArgs = await lifetime.harnessArgs(home, fakes.dir, undefined, { entry: wrapper });
+  const original = await lifetime.harness(home, fakes.dir, undefined, { entry: wrapper });
   const before = readConnection(home)!;
   let requested: CoordinatorProcess | undefined;
   const client = new EngineClient(home, () => {
-    requested = lifetime.start(home, [wrapper, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: new URL(before.api).port }, { input: "ignore" });
+    requested = lifetime.start(home, harnessArgs, { PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: new URL(before.api).port }, { input: "ignore" });
     return requested.pid;
   });
   let recovery: CoordinatorProcess | undefined;
@@ -79,7 +80,7 @@ await import(${JSON.stringify(HARNESS)});
     expect((await client.call(`engine.${kind}`, { requestId: "desktop-handoff" })).outcome).toBe("pending");
     await waitFor(() => existsSync(replacement), "the replacement launcher to wait");
     expect(await original.exited(10000 * SLOW)).toBe(0);
-    recovery = lifetime.start(home, [wrapper, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_TEST_HOST_RECOVERY: "1" });
+    recovery = lifetime.start(home, harnessArgs, { PETRINA_TEST_HOST_RECOVERY: "1" });
     const hello = recovery.line().then((line) => JSON.parse(line));
     await waitFor(() => existsSync(observed), "desktop recovery to inspect the unfinished handoff", undefined, { during: recovery.completion });
     // Recovery briefly probes the lock to distinguish a live launcher from a dead handoff;

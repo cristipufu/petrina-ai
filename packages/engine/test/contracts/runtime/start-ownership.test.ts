@@ -58,11 +58,12 @@ await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "e
   const interrupted = lifetime.start(home, [wrapper]);
   const fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
+  const harnessArgs = await lifetime.harnessArgs(home, fakes.dir);
   const children: CoordinatorProcess[] = [];
   let launches = 0;
   const client = new EngineClient(home, () => {
     launches++;
-    const child = lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" });
+    const child = lifetime.start(home, harnessArgs, { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" });
     children.push(child);
     return child.pid;
   });
@@ -128,7 +129,7 @@ LifecycleStore.prototype.finish = function (...args) {
 };
 await import(${JSON.stringify(HARNESS)});
 `, { monitor: "worker" });
-  const owner = await lifetime.app(home, [wrapper, home, fakes.dir, `--agent-program=${lifetime.actor}`]);
+  const owner = await lifetime.harness(home, fakes.dir, undefined, { entry: wrapper });
   const client = new EngineClient(home, () => { throw new Error("the interrupted restart must not launch a competitor"); });
   const store = pendingStore = new LifecycleStore(home);
 

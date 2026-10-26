@@ -6,15 +6,26 @@ import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type DeliveryMode, type State, type Task } from "@petrina/core";
 import { Store } from "@petrina/storage/store";
+import { childState } from "@petrina/platform/process-tree";
+import type { EngineHarnessOptions } from "../../fixtures/engine-processes.js";
 import { EngineProcess, engineProcessCases, Fakes, git, makeWorld, remoteRef, tempDir, waitFor, type World } from "../../support.js";
 
 const cases = engineProcessCases();
+let releaseStartupGate = () => {};
+async function releaseAndClose(release: () => void, close: () => Promise<void>): Promise<void> {
+  const settled = await Promise.allSettled([Promise.resolve().then(release), Promise.resolve().then(close)]);
+  const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, "Fixture gate release and owner cleanup both failed");
+}
 // A timed-out concurrent body remains owned until this file's peers have finished.
-afterAll(() => cases.close());
+afterAll(() => releaseAndClose(releaseStartupGate, () => cases.close()));
 
 /** A product delivering in `mode` without asking, a task on its way there, and an engine running it. `hold`: a gh command that waits after doing its work. */
-async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string; notes?: "hang" } = {}) {
+async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string; notes?: "hang"; registrationGate?: boolean } = {}) {
   const root = tempDir(`petrina-shipping-${mode}-`), hold = join(root, "hold");
+  let registrationGate: string | undefined;
+  const releaseRegistration = () => { if (registrationGate) rmSync(registrationGate, { force: true }); };
   const owners = cases.open(root, { stopPeers() { rmSync(hold, { force: true }); } });
   return setupWithCleanup(() => owners.prepare(async () => {
   const w = await makeWorld(`shipping-${mode}`, { ...(options.notes ? { version: "1.0.0" } : {}),
@@ -26,6 +37,14 @@ async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?
     w.setGitHub((github) => github.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The previous release." }));
   }
   const home = join(w.dir, "home");
+  registrationGate = options.registrationGate ? join(root, "github-registration") : undefined;
+  if (registrationGate) { releaseStartupGate = releaseRegistration; writeFileSync(registrationGate, ""); }
+  class Startup implements EngineHarnessOptions {
+    readonly githubRegistrationGate = registrationGate;
+    seen?: number;
+    onProcess(child: EngineProcess["proc"]) { this.seen = child.pid; }
+  }
+  const startup = options.registrationGate ? new Startup() : undefined;
   const fakes = new Fakes(w.dir);
   fakes.scenario({ planner: "short", builder: "plain", ...(options.notes ? { releaseManager: options.notes } : {}) });
   if (options.hold) {
@@ -33,19 +52,67 @@ async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?
     w.setGitHub((github) => (github.hold = { command: options.hold!, file: hold, ...(options.holdMatch ? { match: options.holdMatch } : {}) }));
   }
   const close = () => owners.close();
-  const restart = () => owners.prepare(() => owners.harness(home, w.dir, w.remote));
+  const restart = () => owners.prepare(() => owners.harness(home, w.dir, w.remote, startup));
     const engine = await restart();
     const productId = (await engine.act("addProduct", w.clone)) as string;
     await engine.act("setProductDelivery", productId, mode, false);
     const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
     const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
 
-    return { w, home, fakes, engine, taskId, find, hold, restart, close, owners };
-  }), () => owners.close());
+    return { w, home, fakes, engine, taskId, find, hold, restart, close, owners, registrationGate, startup };
+  }), () => releaseAndClose(releaseRegistration, () => owners.close()));
 }
 
 const delivered = (task: Task | undefined) => task?.state === "done" || task?.state === "pr-open";
 const shippingItem = (state: State, taskId: string) => state.inbox.find((item) => item.taskId === taskId && item.kind === "shipping");
+
+it("independently ends a held GitHub helper after forced app exit before disposing its world", async () => {
+  const run = await shipping("pull-request", { hold: "pr create" });
+  const result = await setupWithCleanup(() => run.owners.prepare(async () => {
+    await run.engine.until(() => existsSync(`${run.hold}.reached`), "the actual GitHub publication to enter its hold");
+    const actors = run.owners.harnessActors().filter(actor => actor.state === "running");
+    expect(actors).toHaveLength(1);
+    const actor = actors[0]!;
+    await run.engine.kill();
+    expect(await childState(actor.pid)).toBe("running");
+    expect(existsSync(run.w.dir)).toBe(true);
+    return actor.pid;
+  }), () => run.close());
+  await run.close();
+  expect(await childState(result)).toBe("ended");
+  expect(existsSync(run.w.dir)).toBe(false);
+});
+
+it("joins a native GitHub start before its actor registers, after the app is force-killed", async () => {
+  const run = await shipping("pull-request", { registrationGate: true });
+  const release = () => { rmSync(run.registrationGate!, { force: true }); };
+  const result = await setupWithCleanup(async () => {
+    const start = await run.owners.prepare(async () => {
+      await run.engine.until(() => existsSync(`${run.registrationGate}.reached`), "the actual helper to hold before actor registration");
+      const actors = run.owners.harnessActors();
+      const starts = run.owners.harnessStarts().filter(start => !actors.some(actor => actor.pid === start.pid));
+      expect(starts).toHaveLength(1); expect(starts[0]!.state).toBe("started");
+      expect(run.startup!.seen).toBe(run.engine.proc.pid);
+      await run.engine.kill();
+      expect(await childState(starts[0]!.pid!)).toBe("running");
+      return starts[0]!;
+    });
+    const closing = run.close();
+    let completed = false;
+    void closing.then(() => { completed = true; }, () => { completed = true; });
+    const pending = await waitFor(() => {
+      const observation = run.owners.harnessPending();
+      return observation?.unregistered.includes(start.id) && observation.states.some(([pid, state]) => pid === start.pid && state === "running") && observation;
+    }, "the actual close observation to retain its unregistered native start", undefined, { during: closing });
+    expect(pending.starts).toContain(start.id);
+    const completedAtRelease = completed;
+    expect(completedAtRelease).toBe(false); expect(existsSync(run.w.dir)).toBe(true);
+    release(); await closing;
+    expect(await childState(start.pid!)).toBe("ended"); expect(existsSync(run.w.dir)).toBe(false);
+  }, () => releaseAndClose(release, () => run.close()));
+  await releaseAndClose(release, () => run.close()); releaseStartupGate = () => {};
+  return result;
+});
 const creates = (w: World) => w.github().calls.filter((call) => call[1] === "create");
 
 describe.concurrent("shipping is never repeated blindly", () => {

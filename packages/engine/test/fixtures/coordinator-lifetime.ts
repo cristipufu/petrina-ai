@@ -6,6 +6,7 @@ import { waitFor } from "@petrina/test-support/fixtures";
 import { engineProcesses, HARNESS, FAKE_AGENT, type EngineProcess } from "../support.js";
 import { pidsIn } from "./shutdown-actors.js";
 import { processAlive } from "../../src/instance.js";
+import type { EngineHarnessOptions } from "./engine-processes.js";
 
 /** Construct the case owner before asynchronous lease/setup work or any app generation. */
 export function coordinatorLifetime(root: string, resources?: { stopPeers(): void | Promise<void> }) {
@@ -50,6 +51,11 @@ export function coordinatorLifetime(root: string, resources?: { stopPeers(): voi
     }).then(opened, failed);
     return ready;
   };
+  const harnessOptions = (options: Pick<EngineHarnessOptions, "entry" | "extra">): EngineHarnessOptions => {
+    const starting = options.entry ?? entry!;
+    return { entry: starting, extra: [`--agent-program=${actor}`, ...options.extra ?? []],
+      ...(programs.has(starting) ? { afterExternalStop: () => leaseStopRequested } : {}) };
+  };
   return { get ready() { return initialize(); }, signal: owners.signal,
     prepare: <T>(start: () => Promise<T>) => owners.prepare(start),
     run: <T>(app: EngineProcess, start: () => Promise<T>) => owners.run(app, start),
@@ -65,10 +71,16 @@ export function coordinatorLifetime(root: string, resources?: { stopPeers(): voi
       return owners.prepare(async () => { await initialize(); return owners.app(home, argv,
         programs.has(argv[0]!) ? { afterExternalStop: () => leaseStopRequested } : undefined); });
     },
-    harness(home: string, dir: string, remote?: string, extra: readonly string[] = []) {
+    harness(home: string, dir: string, remote?: string, options: Pick<EngineHarnessOptions, "entry" | "extra"> = {}) {
       return owners.prepare(async () => {
         await initialize(); available();
-        return owners.app(home, [entry!, home, dir, ...(remote ? [remote] : []), `--agent-program=${actor}`, ...extra], { afterExternalStop: () => leaseStopRequested });
+        return owners.harness(home, dir, remote, harnessOptions(options));
+      });
+    },
+    harnessArgs(home: string, dir: string, remote?: string, options: Pick<EngineHarnessOptions, "entry" | "extra"> = {}) {
+      return owners.prepare(async () => {
+        await initialize(); available();
+        return owners.harnessArgs(home, dir, remote, harnessOptions(options));
       });
     },
     close: () => owners.close(),

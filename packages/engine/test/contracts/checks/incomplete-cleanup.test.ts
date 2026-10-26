@@ -70,7 +70,7 @@ for (const kind of ["check", "hook"] as const) {
       let engine: EngineProcess | undefined;
       const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-        engine = await owners.app(home, [launcher, home, fakes.dir]);
+        engine = await owners.harness(home, fakes.dir, undefined, { entry: launcher });
         const productId = await engine.act("addProduct", repo) as string;
         await engine.act("setProductChecks", productId, [{ name: "Detached", command: commandInputText([process.execPath, parent]) }]);
         await engine.act("setProductDelivery", productId, "local", true);

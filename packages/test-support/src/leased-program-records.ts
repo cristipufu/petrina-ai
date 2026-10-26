@@ -21,14 +21,14 @@ export async function createLeasedProgramRecords(folder: string) {
   }
   return {
     /** The renderer receives the expression for this launch's immutable identity, not a saved PID authority. */
-    write(name: string, kind: string, body: (identity: string) => string): string {
+    write(name: string, kind: string, body: (identity: string) => string, options: { beforeRecord?: string } = {}): string {
       const file = join(folder, name), jsonModule = import.meta.resolve("./fixture-json.ts");
       writeFileSync(file, lease.program(`
 const { writeFixtureJson: publishProgramRecord } = await import(${JSON.stringify(jsonModule)});
 const fixtureProgramIdentity = { id: crypto.randomUUID(), pid: process.pid, kind: ${JSON.stringify(kind)} };
 const fixtureProgramRecord = ${JSON.stringify(folder)} + "/" + fixtureProgramIdentity.id + ".record.json";
 process.on("exit", code => publishProgramRecord(fixtureProgramRecord, { ...fixtureProgramIdentity, state: "ended", code }));
-publishProgramRecord(fixtureProgramRecord, { ...fixtureProgramIdentity, state: "running" });
+${options.beforeRecord ? `${options.beforeRecord}\n` : ""}publishProgramRecord(fixtureProgramRecord, { ...fixtureProgramIdentity, state: "running" });
 ${body("fixtureProgramIdentity")}`));
       return file;
     },

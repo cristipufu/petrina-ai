@@ -6,10 +6,15 @@
 import { join } from "node:path";
 import { launch } from "../src/launch.js";
 import { fixtureEngineOptions } from "./engine.js";
+import { observeHarnessGitHub } from "./fixtures/harness-github.js";
 
 const [home, dir, remote] = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
 const agentProgram = process.argv.find(arg => arg.startsWith("--agent-program="))?.slice("--agent-program=".length);
+const githubProgram = process.argv.find(arg => arg.startsWith("--gh-program="))?.slice("--gh-program=".length);
+const githubRegistrationGate = process.argv.find(arg => arg.startsWith("--gh-registration-gate="))?.slice("--gh-registration-gate=".length);
 const browserTempRoot = process.argv.find((arg) => arg.startsWith("--browser-root="))?.slice("--browser-root=".length);
+if (!githubProgram) throw new Error("The app-mode fixture needs an owned GitHub program. Use its owner's harness or harnessArgs.");
+observeHarnessGitHub(githubProgram, githubRegistrationGate);
 await launch({
   home: home!,
   mode: "app",
@@ -17,7 +22,7 @@ await launch({
   loginShell: false,
   engine: fixtureEngineOptions(home!, {
     agentCommand: (profile) => [process.execPath, agentProgram ?? join(import.meta.dir, "fake-agent.ts"), dir!, `--script=${join(dir!, "agents.json")}`, `--record-tool=${profile.toolId}`, ...(process.argv.includes("--stubborn") ? ["--stubborn"] : [])],
-    gh: [process.execPath, join(import.meta.dir, "fake-gh.ts"), join(dir!, "github.json"), remote ?? join(dir!, "github.git")],
+    gh: [process.execPath, githubProgram, join(dir!, "github.json"), remote ?? join(dir!, "github.git")],
     ...(remote ? { remote } : {}),
     ...(browserTempRoot ? { browser: true, browserTempRoot } : {}),
   }),

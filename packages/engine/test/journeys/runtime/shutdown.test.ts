@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { Engine } from "../../engine.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { parseChildState, readProcessList } from "@petrina/platform/process-tree";
-import { EngineProcess, Fakes, HARNESS, makeProduct, tempDir, waitFor, waitForFile } from "../../support.js";
+import { EngineProcess, Fakes, makeProduct, tempDir, waitFor, waitForFile } from "../../support.js";
 
 const cases = engineProcessCases();
 afterAll(() => cases.close());
@@ -79,7 +79,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
 
     };
     const result = await setupWithCleanup(async () => {
-      engine = await owners.app(home, [HARNESS, home, fakes.dir, `--agent-program=${actors.actor}`]);
+      engine = await owners.harness(home, fakes.dir, undefined, { extra: [`--agent-program=${actors.actor}`] });
       const productId = await engine.act("addProduct", await makeProduct(dir));
       await engine.act("addTask", { productId, title: "Work through a quit", description: "[no-check]" });
       await waitFor(async () => {
@@ -100,7 +100,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
       expect(await engine.quit()).toBeLessThan(10_000);
       expect(before.filter(alive)).toEqual([]);
       fakes.scenario({ controlled: true, builder: "plain" });
-      engine = await owners.app(home, [HARNESS, home, fakes.dir, `--agent-program=${actors.actor}`]);
+      engine = await owners.harness(home, fakes.dir, undefined, { extra: [`--agent-program=${actors.actor}`] });
       await waitFor(() => pids().some((pid) => !before.includes(pid) && alive(pid)), "the restarted step's agent");
       expect(before.filter(alive)).toEqual([]);
       const next = pids().filter(alive);
@@ -132,7 +132,7 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
 
     };
     const result = await setupWithCleanup(async () => {
-      engine = await owners.app(home, [launcher, home, fakes.dir, ...(stubborn ? ["--stubborn"] : [])]);
+      engine = await owners.harness(home, fakes.dir, undefined, { entry: launcher, extra: stubborn ? ["--stubborn"] : [] });
       const productId = await engine.act("addProduct", await makeProduct(dir));
       for (const end of ["cancel", "quit"] as const) {
         // A first lookup near its limit may time out under contention. Recovery must then

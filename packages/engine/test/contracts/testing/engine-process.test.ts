@@ -2,8 +2,9 @@ import { afterEach } from "bun:test";
 import { engineProcessCases } from "../../support.js";
 import { expect, it } from "bun:test";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { childState } from "@petrina/platform/process-tree";
-import { type EngineProcess, tempDir } from "../../support.js";
+import { type EngineProcess, HARNESS, tempDir } from "../../support.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 
 const cases = engineProcessCases();
@@ -18,6 +19,20 @@ async function failed(promise: Promise<unknown>): Promise<Error> {
   expect(error).toBeInstanceOf(Error);
   return error as Error;
 }
+
+it("refuses an unmanaged app-mode harness before opening an Engine or GitHub helper", async () => {
+  const root = tempDir("petrina-engine-process-");
+  return cases.use(root, async owners => {
+    const home = join(root, "home");
+    let child: EngineProcess["proc"] | undefined;
+    const error = await failed(owners.app(home, [HARNESS, home, root], { onProcess: proc => { onProcess(proc); child = proc; } }));
+    expect(error.message).toContain("needs an owned GitHub program");
+    expect(existsSync(join(home, "engine.json"))).toBe(false);
+    expect(owners.harnessStarts()).toEqual([]);
+    expect(child).toBeDefined();
+    expect(await childState(child!.pid)).toBe("ended");
+  });
+});
 
 it("drains a full stderr pipe before startup, decodes split Unicode and retains the exact error output", async () => {
   const root = tempDir("petrina-engine-process-");
