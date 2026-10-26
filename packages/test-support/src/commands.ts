@@ -10,11 +10,11 @@ import { SLOW } from "./slow.js";
 import { testGitEnv } from "./test-git-env.js";
 import { execFile } from "node:child_process";
 import { createProcessHost } from "@petrina/platform/process-host";
+import { CLEANUP_MS } from "./command-budgets.js";
+export { CLEANUP_MS } from "./command-budgets.js";
 
 /** Git's allowance per command; like the fixtures' other hang-catching limits, it stretches on a busy machine. */
 export const GIT_TIMEOUT_MS = 30_000;
-/** Stopping a failed command and confirming that everything it started has ended has its own short bound, stretched like the others. */
-export const CLEANUP_MS = 5_000;
 
 /** The parts of a started program the runner uses. Runner tests pass private stand-ins through `start`. */
 export interface Started {

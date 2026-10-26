@@ -54,7 +54,7 @@ await launch({ home: ${JSON.stringify(home)}, mode: ${JSON.stringify(mode === "e
     writeFileSync(${JSON.stringify(marker)}, "starting");
     await new Promise(() => {});
   } }) });
-`);
+`, mode === "offline" ? { monitor: "worker" } : undefined);
   const interrupted = lifetime.start(home, [wrapper]);
   const fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
@@ -127,7 +127,7 @@ LifecycleStore.prototype.finish = function (...args) {
   }
 };
 await import(${JSON.stringify(HARNESS)});
-`);
+`, { monitor: "worker" });
   const owner = await lifetime.app(home, [wrapper, home, fakes.dir, `--agent-program=${lifetime.actor}`]);
   const client = new EngineClient(home, () => { throw new Error("the interrupted restart must not launch a competitor"); });
   const store = pendingStore = new LifecycleStore(home);

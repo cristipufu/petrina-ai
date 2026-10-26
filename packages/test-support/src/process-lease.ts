@@ -1,10 +1,16 @@
 import { createServer, type Socket } from "node:net";
 import { SLOW } from "./slow.js";
+import { CLEANUP_MS } from "./command-budgets.js";
+
+export interface ProcessLeaseProgramOptions {
+  /** Only for actors whose main thread deliberately blocks the event loop. */
+  monitor?: "worker";
+}
 
 /** An out-of-band lifetime for fixture actors, independent of the cleanup being tested. */
 export interface ProcessLease {
   /** No actor body runs before its owner answers. Losing that connection ends the actor. */
-  program(body: string): string;
+  program(body: string, options?: ProcessLeaseProgramOptions): string;
   /** Refuse late actors and disconnect existing actors; safe to call more than once. */
   close(): Promise<void>;
 }
@@ -12,7 +18,8 @@ export interface ProcessLease {
 /**
  * A private loopback connection survives reparenting and detached process groups. When a case fails,
  * closing the lease ends its actors; when a worker dies, the OS closes its connections instead.
- * No PID is signalled and no lifetime timer can masquerade as the subject's successful cleanup.
+ * The optional Worker monitor signals only its own current process, never another or saved PID.
+ * No actor lifetime timer can masquerade as the subject's successful cleanup.
  * Actors must use this wrapper before starting children; wrap each long-lived child as well.
  */
 export async function createProcessLease(): Promise<ProcessLease> {
@@ -39,7 +46,9 @@ export async function createProcessLease(): Promise<ProcessLease> {
   if (!address || typeof address === "string") { server.close(); throw new Error("The fixture process owner has no loopback address"); }
   const port = address.port;
   return {
-    program(body) {
+    program(body, options) {
+      if (options?.monitor === "worker") return workerMonitoredProgram(body, port, token);
+      if (options?.monitor !== undefined) throw new RangeError("Unknown fixture lease monitor");
       return `await (async () => {
   const { createConnection } = require("node:net");
   const connection = createConnection({ host: "127.0.0.1", port: ${port} });
@@ -69,4 +78,76 @@ export async function createProcessLease(): Promise<ProcessLease> {
       });
     },
   };
+}
+
+/** The actor body stays on its main thread; only the existing lease socket moves to a Worker. */
+function workerMonitoredProgram(body: string, port: number, token: string): string {
+  const monitor = `
+const { parentPort, workerData } = require("node:worker_threads");
+const { createConnection } = require("node:net");
+let disarmed = false, acknowledged = false;
+// This is the currently executing process, never a saved or supplied actor identity.
+// Worker process.exit alone would stop only this thread and leave a blocked main alive.
+const lost = () => { if (!disarmed) process.kill(process.pid, "SIGKILL"); };
+process.on("uncaughtException", lost);
+process.on("unhandledRejection", lost);
+process.on("exit", lost);
+const connection = createConnection({ host: workerData.host, port: workerData.port });
+connection.on("error", lost);
+connection.on("end", lost);
+connection.on("close", lost);
+const timeout = setTimeout(lost, ${30_000 * SLOW});
+let answer = "";
+connection.once("connect", () => connection.write(workerData.token + "\\n"));
+connection.on("data", chunk => {
+  answer += chunk.toString("utf8");
+  if (answer === workerData.token + "\\n" && !acknowledged) {
+    acknowledged = true; clearTimeout(timeout); parentPort.postMessage("ready");
+  } else if (answer.length >= workerData.token.length + 1 || !(workerData.token + "\\n").startsWith(answer)) lost();
+});
+parentPort.on("message", message => {
+  if (message !== "disarm" || !acknowledged) { lost(); return; }
+  disarmed = true; clearTimeout(timeout); connection.destroy(); parentPort.close();
+});`;
+  return `await (async () => {
+  const { Worker } = require("node:worker_threads");
+  const monitor = new Worker(${JSON.stringify(monitor)}, { eval: true, workerData: { host: "127.0.0.1", port: ${port}, token: ${JSON.stringify(token)} } });
+  let disarming = false, bodyStarted = false, ready = false;
+  const ended = new Promise((resolve, reject) => {
+    monitor.once("error", error => { reject(error); if (bodyStarted && !disarming) process.exit(78); });
+    monitor.once("exit", code => {
+      if (disarming && code === 0) resolve();
+      else { reject(new Error("Fixture lease monitor ended unexpectedly with " + code)); if (bodyStarted && !disarming) process.exit(78); }
+    });
+  });
+  void ended.catch(() => {});
+  const admitted = new Promise((resolve, reject) => {
+    monitor.on("message", message => {
+      if (message === "ready" && !ready) { ready = true; resolve(); }
+      else { reject(new Error("Fixture lease monitor gave an invalid acknowledgment")); if (bodyStarted && !disarming) process.exit(78); }
+    });
+    void ended.then(() => reject(new Error("Fixture lease monitor ended before admission")), reject);
+  });
+  let handshakeTimer, cleanupTimer, failure, cleanupFailure;
+  try {
+    await Promise.race([admitted, new Promise((_, reject) => { handshakeTimer = setTimeout(() => reject(new Error("Fixture lease monitor gave no acknowledgment")), ${30_000 * SLOW}); })]);
+    clearTimeout(handshakeTimer);
+    bodyStarted = true;
+    await (async () => { ${body}\n})();
+  } catch (error) { failure = { error }; }
+  finally {
+    clearTimeout(handshakeTimer);
+    try {
+      disarming = true; monitor.postMessage("disarm");
+      await Promise.race([ended, new Promise((_, reject) => { cleanupTimer = setTimeout(() => reject(new Error("Fixture lease monitor did not settle; cleanup is unconfirmed")), ${CLEANUP_MS * SLOW}); })]);
+    } catch (error) { cleanupFailure = { error }; void monitor.terminate().catch(() => {}); }
+    finally { clearTimeout(cleanupTimer); }
+  }
+  if (cleanupFailure) {
+    if (failure) throw new AggregateError([failure.error, cleanupFailure.error], "Fixture body and lease monitor cleanup failed");
+    throw cleanupFailure.error;
+  }
+  if (failure) throw failure.error;
+  process.exit(0);
+})();`;
 }

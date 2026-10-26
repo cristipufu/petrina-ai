@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
+import { createProcessLease, type ProcessLease, type ProcessLeaseProgramOptions } from "@petrina/test-support/process-lease";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { waitFor } from "@petrina/test-support/fixtures";
 import { engineProcesses, HARNESS, FAKE_AGENT, type EngineProcess } from "../support.js";
@@ -27,11 +27,11 @@ export function coordinatorLifetime(root: string, resources?: { stopPeers(): voi
     if (owners.signal.aborted) throw new Error("Coordinator fixture is closing; no new actor may start");
     if (!lease || !entry || !actor) throw new Error("Coordinator fixture initialization must finish before using its native programs");
   };
-  const program = (name: string, body: string) => {
+  const program = (name: string, body: string, options?: ProcessLeaseProgramOptions) => {
     if (owners.signal.aborted) throw new Error("Coordinator fixture is closing; no new actor may start");
     if (!lease) throw new Error("Coordinator fixture initialization must finish before writing native programs");
     const path = join(root, name);
-    writeFileSync(path, lease.program(`require("node:fs").appendFileSync(${JSON.stringify(pids)}, String(process.pid) + "\\n");\n${body}\nawait new Promise(() => undefined);`));
+    writeFileSync(path, lease.program(`require("node:fs").appendFileSync(${JSON.stringify(pids)}, String(process.pid) + "\\n");\n${body}\nawait new Promise(() => undefined);`, options));
     programs.add(path);
     return path;
   };
