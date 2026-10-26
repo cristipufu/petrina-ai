@@ -7515,13 +7515,42 @@
       "preservation": "All14original runtime names and79original matcher sites retained; one actual held-log preparation/no-child case added.",
       "newBoundary": "Actualheldlogpreparation joinsbefore disposal and startsnochildunderclosedadmission",
       "limits": "Other legacy timeout/cancel cases need independentfixture handles; fast24 serialcase needs nonvacuous cardinality and targeted native/policy decomposition. No claim those are fixed."
+    },
+    "full-cfdb64d6": {
+      "source": {
+        "head": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",
+        "tree": "3df769eb8a8d3826d42c93f887b2c0eb9a37ac3b",
+        "fingerprint": "50f238687dfb083c64b37d8100f6a71d41a53e200a68d039f93f648fef4932c9",
+        "clean": true
+      },
+      "report": ".test-results/2026-10-26T02-18-29-411Z-b1c04ca4/results.json",
+      "counts": {
+        "tests": 5556,
+        "passed": 5545,
+        "failed": 0,
+        "skipped": 11
+      },
+      "requiredFiles": 873,
+      "actualFiles": 873,
+      "workspaces": 9,
+      "actualExecutions": 4,
+      "normalNativeWorkers": 14,
+      "ms": 227494,
+      "preservation": "All5485priorf3outcomes accounted for:5479identicalrawidentities,6reviewed actual-owner semantic transfers and77added outcomes. Per-slice literal/body/semantic evidence remains required.",
+      "artifacts": "full-cfdb64d6/manifest-verification.json,case-reconciliation.json,resource-comparison.json",
+      "resourceReport": ".test-results/resources/2026-10-26T02-23-04-514Z-a30934be",
+      "resourceGit": 92561,
+      "resourceLaunches": 103707,
+      "gitCallerLocations": 92482,
+      "gitCallerUnavailable": 79,
+      "limits": "Mac qualification only. New caller stack capture adds observer overhead; host contention uncontrolled. Cost target, environment preflight/reuse and main-protecting generic delivery remain unfinished."
     }
   },
   "resourceAudit": {
     "status": "in progress",
-    "source": "f3a3120e3b71f5c4b71924d0c525e3d5f346e592",
-    "report": ".test-results/resources/2026-10-25T23-53-40-886Z-eb48bd39/summary.json",
-    "remainingMeasuredProblem": "93344Git launches (-755/0.8% from98), required full234135ms/5474passes atnormal14workers. Time essentially flat; actual cost exit remains open. Next actual-policy consolidation must preserve native replacement-voter and partial-ballot restart proofs.",
+    "source": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",
+    "report": ".test-results/resources/2026-10-26T02-23-04-514Z-a30934be/summary.json",
+    "remainingMeasuredProblem": "92561Git launches (-783/0.84% fromf3), required full227494ms/5545passes atnormal14workers. Actual cost exit remains open. Caller locations cover92482Git starts;79 unavailable. Larger actual learning-merge/delivery controller families are next; do not substitute file moves or scripted observations for native proof.",
     "exitCriteria": [
       "Trace every top20 expensive case to actual fixture/production callers",
       "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",
