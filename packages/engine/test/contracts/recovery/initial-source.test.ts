@@ -3,15 +3,15 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeliveryMode } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
-import { git, makeWorld, removeDir, type World } from "../../support.js";
+import { git } from "../../support.js";
+import type { Engine } from "../../engine.js";
+import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
 
-const worlds: World[] = [];
-afterAll(() => worlds.forEach(world => removeDir(world.dir)));
+const fixtures = nativeWorldFixtures();
+afterAll(() => fixtures.close());
 
 /** A plan checkpoint before any product work, with only the next Builder admission observed. */
-async function fixture(delivery: DeliveryMode, withCopy = false) {
-  const world = await makeWorld("wait-initial-copy"); worlds.push(world);
-  const engine = world.start({ agentCommand: () => undefined });
+async function prepare(engine: Engine, world: NativeWorld, delivery: DeliveryMode, withCopy = false) {
   engine.schedule = () => {};
   const productId = await engine.addProduct(world.clone);
   const id = engine.addTask({ productId, title: "Wait before starting the build", delivery, backlog: true });
@@ -40,7 +40,12 @@ async function fixture(delivery: DeliveryMode, withCopy = false) {
   return { engine, world, task, scope, admitted, held, run };
 }
 
-const advanceRemote = async (world: World) => {
+function fixture<T>(delivery: DeliveryMode, withCopy: boolean, body: (fixture: Awaited<ReturnType<typeof prepare>>) => Promise<T>): Promise<T> {
+  return fixtures.world("wait-initial-copy", ({ world, engine: withEngine }) => withEngine(async engine =>
+    body(await prepare(engine, world, delivery, withCopy)), { agentCommand: () => undefined }));
+}
+
+const advanceRemote = async (world: NativeWorld) => {
   writeFileSync(join(world.clone, "required-fix.txt"), "The prerequisite's landed change\n");
   await git(world.clone, "add", "required-fix.txt"); await git(world.clone, "commit", "-qm", "Land the prerequisite fix");
   await git(world.clone, "push", "-q", world.remote, "main");
@@ -51,8 +56,7 @@ const advanceRemote = async (world: World) => {
 
 describe.concurrent("a prerequisite wait before the first working copy", () => {
   for (const withCopy of [false, true]) it(`refreshes the commit-delivery source before the Builder starts (copy exists: ${withCopy})`, async () => {
-    const f = await fixture("local", withCopy);
-    try {
+    return fixture("local", withCopy, async f => {
       f.held(); const latest = await advanceRemote(f.world);
       const fetch = f.engine["connections"].fetchDefault.bind(f.engine["connections"]);
       let fetched = 0;
@@ -64,12 +68,11 @@ describe.concurrent("a prerequisite wait before the first working copy", () => {
       expect(await git(f.scope.work.worktree!, "show", "HEAD:required-fix.txt")).toBe("The prerequisite's landed change");
       expect(fetched).toBeGreaterThan(0);
       expect(f.task.runtimeWait?.refreshPending).toBeUndefined();
-    } finally { await f.engine.shutdown(); }
+    });
   });
 
   for (const withCopy of [false, true]) it(`stops when the GitHub source is unavailable before Builder admission (copy exists: ${withCopy})`, async () => {
-    const f = await fixture("pull-request", withCopy);
-    try {
+    return fixture("pull-request", withCopy, async f => {
       f.held();
       f.engine["connections"].fetchDefault = async () => ({ ok: false, error: "The approved GitHub source is unavailable" });
       await f.run();
@@ -77,12 +80,11 @@ describe.concurrent("a prerequisite wait before the first working copy", () => {
       expect(f.task.state).toBe("failed");
       expect(f.task.error).toContain("could not get the latest");
       expect(f.task.runtimeWait?.refreshPending).toBe(true);
-    } finally { await f.engine.shutdown(); }
+    });
   });
 
   it("keeps ordinary no-wait commit preparation unchanged", async () => {
-    const f = await fixture("local");
-    try {
+    return fixture("local", false, async f => {
       await advanceRemote(f.world);
       let fetched = 0;
       f.engine["connections"].fetchDefault = async () => { fetched += 1; return { ok: false, error: "Offline control" }; };
@@ -91,6 +93,6 @@ describe.concurrent("a prerequisite wait before the first working copy", () => {
       expect(f.admitted).toEqual([f.world.initial]);
       expect(fetched).toBe(0);
       expect(f.task.runtimeWait).toBeUndefined();
-    } finally { await f.engine.shutdown(); }
+    });
   });
 });

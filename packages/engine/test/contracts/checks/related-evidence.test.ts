@@ -1,7 +1,7 @@
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { describe as originalDescribe } from "bun:test";
 
-import { expect, it, spyOn } from "bun:test";
+import { afterAll, expect, it, spyOn } from "bun:test";
 
 import { beginAgentStep, openStep } from "@petrina/core";
 import { join } from "node:path";
@@ -9,14 +9,16 @@ import { writeFileSync } from "node:fs";
 
 import { assignedCheckFailures, projectCheckEvidence, relatedCheckCandidates } from "../../../src/related-check-evidence.js";
 import { executionFor } from "@petrina/orchestrator";
-import { git, makeWorld, removeDir } from "../../support.js";
+import { git } from "../../support.js";
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
 
 import { failureName, failure, peer } from "../../../../core/test/fixtures/related-check-evidence.js";
+const fixtures = nativeWorldFixtures();
+afterAll(() => fixtures.close());
 
 originalDescribe("related check evidence", () => {
 it("records failure ownership and the completed Builder's answer, without borrowing a later pass after an update", async () => {
-    const w = await makeWorld("related-recording");
-    const engine = w.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
+    return fixtures.world("related-recording", ({ world: w, engine: withEngine }) => withEngine(async engine => {
     engine.schedule = () => {}; engine.setPoolPaused(false);
     const turn = spyOn(engine["turns"], "turn");
     try {
@@ -81,16 +83,15 @@ it("records failure ownership and the completed Builder's answer, without borrow
         expect(recorded.productChecks![0]!.run!.output).toBe(interrupted.output);
         expect(scope.work.checkReturns).toBe(2);
       }
-    } finally { turn.mockRestore(); await engine.shutdown(); removeDir(w.dir); }
+    } finally { turn.mockRestore(); }
+    }, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] }));
   });
 });
 
 originalDescribe("related check evidence", () => {
 it("shows at most three compact leads to added Builder roles and keeps fresh and continued review blind", async () => {
-    const w = await makeWorld("related-context");
-    const engine = w.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
+    return fixtures.world("related-context", ({ world: w, engine: withEngine }) => withEngine(async engine => {
     engine.setPoolPaused(true); engine.schedule = () => {};
-    try {
       engine.s.products.push({ id: "p", name: "Product", repo: "acme/p", path: w.clone, tone: "blue", checksBy: "coordinator", checks: [{ name: "Types", argv: ["bun", "run", "typecheck"] }, { name: "Tests", argv: ["bun", "run", "test"] }] });
       const ownId = engine.addTask({ productId: "p", title: "Own repair", backlog: true });
       const task = engine.task(ownId)!; const scope = executionFor(task);
@@ -170,6 +171,6 @@ it("shows at most three compact leads to added Builder roles and keeps fresh and
       await engine["shipping"]["recordLanded"](scope, "main", actualSha);
       expect(scope.work.confirmedDelivery).toEqual({ sha: actualSha, tree: actualTree, repo: "acme/p", branch: "main", at: expect.any(Number) });
       expect(scope.work.landed!.sha).toBe(actualSha.slice(0, 7));
-    } finally { await engine.shutdown(); removeDir(w.dir); }
+    }, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] }));
   });
 });

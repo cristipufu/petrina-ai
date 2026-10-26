@@ -1,4 +1,5 @@
-import { expect, it } from "bun:test";
+import { expect, it, spyOn } from "bun:test";
+import { Store } from "@petrina/storage/store";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { rejectionOf } from "@petrina/test-support/rejections";
@@ -114,4 +115,59 @@ for (const failure of [new Error("Preparation failed before opening an Engine"),
     // The controlled rejection started no Engine, program or asynchronous writer; its expected-error root is ours.
     removeFixtureRoot(root);
   }
+});
+
+it("reserves the current birth before a constructor callback tries to open another Engine", async () => {
+  const root = tempDir("petrina-direct-birth-"), owner = directDrivers(root), data = join(root, "data");
+  let nested: { error: unknown } | undefined;
+  try {
+    const engine = owner.open(data, { terminals() {
+      try { owner.open(data); } catch (error) { nested = { error }; }
+      return [];
+    } });
+    expect(nested?.error).toBeInstanceOf(Error);
+    expect((nested!.error as Error).message).toContain("Stop and settle");
+    await owner.close();
+    expect(engine.stopped).toBe(true);
+    expect(existsSync(root)).toBe(false);
+  } finally { await owner.close(); }
+});
+
+for (const failure of [new Error("Engine construction failed"), undefined]) it(`preserves the original synchronous constructor rejection and retains its failed birth (${failure === undefined ? "undefined" : "Error"})`, async () => {
+  const root = tempDir("petrina-direct-birth-failure-"), owner = directDrivers(root);
+  const stores = new Set<Store>(), closedStores = new Set<Store>();
+  const load = Store.prototype.loadActive, closeStore = Store.prototype.close;
+  let restoreLoad: (() => void) | undefined, restoreClose: (() => void) | undefined, recoveries = 0;
+  let thrown: { error: unknown } | undefined;
+  const finish = async () => {
+    await Promise.allSettled([owner.close()]);
+    const errors: unknown[] = [];
+    for (const store of stores) if (!closedStores.has(store)) {
+      try { closeStore.call(store); closedStores.add(store); } catch (error) { errors.push(error); }
+    }
+    for (const restore of [restoreClose, restoreLoad]) try { restore?.(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Failed-construction Store cleanup was not confirmed; root retained");
+    removeFixtureRoot(root);
+  };
+  await setupWithCleanup(async () => {
+    const reading = spyOn(Store.prototype, "loadActive"); restoreLoad = () => reading.mockRestore();
+    reading.mockImplementation(function (this: Store, ...args) { stores.add(this); return load.apply(this, args); });
+    const closing = spyOn(Store.prototype, "close"); restoreClose = () => closing.mockRestore();
+    closing.mockImplementation(function (this: Store) { closeStore.call(this); closedStores.add(this); });
+    try { owner.open(join(root, "data"), { terminals() { throw failure; }, browserRecovery: async () => { recoveries++; } }); }
+    catch (error) { thrown = { error }; }
+    expect(thrown).toBeDefined();
+    expect(thrown!.error).toBe(failure);
+    expect(stores.size).toBe(1);
+    for (const store of stores) {
+      expect(closedStores.has(store)).toBe(true);
+      expect(() => store.database.query("SELECT 1").get()).toThrow();
+    }
+    expect(recoveries).toBe(0);
+    const closed = await rejectionOf(owner.close());
+    expect(closed).toBeInstanceOf(AggregateError);
+    if (closed instanceof AggregateError) expect(closed.errors).toContain(failure);
+    expect(existsSync(root)).toBe(true);
+  }, finish);
+  await finish();
 });

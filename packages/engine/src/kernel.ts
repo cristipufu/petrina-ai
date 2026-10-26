@@ -314,6 +314,50 @@ export abstract class Kernel {
     readonly options: EngineOptions = {},
   ) {
     this.files = options.files ?? localFiles;
+    this.store = new Store(join(dataDir, "petrina.db"), { debugSql: options.debugSql });
+    try {
+      const loaded = this.store.loadActive((state) => { for (const task of state.tasks) restoreRepositoryState(task as MTask); renameRoles(state as MState); });
+      this.s = (loaded ?? this.empty()) as MState;
+      this.s.backgroundAgents = [];
+      // An injected agent command is the engine test seam. Never let fake-agent tests spawn a real
+      // system sleep assertion; production launches use the default unless they inject an observer.
+      const awakeObserver = options.awakeObserver ?? (options.agentCommand ? () => {} : undefined);
+      this.idleSleep = new IdleSleepAssertion(awakeObserver ? { observe: awakeObserver } : {});
+      this.draining = options.admissionsClosed ?? false;
+      if (loaded) {
+        renameRoles(this.s);
+        // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
+        for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); clearRunningTools(task); }
+      }
+      this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
+      this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
+      restoreProfileCatalog(this.s);
+      // Tests stand in the tools' own apps: those count as installed.
+      this.s.tools = detectTools(options.requireAgentCommand
+        ? id => Boolean(options.toolPath?.(id) || options.agentCommand)
+        : undefined).map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
+      this.s.setup = setupOf(loaded) as MState["setup"];
+      if (this.s.setup && !loaded?.setup && this.store.history.info().total > 0) this.s.setup.done = true;
+      this.s.planner = this.onUsable(PLANNER_PROFILE);
+      this.found = options.terminals?.() ?? detectTerminals(this.machine);
+      this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
+      this.tracking = new Tracking(this);
+      this.tracking.start();
+      // What is loaded is the starting point: observation begins here, and only later changes are events.
+      this.events = new WorkflowEvents(this, options.eventRetention);
+      this.events.baseline(this.s.tasks);
+      this.usageCoordinator.startReaders(this.dataDir, options);
+      this.recoverStoppedRestorations();
+    } catch (error) {
+      this.stopped = true;
+      const failures: unknown[] = [];
+      for (const close of [() => this.usageCoordinator.stop(), () => this.idleSleep?.shutdown(), () => this.tracking?.close(), () => this.store.close()]) {
+        try { close(); } catch (failure) { failures.push(failure); }
+      }
+      if (failures.length) throw new AggregateError([error, ...failures], "Engine construction failed and its resources could not all be closed");
+      throw error;
+    }
+    // Do not start native recovery for a synchronously failed construction with no returned owner.
     const browserRecovery = options.browserRecovery?.bind(options) ?? recoverBrowserTemps;
     let recovering: Promise<void>;
     try { recovering = browserRecovery(join(dataDir, "browser-temp"), options.browserTempRoot); }
@@ -325,39 +369,6 @@ export abstract class Kernel {
     // Launch awaits startupReady to report recovery failures. Consume an otherwise
     // unobserved rejection for direct Engine users while leaving the original promise rejectable.
     void this.startupReady.catch(() => undefined);
-    this.store = new Store(join(dataDir, "petrina.db"), { debugSql: options.debugSql });
-    const loaded = this.store.loadActive((state) => { for (const task of state.tasks) restoreRepositoryState(task as MTask); renameRoles(state as MState); });
-    this.s = (loaded ?? this.empty()) as MState;
-    this.s.backgroundAgents = [];
-    // An injected agent command is the engine test seam. Never let fake-agent tests spawn a real
-    // system sleep assertion; production launches use the default unless they inject an observer.
-    const awakeObserver = options.awakeObserver ?? (options.agentCommand ? () => {} : undefined);
-    this.idleSleep = new IdleSleepAssertion(awakeObserver ? { observe: awakeObserver } : {});
-    this.draining = options.admissionsClosed ?? false;
-    if (loaded) {
-      renameRoles(this.s);
-      // Nothing worked while Petrina was stopped: a step's working time ends at the last moment it saved.
-      for (const task of this.s.tasks) { this.pauseStep(task, this.s.now); stopCheckProgress(task, this.s.now); clearRunningTools(task); }
-    }
-    this.s.roleChanges = (loaded?.roleChanges ?? structuredClone(NO_ROLE_CHANGES)) as MState["roleChanges"];
-    this.s.roles = libraryRoles(this.s.roleChanges) as MState["roles"];
-    restoreProfileCatalog(this.s);
-    // Tests stand in the tools' own apps: those count as installed.
-    this.s.tools = detectTools(options.requireAgentCommand
-      ? id => Boolean(options.toolPath?.(id) || options.agentCommand)
-      : undefined).map((tool) => (options.toolPath?.(tool.id) ? { ...tool, status: "ready" as const } : tool)) as MState["tools"];
-    this.s.setup = setupOf(loaded) as MState["setup"];
-    if (this.s.setup && !loaded?.setup && this.store.history.info().total > 0) this.s.setup.done = true;
-    this.s.planner = this.onUsable(PLANNER_PROFILE);
-    this.found = options.terminals?.() ?? detectTerminals(this.machine);
-    this.s.terminals = this.found.map(({ id, name }) => ({ id, name }));
-    this.tracking = new Tracking(this);
-    this.tracking.start();
-    // What is loaded is the starting point: observation begins here, and only later changes are events.
-    this.events = new WorkflowEvents(this, options.eventRetention);
-    this.events.baseline(this.s.tasks);
-    this.usageCoordinator.startReaders(this.dataDir, options);
-    this.recoverStoppedRestorations();
   }
 
   waitUntilReady(): Promise<void> { return this.startupReady; }

@@ -1,11 +1,11 @@
-import { expect, it } from "bun:test";
+import { afterAll, expect, it } from "bun:test";
 import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
-import { makeWorld, removeDir } from "../../support.js";
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+const fixtures = nativeWorldFixtures();
+afterAll(() => fixtures.close());
 
 for (const approval of [false, true]) it(`starts settled delivery prerequisites at the saved ${approval ? "approval" : "publication"} boundary`, async () => {
-  const world = await makeWorld(`prepared-choice-${approval}`);
-  const engine = world.start({ agentCommand: () => { throw new Error("These settled prerequisites do not open an agent"); } });
-  try {
+  return fixtures.world(`prepared-choice-${approval}`, ({ world, engine: withEngine }) => withEngine(async engine => {
     await engine.waitUntilReady();
     engine.setPoolPaused(true);
     const productId = await engine.addProduct(world.clone);
@@ -18,5 +18,5 @@ for (const approval of [false, true]) it(`starts settled delivery prerequisites 
     expect(task.repository?.reviewedSha).toBeDefined();
     expect(task.repository?.checks).toBeUndefined();
     expect(world.github().calls.filter(call => call[1] === "create")).toEqual([]);
-  } finally { await engine.shutdown(); removeDir(world.dir); }
+  }, { agentCommand: () => { throw new Error("These settled prerequisites do not open an agent"); } }));
 });

@@ -1,20 +1,30 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
 import { Aborted } from "../../../src/kernel.js";
 import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
-import { makeWorld, removeDir, remoteRef, taskOf, until } from "../../support.js";
+import { remoteRef, taskOf, until } from "../../support.js";
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
+const fixtures = nativeWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("A delivery interrupted at any step never goes out twice", () => {
   it("never starts a publishing step that was waiting in line when the task was cancelled", async () => {
-    const w = await makeWorld("cancel-queued");
-    const engine = w.start({ agentCommand: () => { throw new Error("Prepared pull requests need no provider"); } });
-    const schedule = engine.schedule.bind(engine);
-    engine.schedule = () => {};
     const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     const controller = new AbortController();
     let queued: Promise<unknown> | undefined, occupying: Promise<unknown> | undefined, b: string | undefined;
+    let stopPeers = async () => { controller.abort(); release.resolve(); };
+    return fixtures.world("cancel-queued", ({ world: w, engine: withEngine }) => withEngine(async engine => {
+    const schedule = engine.schedule.bind(engine);
+    engine.schedule = () => {};
+    stopPeers = async () => {
+      controller.abort(); release.resolve();
+      const settled = await Promise.allSettled([occupying, queued]);
+      if (b) engine.drivers.delete(b);
+      const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, "Queued publication fixture peers did not all settle");
+    };
     try {
       await engine.waitUntilReady(); engine.setPoolPaused(false);
       const productId = await engine.addProduct(w.clone);
@@ -56,7 +66,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     } finally {
       release.resolve(); await occupying; await queued;
       if (b) engine.drivers.delete(b);
-      await engine.shutdown(); removeDir(w.dir);
     }
+    }, { agentCommand: () => { throw new Error("Prepared pull requests need no provider"); } }), {}, { stopPeers: () => stopPeers() });
   });
 });

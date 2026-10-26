@@ -17,7 +17,7 @@ export function removeFixtureRoot(root: string): void {
 export function directDrivers(root: string) {
   const active = new Map<Engine, FixtureOperations>();
   const completed = new WeakSet<Engine>();
-  let closing = false;
+  let closing = false, constructing = false;
   const deadlines = {
     allowanceMs: CLEANUP_MS * SLOW,
     arm(expired: () => void, ms: number) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
@@ -35,14 +35,28 @@ export function directDrivers(root: string) {
   const prepare = <T>(start: () => Promise<T>): Promise<T> => owner.run(start);
   const open = (dataDir: string, options: EngineOptions = {}): Engine => {
     if (closing) throw new Error("Direct-driver fixture is closing; no Engine may open");
-    if (active.size) throw new Error("Stop and settle the current Engine before opening its replacement");
-    const engine = new Engine(dataDir, options);
+    if (active.size || constructing) throw new Error("Stop and settle the current Engine before opening its replacement");
+    let born!: () => void, failed!: (error: unknown) => void;
+    const construction = new Promise<void>((resolve, reject) => { born = resolve; failed = reject; });
+    // Constructor callbacks can synchronously reenter close before a generation exists in active.
+    // Publish that birth's ownership first, so root cleanup also joins any late-born shutdown.
+    void owner.run(() => construction).catch(() => undefined);
+    constructing = true;
+    let engine: Engine;
+    try { engine = new Engine(dataDir, options); }
+    catch (error) { constructing = false; failed(error); throw error; }
     const generation = new FixtureOperations({
       ...deadlines, label: `Engine generation at ${dataDir}`,
       stop: () => engine.shutdown(),
       dispose: () => { active.delete(engine); completed.add(engine); },
     });
     active.set(engine, generation);
+    constructing = false;
+    if (closing) {
+      void generation.close().then(born, failed);
+      throw new Error("Direct-driver fixture closed during Engine construction; no generation may be handed out");
+    }
+    born();
     return engine;
   };
   const run = <T>(engine: Engine, start: () => Promise<T>): Promise<T> => {
