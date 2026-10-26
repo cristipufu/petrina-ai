@@ -2,7 +2,7 @@ import { describe as originalDescribe } from "bun:test";
 import { afterAll, expect, it, spyOn } from "bun:test";
 
 
-import { existsSync, lstatSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { join } from "node:path";
 
@@ -11,34 +11,15 @@ import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { isCheckExecutorFacts, isCheckOutputIdentity } from "@petrina/core";
 
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
-import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { runChecks, checkCommandOutcome, powerLogSleep, heldMachineRecords } from "../../fixtures/check-runner.js";
-import { checkExecutionFixture } from "../../fixtures/check-execution.js";
+import { checkExecutionFixture, checkOwner, checkStartCapture } from "../../fixtures/check-execution.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 const root = (prefix: string) => { const dir = tempDir(prefix); roots.push(dir); return dir; };
 const arm = (expired: () => void, ms: number) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
-const dispose = (dir: string) => {
-  removeDir(dir);
-  try { lstatSync(dir); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  throw new Error(`The check fixture could not remove ${dir}`);
-};
-function checkOwner(dir: string, stop: () => void | Promise<void>) {
-  let closing = false;
-  const operations = new FixtureOperations({
-    arm, allowanceMs: CLEANUP_MS * SLOW, label: `Check fixture at ${dir}`,
-    stop: () => { closing = true; return stop(); }, dispose: () => dispose(dir),
-  });
-  return {
-    run: <T>(start: () => Promise<T>) => operations.run(start),
-    close: () => operations.close(),
-    beforeStart: () => !closing,
-  };
-}
 
 originalDescribe("a product's checks", () => {
 it("reports each check's start and result while another check is still running", async () => {
@@ -110,12 +91,13 @@ for (const mode of ["launch failure", "successful registration", "registration f
     const ready = join(dir, "ready"), program = join(dir, "check.ts");
     const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
     let pid: number | undefined, returned = false;
-    let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined, restore = () => {};
+    let capture: ReturnType<typeof checkStartCapture> | undefined;
     const owner = checkOwner(dir, async () => {
       released.resolve();
       const errors: unknown[] = [];
-      try { restore(); } catch (error) { errors.push(error); }
+      try { capture?.restore(); } catch (error) { errors.push(error); }
       try {
+        const child = capture?.child();
         if (pid !== undefined && !child) throw new Error("The registration fixture did not capture its launched child");
         if (child && await stopOwnedProcess(child, { graceMs: CLEANUP_MS * SLOW, forceMs: CLEANUP_MS * SLOW }, arm) !== "confirmed")
           throw new Error("The registration fixture's actual child did not stop");
@@ -128,23 +110,8 @@ writeFileSync(${JSON.stringify(ready)} + ".tmp", "ready"); renameSync(${JSON.str
 console.log("Original command output");
 ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.exit(0);"}`);
       const command = mode === "launch failure" ? ["petrina-no-such-program"] : [process.execPath, program];
-      const nativeSpawn = Bun.spawn.bind(Bun);
-      const dispatch = ((...args: unknown[]) => {
-        const first = args[0];
-        const argv = Array.isArray(first) ? first : first && typeof first === "object" && "cmd" in first ? first.cmd : undefined;
-        const options = Array.isArray(first) ? args[1] : first;
-        const matches = Array.isArray(argv) && argv.length === command.length && argv.every((value, index) => value === command[index]) &&
-          options && typeof options === "object" && "cwd" in options && options.cwd === dir;
-        const started = Reflect.apply(nativeSpawn, undefined, args);
-        if (matches) {
-          const owned = started as Bun.Subprocess<"ignore", "pipe", "pipe">;
-          child = owned; void owned.exited.catch(() => undefined);
-        }
-        return started;
-      }) as typeof Bun.spawn;
-      const spawning = spyOn(Bun, "spawn");
-      restore = () => spawning.mockRestore();
-      spawning.mockImplementation(dispatch);
+      capture = checkStartCapture(dir, command);
+      capture.install();
       const running = owner.run(() => runChecks(dir, [{ name: "Registered check", argv: command }],
       process.env, 30_000 * SLOW, undefined, join(dir, "logs"), async () => {
         entered.resolve(); await released.promise;
@@ -160,6 +127,7 @@ ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.ex
         released.resolve();
       }
       const [run] = await running;
+      const child = capture.child();
       expect(isCheckExecutorFacts(run!.executor)).toBe(true);
       expect(isCheckOutputIdentity(run!.outputIdentity)).toBe(mode === "successful registration");
       expect(run!.endedAt).toBeDefined(); expect(run!.cleanupIncomplete).toBeUndefined();
@@ -310,46 +278,142 @@ it("cancels evidence collection after a completed failure without starting pendi
 
 originalDescribe("a product's checks", () => {
 it("reports a check that exceeds its deadline as timed out", async () => {
-    const dir = root("petrina-checks-timeout-");
-    const [run] = await runChecks(dir, [{ name: "Too slow", argv: [process.execPath, "-e", "await Bun.sleep(120000)"] }], process.env, 200 * SLOW, undefined, join(dir, "logs"));
-    expect(run!.ok).toBe(false);
-    expect(run!.timedOut).toBe(true);
-    expect(run!.execution?.timedOut).toBe(true);
-    expect(isCheckExecutorFacts(run!.executor)).toBe(true);
-    expect(run!.outputIdentity).toBeUndefined();
-    expect(existsSync(run!.logPath!)).toBe(true);
-    expect(run!.logError).toBeUndefined();
+    const owner = await checkExecutionFixture("running", { name: "Too slow", timeoutMs: 200 * SLOW });
+    await setupWithCleanup(async () => {
+      expect(owner.ready()).toBe(true);
+      expect(owner.child()!.exitCode).toBeNull();
+      const [run] = await owner.run(async () => "");
+      expect(run!.ok).toBe(false);
+      expect(run!.timedOut).toBe(true);
+      expect(run!.execution?.timedOut).toBe(true);
+      expect(isCheckExecutorFacts(run!.executor)).toBe(true);
+      expect(run!.outputIdentity).toBeUndefined();
+      expect(existsSync(run!.logPath!)).toBe(true);
+      expect(run!.logError).toBeUndefined();
+      expect(await childState(owner.child()!.pid)).toBe("ended");
+    }, () => owner.close());
+    await owner.close();
   });
 });
 
 originalDescribe("a check that misbehaves", () => {
-it("reports fast failures when many checks finish together, without waiting for their timeout", async () => {
-    // A minute leaves room for 24 programs starting at once while the load climbs after SLOW was measured.
-    // A failure Petrina missed would still be cut off at that limit and show as timed out.
-    const results = await runChecks(root("petrina-checks-fast-"), Array.from({ length: 24 }, (_, index) => ({ name: `Check ${index}`, argv: [process.execPath, "-e", "console.error('Failed right away'); process.exit(1)"] })), process.env, 60_000 * SLOW);
-    for (const result of results) {
-      expect(result.ok).toBe(false);
-      expect(result.timedOut).toBeUndefined();
-      expect(result.output).toContain("Failed right away");
-    }
+it("records a real fast failure without waiting for its timeout", async () => {
+    const dir = tempDir("petrina-checks-fast-native-"), command = [process.execPath, "-e", "console.error('Failed right away'); process.exit(1)"];
+    let capture: ReturnType<typeof checkStartCapture> | undefined;
+    const owner = checkOwner(dir, async () => {
+      const errors: unknown[] = [];
+      try { capture?.restore(); } catch (error) { errors.push(error); }
+      const child = capture?.child();
+      if (child) try {
+        if (await stopOwnedProcess(child, { graceMs: CLEANUP_MS * SLOW, forceMs: CLEANUP_MS * SLOW }, arm) !== "confirmed")
+          throw new Error("The fast-failure fixture's actual child did not stop");
+      } catch (error) { errors.push(error); }
+      if (errors.length) throw new AggregateError(errors, "Fast-failure fixture cleanup could not be confirmed");
+    });
+    await setupWithCleanup(async () => {
+      capture = checkStartCapture(dir, command);
+      capture.install();
+      const results = await owner.run(() => runChecks(dir, [{ name: "Check 0", argv: command }], process.env, 60_000 * SLOW,
+        undefined, undefined, undefined, undefined, async () => "", undefined, undefined, owner.beforeStart));
+      expect(results).toHaveLength(1);
+      expect(results[0]!.ok).toBe(false);
+      expect(results[0]!.timedOut).toBeUndefined();
+      expect(results[0]!.output).toContain("Failed right away");
+      expect(results[0]!.execution?.exit).toEqual({ status: "reported", code: 1 });
+      expect(capture.child()).toBeDefined();
+      expect(await childState(capture.child()!.pid)).toBe("ended");
+    }, () => owner.close());
+    await owner.close();
+  });
+
+it("records all 24 controlled command results in order without starting the next early", async () => {
+    const dir = tempDir("petrina-checks-fast-records-"), command = [process.execPath, "-e", "console.error('Failed right away'); process.exit(1)"];
+    // These are explicit stream/exit protocol records; the neighboring case proves real native exit.
+    const recordOf = () => {
+      const completion = Promise.withResolvers<number>(), entered = Promise.withResolvers<void>();
+      const child = { exited: completion.promise, stdout: new Response("").body!, stderr: new Response("Failed right away\n").body! } as Bun.Subprocess<"ignore", "pipe", "pipe">;
+      return { child, completion, entered };
+    };
+    const records: ReturnType<typeof recordOf>[] = [];
+    const starts: string[][] = [], progress: string[] = [];
+    let restore = () => {};
+    const owner = checkOwner(dir, () => { for (const record of records) record.completion.resolve(1); restore(); });
+    await setupWithCleanup(async () => {
+      records.push(...Array.from({ length: 24 }, recordOf));
+      const nativeSpawn = Bun.spawn.bind(Bun);
+      const spawning = spyOn(Bun, "spawn");
+      restore = () => spawning.mockRestore();
+      spawning.mockImplementation(((...args: unknown[]) => {
+        const first = args[0], options = args[1];
+        if (Array.isArray(first) && first.length === command.length && first.every((value, index) => value === command[index]) &&
+          options && typeof options === "object" && "cwd" in options && options.cwd === dir) {
+          const record = records[starts.length];
+          if (!record) throw new Error("The batch started more declared commands than it owns");
+          starts.push([...first]); record.entered.resolve(); return record.child;
+        }
+        return Reflect.apply(nativeSpawn, undefined, args);
+      }) as typeof Bun.spawn);
+      const running = owner.run(() => runChecks(dir, Array.from({ length: 24 }, (_, index) => ({ name: `Check ${index}`, argv: command })), process.env, 60_000 * SLOW,
+        undefined, undefined, undefined, event => progress.push(`${event.index}:${event.kind}`), async () => "", undefined, undefined, owner.beforeStart));
+      for (const [index, record] of records.entries()) {
+        await Promise.race([record.entered.promise, running.then(() => { throw new Error(`The batch ended before Check ${index} started`); })]);
+        expect(starts).toHaveLength(index + 1);
+        record.completion.resolve(1);
+      }
+      const results = await running;
+      expect(results).toHaveLength(24);
+      expect(results.map(result => result.name)).toEqual(Array.from({ length: 24 }, (_, index) => `Check ${index}`));
+      expect(starts).toEqual(Array.from({ length: 24 }, () => command));
+      expect(progress).toEqual(Array.from({ length: 24 }, (_, index) => [`${index}:started`, `${index}:finished`]).flat());
+      for (const result of results) {
+        expect(result.ok).toBe(false);
+        expect(result.timedOut).toBeUndefined();
+        expect(result.output).toContain("Failed right away");
+      }
+    }, () => owner.close());
+    await owner.close();
+  });
+
+it("independently closes a prepared actor when its caller fails before handing it to a check", async () => {
+    const owner = await checkExecutionFixture("running"), child = owner.child()!;
+    await setupWithCleanup(async () => {
+      const failure = new Error("Caller failed before native handoff");
+      let actual: unknown;
+      try { await setupWithCleanup(() => { throw failure; }, () => owner.close()); }
+      catch (error) { actual = error; }
+      expect(actual).toBe(failure);
+      expect(await childState(child.pid)).toBe("ended");
+      expect(child.stdout.locked).toBe(false);
+      expect(child.stderr.locked).toBe(false);
+      expect(existsSync(owner.root)).toBe(false);
+    }, () => owner.close());
+    await owner.close();
   });
 });
 
 originalDescribe("a check that misbehaves", () => {
 it("stops the current check and never starts pending commands when the task is stopped", async () => {
-    const stop = new AbortController();
-    setTimeout(() => stop.abort(), 300);
-    const started = Date.now();
-    const dir = root("petrina-checks-abort-");
-    const results = await runChecks(dir, [{ name: "Slow", argv: [process.execPath, "-e", "await Bun.sleep(30000)"] }, { name: "Slower", argv: [process.execPath, "-e", "await Bun.sleep(40000)"] }], process.env, 60_000, stop.signal, join(dir, "logs"));
-    expect(Date.now() - started).toBeLessThan(4000);
-    expect(results.map((run) => [run.name, run.ok])).toEqual([["Slow", false]]);
-    for (const run of results) {
-      expect(existsSync(run.logPath!)).toBe(true);
-      expect(run.logError).toBeUndefined();
-      expect(isCheckExecutorFacts(run.executor)).toBe(true);
-      expect(run.outputIdentity).toBeUndefined();
-    }
+    const owner = await checkExecutionFixture("running", { name: "Slow", pendingName: "Slower", timeoutMs: 60_000 });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const close = () => { clearTimeout(timer); return owner.close(); };
+    await setupWithCleanup(async () => {
+      expect(owner.ready()).toBe(true);
+      expect(owner.child()!.exitCode).toBeNull();
+      timer = setTimeout(() => owner.cancel(), 300);
+      const started = Date.now();
+      const results = await owner.run(async () => "", true);
+      expect(Date.now() - started).toBeLessThan(4000);
+      expect(results.map((run) => [run.name, run.ok])).toEqual([["Slow", false]]);
+      for (const run of results) {
+        expect(existsSync(run.logPath!)).toBe(true);
+        expect(run.logError).toBeUndefined();
+        expect(isCheckExecutorFacts(run.executor)).toBe(true);
+        expect(run.outputIdentity).toBeUndefined();
+      }
+      expect(owner.spawning).toHaveBeenCalledTimes(1);
+      expect(await childState(owner.child()!.pid)).toBe("ended");
+    }, close);
+    await close();
   });
 });
 

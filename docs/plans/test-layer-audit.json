@@ -2387,13 +2387,22 @@
         "actual defunct lost-exit"
       ],
       "reviewedOriginalRuntimePasses": 32,
-      "currentRuntimePasses": 32,
       "reviewedOriginalAssertionSites": 169,
-      "currentAssertionSites": 169,
       "validation": {
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
         "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
         "fullQualification": "8f7e2893"
+      },
+      "currentFamily": {
+        "base": "2158d9f8",
+        "previousOwnerRuntimeCases": 15,
+        "currentOwnerRuntimeCases": 17,
+        "unchangedHelperNeighbors": 6,
+        "previousMatcherChainsPreserved": 84,
+        "currentMatcherSites": 108,
+        "artifact": "workstreams/check-execution-family-next/preservation-v2.json",
+        "review": "Actual runner launch/fast exit retained, independent leased timeout/cancel cleanup before fixture disposal. Controlled24 count/order/progress cannot pass with empty/truncated rows. RootR1 and first UNRUNV1 preserved.",
+        "qualification": "Root23pass/0fail/0skip/268expectations, Repository types/conventions0. Full cost/platform qualification remains separate."
       }
     },
     {
@@ -7544,6 +7553,13 @@
       "gitCallerLocations": 92482,
       "gitCallerUnavailable": 79,
       "limits": "Mac qualification only. New caller stack capture adds observer overhead; host contention uncontrolled. Cost target, environment preflight/reuse and main-protecting generic delivery remain unfinished."
+    },
+    "check-execution-family-focused": {
+      "patch": "48422f42d4c1378e166981f4d0de44148a3087d2a55726f8d63221f00f7a27af",
+      "root": "23cases/268expectations,Repo types/conventions0",
+      "artifacts": "workstreams/check-execution-family-next/handoff.json; check-execution-family-integrated-review.json",
+      "resourceScope": "Sameauthor23case invocation observed30directstarts/30exits,18Bun3Git9ps; expected2failedstarts separate; actual fast1Bun/controlled24zero/addedindependentfailure1Bun. No paired baseline/full-speed claim.",
+      "limits": "These two native test files follow the latest complete cfdb run. Broader native cleanup, platform and complete global qualification remain open."
     }
   },
   "resourceAudit": {
