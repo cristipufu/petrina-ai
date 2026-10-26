@@ -7,6 +7,7 @@ import { tempDir } from "@petrina/test-support/fixtures";
 import { directDrivers, closeDirectDrivers } from "../../fixtures/direct-drivers.js";
 import { installPreparedProduct, type PreparedProduct } from "../../fixtures/prepared-product.js";
 import { makeWorld } from "../../support.js";
+import { makeProduct } from "@petrina/test-support/repositories";
 
 const fixtures = new Set<ReturnType<typeof directDrivers>>();
 afterEach(async () => { await closeDirectDrivers(fixtures); fixtures.clear(); });
@@ -67,6 +68,50 @@ for (const format of ["sha1", "sha256"] as const) it(`prepares known ${format} p
       expect(restarted.tracking.log.productIdTaken("api")).toBe(true);
     });
     await owner.stop(restarted);
+  }), () => owner.close());
+  await owner.close(); fixtures.delete(owner);
+});
+
+
+for (const format of ["sha1", "sha256"] as const) it(`calibrates declared ${format} local catalog recipes against real discovery and durable restart`, async () => {
+  const root = tempDir(`petrina-prepared-local-${format}-`), owner = directDrivers(root); fixtures.add(owner);
+  await setupWithCleanup(() => owner.prepare(async () => {
+    const path = await makeProduct(join(root, "product"), { origin: "none", objectFormat: format });
+    const actual = owner.open(join(root, "actual-data"), { agentCommand: () => undefined });
+    const expected = await owner.run(actual, async () => {
+      await actual.waitUntilReady(); actual.setPoolPaused(true);
+      expect(await actual.addProduct(path, "Local product")).toBe("clone");
+      expect(Object.hasOwn(actual.s.products[0]!, "remote")).toBe(false);
+      return structuredClone(actual.s.products);
+    });
+    await owner.stop(actual);
+    const data = join(root, "prepared-data"), prepared = owner.open(data, { agentCommand: () => undefined });
+    await owner.run(prepared, async () => {
+      await prepared.waitUntilReady(); prepared.setPoolPaused(true); await Promise.all([...prepared.backgroundWork]);
+      const native = Bun.spawn;
+      let calls = 0;
+      const watch = spyOn(Bun, "spawn");
+      try {
+        watch.mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+          if (args[0][0] === "git" && args[1]?.cwd === path) calls++;
+          return Reflect.apply(native, Bun, args);
+        }) as typeof Bun.spawn);
+        expect(installPreparedProduct(prepared, { id: "clone", name: "Local product", repo: "local/clone", tone: "blue", path,
+          defaultBranch: "main", delivery: "local", approveDelivery: true })).toBe("clone");
+        expect(calls).toBe(0);
+      } finally { watch.mockRestore(); }
+      expect(prepared.s.products).toEqual(expected);
+      expect(prepared.tracking.log.productIdTaken("clone")).toBe(true);
+      expect(prepared.s.products[0]!.checks).toBeUndefined(); expect(prepared.s.products[0]!.checkSetup).toBeUndefined();
+    });
+    await owner.stop(prepared);
+    const reopened = owner.open(data, { agentCommand: () => undefined });
+    await owner.run(reopened, async () => {
+      await reopened.waitUntilReady();
+      expect(reopened.s.products).toEqual(expected);
+      expect(reopened.tracking.log.productIdTaken("clone")).toBe(true);
+    });
+    await owner.stop(reopened);
   }), () => owner.close());
   await owner.close(); fixtures.delete(owner);
 });

@@ -563,16 +563,41 @@ export async function contentTree(path: string): Promise<string | undefined> {
  */
 export async function squash(path: string, fork: string, message: string): Promise<{ head: string; tree: string }> {
   if (!isSha(fork)) throw new Error("Not a complete fork commit");
-  // Read recorded parents rather than the optional commit graph. A direct single parent proves
-  // there is already exactly one task commit, without walking/counting the whole branch.
-  const [head, tree, parents, ...body] = (await must(["git", "-c", "core.commitGraph=false", "show", "--no-patch", "--format=%H%n%T%n%P%n%B", "HEAD"], path)).split("\n");
-  if (!head || !tree || !isSha(head) || !isSha(tree)) throw new Error("The task's current commit could not be read");
-  if (head === fork || (parents === fork && body.join("\n").trim() === message.trim())) return { head, tree };
-  // The commit is made first and the branch moves to it last, so a failure leaves the branch as it was.
-  const sha = await must(["git", "commit-tree", tree, "-p", fork, "-F", "-"], path, message);
-  if (!isSha(sha)) throw new Error("The folded task commit could not be created");
-  await must(["git", "reset", "--soft", "--quiet", sha], path);
-  return { head: sha, tree };
+  return (await observeFold(path)).squash(fork, message);
+}
+
+export type FoldObservation = ({ kind: "observed"; head: string; tree: string; parents: readonly string[] }
+  | { kind: "unavailable" }) & { squash(fork: string, message: string): Promise<{ head: string; tree: string }> };
+
+/** One operation's actual commit metadata and bound, single-use fold; never cached between operations. */
+export async function observeFold(path: string): Promise<FoldObservation> {
+  let captured: { head: string; tree: string; parents: string[]; body: string } | undefined;
+  let failure: { error: unknown } | undefined;
+  try {
+    // Raw parents, never the optional commit graph, prove an existing single task commit.
+    const [head, tree, parents, ...body] = (await must(["git", "-c", "core.commitGraph=false", "show", "--no-patch", "--format=%H%n%T%n%P%n%B", "HEAD"], path)).split("\n");
+    if (!head || !tree || !isSha(head) || !isSha(tree)) throw new Error("The task's current commit could not be read");
+    const recordedParents = parents ? parents.split(" ") : [];
+    if (recordedParents.some(parent => !isSha(parent))) throw new Error("The task's current commit could not be read");
+    captured = { head, tree, parents: recordedParents, body: body.join("\n") };
+  } catch (error) { failure = { error }; }
+  let consumed = false;
+  const fold = async (fork: string, message: string): Promise<{ head: string; tree: string }> => {
+    if (!isSha(fork)) throw new Error("Not a complete fork commit");
+    if (consumed) throw new Error("A fold observation belongs to one operation");
+    consumed = true;
+    // An unavailable observation stays unavailable; it must never be retried into successful proof.
+    if (failure) throw failure.error;
+    const { head, tree, parents, body } = captured!;
+    if (head === fork || (parents.length === 1 && parents[0] === fork && body.trim() === message.trim())) return { head, tree };
+    // Create the commit first; move the branch last, preserving the original index/worktree semantics.
+    const sha = await must(["git", "commit-tree", tree, "-p", fork, "-F", "-"], path, message);
+    if (!isSha(sha)) throw new Error("The folded task commit could not be created");
+    await must(["git", "reset", "--soft", "--quiet", sha], path);
+    return { head: sha, tree };
+  };
+  return captured ? { kind: "observed", head: captured.head, tree: captured.tree, parents: Object.freeze([...captured.parents]), squash: fold }
+    : { kind: "unavailable", squash: fold };
 }
 
 /**

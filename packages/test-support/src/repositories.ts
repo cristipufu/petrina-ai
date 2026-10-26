@@ -6,14 +6,14 @@ import { tempDir, removeDir } from "./fixtures.js";
 export const ADDRESS = "https://github.com/acme/demo.git";
 
 /** A product with a GitHub-like origin: a bare repository and a clone of it, on main. */
-export async function makeProduct(root: string): Promise<string> {
-  const seed = await repositorySeed(undefined, true);
+export async function makeProduct(root: string, options: { origin?: "private" | "none"; objectFormat?: "sha1" | "sha256" } = {}): Promise<string> {
+  const seed = await repositorySeed(undefined, true, options.objectFormat, options.origin === "none" ? "none" : "github");
   const origin = join(root, "origin.git");
   const clone = join(root, "clone");
   mkdirSync(root, { recursive: true });
-  cpSync(seed.origin, origin, { recursive: true });
+  if (options.origin !== "none") cpSync(seed.origin, origin, { recursive: true });
   cpSync(seed.clone, clone, { recursive: true });
-  await git(clone, "remote", "set-url", "origin", origin);
+  if (options.origin !== "none") await git(clone, "remote", "set-url", "origin", origin);
   return clone;
 }
 
@@ -23,13 +23,13 @@ interface RepositorySeed { readonly path: string; readonly origin: string; reado
 // ever handed out; a failed one leaves no entry and no folder behind, so the next fixture prepares it afresh.
 const repositorySeeds = new Map<string, Promise<RepositorySeed>>();
 const seedFolders = new Set<string>();
-export function repositorySeed(version?: string, versionFile = false, objectFormat?: "sha1" | "sha256"): Promise<RepositorySeed> {
-  const key = JSON.stringify([version ?? "", versionFile, objectFormat]);
+export function repositorySeed(version?: string, versionFile = false, objectFormat?: "sha1" | "sha256", origin: "github" | "none" = "github"): Promise<RepositorySeed> {
+  const key = JSON.stringify([version ?? "", versionFile, objectFormat, origin]);
   const saved = repositorySeeds.get(key);
   if (saved) return saved;
   const path = tempDir("petrina-repository-seed-");
   seedFolders.add(path);
-  const preparing = prepareSeed(path, version, versionFile, objectFormat).catch((error: unknown) => {
+  const preparing = prepareSeed(path, version, versionFile, objectFormat, origin).catch((error: unknown) => {
     if (repositorySeeds.get(key) === preparing) repositorySeeds.delete(key);
     removeDir(path);
     // A folder that could not be removed yet stays for the exit cleanup.
@@ -40,7 +40,7 @@ export function repositorySeed(version?: string, versionFile = false, objectForm
   return preparing;
 }
 
-async function prepareSeed(path: string, version: string | undefined, versionFile: boolean, objectFormat: "sha1" | "sha256" | undefined): Promise<RepositorySeed> {
+async function prepareSeed(path: string, version: string | undefined, versionFile: boolean, objectFormat: "sha1" | "sha256" | undefined, remote: "github" | "none"): Promise<RepositorySeed> {
   const source = join(path, "source"), origin = join(path, "origin.git"), clone = join(path, "clone");
   mkdirSync(source);
   await git(source, "init", "-q", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
@@ -65,6 +65,7 @@ async function prepareSeed(path: string, version: string | undefined, versionFil
     await git(clone, "remote", "remove", "origin");
     await git(clone, "remote", "add", "origin", ADDRESS);
   }
+  if (remote === "none") await git(clone, "remote", "remove", "origin");
   return Object.freeze({ path, origin, clone, head: await git(source, "rev-parse", "HEAD") });
 }
 // Standalone diagnostic scripts import these helpers too. The parallel runner owns cleanup when

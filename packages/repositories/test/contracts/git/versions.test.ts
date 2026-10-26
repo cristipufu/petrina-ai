@@ -161,6 +161,32 @@ describe("Petrina's own git steps", () => {
     expect(await contains(repo, "other-reference", base)).toBe(false);
     expect(await contains(repo, "HEAD", "invalid-ancestor")).toBe(false);
   });
+
+  for (const format of ["sha1", "sha256"] as const) it(`owns one ${format} fold observation and observes each later operation afresh`, async () => {
+    const repo = join(temp, `observed-fold-${format}`); mkdirSync(repo);
+    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
+    writeFileSync(join(repo, "README.md"), "Initial\n"); await commitAll(repo, "Initial");
+    const base = await operations.head(repo);
+    writeFileSync(join(repo, "README.md"), "Actual task contents\n"); await commitAll(repo, "Task");
+    const first = await operations.observeFold(repo);
+    expect(first.kind).toBe("observed");
+    if (first.kind !== "observed") throw new Error("The committed task was unavailable");
+    expect(first.parents).toEqual([base]);
+    expect(first.head).toBe(await operations.head(repo));
+    expect(first.tree).toBe(await git(repo, "rev-parse", "HEAD^{tree}"));
+    expect(await first.squash(base, "Task")).toEqual({ head: first.head, tree: first.tree });
+    await expectRejection(first.squash(base, "Must not reuse an earlier operation"), "one operation");
+    writeFileSync(join(repo, "later.txt"), "A later mutation\n"); await commitAll(repo, "Later");
+    const later = await operations.observeFold(repo);
+    expect(later.kind).toBe("observed");
+    if (later.kind !== "observed") throw new Error("The later committed task was unavailable");
+    expect(later.head).not.toBe(first.head); expect(later.tree).not.toBe(first.tree);
+    expect(later.parents).toEqual([first.head]);
+    const result = await later.squash(base, "Final message");
+    expect(result).toEqual({ head: await operations.head(repo), tree: later.tree });
+    expect(await git(repo, "show", "-s", "--format=%P", "HEAD")).toBe(base);
+    expect(await git(repo, "show", "HEAD:later.txt")).toBe("A later mutation");
+  });
 });
 
 describe("the change's fingerprint", () => {

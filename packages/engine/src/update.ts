@@ -37,13 +37,18 @@ export class Updates {
   async fold(scope: RepositoryContext): Promise<FoldedVersion | undefined> {
     const { work: repository } = scope;
     // While the builder brings the work up to date, the branch sits on main with the change not committed yet.
-    if (!repository.worktree || repository.updating) return;
-    const settled = await this.settleBase(scope);
+    const worktree = repository.worktree;
+    if (!worktree || repository.updating) return;
+    // Source/commit reads below do not change HEAD. Keep this observation within this fold only.
+    let pending: Promise<git.FoldObservation> | undefined;
+    const observe = () => pending ??= git.observeFold(worktree);
+    const settled = await this.settleBase(scope, observe);
     const base = settled.base ?? repository.base;
     if (!base) return;
-    const fork = settled.fork ?? await git.mergeBase(repository.worktree, "HEAD", base);
+    const observed = await observe();
+    const fork = settled.fork ?? await git.mergeBase(worktree, observed.kind === "observed" ? observed.head : "HEAD", base);
     if (!fork) return;
-    const version = await git.squash(repository.worktree, fork, this.message(scope));
+    const version = await observed.squash(fork, this.message(scope));
     await this.k.rememberVersion(scope, version);
     return { fork, version };
   }
@@ -55,7 +60,7 @@ export class Updates {
    * would be folded into the task's commit. The base follows the branch's latest meeting with main, read from
    * the product's own clone with no network. The same when the noted base is not in the branch at all.
    */
-  private async settleBase(scope: RepositoryContext): Promise<{ base?: string; fork?: string }> {
+  private async settleBase(scope: RepositoryContext, observe: () => Promise<git.FoldObservation>): Promise<{ base?: string; fork?: string }> {
     const { task, work: repository } = scope;
     const worktree = repository.worktree!;
     const base = repository.baseSha;
@@ -66,13 +71,17 @@ export class Updates {
       ? await git.revParse(product.path, `refs/petrina/sources/${task.id}`)
       : (repository.delivery !== "local" || repository.localUpdate?.pushed === false ? await git.revParse(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await git.revParse(product.path, `refs/heads/${branch}`));
     if (!main) return { base };
-    if ((await git.mergeBase(worktree, "HEAD", main)) === base) return { base, fork: base };
+    const observed = await observe();
+    const head = observed.kind === "observed" ? observed.head : "HEAD";
+    // Direct recorded ancestry proves the ordinary unchanged source without walking history again.
+    if (main === base && observed.kind === "observed" && (observed.head === base || observed.parents.length === 1 && observed.parents[0] === base)) return { base, fork: base };
+    if ((await git.mergeBase(worktree, head, main)) === base) return { base, fork: base };
     // Moving where the work starts rests on the commits themselves, not on Git's commit index: an edited one could
     // move it past a lesson main removed, which the learnings kept on an update would then bring back.
-    const met = await git.mergeBase(worktree, "HEAD", main, true);
+    const met = await git.mergeBase(worktree, head, main, true);
     if (!met) return { base };
     if (met === base) return { base, fork: base };
-    const [forward, baseInBranch] = await Promise.all([git.contains(worktree, met, base, true), git.contains(worktree, "HEAD", base, true)]);
+    const [forward, baseInBranch] = await Promise.all([git.contains(worktree, met, base, true), git.contains(worktree, head, base, true)]);
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
     if (!forward && baseInBranch) return { base, fork: base };
     repository.baseSha = met;

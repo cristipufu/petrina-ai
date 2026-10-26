@@ -1,5 +1,5 @@
-import { afterAll, expect, it } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { afterAll, expect, it, spyOn } from "bun:test";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "../../../src/commands.js";
 import { headNow } from "../../../src/repository-head.js";
@@ -43,4 +43,39 @@ it("reads a working copy's HEAD from Git's files as Git itself does, for callbac
   await git(copy, "switch", "-q", "--detach", "HEAD~1");
   expect(headNow(copy)).toBe(await git(clone, "rev-parse", "main"));
   expect(() => headNow(join(root, "missing"))).toThrow();
+});
+
+
+for (const format of ["sha1", "sha256"] as const) it(`copies declared ${format} no-origin recipes without discovery or per-copy Git and keeps writes private`, async () => {
+  const root = tempDir(`petrina-no-origin-${format}-`); roots.push(root);
+  const first = await makeProduct(join(root, "first"), { origin: "none", objectFormat: format });
+  const baseline = await git(first, "rev-parse", "HEAD");
+  expect(baseline).toHaveLength(format === "sha1" ? 40 : 64);
+  expect(await git(first, "remote")).toBe("");
+  expect(existsSync(join(root, "first", "origin.git"))).toBe(false);
+  const native = Bun.spawn;
+  let calls = 0, second = "";
+  const watch = spyOn(Bun, "spawn");
+  try {
+    watch.mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+      if (args[0][0] === "git") calls++;
+      return Reflect.apply(native, Bun, args);
+    }) as typeof Bun.spawn);
+    second = await makeProduct(join(root, "second"), { origin: "none", objectFormat: format });
+    expect(calls).toBe(0);
+  } finally { watch.mockRestore(); }
+  expect(await git(second, "remote")).toBe("");
+  expect(await git(second, "rev-parse", "HEAD")).toBe(baseline);
+  expect(await git(first, "config", "--local", "--list")).toBe(await git(second, "config", "--local", "--list"));
+  writeFileSync(join(first, "README.md"), "Private mutable first copy\n");
+  await git(first, "add", "."); await git(first, "commit", "-qm", "Only the first changes");
+  expect(await git(first, "rev-parse", "HEAD")).not.toBe(baseline);
+  expect(await git(second, "rev-parse", "HEAD")).toBe(baseline);
+  expect(readFileSync(join(second, "README.md"), "utf8")).toBe("# Demo\n");
+  const third = await makeProduct(join(root, "third"), { origin: "none", objectFormat: format });
+  expect(await git(third, "rev-parse", "HEAD")).toBe(baseline);
+  // The existing default still owns its actual private remote and tracking configuration.
+  const ordinary = await makeProduct(join(root, "ordinary"), { objectFormat: format });
+  expect(await git(ordinary, "remote", "get-url", "origin")).toBe(join(root, "ordinary", "origin.git"));
+  expect(existsSync(join(root, "ordinary", "origin.git"))).toBe(true);
 });
