@@ -19,7 +19,7 @@ describe.concurrent("one task across products", () => {
 
     const { first, second, id } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" })), title: "A shared local delivery", clientId: "shared-history-request", backlog: true });
       engine.schedule();
       expect(engine.task(id)?.state).toBe("backlog");
@@ -109,7 +109,7 @@ describe.concurrent("one task across products", () => {
 
     const { id } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       api.setGitHub((state) => { state.fail = { "pr create": 1 }; });
       const worksOn = [first, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const }));
       const id = engine.addTask({ backlog: true, productId: first, worksOn, title: "A partial delivery" });
@@ -153,7 +153,7 @@ describe.concurrent("one task across products", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "release" }], title: "Release the shared greeting" });
       await prepareSharedDelivery(engine, id, {});
       engine.schedule();
@@ -189,7 +189,7 @@ describe.concurrent("one task across products", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const id = engine.addTask({ productId: first, worksOn: [{ productId: first, startFrom: { kind: "pull-request", value: "7" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "pull-request" }], title: "Update the shared PR" });
       const plan = await until(engine, (state) => !!itemOf(state, id, "plan"), coordinator([]));
       expect(taskOf(plan, id).workRows).toHaveLength(2);
@@ -237,7 +237,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
 
     const { id, approved } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       engine.setProductChecks(first, [{ name: "Update peer release record", command: commandInputText([process.execPath, "mutate-peer-release.cjs"]) }]);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "release" })), title: "Prepare two releases" });
       await prepareSharedDelivery(engine, id, { build: "run" });
@@ -316,7 +316,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
 
     const { id, approval } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       engine.setProductChecks(second, [{ name: "Release version", command: commandInputText([process.execPath, "version-check.cjs"]) }]);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "release" }], title: "Check release preparation" });
       await prepareSharedDelivery(engine, id, { build: "run" });

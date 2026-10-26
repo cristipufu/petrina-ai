@@ -15,7 +15,7 @@ describe.concurrent("one task across products", () => {
 
     const { copies, id } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep each review copy with its product" });
       await until(engine, (state) => !!taskOf(state, id).screen && !engine.drivers.has(id), coordinator(["plan", "design"]));
@@ -51,7 +51,7 @@ describe.concurrent("one task across products", () => {
     const { id, member, copies, kept, resumed, session, scenario, second } = await withEngine(async engine => {
 
       await engine.checkTools();
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       // Both initial verifiers say the Important finding does not block, so Antigravity gives the third answer, on the screen.
       const scenario: Scenario = { planner: "parallel", builder: "plain", reviewer: "important", verifier: "not-a-bug", screenRoles: ["verifier"], screenModels: ["gemini-4-argon"], screenRoleHold: true, reopen: "resume", affectedProducts: [first, second] };
       fakes.scenario(scenario);
@@ -129,7 +129,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "short", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Preserve hand-back ownership" });
       // Screen requests are scripted stand-ins: this exercises saved review conversations without a window.

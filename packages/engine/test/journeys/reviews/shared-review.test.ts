@@ -15,7 +15,7 @@ describe.concurrent("one task across products", () => {
 
     const { second, id, findingId, report } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const id = engine.addTask({ productId: first, title: "Keep routing the reported API repair", worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })) });
       await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       engine.setPoolPaused(true);
@@ -67,7 +67,7 @@ describe.concurrent("one task across products", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", builder: "plain", controlled: true });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Review the shared greeting" });
       await until(engine, () => fakes.received("code reviewer").length >= 2, (engine, state) => {
@@ -108,7 +108,7 @@ describe.concurrent("one task across products", () => {
     let unsubscribe = () => {};
 
     try {
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reopen: "resume", reviewer: "important-twice", affectedProducts: [first, second], fixes: "change" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Repair the shared greeting" });
       unsubscribe = engine.subscribe(() => {
@@ -161,7 +161,7 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("unassigned", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reviewer: "important-twice" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Resolve ownership" });
       const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
@@ -195,7 +195,7 @@ describe.concurrent("shared-task repair regressions", () => {
     await fixtures.world("mixed-ownership", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reviewer: "important-twice", affectedProducts: [second], unassignedFinding: true, fixes: "change", reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Repair only the assigned problem" });
       const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));

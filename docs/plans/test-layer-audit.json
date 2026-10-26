@@ -1683,12 +1683,14 @@
           "assertionsUnchanged": true
         }
       ],
-      "review": "Complete ownership audit: metadata, invocation and final-process-state decisions use data and explicit formatter/clock/identity inputs; actual SDK, provider, process lifetime and host recording controls retain their real boundaries. All 26 remaining static cases and 185 complete matcher AST sites retained; prior migrated owners remain listed.",
+      "review": "Original native stop entry, ancestry, final-state and cleanup behavior is retained in fourteen real native variants. Twenty-two timing permutations now run against the actual stop policy through nineteen controlled-clock orchestration cases and five exact diagnostic formatter cases. The native fork controls additionally require immediate worker absence and an unrelated unpaused peer before independent fallback cleanup. The semantic map preserves the original timing inputs, scan order, deadlines, signal ownership and incomplete outcomes; no retries, reduced workers or production deadline changes.",
       "from": "packages/engine/test/agent-lifetime.test.ts",
       "splitFiles": [
         "packages/agent-runtime/test/contracts/processes/stopping.test.ts",
         "packages/platform/test/rules/processes/stop-confirmation.test.ts",
-        "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts"
+        "packages/agent-runtime/test/contracts/agents/session-lifetime.test.ts",
+        "packages/platform/test/orchestration/processes/agent-stop.test.ts",
+        "packages/agent-runtime/test/rules/processes/stop-diagnostics.test.ts"
       ],
       "layer": "contracts",
       "area": "processes",
@@ -1696,6 +1698,15 @@
         "artifact": "parallel-agent-runtime/next-runtime/reconciliation.json",
         "rules": "Platform 10 pass; host activity 5 pass",
         "native": "Runtime 111 pass / 50.764s; Engine neighbors 79 pass / 26.270s. Console/JUnit assertion totals differ under concurrency; both raw records retained. Combined source/platform qualification due."
+      },
+      "stopPolicyTransfer": {
+        "nativeVariantsTransferred": 22,
+        "actualControllerCases": 19,
+        "diagnosticCases": 5,
+        "nativeVariantsRetained": 14,
+        "semanticMap": "workstreams/process-lease-guardian-next/removal-map-v1/map.md",
+        "validation": "workstreams/ownership-final-cohort/stop-transfer.xml",
+        "qualification": "38 focused cases passed; all workspace types/conventions pass; combined full/platform evidence pending"
       }
     },
     {

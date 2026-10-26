@@ -27,7 +27,7 @@ describe.concurrent("one task across products", () => {
     await withEngine(async engine => {
 
       engine.setPoolPaused(true);
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const id = engine.addTask({ productId: first, title: "Saved shared cleanup", backlog: true });
       const task = engine.task(id)!;
       task.repositories = [];

@@ -21,7 +21,7 @@ describe.concurrent("one task across products", () => {
     };
 
     try {
-      const first = await engine.addProduct(shop.clone), second = shared ? await engine.addProduct(api.clone, "API") : undefined;
+      const first = await shop.preparedProduct(engine), second = shared ? await api.preparedProduct(engine) : undefined;
       const products = second ? [first, second] : [first];
       fakes.scenario({ planner: "tester-with-design", builder: "plain", affectedProducts: products });
       const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Give the Tester current product checks" });
@@ -42,7 +42,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const products = [first, second];
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", affectedProducts: products });
       const log = join(shop.dir, "checks-ran.txt"), script = join(shop.dir, "fails.cjs");
@@ -79,7 +79,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const products = [first, second];
       fakes.scenario({ planner: "tester-first", builder: "plain", reopen: "resume", affectedProducts: products, fixes: "change" });
       const script = (name: string, body: string) => { const path = join(api.dir, name); writeFileSync(path, body); return commandInputText([process.execPath, path]); };

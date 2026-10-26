@@ -16,8 +16,8 @@ describe.concurrent("one task across products", () => {
 
     const { id } = await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone);
-      const products = count === 1 ? [first] : [first, await engine.addProduct(api.clone, "API")];
+      const first = await shop.preparedProduct(engine);
+      const products = count === 1 ? [first] : [first, await api.preparedProduct(engine)];
       const id = engine.addTask({ productId: first, ...(count > 1 ? { worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const })) } : {}), title: "Settle saved review objections" });
       await until(engine, (state) => !!itemOf(state, id, "delivery"), coordinator(["plan", "design"]));
       engine.setPoolPaused(true);

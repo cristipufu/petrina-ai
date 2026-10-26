@@ -7,8 +7,12 @@ import { Fakes, makeWorld, tempDir, type World } from "../support.js";
 import { closeDirectDrivers, directDrivers } from "./direct-drivers.js";
 import { sharedAgents } from "./shared-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
+import { installPreparedProduct } from "./prepared-product.js";
 
-type SharedWorld = Omit<World, "start">;
+type SharedWorld = Omit<World, "start"> & {
+  /** Explicit known fixture metadata; the workflow still performs every native source/check/delivery operation. */
+  preparedProduct(engine: Engine): string;
+};
 type SharedOptions = Partial<EngineOptions>;
 interface SharedProducts {
   shop: SharedWorld;
@@ -78,7 +82,17 @@ export function sharedWorldFixtures() {
   type Prepared = Awaited<ReturnType<typeof products>>;
   const visible = ({ shop: rawShop, api: rawApi, remotes, sourceRemotes }: Prepared): SharedProducts => {
     const { start: _shopStart, ...shop } = rawShop, { start: _apiStart, ...api } = rawApi;
-    return { shop, api, remotes, sourceRemotes };
+    return {
+      shop: { ...shop, preparedProduct: (engine: Engine) => installPreparedProduct(engine, {
+        id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path: shop.clone,
+        remote: "https://github.com/acme/demo.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true,
+      }) },
+      api: { ...api, preparedProduct: (engine: Engine) => installPreparedProduct(engine, {
+        id: "api", name: "API", repo: "acme/api", tone: "green", path: api.clone,
+        remote: "https://github.com/acme/api.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true,
+      }) },
+      remotes, sourceRemotes,
+    };
   };
   const generation = (entry: Entry, start: (options: SharedOptions) => Engine): SharedFixture["engine"] =>
     async <T>(body: (engine: Engine) => Promise<T>, options: SharedOptions = {}): Promise<T> => {

@@ -22,7 +22,7 @@ describe.concurrent("one task across products", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       for (const productId of [first, second]) {
         const product = engine.getState().products.find((entry) => entry.id === productId)!;
         engine.updateProduct(productId, { name: product.name, delivery: "pull-request", approveDelivery: true, shipLowRisk: productId === first || choice.secondOptedIn });
@@ -52,7 +52,7 @@ describe.concurrent("one task across products", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "A shared change" });
       await prepareSharedDelivery(engine, id, {});
       engine.schedule();
@@ -102,7 +102,7 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("links", async ({ shop, api, engine: withEngine }) => {
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       api.setGitHub((state) => { state.fail = { "pr edit": 1 }; });
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Finish links" });
       await prepareSharedDelivery(engine, id, {});

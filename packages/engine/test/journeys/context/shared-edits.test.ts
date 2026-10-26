@@ -10,7 +10,7 @@ describe.concurrent("one task across products", () => {
     await fixtures.world("editing-design", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       const architect = engine.getState().roles.find((role) => role.result === "brief")!;
       engine.saveRole(architect.id, { ...draftOf(architect), canEdit: true });
       fakes.scenario({ builder: "plain", architect: "writes" });
@@ -30,7 +30,7 @@ describe.concurrent("shared-task repair regressions", () => {
     await fixtures.world("editing-notes", async ({ shop, api, engine: withEngine, fakes }) => {
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       engine.addRole({ ...draftOf(engine.getState().roles.find((role) => role.result === "notes")!), name: "Copywriter", result: "notes", canEdit: true });
       fakes.scenario({ planner: "copy", builder: "plain" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep both copy reports" });
