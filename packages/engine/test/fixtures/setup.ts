@@ -6,6 +6,8 @@ import { findProgram } from "@petrina/agent-runtime/tools";
 import { FAKE_GH } from "../support.js";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
+import { installPreparedProduct } from "./prepared-product.js";
+import { ADDRESS } from "@petrina/test-support/repositories";
 import { nativeWorldFixtures, type NativeWorld } from "./native-worlds.js";
 import { clone, makeGitHubClone } from "../../../repositories/test/fixtures/discovery.js";
 
@@ -87,7 +89,8 @@ export function setupFixtures() {
       const w = fixture.world;
       return fixture.engine(async engine => {
         await engine.checkTools();
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, { id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path: w.clone,
+          remote: ADDRESS, defaultBranch: "main", delivery: "pull-request", approveDelivery: true });
         engine.setProductDelivery(productId, "release", false);
         const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
         return body({ engine, taskId, w });
