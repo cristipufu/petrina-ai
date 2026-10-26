@@ -4065,7 +4065,8 @@
       "from": "packages/engine/test/learnings-update.test.ts",
       "splitFiles": [
         "packages/engine/test/journeys/guidance/shared-learning-delivery.test.ts",
-        "packages/engine/test/contracts/repositories/learning-reconciliation.test.ts"
+        "packages/engine/test/contracts/repositories/learning-reconciliation.test.ts",
+        "packages/orchestrator/test/orchestration/instructions/learning-merge.test.ts"
       ],
       "layer": "journeys",
       "area": "guidance",
@@ -4073,6 +4074,22 @@
       "validation": {
         "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
         "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
+      },
+      "learningReconciliationCost": {
+        "base": "cfdb64d6",
+        "originalNativeCases": 49,
+        "retainedOriginalNativeCases": 24,
+        "transferredOriginalPortableCases": 25,
+        "newPortableControls": 3,
+        "newNativeOwnershipControls": 1,
+        "originalLiteralEntries": 130,
+        "literalEntriesRetainedExactly": 77,
+        "semanticTransfers": 53,
+        "helperEntriesRetained": 17,
+        "observedGitBefore": 2669,
+        "observedGitAfterIncludingNewControl": 1422,
+        "artifact": "workstreams/learning-merge25-next/handoff.json; workstreams/learning-assembled-review/handoff.json",
+        "review": "Actual policy/text owners, live receipt snapshot, raw object-history flags and real native mutation/restart/ownership reviewed. All original variants and oracles mapped; narrow focused cost only."
       }
     },
     {
@@ -7583,6 +7600,16 @@
       "normalNativeWorkers": 14,
       "artifacts": "workstreams/check-process-ownership-next/qualification-v4.json; runtime-reconciliation.json; resources-v4-summary.json",
       "source": "Four exact frozen V4 paths, plus root whitespace-only removal in output.test.ts; root source review clear."
+    },
+    "learning-merge-focused": {
+      "authorPortable": 28,
+      "authorNative": 25,
+      "failed": 0,
+      "skipped": 0,
+      "rootComposedOrchestrator": 508,
+      "allNineTypes": "passed",
+      "artifacts": "workstreams/learning-merge25-next/qualification-v3.json; workstreams/learning-assembled-review/handoff.json; learning-delivery-final-orchestrator.json; learning-delivery-final-types.log",
+      "limits": "No post-change complete suite/resource/native-platform result."
     }
   },
   "resourceAudit": {

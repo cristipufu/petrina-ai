@@ -66,3 +66,5 @@ export * from "./turn-recovery-ports.js";
 export * from "./model-capacity.js";
 
 export * from "./product-context.js";
+export { keepApprovedLearnings, keptLearningsMessage } from "./learning-merge.js";
+export type { PlainInstructions, LearningRecords, LearningMergeRecords, LearningMergeRequest, LearningMergeEffects, LearningMergeResult } from "./ports/learning-merge.js";

@@ -1,4 +1,4 @@
-import { type RepositoryContext } from "@petrina/orchestrator";
+import { keptLearningsMessage, type RepositoryContext } from "@petrina/orchestrator";
 // Keeping a task's work one commit on top of the latest default branch. Petrina folds the branch into one
 // commit after every build, and right before the delivery check, and again right before shipping, puts it
 // on top of the latest main itself, with git plumbing that never leaves a working copy halfway through a
@@ -8,7 +8,6 @@ import { type RepositoryContext } from "@petrina/orchestrator";
 import { JOURNEY_WORDS as W, lastIndexWhere, petrinaMoment } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { keptLearnings } from "./learnings.js";
-import { AGENTS_FILE } from "@petrina/core";
 import type { Sources } from "./sources.js";
 import type { Connections } from "./connection.js";
 import type { Kernel } from "./kernel.js";
@@ -145,9 +144,7 @@ export class Updates {
       if (kept) {
         // Not a send-back: told apart from a conflict on the journey, with the lines it kept in the log.
         petrinaMoment(task, "update", { outcome: W.keptLearnings, reason: sourceName === "main" ? W.upToDate : `up to date with ${sourceName}` }, Date.now());
-        const added = kept.added.length ? `kept ${sourceName}'s and added this work's: ${kept.added.join("; ")}` : `kept ${sourceName}'s, which already has this work's`;
-        const present = kept.present.length ? `${kept.added.length ? `; already on ${sourceName}, kept once` : ""}: ${kept.present.join("; ")}` : "";
-        this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there): ${sourceName} and this work only added approved learnings to ${AGENTS_FILE}, so Petrina ${added}${present}`);
+        this.k.log(scope, "done", keptLearningsMessage(kept, sourceName, commits));
       } else this.k.log(scope, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
       this.k.commit();
       return "moved";
