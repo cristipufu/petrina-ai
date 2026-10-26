@@ -305,7 +305,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
     });
   });
 
-  for (const decision of ["retry", "send-back"] as const) it(`keeps shared approval and offers ${decision} when release-version checks fail`, async () => {
+  for (const decision of ["send-back"] as const) it(`keeps shared approval and offers ${decision} when release-version checks fail`, async () => {
     await fixtures.world(`release-version-failure-${decision}`, async ({ shop, api, engine: withEngine, fakes }) => {
     const allow = join(api.dir, "allow-release");
     writeFileSync(join(api.clone, "package.json"), JSON.stringify({ name: "api", version: "1.0.0" }));

@@ -80,13 +80,5 @@ describe.concurrent("Release versions on real deliveries", () => {
     });
   }));
 
-  it("stops after three new preparations when main keeps moving", () => world("keeps-moving", {}, async ({ world: w, deliver }) => {
-    w.setGitHub((github) => (github.meanwhile = { command: "release view", withTag: true, times: 4 }));
-    const [task] = await deliver("release");
-    expect(task!.state).toBe("failed");
-    expect(task!.error).toContain("main kept moving while Petrina was delivering, so it stopped after 3 new preparations");
-    expect(w.script().releaseManagerPrompts).toHaveLength(4);
-    expect(w.github().releases).toEqual([]);
-    expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBeUndefined();
-  }));
+
 });

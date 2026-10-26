@@ -44,10 +44,6 @@ import type { ToolChecks } from "./tool-checks.js";
 import type { Turns } from "./turn.js";
 import type { Updates } from "./update.js";
 
-/** Preparations started again because the default branch moved, before Petrina stops and asks. */
-const MAX_MOVES = 3;
-/** Failed preparations (the checks failing on the version commit) before Petrina stops and asks. */
-const MAX_FAILURES = 2;
 /** A delivery from before the update, which Petrina leaves to the coordinator. */
 export const CARRIED_OVER = "This delivery was interrupted before Petrina was updated";
 
@@ -112,6 +108,7 @@ export class Shipping {
     this.companions = new CompanionLinks(k);
     this.verifier = new ShippingVerifier(k, connections);
     this.workflow = new DeliveryWorkflow(this.admission, {
+      restoredChecks: (scope, signal) => this.checks.failing(scope, signal, undefined, "publishing"),
       closedPullRequest: ({ work }) => github.prState(work.source!.product.repo, work.pr!.number, k.options.gh),
       needGitHub: task => this.tools.needGitHub(task),
       readyToShip: (scope, signal) => this.readyToShip(scope, signal),
@@ -129,6 +126,9 @@ export class Shipping {
       clearUnpublishedVersion: scope => this.clearUnpublishedVersion(scope),
       finishCompanions: task => this.companions.finish(task),
     }, {
+      clearStep: scope => k.clearStep(scope), checksBlocked: task => this.checks.blocked(task),
+      productName: scope => k.repositoryOf(scope)!.name, defaultBranch: scope => k.repositoryOf(scope)?.defaultBranch,
+      findingId: task => k.id(task.id), gate: (task, problem) => k.gate(task, "delivery", problem), fail: (id, error) => k.fail(id, error),
       changed: () => k.commit(), noteScope: (scope, tone, text) => k.log(scope, tone, text),
       destination: scope => destination(scope.work, k.repositoryOf(scope)),
       sourceName: scope => scope.work.source?.start.kind === "pull-request" ? `PR #${scope.work.source.start.number}` : scope.work.source?.start.branch ?? k.repositoryOf(scope)?.defaultBranch ?? "main",
@@ -355,73 +355,13 @@ export class Shipping {
    * check again. After two failures Petrina stops and asks. Shared tasks keep their approval and return to
    * the delivery check instead; the coordinator can retry preparation or ask for changes.
    */
-  private async preparationFailed(scope: RepositoryContext, summary: string, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const { task, work: repository } = scope;
-    const shipping = repository.shipping!;
-    await this.backToWork(scope);
-    const failures = shipping.failures + 1;
-    const reason = /[.!?]$/.test(summary.trim()) ? summary.trim() : `${summary.trim()}.`;
-    if (task.repositories) {
-      // Only delivery preparation changed. Keep the reviewed work and its approval; no builder owns this failure.
-      delete repository.shipping;
-      this.k.clearStep(scope);
-
-      await this.clearUnpublishedPreparations(task);
-      // Check the restored work, so failures belonging only to the removed version do not reach a builder.
-      const restoredChecks = await this.checks.failing(scope, signal, undefined, "publishing");
-      if (restoredChecks.kind === "blocked") { this.checks.blocked(task); return "stop"; }
-
-      const delivery = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
-      if (delivery < 0) throw new Error("The plan has no delivery check before release preparation");
-      task.stageIndex = delivery;
-      task.sub = 0;
-      const problem = `${this.k.repositoryOf(scope)!.name}: getting the release ready failed. ${reason} Nothing was published. Your approved work is saved; try delivery again or send it back with a note.`;
-      this.k.log(scope, "warn", problem);
-      this.k.gate(task, "delivery", problem);
-      return "stop";
-    }
-    task.findings.push({ id: this.k.id(task.id), text: `Getting the delivery ready failed, so nothing was published: ${reason}`, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-    repository.shipping = { moves: 0, failures };
-    this.clearApproval(scope);
-    delete task.agent;
-    // Nothing was handed back, so no record for estimates.
-    this.k.clearStep(scope);
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry) => this.k.role(entry.roleId)?.result === "build" && entry.kind === "do");
-    if (builder >= 0) {
-      task.stageIndex = builder;
-      task.sub = 0;
-      task.fixing = true;
-    }
-    this.k.log(scope, "warn", `Not ready to publish: ${reason} Nothing was published; it goes back to the builder.`);
-    this.k.commitNow();
-    if (failures < MAX_FAILURES && builder >= 0) return "continue";
-    this.k.fail(task.id, new Error(`Getting the delivery ready failed ${failures} times, so Petrina stopped and published nothing. The last reason: ${reason} Try again to send it back to the builder, or cancel it.`));
-    return "stop";
+  private preparationFailed(scope: RepositoryContext, summary: string, signal: AbortSignal): Promise<"continue" | "stop"> {
+    return this.workflow.preparationFailed(scope, summary, signal);
   }
 
-  /** The default branch moved before a release or local delivery went out: Petrina gets it ready again. */
-  private async prepareAgain(scope: RepositoryContext, why: string): Promise<"again"> {
-    const { task, work: repository } = scope;
-    if (task.proofRequests?.length) {
-      await this.returnForDecision(task, "proof");
-      return "again";
-    }
-    const shipping = repository.shipping!;
-    const branch = repository.source?.start.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main";
-    if (shipping.moves >= MAX_MOVES) {
-      // A Retry gets a fresh set of attempts.
-      shipping.moves = 0;
-      this.k.commitNow();
-      throw new Error(`${why} again: ${branch} kept moving while Petrina was delivering, so it stopped after ${MAX_MOVES} new preparations and published nothing. Retry when it is quiet.`);
-    }
-    // The version change goes: the work is brought up to date again, and gets a fresh version.
-    await this.backToWork(scope);
-    repository.shipping = { ...(shipping.start ? { start: shipping.start } : {}), moves: shipping.moves + 1, failures: shipping.failures };
-    const place = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : branch;
-    endPetrinaStep(task, { outcome: place === "main" ? W.mainMovedOn : `${place} moved on`, reason: W.readyAgain }, Date.now());
-    this.k.log(scope, "warn", `${why}, so Petrina gets it ready again (${shipping.moves + 1} of ${MAX_MOVES})`);
-    this.k.commitNow();
-    return "again";
+  /** The default branch moved before a release or local delivery went out. */
+  private prepareAgain(scope: RepositoryContext, why: string): Promise<"again"> {
+    return this.workflow.prepareAgain(scope, why);
   }
 
   /**

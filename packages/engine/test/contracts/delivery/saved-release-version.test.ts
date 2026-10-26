@@ -17,7 +17,7 @@ afterAll(() => owned.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
-for (const route of ["failed preparation", "shared needs-you", "shared paused", "shared failed", "delivery retry", "proof decision", "acceptance decision", "no version change", "working edits"] as const) it(`pins the restored saved work after ${route}`, async () => {
+for (const route of ["no version change", "working edits"] as const) it(`pins the restored saved work after ${route}`, async () => {
     const f = await fixture();
     const scope = executionFor(f.task), path = scope.work.worktree!, shipping = f.engine["shipping"];
     scope.work.branch = await git(path, "branch", "--show-current");
@@ -36,32 +36,7 @@ for (const route of ["failed preparation", "shared needs-you", "shared paused", 
       { id: "ship", title: "Deliver", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
     ] };
     f.task.stageIndex = 2;
-    if (route.startsWith("shared ")) {
-      f.task.repositories = [Object.assign(f.task.repository!, { completedStages: [] })]; delete f.task.repository;
-      const state = route.slice("shared ".length) as "needs-you" | "paused" | "failed";
-      // Control the shared driver's outcome; its real finalizer must restore unpublished work.
-      const deliverMany = shipping["workflow"]["deliverMany"];
-      shipping["workflow"]["deliverMany"] = async () => {
-        f.task.state = state;
-        if (state === "failed") throw new Error("Delivery stopped before publication");
-        return "stop";
-      };
-      try {
-        const outcome = await shipping.deliver(f.task, f.task.plan.stages[2]!, new AbortController().signal).then(value => value, error => error.message);
-        expect(outcome).toBe(state === "failed" ? "Delivery stopped before publication" : "stop");
-        expect(f.task.state).toBe(state);
-      } finally { shipping["workflow"]["deliverMany"] = deliverMany; }
-      f.task.state = "waiting"; // The coordinator can resume the task before requesting validation.
-    } else if (route === "failed preparation") {
-      expect(await shipping["preparationFailed"](scope, "Release checks failed", new AbortController().signal)).toBe("continue");
-    } else if (route === "delivery retry") {
-      expect(await shipping["prepareAgain"](scope, "Main moved before publication")).toBe("again");
-    } else if (route === "proof decision" || route === "acceptance decision") {
-      await shipping["returnForDecision"](f.task, route === "proof decision" ? "proof" : "acceptance");
-      expect(f.task.stageIndex).toBe(1);
-    } else {
-      await shipping.clearUnpublishedVersion(scope);
-    }
+    await shipping.clearUnpublishedVersion(scope);
     expect(await git(path, "rev-parse", "HEAD")).toBe(saved.commit);
     expect(await git(path, "status", "--porcelain")).toBe("");
     expect(scope.work.savedVersion).toEqual(saved);

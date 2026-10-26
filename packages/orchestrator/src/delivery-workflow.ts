@@ -1,4 +1,4 @@
-import { beginPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap, petrinaMoment, lastIndexWhere, JOURNEY_WORDS as W } from "@petrina/core";
+import { beginPetrinaStep, endPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap, petrinaMoment, lastIndexWhere, JOURNEY_WORDS as W } from "@petrina/core";
 import { clearDeliveryPreparation } from "./delivery-return.js";
 import { addDeliveryCheck } from "./delivery-gate.js";
 import type { RuntimeTask } from "./model.js";
@@ -9,6 +9,11 @@ import type { DeliveryFailures, DeliveryPhaseEffects, DeliveryRecording, Deliver
 export function needsReleaseManager(task: RepositoryWork): boolean {
   return task.delivery === "release" && !task.shipping?.prepared && !task.shipping?.step && !task.shipping?.carriedOver;
 }
+
+/** Preparations restarted after source movement, before asking the coordinator. */
+const MAX_MOVES = 3;
+/** Failed preparations before returning the decision to the coordinator. */
+const MAX_FAILURES = 2;
 
 /** Actual delivery sequencing; the host retains native checks, source preparation and publication. */
 export class DeliveryWorkflow {
@@ -94,6 +99,76 @@ export class DeliveryWorkflow {
     }
     return "ready";
   }
+
+  async preparationFailed(scope: RepositoryContext, summary: string, signal: AbortSignal): Promise<"continue" | "stop"> {
+    const { task, work: repository } = scope;
+    const shipping = repository.shipping!;
+    await this.effects.backToWork(scope);
+    const failures = shipping.failures + 1;
+    const reason = /[.!?]$/.test(summary.trim()) ? summary.trim() : `${summary.trim()}.`;
+    if (task.repositories) {
+      // Only delivery preparation changed. Keep the reviewed work and its approval; no builder owns this failure.
+      delete repository.shipping;
+      this.host.clearStep(scope);
+
+      await this.clearUnpublishedPreparations(task);
+      // Check the restored work, so failures belonging only to the removed version do not reach a builder.
+      const restoredChecks = await this.effects.restoredChecks(scope, signal);
+      if (restoredChecks.kind === "blocked") { this.host.checksBlocked(task); return "stop"; }
+
+      const delivery = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
+      if (delivery < 0) throw new Error("The plan has no delivery check before release preparation");
+      task.stageIndex = delivery;
+      task.sub = 0;
+      const problem = `${this.host.productName(scope)}: getting the release ready failed. ${reason} Nothing was published. Your approved work is saved; try delivery again or send it back with a note.`;
+      this.host.noteScope(scope, "warn", problem);
+      this.host.gate(task, problem);
+      return "stop";
+    }
+    task.findings.push({ id: this.host.findingId(task), text: `Getting the delivery ready failed, so nothing was published: ${reason}`, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+    repository.shipping = { moves: 0, failures };
+    this.clearApproval(scope);
+    delete task.agent;
+    // Nothing was handed back, so no record for estimates.
+    this.host.clearStep(scope);
+    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry) => this.host.role(entry.roleId, task)?.result === "build" && entry.kind === "do");
+    if (builder >= 0) {
+      task.stageIndex = builder;
+      task.sub = 0;
+      task.fixing = true;
+    }
+    this.host.noteScope(scope, "warn", `Not ready to publish: ${reason} Nothing was published; it goes back to the builder.`);
+    this.host.checkpoint();
+    if (failures < MAX_FAILURES && builder >= 0) return "continue";
+    this.host.fail(task.id, new Error(`Getting the delivery ready failed ${failures} times, so Petrina stopped and published nothing. The last reason: ${reason} Try again to send it back to the builder, or cancel it.`));
+    return "stop";
+  }
+
+  /** The default branch moved before a release or local delivery went out: Petrina gets it ready again. */
+  async prepareAgain(scope: RepositoryContext, why: string): Promise<"again"> {
+    const { task, work: repository } = scope;
+    if (task.proofRequests?.length) {
+      await this.returnForDecision(task, "proof");
+      return "again";
+    }
+    const shipping = repository.shipping!;
+    const branch = repository.source?.start.branch ?? this.host.defaultBranch(scope) ?? "main";
+    if (shipping.moves >= MAX_MOVES) {
+      // A Retry gets a fresh set of attempts.
+      shipping.moves = 0;
+      this.host.checkpoint();
+      throw new Error(`${why} again: ${branch} kept moving while Petrina was delivering, so it stopped after ${MAX_MOVES} new preparations and published nothing. Retry when it is quiet.`);
+    }
+    // The version change goes: the work is brought up to date again, and gets a fresh version.
+    await this.effects.backToWork(scope);
+    repository.shipping = { ...(shipping.start ? { start: shipping.start } : {}), moves: shipping.moves + 1, failures: shipping.failures };
+    const place = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : branch;
+    endPetrinaStep(task, { outcome: place === "main" ? W.mainMovedOn : `${place} moved on`, reason: W.readyAgain }, this.host.now());
+    this.host.noteScope(scope, "warn", `${why}, so Petrina gets it ready again (${shipping.moves + 1} of ${MAX_MOVES})`);
+    this.host.checkpoint();
+    return "again";
+  }
+
 
   /** Return every still-unpublished product to the same coordinator decision. */
   async returnForDecision(task: RuntimeTask, why: "proof" | "acceptance"): Promise<void> {

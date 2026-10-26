@@ -18,6 +18,7 @@ export interface DeliveryWorkflowAdmission {
 
 /** Native phases record their real observations on the supplied, bound execution before returning. */
 export interface DeliveryPhaseEffects {
+  restoredChecks(scope: RepositoryContext, signal: AbortSignal): Promise<{ kind: "passed" | "product-failed" | "blocked" }>;
   closedPullRequest(scope: RepositoryContext): Promise<NonNullable<RepositoryWork["pr"]>["state"] | undefined>;
   needGitHub(task: RuntimeTask): Promise<void>;
   readyToShip(scope: RepositoryContext, signal: AbortSignal): Promise<"ready" | "back">;
@@ -38,6 +39,13 @@ export interface DeliveryPhaseEffects {
 }
 
 export interface DeliveryRecording {
+  clearStep(scope: RepositoryContext): void;
+  checksBlocked(task: RuntimeTask): void;
+  productName(scope: RepositoryContext): string;
+  defaultBranch(scope: RepositoryContext): string | undefined;
+  findingId(task: RuntimeTask): Id;
+  gate(task: RuntimeTask, problem: string): void;
+  fail(taskId: Id, error: Error): void;
   changed(): void;
   noteScope(scope: RepositoryContext, tone: "warn", text: string): void;
   destination(scope: RepositoryContext): string;

@@ -422,44 +422,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     }, {});
   });
 
-  it("publishes nothing when the checks fail with the version set, goes back to the builder, and stops after the second time", async () => {
-    await fixtures.world("version-fails", async ({ world: w, engine: ownedEngine }) => {
-    await released(w, "v1.4.0", w.initial);
-    // A check that pins the version: it passes on the work, and fails once Petrina sets the new version.
-    w.setScript((script) => (script.checks = [{ name: "Pinned", argv: ["git", "grep", "-q", "--fixed-strings", '"version": "1.4.0"', "--", "package.json"], why: "A check that pins the version, for tests" }]));
-      await ownedEngine(async engine => {
-    try {
-      const productId = await engine.addProduct(w.clone);
-      engine.setProductDelivery(productId, "release", false);
-      const taskId = engine.addTask( { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
-      let task = taskOf(await finish(engine, taskId), taskId);
-      expect(task.state).toBe("failed");
-      expect(task.error).toContain("Getting the delivery ready failed 2 times");
-      const texts = task.timeline.map((entry) => entry.text);
-      const back = texts.findIndex((text) => text.startsWith("Not ready to publish: The product's checks fail with the version set to 1.4.1."));
-      expect(back).toBeGreaterThan(-1);
-      // Back through the builder and the review, with a blocking finding, and the approval gone.
-      expect(task.timeline.slice(back).some((entry) => entry.roleId === "builder" && entry.tone === "milestone")).toBe(true);
-      expect(task.findings.some((finding) => finding.raisedBy === "petrina" && finding.severity === "blocking" && finding.text.startsWith("Getting the delivery ready failed"))).toBe(true);
-      expect(task.approvedFor).toBeUndefined();
-      // Nothing was published, the version change is gone, and no notes were written for it.
-      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
-      expect(await remoteRef(w.remote, "refs/tags/v1.4.1")).toBeUndefined();
-      expect(w.github().releases.map((entry) => entry.tagName)).toEqual(["v1.4.0"]);
-      expect(JSON.parse(readFileSync(join(task.worktree!, "package.json"), "utf8")).version).toBe("1.4.0");
-      expect(w.script().releaseManagerPrompts).toBeUndefined();
-      // Try again sends it back to the builder once more; it still publishes nothing while the check pins the version.
-      engine.retry(itemOf(engine.getState(), taskId, "stuck")!.id);
-      task = taskOf(await finish(engine, taskId), taskId);
-      expect(task.state).toBe("failed");
-      expect(w.github().releases).toHaveLength(1);
-    } finally {
-      await engine.shutdown();
-    }
 
-      });
-    }, { version: "1.4.0" });
-  });
 
   it("keeps the approved destination when the product default branch changes", async () => {
     await fixtures.world("destination", async ({ world: w, engine: ownedEngine }) => {

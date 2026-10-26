@@ -3064,7 +3064,8 @@
       "from": "packages/engine/test/delivery.test.ts",
       "splitFiles": [
         "packages/engine/test/journeys/delivery/publication.test.ts",
-        "packages/orchestrator/test/orchestration/delivery/publication-family.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/publication-family.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/release-family.test.ts"
       ],
       "layer": "journeys",
       "area": "delivery",
@@ -3534,7 +3535,8 @@
       "from": "packages/engine/test/extra-validation-restoration.test.ts",
       "splitFiles": [
         "packages/engine/test/contracts/validation/restoration.test.ts",
-        "packages/engine/test/contracts/delivery/saved-release-version.test.ts"
+        "packages/engine/test/contracts/delivery/saved-release-version.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/release-family.test.ts"
       ],
       "layer": "contracts",
       "area": "validation",
@@ -5023,7 +5025,8 @@
         "packages/engine/test/contracts/acceptance/shared-tree-freshness.test.ts",
         "packages/engine/test/journeys/context/shared-edits.test.ts",
         "packages/engine/test/journeys/acceptance/shared-exhaustion.test.ts",
-        "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/release-family.test.ts"
       ],
       "layer": "journeys",
       "area": "repositories",
@@ -6802,7 +6805,8 @@
         "packages/engine/test/contracts/formats/version-files.test.ts",
         "packages/engine/test/journeys/delivery/release-versions.test.ts",
         "packages/engine/test/contracts/delivery/release-versions.test.ts",
-        "packages/engine/test/contracts/testing/release-version-ownership.test.ts"
+        "packages/engine/test/contracts/testing/release-version-ownership.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/release-family.test.ts"
       ],
       "layer": "rules",
       "area": "delivery",

@@ -31,6 +31,7 @@ export function deliveryWorkflowFixture() {
       prepared: { tested: observed(scope.work).candidate, summary: "Recorded preparation observation", body: "Recorded body" } };
   };
   const effects: DeliveryPhaseEffects = {
+    restoredChecks(scope, signal) { phase("restored-checks", scope); return hooks.restoredChecks?.(scope, signal) ?? Promise.resolve({ kind: "passed" }); },
     closedPullRequest(scope) { phase("closed", scope); return hooks.closedPullRequest?.(scope) ?? Promise.resolve(scope.work.pr?.state); },
     needGitHub(task) { events.push(`login:${task.id}`); return hooks.needGitHub?.(task) ?? Promise.resolve(); },
     readyToShip(scope, signal) { phase("ready", scope); return hooks.readyToShip?.(scope, signal) ?? Promise.resolve("ready"); },
@@ -70,6 +71,13 @@ export function deliveryWorkflowFixture() {
     },
   };
   const host: DeliveryRecording = {
+    clearStep: scope => { events.push(`clear-step:${scope.task.id}:${scope.work.productId}`); },
+    checksBlocked: task => { events.push(`checks-blocked:${task.id}`); task.state = "needs-you"; },
+    productName: scope => scope.work.source!.product.name,
+    defaultBranch: scope => scope.work.source?.product.defaultBranch,
+    findingId: () => `finding-${++sequence}`,
+    gate: (task, problem) => { task.state = "needs-you"; events.push(`gate:${task.id}:${problem}`); },
+    fail: (id, error) => { const task = live.tasks.get(id)!; task.state = "failed"; task.error = error.message; events.push(`failed:${id}`); },
     changed: () => { events.push("changed"); },
     noteScope: (scope, tone, text) => { events.push(`log:${scope.task.id}:${scope.work.productId}:${tone}:${text}`); },
     destination: scope => live.host.destination(scope),
