@@ -6,9 +6,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProductEditor } from "../../../src/components/ProductSettings";
 
-const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn() }));
+const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn(), setProductCheckSetup: vi.fn() }));
 
-vi.mock("../../../src/engine", () => ({ sim: commands, useEngineStatus: () => ({ link: "live" }) }));
+vi.mock("../../../src/engine", () => ({ sim: commands, useEngineStatus: () => ({ link: "live" }), failureText: (failure: unknown) => failure instanceof Error ? failure.message : String(failure) }));
 
 let host: HTMLDivElement, root: Root;
 

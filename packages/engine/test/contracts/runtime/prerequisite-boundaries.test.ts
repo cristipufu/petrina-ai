@@ -1,3 +1,5 @@
+import type { CheckVerification } from "../../../src/product-checks.js";
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -72,7 +74,7 @@ describe.concurrent("runtime waits at check boundaries", () => {
 const [started, release] = process.argv.slice(2); writeFileSync(started + ".tmp", "ready"); renameSync(started + ".tmp", started);
 while (!existsSync(release)) await Bun.sleep(10);`);
     const firstCheck: ProductCheck = { name: "Admitted", argv: [process.execPath, script, started, release] };
-    let active: Promise<number> | undefined, queued: Promise<unknown> | undefined;
+    let active: Promise<CheckVerification> | undefined, queued: Promise<unknown> | undefined;
     const controller = new AbortController();
     try {
       active = checks.runProductChecks(executionFor(first), [firstCheck], controller.signal);
@@ -87,7 +89,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       hold(first);
       expect(runtimeWaitView(first, id => engine.task(id))?.phase).toBe("after-current-work");
       writeFileSync(release, "go");
-      expect(await active).toBe(0);
+      expect(nonpassingChecks(await active!)).toBe(0);
       expect(executionFor(first).work.checks?.results[0]?.ok).toBe(true);
       expect(first.journey?.flatMap(step => step.checkAttempts ?? [])).toHaveLength(1);
       expect(second.journey?.at(-1)?.productChecks?.[0]?.result).toBe("stopped");
@@ -178,7 +180,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       if (args[0].task.id === first.id && ++captures === (boundary === "preparation" ? 1 : 2)) { captured(); await released; }
       return result;
     };
-    let blocker: Promise<number> | undefined, work: Promise<unknown> | undefined;
+    let blocker: Promise<CheckVerification> | undefined, work: Promise<unknown> | undefined;
     try {
       if (boundary === "queue handoff") {
         blocker = checks.runProductChecks(executionFor(second), [blockerCheck], controller.signal);
@@ -188,7 +190,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       if (blocker) {
         await waitFor(() => first.statusLine.startsWith("Waiting to run the checks"), "the source-sensitive checks to queue");
         writeFileSync(blockerRelease, "go");
-        expect(await blocker).toBe(0);
+        expect(nonpassingChecks(await blocker!)).toBe(0);
       }
       await ready;
       hold();
@@ -207,7 +209,7 @@ while (!existsSync(release)) await Bun.sleep(10);`);
       expect(scope.work.baseSha).toBe(latest);
       expect(readFileSync(join(worktree, "required-fix.txt"), "utf8")).toBe("The required prerequisite fix\n");
       expect(first.runtimeWait?.refreshPending).toBeUndefined();
-      expect(await checks.runProductChecks(scope, [sourceCheck], controller.signal)).toBe(0);
+      expect(nonpassingChecks(await checks.runProductChecks(scope, [sourceCheck], controller.signal))).toBe(0);
       expect(readFileSync(observed, "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([{ fix: true }]);
       expect(first.journey?.flatMap(step => step.checkAttempts ?? [])).toHaveLength(1);
       expect(scope.work.checks?.results[0]?.ok).toBe(true);

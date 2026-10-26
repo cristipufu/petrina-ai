@@ -144,7 +144,7 @@ export class Driver {
       // Right before the coordinator is asked to ship, the checks run again on what would ship.
       const checkResult = await this.checks.checksBeforeDelivery(scope, signal, async () => await this.updates.upToDate(scope, signal) !== "conflict");
       if (checkResult === "returned") { sentBack = true; break; }
-      if (checkResult === "exhausted") {
+      if (checkResult === "exhausted" || checkResult === "blocked") {
         this.checks.blocked(current);
         return { kind: "stop" };
       }
@@ -216,6 +216,7 @@ export class Driver {
     // Resolve an already-known stale base before spending checks or acceptance on it.
     // A saved helper finishes its version first; completed discovery does not defer the checks' update.
     let failed = false;
+    const eligibleProducts = new Set<Id>();
     let conflict = false;
     for (const scope of scopesFor(current)) {
       const work = scope.work;
@@ -230,7 +231,9 @@ export class Driver {
         if (update === "moved") required = await this.checks.ensureChecks(scope, signal);
       }
       try {
-        failed = await this.checks.failing(scope, signal, required, "acceptance", async () => testerFinishing() || await this.updates.upToDate(scope, signal) !== "conflict") || failed;
+        const result = await this.checks.failing(scope, signal, required, "acceptance", async () => testerFinishing() || await this.updates.upToDate(scope, signal) !== "conflict");
+        failed = result.kind !== "passed" || failed;
+        if (result.kind === "product-failed") eligibleProducts.add(result.productId);
       } catch (error) { if (error instanceof CheckPreparationChanged) { conflict = true; break; } throw error; }
 
     }
@@ -240,7 +243,7 @@ export class Driver {
         delete work.portReview;
         delete work.reviewedTree;
       }
-      if (this.checks.backToBuilder(scope, "before acceptance testing")) return { kind: "repeat" };
+      if (this.checks.backToBuilder(scope, "before acceptance testing", eligibleProducts)) return { kind: "repeat" };
       // Acceptance testing waits here, and starts once the checks pass on the current code.
       this.checks.blocked(current);
       return { kind: "stop" };
@@ -437,6 +440,6 @@ export class Driver {
   /** Low-risk work skips the delivery check only where the coordinator opted in, with nothing left that needs them. */
   private shipsUnasked(task: MTask): boolean {
     const scope = executionFor(task);
-    return shipsUnasked(task, { products: this.k.s.products, product: this.k.productOf(task), checks: scope.work.checks });
+    return shipsUnasked(task, { products: this.k.s.products, product: this.k.productOf(task), checks: scope.work.checks, checkSetup: scope.work.checkSetup, checkSetupInvalidated: scope.work.checkSetupInvalidated });
   }
 }

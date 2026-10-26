@@ -184,7 +184,7 @@ export class Work {
       }
       // A changed return awaits verification. An unchanged return retains the unresolved problem,
       // including when an earlier edit or check-definition change made that evidence outdated.
-      const problem = changed === true ? undefined : checkProblem({ checks: repository.checks });
+      const problem = changed === true ? undefined : checkProblem(repository);
       const outcome = builderReturnWords(changed, problem, fixed);
       const returnedStep = openStep(task);
       if (returnedStep?.kind === "agent") returnedStep.builderReturn = { productId: repository.productId, ...(changed !== undefined ? { changed } : {}), claimedFixes: fixed, outcome };

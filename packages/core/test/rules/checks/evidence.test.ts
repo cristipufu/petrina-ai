@@ -151,7 +151,7 @@ describe("saved check evidence", () => {
   it.each([false, true])("retains unresolved outdated passing=%s evidence without inventing interruption", (ok) => {
     const { task, run } = fixture(ok);
     task.checks!.current = false;
-    expect(checkProblem(task)).toBe(ok ? undefined : "failing");
+    expect(checkProblem(task)).toBe(ok ? "unverified" : "failing");
     expect(builderCheckSummary(task)).toContain("Checks need updating");
     if (!ok) expect(builderCheckSummary(task)).toContain("Earlier checks failed");
     run.interruption = { source: "macOS power log", at: now, event: "Sleep" };
@@ -174,7 +174,7 @@ describe("saved check evidence", () => {
     expect(summary).not.toContain("Checks unverified");
     expect(summary).not.toContain("evidence reused");
     if (kind !== "passed") expect(summary).toContain(kind === "failed" ? "Earlier checks failed" : "Earlier checks were unverified");
-    expect(checkProblem(task)).toBe(kind === "failed" ? "failing" : kind === "interrupted" ? "unverified" : undefined);
+    expect(checkProblem(task)).toBe(kind === "failed" ? "failing" : "unverified");
     // Waiting and running both describe the same pending verification; neither changes history.
     task.state = "running";
     task.journey!.push({ id: "fresh-checks", kind: "petrina", work: "checks", round: 1, sub: 0, startedAt: now + 3 });
@@ -248,4 +248,14 @@ describe("saved check evidence", () => {
     decision.endedAt = now + 1;
     expect(view().name).toBe("Your delivery check");
   });
+});
+
+it("a legacy reported pass without local setup facts remains visible but cannot become a current batch", () => {
+  const { task, run } = fixture(true);
+  delete task.checkSetup; delete task.checks!.environment; delete run.executor;
+  const before = JSON.stringify(task);
+  expect(checkProblem(task)).toBe("unverified");
+  expect(checkDecisionLabel(task)).toBe("Your call: checks unverified");
+  expect(run.ok).toBe(true);
+  expect(JSON.stringify(task)).toBe(before);
 });

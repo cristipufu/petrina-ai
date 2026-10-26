@@ -203,7 +203,7 @@ export class Shipping {
         return changed;
       },
     });
-    if (await this.checks.checksBeforeShipping(scope, signal, preparation)) return "back";
+    if (await this.checks.checksBeforeShipping(scope, signal, preparation) !== "passed") return "back";
     const { task } = scope;
     if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal)) {
       await this.returnForDecision(task, "proof");
@@ -354,7 +354,18 @@ export class Shipping {
     if (task.proofRequests?.length) repository.proofRelease = { start, tested };
     // A version commit changes what ships: the checks run on it too.
     this.beforePublishing(scope);
-    if (tested !== start && (await this.checks.failing(scope, signal, undefined, "publishing"))) return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
+    if (tested !== start) {
+      const verified = await this.checks.failing(scope, signal, undefined, "publishing");
+      if (verified.kind === "product-failed") return this.preparationFailed(scope, `The product's checks fail with the version set to ${shipping.version}`, signal);
+      if (verified.kind === "blocked") {
+        await this.backToWork(scope);
+        delete repository.shipping;
+        if (task.repositories) await this.clearUnpublishedPreparations(task);
+        this.clearApproval(scope);
+        this.checks.blocked(task);
+        return "stop";
+      }
+    }
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
     const preview = repository.releasePreview;
     if (task.repositories && preview && (preview.start !== start || preview.version !== shipping.version || preview.tag !== shipping.tag || preview.after !== shipping.after)) {
@@ -442,7 +453,8 @@ export class Shipping {
 
       await this.clearUnpublishedPreparations(task);
       // Check the restored work, so failures belonging only to the removed version do not reach a builder.
-      await this.checks.failing(scope, signal, undefined, "publishing");
+      const restoredChecks = await this.checks.failing(scope, signal, undefined, "publishing");
+      if (restoredChecks.kind === "blocked") { this.checks.blocked(task); return "stop"; }
 
       const delivery = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
       if (delivery < 0) throw new Error("The plan has no delivery check before release preparation");

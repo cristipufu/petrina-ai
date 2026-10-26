@@ -1,3 +1,4 @@
+import { setupWork, setupExecutor } from "../../fixtures/check-setup.js";
 import { describe, expect, it } from "vitest";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { workflowFixture } from "../../fixtures/workflow.js";
@@ -40,7 +41,7 @@ describe("the rules a task's run follows, in the engine and the demo alike", () 
     const both = copy({ checks: { at: 1, results: [run("Tests", false), run("Build", false)] } });
     expect(gateTitle(both, "delivery")).toBe(`Your call on “${planned.title}”: checks still fail (Tests, Build)`);
     // Once the checks pass, open Important findings are counted as before.
-    expect(gateTitle(copy({ findings: [important()], checks: { at: 1, results: [run("Tests", true)] } }), "delivery")).toBe(`Your call on “${planned.title}”: 1 blocking finding still open`);
+    expect(gateTitle(copy({ findings: [important()], ...setupWork([{ ...run("Tests", true), executor: setupExecutor }]) }), "delivery")).toBe(`Your call on “${planned.title}”: 1 blocking finding still open`);
   });
 
   it.each(["legacy", "timed-out", "start-failed"] as const)("keeps %s verification separate from a completed code failure at delivery", kind => {

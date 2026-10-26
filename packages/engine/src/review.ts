@@ -111,13 +111,16 @@ export class Reviews {
       // The work goes on top of the latest main before anyone reviews it: a conflict goes to the builder first,
       // so a port after the review (and a review of that port) stays the exception.
       let failedChecks = false;
+      const eligibleProducts = new Set<Id>();
       for (const scope of scopesFor(task)) {
         if (task.repositories) task.activeProductId = scope.work.productId;
         if (!await this.prepareChecks(scope, signal)) return "continue";
         // The product's checks run before any reviewer spends time: an agent's word never counts as passing.
         // A failed run is evidence too: it returns to the builder without spending a review round.
         try {
-          failedChecks = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review", () => this.prepareChecks(scope, signal)) || failedChecks;
+          const result = await this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review", () => this.prepareChecks(scope, signal));
+          failedChecks = result.kind !== "passed" || failedChecks;
+          if (result.kind === "product-failed") eligibleProducts.add(result.productId);
         } catch (error) { if (error instanceof CheckPreparationChanged) return "continue"; throw error; }
       }
       if (failedChecks) {
@@ -126,7 +129,7 @@ export class Reviews {
           delete work.portReview;
           delete work.reviewedTree;
         }
-        if (this.checks.backToBuilder(scope, "before review")) return "continue";
+        if (this.checks.backToBuilder(scope, "before review", eligibleProducts)) return "continue";
         // The round has not started: it waits here with its number, its reviewers' conversations and its
         // incremental anchor, and runs once the checks pass. No review is assumed from the Builder's answers.
         return this.checks.blocked(task);

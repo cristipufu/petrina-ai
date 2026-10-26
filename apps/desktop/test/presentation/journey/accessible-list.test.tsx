@@ -60,7 +60,7 @@ describe('the journey as a list, for screen readers and the keyboard', () => {
     expect(list.getAttribute('aria-label')).toBe(`Journey, ${view.nodes.length} steps`);
     const items = [...list.querySelectorAll('li')].map((item) => item.textContent);
     expect(items[3]).toBe('4. Code reviewer. Done. Codex · GPT-6.1 Sol · high effort. 9m elapsed. 1 important. Moved on: sent back: 1 important.');
-    expect(items[7]).toMatch(/^8\. Your delivery check\. Waiting for you\. Waiting \d+m so far\. Reviews done/);
+    expect(items[7]).toMatch(/^8\. Your delivery check\. Waiting for you\. Waiting \d+m so far\. Reviews done\. Waiting for your OK to ship\./);
     expect(items[8]).toBe('9. Publish delivery. Next.');
   });
 

@@ -1,3 +1,4 @@
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { expect, it } from "bun:test";
 import { checkOutcome, checkProblem, type CheckRun } from "@petrina/core";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
@@ -37,7 +38,7 @@ it.each([...cases])("records %s as blocking evidence without a code finding or a
   try {
     f = await checkContext(root);
     f.setCheck(kind === "legacy-pass" ? "--sequence=PF" : "--pass");
-    expect(await f.check()).toBe(false);
+    expect((await f.check()).kind).toBe("passed");
     const { task, scope } = f;
     const checks = f.engine["checks"];
     const signal = new AbortController().signal;
@@ -46,7 +47,7 @@ it.each([...cases])("records %s as blocking evidence without a code finding or a
     const snapshot = structuredClone(run);
     scope.work.checkReturns = 1;
     const rounds = structuredClone(task.rounds);
-    expect(await checks["runPreparedChecks"](scope, definitions, signal, [run])).toBe(1);
+    expect(nonpassingChecks(await checks["runPreparedChecks"](scope, definitions, signal, [run]))).toBe(1);
     expect(checkOutcome(scope.work.checks!.results[0]!).kind).toBe(kind === "start-failed" ? "unavailable" : "incomplete");
     expect(scope.work.checks!.results).toEqual([snapshot]);
     expect(checkProblem({ checks: scope.work.checks })).toBe("unverified");
@@ -54,9 +55,9 @@ it.each([...cases])("records %s as blocking evidence without a code finding or a
     expect(scope.work.checkReturns).toBe(1);
     expect(task.rounds).toEqual(rounds);
     // It still applies to this tree and definition as BLOCKING evidence, never as a pass.
-    expect(await checks.current(scope)).toBe(true);
-    expect(await checks.failing(scope, signal, definitions)).toBe(true);
-    expect(await checks.failing(scope, signal, definitions)).toBe(true);
+    expect((await checks.current(scope)).inputs.kind).toBe("matches");
+    expect((await checks.failing(scope, signal, definitions)).kind).toBe("blocked");
+    expect((await checks.failing(scope, signal, definitions)).kind).toBe("blocked");
     expect(scope.work.checks!.results).toEqual([snapshot]);
     expect(scope.work.checkReturns).toBe(1);
     expect(task.findings).toEqual([]);
@@ -80,7 +81,7 @@ it.each([...cases])("records %s as blocking evidence without a code finding or a
       expect(scope.work.checkReturns).toBe(1);
       expect(scope.work.approvedSha).toBeUndefined();
       expect(f.engine.s.inbox.some(candidate => candidate.id === item.id)).toBe(false);
-      expect(await checks.failing(scope, signal, definitions)).toBe(true);
+      expect((await checks.failing(scope, signal, definitions)).kind).toBe("product-failed");
       expect(f.runs()).toEqual(["passed", "failed"]);
       expect(checkOutcome(scope.work.checks!.results[0]!).kind).toBe("failed");
       expect(scope.work.checkReturns).toBe(1);
@@ -105,12 +106,12 @@ it("keeps a real completed code failure beside an incomplete check and never cha
     ]);
     const checks = f.engine["checks"], signal = new AbortController().signal;
     const definitions = await checks.ensureChecks(f.scope, signal);
-    expect(await checks.failing(f.scope, signal, definitions)).toBe(false);
+    expect((await checks.failing(f.scope, signal, definitions)).kind).toBe("passed");
     const [first, second] = f.scope.work.checks!.results;
     const failed: CheckRun = { ...first!, ok: false, execution: completeCheckExecution(7), output: "Actual assertion failure" };
     const unavailable = incomplete(second!, "start-failed");
     f.scope.work.checkReturns = 1;
-    expect(await checks["runPreparedChecks"](f.scope, definitions, signal, [failed, unavailable])).toBe(2);
+    expect(nonpassingChecks(await checks["runPreparedChecks"](f.scope, definitions, signal, [failed, unavailable]))).toBe(2);
     expect(checkProblem({ checks: f.scope.work.checks })).toBe("failing");
     expect(f.task.findings.map(finding => finding.text)).toEqual([`Check failed: ${failed.name} (${failed.command})`]);
     expect(f.scope.work.checkReturns).toBe(1);

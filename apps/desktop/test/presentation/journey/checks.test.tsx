@@ -9,10 +9,11 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false, invoke: () => { t
 import { act, useSyncExternalStore } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, createDemoState, type State, type Task, type DeepMutable } from "@petrina/core";
+import { recordedCheckBatch, builderCheckSummary, gateTitle, gateStatus, deliveryLabel, beginAgentStep, endAgentStep, beginYouStep, decisionEvidence, recordStepResult, recordCheckReuse, Simulator, createDemoState, type State, type Task, type DeepMutable } from "@petrina/core";
 import { App } from '../../../src/App';
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { acceptanceFixture } from "../../fixtures/acceptance";
+import { setupObservation } from "../../fixtures/check-setup";
 
 let simulator: Simulator;
 
@@ -195,6 +196,17 @@ describe('the journey in the task sheet', () => {
     const source = run.source!;
     original.productChecks = [{ id: source.checkId, attemptId: source.attemptId, productId: task.productId, name: run.name, result: passed ? 'pass' : 'fail', run }];
     task.checks = { at: NOW - 49_000, current: true, results: [run] };
+    if (passed) {
+      // This branch promises a complete recorded pass; legacy/missing setup stays in the failed branch below.
+      const beforeSetup = setupObservation(task.productId, 0, NOW - 91_000);
+      const setup = setupObservation(task.productId, 0, NOW - 48_000); setup.position = "after-checks";
+      original.checkSetups = [beforeSetup, setup];
+      task.checkSetup = setup;
+      run.executor = setup.executor;
+      task.checks = { ...task.checks, sha: setup.input.sha, tree: setup.input.tree, definition: setup.input.definition,
+        environment: { ...setup.identity!, setupAttempts: { before: beforeSetup.id, after: setup.id } } };
+    }
+    if (passed) expect(recordedCheckBatch(task).kind).toBe("passed");
     task.journey = task.journey!.slice(0, task.journey!.indexOf(original) + 1);
     const builderIndex = task.plan!.stages.findIndex((stage) => stage.roleId === 'builder');
     task.stageIndex = builderIndex; task.fixing = true;
@@ -287,4 +299,18 @@ describe('the journey in the task sheet', () => {
     expect(details).not.toContain('Checks ran');
     expect(details).not.toContain('linked below');
   });
+  it.each([false, true])('shows only the selected step local setup (missing=%s)', async missing => {
+    const state = createDemoState(NOW), task = taskOf(state, 'pricing-refresh');
+    const step = task.journey!.findLast(step => step.kind === 'petrina' && step.work === 'checks')!;
+    task.checkSetup = setupObservation(task.productId, 0, NOW);
+    if (missing) delete step.checkSetups;
+    else step.checkSetups = [setupObservation(task.productId, 7, NOW - 60_000)];
+    await mount(state); await openTask(task.id);
+    await act(async () => host.querySelector<HTMLElement>(`.journey-list li[data-step-id="${step.id}"]`)!.click());
+    const local = host.querySelector('.journey-details .check-setup-observations');
+    if (missing) expect(host.querySelector('.journey-details')?.textContent).toContain('No local setup observation was recorded for this step.');
+    else { expect(local?.textContent).toContain('Compiler version did not pass (exit 7)'); expect(local?.textContent).toContain('Before automated checks'); }
+    expect(local?.textContent ?? '').not.toContain('Local setup was verified');
+  });
+
 });

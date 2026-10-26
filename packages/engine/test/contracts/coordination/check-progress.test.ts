@@ -1,3 +1,4 @@
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it, spyOn } from "bun:test";
@@ -46,7 +47,7 @@ it("records a first failure on its own code before completion, including a hook 
   await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Prepare the checked change");
   const check: ProductCheck = { name: "Quick", argv: [process.execPath, "-e", "process.exit(1)"] };
   task.journey = [];
-  expect(await engine["checks"].runProductChecks(scope, [check], new AbortController().signal)).toBe(1);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], new AbortController().signal))).toBe(1);
   const page = await coordination.call("watch.events", { taskIds: [task.id], from: "oldest", kinds: ["check.finished"], timeoutMs: 0 });
   const event = (page.events as WorkflowEvent[])[0]!;
   expect(event).toMatchObject({ result: "fail", ok: false, versions: { attemptId: "run-0", sha: scope.work.checks!.sha, tree: scope.work.checks!.tree, definition: scope.work.checks!.definition } });
@@ -54,7 +55,7 @@ it("records a first failure on its own code before completion, including a hook 
   const hook = join(scope.work.worktree!, ".git", "hooks", "pre-commit");
   writeFileSync(hook, "#!/bin/sh\nprintf 'Hook diagnostic\\n' >&2\nexit 1\n", { mode: 0o755 });
   const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
-  expect(await engine["checks"].runProductChecks(scope, [], new AbortController().signal)).toBe(1);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [], new AbortController().signal))).toBe(1);
   const hooks = await coordination.call("watch.events", { taskIds: [task.id], cursor, kinds: ["check.finished"], timeoutMs: 0 });
   const finished = (hooks.events as WorkflowEvent[])[0]!;
   expect(finished).toMatchObject({ name: "Pre-commit hook", result: "fail", versions: { definition: scope.work.checks!.definition } });
@@ -89,7 +90,7 @@ it("retains live check progress and every original diagnostic through repeated p
     expect(completed).toEqual(expect.objectContaining({ name: "Quick", result: "pass", versions: expect.objectContaining({ sha: firstSha, tree: await git(work.worktree!, "rev-parse", "HEAD^{tree}"), definition: expect.any(String), attemptId: "run-0" }) }));
     expect(completed.versions).not.toHaveProperty("passed");
   } finally { writeFileSync(release, "go"); }
-  expect(await running).toBe(0);
+  expect(nonpassingChecks(await running!)).toBe(0);
   const firstLog = task.journey![0]!.productChecks![0]!.run!.logPath;
   const firstVersion = structuredClone(task.journey![0]!.checkAttempts![0]!);
   writeFileSync(join(work.worktree!, "changed.txt"), "New code for the next attempt\n");
@@ -97,7 +98,7 @@ it("retains live check progress and every original diagnostic through repeated p
   const nextSha = await git(work.worktree!, "rev-parse", "HEAD");
   const repeatCursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
   const failure = "Original failure near the beginning\n" + "Later diagnostic line\n".repeat(9000);
-  expect(await engine["checks"].runProductChecks(executionFor(task), [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], new AbortController().signal)).toBe(1);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(executionFor(task), [{ name: "Quick", argv: [process.execPath, "-e", 'await Bun.write(Bun.stderr, "Original failure near the beginning\\n" + "Later diagnostic line\\n".repeat(9000)); process.exit(1);'] }], new AbortController().signal))).toBe(1);
   const evidence = task.journey![0]!.productChecks!;
   expect(evidence).toHaveLength(3);
   expect(evidence[2]!.attemptId).not.toBe(evidence[0]!.attemptId);
@@ -111,7 +112,7 @@ it("retains live check progress and every original diagnostic through repeated p
   expect(failed.versions).not.toHaveProperty("passed", true);
   expect(task.journey![0]!.checkAttempts![0]).toEqual(firstVersion);
   // A newer successful run cannot replace the earlier failed run's diagnostics.
-  expect(await engine["checks"].runProductChecks(executionFor(task), checks.slice(0, 1), new AbortController().signal)).toBe(0);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(executionFor(task), checks.slice(0, 1), new AbortController().signal))).toBe(0);
   task.state = "paused";
   engine.setPoolPaused(true);
   await engine.shutdown();
@@ -137,10 +138,10 @@ it("reuses the recorded attempt within repeated release preparation without link
   const checks = [{ name: "Quick", argv: [process.execPath, "-e", "console.log('checked')"] }];
   engine.s.products[0]!.checks = checks;
   engine.s.products[0]!.checksBy = "coordinator";
-  expect(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal)).toBe(0);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal))).toBe(0);
   writeFileSync(join(scope.work.worktree!, "changed.txt"), "A new version for release preparation\n");
   await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Change the checked version");
-  expect(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal)).toBe(0);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal))).toBe(0);
   expect(task.journey).toHaveLength(1);
   const attempts = task.journey![0]!.checkAttempts!;
   expect(attempts).toHaveLength(2);
@@ -148,7 +149,7 @@ it("reuses the recorded attempt within repeated release preparation without link
   expect(attempts[0]!.sha).not.toBe(attempts[1]!.sha);
   expect(scope.work.checks!.provenance).toEqual({ nodeId: "notes", attemptId: attempts[1]!.id });
   const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
-  expect(await engine["checks"].failing(scope, new AbortController().signal, checks, "review")).toBe(false);
+  expect((await engine["checks"].failing(scope, new AbortController().signal, checks, "review")).kind).toBe("passed");
   const page = await coordination.call("watch.events", { taskIds: [task.id], cursor, timeoutMs: 0, kinds: ["check.reused"] });
   expect(page.events).toEqual([expect.objectContaining({ nodeId: "notes", attemptId: attempts[1]!.id, passed: true, refs: { node: { taskId: task.id, nodeId: "notes" }, checks: [{ taskId: task.id, nodeId: "notes", index: 1 }], details: expect.any(Object) } })]);
   expect(task.journey![0]!.reuses![0]!.attemptId).toBe(attempts[1]!.id);
@@ -187,7 +188,7 @@ it("records a run with nothing to run, so reviewers start on none-configured rat
   engine.s.products[0]!.checks = [];
   engine.s.products[0]!.checksBy = "coordinator";
   const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
-  expect(await engine["checks"].failing(scope, new AbortController().signal, [], "review")).toBe(false);
+  expect((await engine["checks"].failing(scope, new AbortController().signal, [], "review")).kind).toBe("passed");
   const step = task.journey![0]!;
   expect(step).toMatchObject({ kind: "petrina", work: "checks", end: "done", outcome: W.checks(0, 0), reason: W.noChecks, productChecks: [] });
   expect(step.checkAttempts).toEqual([expect.objectContaining({ id: "run-0", commands: [], passed: true, definition: expect.any(String) })]);
@@ -201,7 +202,7 @@ it("records a run with nothing to run, so reviewers start on none-configured rat
   Object.assign(task.journey![1]!, { endedAt: Date.now(), end: "done" });
   engine.commit(task);
   const later = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
-  expect(await engine["checks"].failing(scope, new AbortController().signal, [], "acceptance")).toBe(false);
+  expect((await engine["checks"].failing(scope, new AbortController().signal, [], "acceptance")).kind).toBe("passed");
   expect(task.journey).toHaveLength(2);
   expect(step.reuses).toEqual([expect.objectContaining({ purpose: "acceptance", attemptId: "run-0", passed: true })]);
   task.journey!.push({ id: "tester", kind: "agent", roleId: "tester", profileId: "opus-high", stageId: "release", round: 1, sub: 0, startedAt: Date.now() });
@@ -222,7 +223,7 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
   const inspections = spyOn(gitOps, "worktreeStatus"), restores = spyOn(gitOps, "restoreTracked"), resets = spyOn(gitOps, "resetTo");
   try {
     // A check with no command counts as nothing to run, the same as an empty list.
-    expect(await engine["checks"].runProductChecks(scope, [{ name: "Nothing", argv: [] }], new AbortController().signal)).toBe(0);
+    expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [{ name: "Nothing", argv: [] }], new AbortController().signal))).toBe(0);
     expect(readFileSync(readme, "utf8")).toContain("An edit nobody committed yet");
     expect(task.journey![0]).toMatchObject({ kind: "petrina", work: "checks", end: "done", reason: W.noChecks, productChecks: [] });
     expect(task.journey![0]!.checkAttempts).toEqual([expect.objectContaining({ id: "run-0", commands: [] })]);
@@ -234,7 +235,7 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
     await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Keep the edit");
     const changing = { name: "Changing", argv: [process.execPath, "-e", "require('node:fs').appendFileSync('README.md', 'Added by a check\\n')"] };
     engine.s.products[0]!.checks = [changing];
-    expect(await engine["checks"].runProductChecks(scope, [changing], new AbortController().signal)).toBe(0);
+    expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [changing], new AbortController().signal))).toBe(0);
     expect(readFileSync(readme, "utf8")).not.toContain("Added by a check");
     expect(restores).toHaveBeenCalledTimes(1);
   } finally { inspections.mockRestore(); restores.mockRestore(); resets.mockRestore(); }
@@ -259,7 +260,7 @@ it("describes a resumed attempt with nothing left to run as nothing configured, 
   // The coordinator removed the check before the retry: the second attempt records its versions and nothing else.
   engine.s.products[0]!.checks = [];
   const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
-  expect(await engine["checks"].runProductChecks(scope, [], new AbortController().signal)).toBe(0);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [], new AbortController().signal))).toBe(0);
   expect(task.journey).toHaveLength(1);
   expect(step).toMatchObject({ end: "done", reason: W.noChecks });
   expect(step.productChecks!.map((entry) => [entry.attemptId, entry.result])).toEqual([["run-0", "stopped"]]);
@@ -290,7 +291,7 @@ it("describes the latest attempt when an interrupted run is resumed on the same 
   expect(step.productChecks![0]).toMatchObject({ attemptId: "run-0", result: "stopped" });
   writeFileSync(release, "go");
   const cursor = (await coordination.call("watch.events", { taskIds: [task.id], timeoutMs: 0 })).cursor;
-  expect(await engine["checks"].runProductChecks(scope, [check], new AbortController().signal)).toBe(0);
+  expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], new AbortController().signal))).toBe(0);
   expect(task.journey).toHaveLength(1);
   expect(step.productChecks!.map((check) => [check.attemptId, check.result])).toEqual([["run-0", "stopped"], ["run-1", "pass"]]);
   task.journey!.push({ id: "review", kind: "agent", roleId: "code-reviewer", profileId: "opus-high", stageId: "release", round: 1, sub: 0, startedAt: Date.now(), trigger: { after: step.id, reason: step.reason! } });

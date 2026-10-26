@@ -8,7 +8,7 @@ import type { RepairHost } from "./ports/repair.js";
  * decision to continue still `covered` name no owner. `final`: an acceptance repair of testing the delivery check started,
  * which returns to that final testing and then the check.
  */
-export function beginRepair(k: RepairHost, task: RuntimeTask, kind: "checks" | "acceptance" | "review", returnStage: number, { covered = new Set<string>(), final = false }: { covered?: ReadonlySet<string>; final?: boolean } = {}): boolean {
+export function beginRepair(k: RepairHost, task: RuntimeTask, kind: "checks" | "acceptance" | "review", returnStage: number, { covered = new Set<string>(), final = false, eligibleProducts }: { covered?: ReadonlySet<string>; final?: boolean; eligibleProducts?: ReadonlySet<string> } = {}): boolean {
   if (!task.repositories) return false;
 
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking" && !covered.has(finding.id));
@@ -20,7 +20,7 @@ export function beginRepair(k: RepairHost, task: RuntimeTask, kind: "checks" | "
   // An unavailable owner keeps its findings for the coordinator, without consuming another owner's tries.
   const products = affected.filter((id) => {
     const work = task.repositories!.find((entry) => entry.productId === id)!;
-    return !repositoryPublished(work) && (!field || (work[field] ?? 0) < 2);
+    return (!eligibleProducts || eligibleProducts.has(id)) && !repositoryPublished(work) && (!field || (work[field] ?? 0) < 2);
   });
   if (!products.length) return false;
   const builder = task.plan?.stages.findIndex((stage) => stage.kind === "do" && k.role(stage.roleId, task)?.result === "build") ?? -1;

@@ -6022,7 +6022,7 @@
       "baselineDigest": "205fd6e32aa16d772aa4e29185edeca05365c4ee15e749d3d32f9d41fb2d4fe5",
       "status": "reviewed",
       "from": "packages/engine/test/shared-image-history.test.ts",
-      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live \u00d7 first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live × first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
       "validation": {
         "artifact": "state-api-next/runtime-reconciliation.json",
         "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
@@ -7073,7 +7073,7 @@
       "status": "reviewed",
       "layer": "orchestration",
       "area": "reviews",
-      "review": "Fifteen pure controller variants preserve both original mixed tests\u2019 reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
+      "review": "Fifteen pure controller variants preserve both original mixed tests’ reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
       "validation": "review-layers-16bce9e0/orchestrator-reviewed.json: all 228 cases / 14 files pass. All workspace types and conventions pass. reconciliation.json maps each original assertion category to its actual owner; original bodies retained. Full changed-batch qualification remains due."
     },
     {
@@ -7761,6 +7761,56 @@
       "assertionChains": 81,
       "artifacts": "workstreams/release-version-cost-next/{qualification.json,runtime-reconciliation.json,native-resources-summary.json,root-integrated-source.json}",
       "limits": "Native focused Mac only; console99 expectations and raw JUnit17 kept separately. Full integrated qualification remains due."
+    },
+    "check-setup-phase2-focused": {
+      "status": "Implemented and focused-qualified on Mac; complete integrated full and native platform qualification pending",
+      "source": "Primary5d167a0d plus composed backend63V19/UI22V9/root2gatecallers/test-only2/docs3/AGENT existing rule refinement; external phase2-composed-integration receipts preserve exact hashes and later deltas",
+      "behavior": "Coordinator declarations save without probes; before/after setup binds actual source/definition/executor/output identity; fresh operation-local observation gates reuse. Missing historical facts remain missing. Typed code failure retains bounded repair only after actual ownership settlement; setup/incomplete holds no allowance. Same-task peer uncertainty blocks all automatic repair; same failed invalidation marker cannot re-execute probes, a new marker can.",
+      "rootPortable": {
+        "core": 1451,
+        "desktop": 603,
+        "orchestrator": 528,
+        "failed": 0,
+        "skipped": 0,
+        "all9TypesExit": 0,
+        "conventionsExit": 0,
+        "desktopBuildExit": 0,
+        "artifact": "phase2-composed-integration/"
+      },
+      "native": [
+        {
+          "source": "source-with-controls-v18",
+          "passed": 16,
+          "failed": 0,
+          "CLI_filtered": 16,
+          "ms": 3524.033,
+          "expectations": 208,
+          "observedLaunches": 228,
+          "programs": {
+            "git": 193,
+            "bun": 33,
+            "ps": 2
+          }
+        },
+        {
+          "source": "source-with-controls-v19",
+          "passed": 7,
+          "failed": 0,
+          "CLI_filtered": 20,
+          "ms": 1588.548,
+          "expectations": 76,
+          "observedLaunches": 195,
+          "programs": {
+            "git": 180,
+            "bun": 15
+          }
+        }
+      ],
+      "nativeLimits": "Separate source-specific focused proofs, not a single rerun of every setup variant. Normal14workers; stable63owned+5UIdependency hashes, raw XML and complete observer records retained. No full-suite speed claim.",
+      "UI": "Final frozen22-file source; six light/dark×default/portfolio/first-run browser variants,16screenshots, no page/console/overflow findings. Root inspected four final editor/task/node layouts. Six added gate/history controls reproduce4failures with oldcallers then24pass after correctedcallers.",
+      "review": "Independent backend source review closed R8/R9/R10/R11 and ownership/no-start/shared-marker follow-through. Root reviewed exact UI/backend sources, actual recording-fixture producers, owned signals, docs and all three current-root compositions. Final independent3composition+shared-setting/Engine-delegate review is clear: workstreams/phase2-composition-independent-review/handoff.json.",
+      "artifact": "workstreams/check-environment-phase2-next/handoff-final.json; workstreams/check-environment-phase2-independent-review/; workstreams/check-setup-ui-next/; workstreams/check-setup-ui-callers-next/; phase2-composed-integration/",
+      "firstFailures": "Original V8 native17pass/1fail retained; R7 affected2correction separate. Core fixture/classifier and first browser failures remain in author packets. No retries/skips/worker/deadline weakening."
     }
   },
   "resourceAudit": {

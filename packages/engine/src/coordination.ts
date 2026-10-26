@@ -1,7 +1,7 @@
 import type { ExtraValidation } from "@petrina/core";
 import type { ExtraRequest } from "./extra-validations.js";
 import { messageRemovalText } from "@petrina/core";
-import { checkProblem, displayTask, originalCheck, reviewDecisionPending, roleForTask, runtimeWaitView } from "@petrina/core";
+import { deliveryCheckProblem, displayTask, originalCheck, reviewDecisionPending, roleForTask, runtimeWaitView } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import { finishedTask, involvesProduct, journeyView, mainLine, nextSteps, seatRemaining, taskLanding, taskProductIds, timeLeft, workedSoFar, resultSeatOf, type Landing, type Task, type InboxItem, type HistoryQuery } from "@petrina/core";
 import type { Engine } from "./engine.js";
@@ -162,7 +162,7 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           leadProductId: task.leadProductId,
           acceptance: { passed: task.acceptancePassed, blocked: task.acceptanceBlocked, unverified: task.acceptanceUnverified, testedPatch: task.testedPatch, testedVersions: task.testedVersions, proofRequests: task.proofRequests, proofRefreshes: task.proofRefreshes },
           diagnostics: checkLogRevision(engine.dataDir, task.id, (task.repositories ?? [task]).flatMap((work) => work.checks?.results.flatMap((run) => [run.logPath, originalCheck(task, run)?.check.run?.logPath]) ?? [])),
-          evidence: task.journey?.map(({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId }) => ({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId })),
+          evidence: task.journey?.map(({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, checkSetups, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId }) => ({ id, kind, roleId, stageId, round, endedAt, productChecks, checkAttempts, checkSetups, reuses, reviewInput, agentInputs, agentResults, result, seats, acceptanceChecks, acceptancePatch, buildVersions, buildProductId })),
           evidenceRoles: [...new Set([...(task.journey ?? []).map((step) => step.roleId), ...(task.plan?.stages ?? []).map((stage) => stage.roleId)])].map((id) => {
             const role = id ? roleForTask(engine.s.roles, id, task) : undefined;
             return role && { id: role.id, name: role.name, result: role.result, canEdit: role.canEdit };
@@ -182,17 +182,17 @@ export function requestRevision(engine: Engine, item: InboxItem): string {
           call: task.call,
           findings: task.findings,
           reviewDecision: task.reviewDecision,
-          repositories: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, workChoice: work.workChoice, delivery: work.delivery, checkedSha: work.checkedSha, checkedPatch: work.checkedPatch, checks: work.checks })),
+          repositories: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, workChoice: work.workChoice, delivery: work.delivery, checkedSha: work.checkedSha, checkedPatch: work.checkedPatch, checks: work.checks, checkSetup: work.checkSetup, checkSetupInvalidated: work.checkSetupInvalidated })),
           checkedSha: task.checkedSha,
           checkedPatch: task.checkedPatch,
-          checks: task.checks,
+          checks: task.checks, checkSetup: task.checkSetup, checkSetupInvalidated: task.checkSetupInvalidated,
 
           stageIndex: task.stageIndex,
         }
       : {}),
   });
 }
-const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks" | "reviewDecision">) =>
+const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks" | "checkSetup" | "checkSetupInvalidated" | "reviewDecision">) =>
   kind === "question"
     ? ["inbox.answer"]
     : kind === "permission"
@@ -207,7 +207,7 @@ const decisions = (kind: string, task?: Pick<Task, "repositories" | "checks" | "
               ? ["learning.accept", "learning.decline"]
               : kind === "guide"
                 ? ["review-guide.accept", "review-guide.decline"]
-                : kind === "delivery" && task && !reviewDecisionPending(task) && checkProblem(task)
+                : kind === "delivery" && task && !reviewDecisionPending(task) && deliveryCheckProblem(task)
                   ? ["inbox.rerun-checks", "inbox.changes"]
                 : ["plan", "design", "delivery", "disagreement"].includes(kind)
                   ? ["inbox.approve", "inbox.changes"]
@@ -409,6 +409,7 @@ export class Coordination {
             findings: a.findingId ? task!.findings.find((finding) => finding.id === a.findingId) : task!.findings,
             design: task!.brief || task!.objections.length || task!.call ? { brief: task!.brief ?? null, objections: task!.objections, call: task!.call ?? null } : undefined,
             messages: task!.queued,
+            "check-setup": { authority: "Recorded observations only; this read never verifies local setup", products: (task!.repositories ?? [task!]).map(work => ({ productId: work.productId, attempt: work.checkSetup ?? null, invalidation: work.checkSetupInvalidated ?? null })), history: task!.journey?.flatMap(step => (step.checkSetups ?? []).map(attempt => ({ nodeId: step.id, attempt }))) ?? [] },
             source: { source: task!.source, choice: task!.workChoice, proposed: task!.proposedSource, selectedProducts: task!.selectedProducts, rows: task!.workRows },
             error: task!.error,
           } as Record<string, unknown>
@@ -448,7 +449,7 @@ export class Coordination {
         reviewInput: node?.reviewInput ? { digest: node.reviewInput.digest, read: { taskId: task!.id, nodeId: node.id } } : null,
       });
     }
-    if (name === "journey.check") return readCheckLog(e.dataDir, task!, { nodeId: a.nodeId, productId: a.productId, index: a.index, section: a.section, cursor: a.cursor, limit: a.limit, ifRevision: a.ifRevision });
+    if (name === "journey.check") return readCheckLog(e.dataDir, task!, { nodeId: a.nodeId, productId: a.productId, setupAttemptId: a.setupAttemptId, index: a.index, section: a.section, cursor: a.cursor, limit: a.limit, ifRevision: a.ifRevision });
     if (name === "journey.review-input") {
       const node = task!.journey?.find((step) => step.id === a.nodeId);
       if (!node) return { outcome: "missing", message: "That journey node does not exist." };
@@ -597,7 +598,7 @@ export class Coordination {
         return { outcome: "missing", message: "This request's task or product is no longer available." };
       if (requestRevision(e, item as InboxItem) !== a.revision)
         return { outcome: "changed", message: "The request changed. Inspect it again before deciding." };
-      if (!decisions(item.kind, { repositories: itemTask.repositories, checks: executionFor(itemTask).work.checks, reviewDecision: itemTask.reviewDecision }).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
+      if (!decisions(item.kind, { ...executionFor(itemTask).work, repositories: itemTask.repositories, reviewDecision: itemTask.reviewDecision }).includes(name)) return unavailable(`That is a ${item.kind} request. Use its available decisions.`);
       switch (name) {
         case "inbox.answer":
           e.answer(a.itemId, a.answer, { clientId: a.requestId });
@@ -752,6 +753,9 @@ export class Coordination {
       }
       case "product.checks":
         e.setProductChecks(a.productId, a.checks);
+        break;
+      case "product.check-setup":
+        e.setProductCheckSetup(a.productId, a.requirements);
         break;
       case "pool.limit":
         e.setPoolLimit(a.limit);

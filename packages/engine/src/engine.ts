@@ -500,6 +500,17 @@ export class Engine extends Kernel implements Commands {
     this.commit();
   }
 
+  /** Coordinator-owned declarations are validated in full before any state changes. */
+  setProductCheckSetup(productId: Id, requirements: readonly library.CheckPrerequisite[]): void {
+    const engine = this;
+    const executions = function* () {
+      for (const task of engine.s.tasks) for (const { work } of scopesFor(task)) yield { taskId: task.id, work };
+    };
+    if (library.configureProductCheckSetup(this.s.products.find(product => product.id === productId), requirements, executions(), {
+      id: prefix => this.id(prefix), now: () => Date.now(),
+    })) this.commitNow();
+  }
+
   updateProduct(productId: Id, settings: ProductSettings): void {
     const product = this.s.products.find((entry) => entry.id === productId);
     if (!product) throw new Error("This product is no longer in Petrina.");
@@ -952,7 +963,9 @@ export class Engine extends Kernel implements Commands {
     delete task.error;
     // An explicit Retry refreshes checks, pass or fail, even on unchanged work. Keep the output visible
     // until that run finishes; ordinary stage changes and restarts keep its identity and reuse it.
+    scope!.work.checkSetupInvalidated = { id: this.id(task.id), kind: "explicit-rerun", at: Date.now() };
     if (scope!.work.checks) {
+      scope!.work.checks.current = false;
       delete scope!.work.checks.sha;
       delete scope!.work.checks.tree;
     }
@@ -971,11 +984,12 @@ export class Engine extends Kernel implements Commands {
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
     if (item.kind !== "delivery") throw new Error("Run checks again is only available for a delivery check problem.");
-    if (!library.checkProblem({ repositories: task.repositories, checks: executionFor(task).work.checks })) throw new Error("This delivery has no failed or unverified product checks to rerun.");
+    if (!library.deliveryCheckProblem({ repositories: task.repositories, ...executionFor(task).work })) throw new Error("This delivery has no failed or unverified product checks to rerun.");
     this.takeover.notDrivingItem(itemId);
     this.takeItem(itemId);
     for (const { work } of scopesFor(task)) {
       if (library.repositoryPublished(work)) continue;
+      work.checkSetupInvalidated = { id: this.id(task.id), kind: "explicit-rerun", at: Date.now() };
       if (work.checks) { delete work.checks.sha; delete work.checks.tree; work.checks.current = false; }
       delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
     }

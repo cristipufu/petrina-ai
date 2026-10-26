@@ -7,7 +7,7 @@ import { DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
 import { libraryRoles, NO_ROLE_CHANGES } from "./roles.js";
 import { followUpDescription, followUpTitle } from "./follow-ups.js";
 import { findingCount } from "./findings.js";
-import type { CheckRun, JourneyProductCheck, DeliveryMode, Finding, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
+import type { CheckRun, CheckSetupAttempt, JourneyProductCheck, DeliveryMode, Finding, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
 import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
 import { askMomentId, MemoryWorkLog } from "./worklog.js";
 import type { Clone } from "./setup.js";
@@ -300,6 +300,9 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
   const delta = now - ago - endedAt;
   const at = (value: number) => value + delta;
   const shiftRun = (run: CheckRun): CheckRun => ({ ...run, ...(run.startedAt !== undefined ? { startedAt: at(run.startedAt) } : {}), ...(run.endedAt !== undefined ? { endedAt: at(run.endedAt) } : {}) });
+  const shiftSetup = (attempt: CheckSetupAttempt): CheckSetupAttempt => ({ ...attempt, queuedAt: at(attempt.queuedAt),
+    ...(attempt.startedAt !== undefined ? { startedAt: at(attempt.startedAt) } : {}), ...(attempt.endedAt !== undefined ? { endedAt: at(attempt.endedAt) } : {}),
+    results: attempt.results.map(result => ({ ...result, run: shiftRun(result.run) })) });
   const shiftEvidence = (check: JourneyProductCheck): JourneyProductCheck => ({ ...check, ...(check.queuedAt !== undefined ? { queuedAt: at(check.queuedAt) } : {}), ...(check.startedAt !== undefined ? { startedAt: at(check.startedAt) } : {}), ...(check.endedAt !== undefined ? { endedAt: at(check.endedAt) } : {}), ...(check.reusedAt !== undefined ? { reusedAt: at(check.reusedAt) } : {}), ...(check.run ? { run: shiftRun(check.run) } : {}) });
   // Each fast-forward has its own id counter. Rename pending requests in both the inbox and log.
   const shiftedInbox = inbox.map((item) => ({ ...item, id: `${task.id}:${item.id}`, at: at(item.at) }));
@@ -318,6 +321,8 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
       ...(task.pr ? { pr: { ...task.pr, openedAt: at(task.pr.openedAt) } } : {}),
       ...(task.cleanup?.removedAt !== undefined ? { cleanup: { ...task.cleanup, removedAt: at(task.cleanup.removedAt) } } : {}),
       ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at), results: task.checks.results.map(shiftRun) } } : {}),
+      ...(task.checkSetup ? { checkSetup: shiftSetup(task.checkSetup) } : {}),
+      ...(task.checkSetupInvalidated ? { checkSetupInvalidated: { ...task.checkSetupInvalidated, at: at(task.checkSetupInvalidated.at) } } : {}),
       ...(task.screen ? { screen: { ...task.screen, at: at(task.screen.at) } } : {}),
       timeline: task.timeline.map((entry) => ({ ...entry, at: at(entry.at) })),
       session: task.session.map((line) => ({ ...line, at: at(line.at) })),
@@ -328,6 +333,7 @@ function shift(placed: Placed, now: number, ago: number, priority: number): Plac
               startedAt: at(step.startedAt),
               ...(step.endedAt !== undefined ? { endedAt: at(step.endedAt) } : {}),
               ...(step.productChecks ? { productChecks: step.productChecks.map(shiftEvidence) } : {}),
+              ...(step.checkSetups ? { checkSetups: step.checkSetups.map(shiftSetup) } : {}),
               // A question or request is its inbox item, renamed below like the item.
               ...(step.asks ? { asks: step.asks.map((ask) => ({ ...ask, id: `${task.id}:${ask.id}`, at: at(ask.at), ...(ask.endedAt !== undefined ? { endedAt: at(ask.endedAt) } : {}) })) } : {}),
             })),

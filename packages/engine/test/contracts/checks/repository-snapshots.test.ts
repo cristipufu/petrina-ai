@@ -1,3 +1,5 @@
+import type { CheckVerification } from "../../../src/product-checks.js";
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -26,7 +28,7 @@ describe("explicit repository execution contexts", () => {
     try {
       engine.setPoolPaused(false);
       expect(state.message).toBe("The checked commit message");
-      expect(await engine["checks"].runProductChecks(scope, [], new AbortController().signal, undefined, state)).toBe(0);
+      expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [], new AbortController().signal, undefined, state))).toBe(0);
       expect(messages).toHaveBeenCalledTimes(1);
       expect(heads).not.toHaveBeenCalled(); expect(trees).not.toHaveBeenCalled();
       expect(readFileSync(body, "utf8")).toBe("The checked commit message\n");
@@ -132,6 +134,9 @@ describe("explicit repository execution contexts", () => {
     const scope = executionFor(task, "first"), path = scope.work.worktree!;
     const sha = await git(path, "rev-parse", "HEAD"), tree = await git(path, "rev-parse", "HEAD^{tree}");
     const original = await git(path, "show", "HEAD:README.md");
+    const checksToRun = hooks ? [] : [{ name: "Build", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('check-artifact.txt', 'Build output\\n')"] }];
+    engine.setPoolPaused(false);
+    const prepared = await engine["checks"]["captureState"](scope, checksToRun);
     const inspections = spyOn(gitOps, "worktreeStatus"), heads = spyOn(gitOps, "head");
     const checks = engine["checks"], hook = checks["runHooks"];
     checks["runHooks"] = async () => {
@@ -142,12 +147,11 @@ describe("explicit repository execution contexts", () => {
       return [];
     };
     // A run with nothing to run touches no file at all; a real check gets exactly one combined inspection afterwards.
-    const checksToRun = hooks ? [] : [{ name: "Build", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('check-artifact.txt', 'Build output\\n')"] }];
     try {
-      expect(await engine["checks"]["runAll"](scope, checksToRun, { sha, tree, trackedChanged: false, hooks: hooks ? ["pre-commit"] : [], definition: "test" }, new AbortController().signal, new Map())).toBe(0);
+      expect(nonpassingChecks(await engine["checks"]["runAll"](scope, checksToRun, { ...prepared, sha, tree, trackedChanged: false, hooks: hooks ? ["pre-commit"] : [], definition: "test" }, new AbortController().signal, new Map()))).toBe(0);
       expect(heads).not.toHaveBeenCalled();
       expect(inspections).toHaveBeenCalledTimes(hooks ? 3 : 1);
-      expect(scope.work.checks).toMatchObject({ current: true, sha, tree, results: hooks ? [] : [expect.objectContaining({ name: "Build", ok: true })] });
+      expect(scope.work.checks).toMatchObject({ current: false, sha, tree, results: hooks ? [] : [expect.objectContaining({ name: "Build", ok: true })] });
       expect(await git(path, "rev-parse", "HEAD")).toBe(sha);
       expect(await git(path, "show", "HEAD:README.md")).toBe(original);
       if (!hooks) expect(await git(path, "status", "--porcelain")).toContain("check-artifact.txt");
@@ -157,6 +161,8 @@ describe("explicit repository execution contexts", () => {
   it("does not attach current check evidence to the old commit when restoring a hook's commit fails", async () => {
     const { engine, task } = await fixture("failed-post-check-restore", { git: ["first"] });
     const scope = executionFor(task, "first"), path = scope.work.worktree!, sha = await git(path, "rev-parse", "HEAD");
+    engine.setPoolPaused(false);
+    const prepared = await engine["checks"]["captureState"](scope, []);
     scope.work.checks = { at: 1, current: true, sha, results: [] };
     const checks = engine["checks"], hook = checks["runHooks"];
     checks["runHooks"] = async () => {
@@ -166,7 +172,7 @@ describe("explicit repository execution contexts", () => {
     };
     const reset = spyOn(gitOps, "resetTo").mockResolvedValue(undefined);
     try {
-      await expectRejection(engine["checks"]["runAll"](scope, [], { sha, trackedChanged: false, hooks: ["pre-commit"], definition: "test" }, new AbortController().signal, new Map()), "could not restore the original work");
+      await expectRejection(engine["checks"]["runAll"](scope, [], { ...prepared, sha, trackedChanged: false, hooks: ["pre-commit"], definition: "test" }, new AbortController().signal, new Map()), "could not restore the original work");
       expect(scope.work.checks).toMatchObject({ sha, current: false });
       expect(await git(path, "rev-parse", "HEAD")).not.toBe(sha);
     } finally { reset.mockRestore(); checks["runHooks"] = hook; await engine.shutdown(); }
@@ -180,17 +186,17 @@ describe("explicit repository execution contexts", () => {
       const scope = executionFor(task, "first"), checks = engine["checks"], signal = new AbortController().signal;
       const commands = [{ name: "Quick check", argv: [process.execPath, "-e", "console.log('Checked')"] }];
       engine.s.products.find((product) => product.id === "first")!.checks = commands;
-      expect(await checks.failing(scope, signal, commands)).toBe(false);
+      expect((await checks.failing(scope, signal, commands)).kind).toBe("passed");
       // One gate observation plus one combined inspection after the command.
       expect(probe).toHaveBeenCalledTimes(2);
       const attempt = task.journey!.at(-1)!.checkAttempts![0]!;
       expect(attempt).toMatchObject({ passed: true, sha: scope.work.checks!.sha, tree: scope.work.checks!.tree, definition: scope.work.checks!.definition });
-      expect(await checks.failing(scope, signal, commands)).toBe(false);
+      expect((await checks.failing(scope, signal, commands)).kind).toBe("passed");
       expect(probe).toHaveBeenCalledTimes(3);
       expect(task.journey!.at(-1)!.checkAttempts).toHaveLength(1);
       expect(scope.work.checks!.current).toBe(true);
       writeFileSync(join(scope.work.worktree!, "README.md"), "A tracked change after the checks\n");
-      expect(await checks.current(scope)).toBe(false);
+      expect((await checks.current(scope)).inputs.kind).not.toBe("matches");
       expect(probe).toHaveBeenCalledTimes(4);
       expect(attempt.passed).toBe(true);
     } finally { probe.mockRestore(); await engine.shutdown(); }
@@ -199,7 +205,7 @@ describe("explicit repository execution contexts", () => {
   it("finishes a queued check against its bound owner after the task's current product changes", async () => {
     const { engine, task } = await fixture("queued-check", { git: ["first","second"] });
     let release: (() => void) | undefined;
-    let pending: Promise<number> | undefined;
+    let pending: Promise<CheckVerification> | undefined;
     try {
       engine.setPoolPaused(false);
       const first = executionFor(task, "first"), second = executionFor(task, "second");
@@ -216,7 +222,7 @@ describe("explicit repository execution contexts", () => {
       task.activeProductId = "second";
       engine.getState(); engine.windowState(); engine.taskDetails(task.id); engine.commitNow();
       release(); release = undefined;
-      expect(await pending).toBe(1);
+      expect(nonpassingChecks(await pending!)).toBe(1);
       expect(await gitOps.head(first.work.worktree!)).toBe(queuedHead);
       expect(engine.s.products.find((product) => product.id === "first")!.hooks).toEqual(["commit-msg"]);
       expect(first.work.checks!.results[0]!.output).toContain("Failure from the first product");

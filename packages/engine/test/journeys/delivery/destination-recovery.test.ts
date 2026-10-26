@@ -177,7 +177,7 @@ it("looks up an interrupted local publication after restart before checking and 
     try {
       expect(f.engine()["shipping"].waitingForTurn(first)).toBeUndefined();
       expect(f.engine()["shipping"].waitingForTurn(second)).toContain("first");
-      expect(await f.engine()["checks"].failing(firstScope, signal)).toBe(false);
+      expect((await f.engine()["checks"].failing(firstScope, signal)).kind).toBe("passed");
       const tested = await git(firstScope.work.worktree!, "rev-parse", "HEAD");
       // Save exactly the window after an admitted local update reached Git, before its result reached state.
       first.state = "running";

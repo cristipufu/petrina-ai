@@ -1,6 +1,6 @@
 // Task state is grouped by owner and lifetime. These interfaces keep one persisted shape;
 // composing them does not introduce projection copies or a second schema.
-import type { AcceptanceGap, ActiveAgent, BuilderContext, CheckRun, Cleanup, Column, ConversationNote, DesignBrief, DesignCall, DeliveryMode, Driving, Finding, HandedBack, Hunt, Id, InboxKind, JourneyStep, Lesson, Objection, Plan, PullRequest, QueuedMessage, RiskLevel, RunState, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TaskKind, TimelineEntry, WorkRow } from "./model.js";
+import type { AcceptanceGap, ActiveAgent, BuilderContext, CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupInvalidation, Cleanup, Column, ConversationNote, DesignBrief, DesignCall, DeliveryMode, Driving, Finding, HandedBack, Hunt, Id, InboxKind, JourneyStep, Lesson, Objection, Plan, PullRequest, QueuedMessage, RiskLevel, RunState, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TaskKind, TimelineEntry, WorkRow } from "./model.js";
 import type { PullRequestBackground, TaskSource, WorkChoice } from "./source.js";
 import type { ReadinessWait } from "./readiness.js";
 
@@ -19,7 +19,11 @@ export interface RepositoryState {
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
-  checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; results: readonly CheckRun[]; provenance?: { nodeId: Id; attemptId: string } };
+  checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; environment?: CheckEnvironmentBinding; results: readonly CheckRun[]; provenance?: { nodeId: Id; attemptId: string } };
+  /** Last actual setup observation, never an invented pass for a product with no declarations. */
+  checkSetup?: CheckSetupAttempt;
+  /** An actual coordinator change/rerun, including one made before the first observation. */
+  checkSetupInvalidated?: CheckSetupInvalidation;
   /**
    * Automatic Builder returns in the current check failure episode, twice at most. Only a passing run of every
    * check and hook on the current code and check definitions ends the episode and clears it.
@@ -102,7 +106,7 @@ export interface RepositoryState {
 /** These fields belong to one repository, never to a whole shared task. */
 export const REPOSITORY_FIELDS = [
   "savedVersion", "productId", "workChoice", "workProduct", "source", "prBackground", "delivery",
-  "worktree", "branch", "base", "baseSha", "checks", "checkReturns", "reviewedSha", "reviewedTree",
+  "worktree", "branch", "base", "baseSha", "checks", "checkSetup", "checkSetupInvalidated", "checkReturns", "reviewedSha", "reviewedTree",
   "checkedSha", "checkedPatch", "approvedSha", "approvedPatch", "approvedFor", "updating", "portReview",
   "lessons", "hooking", "tamper", "builderSession", "report", "pr", "release", "landed", "localUpdate", "shipping",
   "cleanup", "conversation", "sideStep", "stepAttempts", "editAttempt", "acceptanceReturns", "releasePreview", "confirmedDelivery", "proofRelease"

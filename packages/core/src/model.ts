@@ -344,6 +344,8 @@ export interface JourneyStep {
   productChecks?: readonly JourneyProductCheck[];
   /** Immutable run versions; unlike the repository's latest checks these survive subsequent runs. */
   checkAttempts?: readonly CheckAttemptEvidence[];
+  /** Actual setup observations, separate from product commands and their findings. */
+  checkSetups?: readonly CheckSetupAttempt[];
   /** Check-specific answers from a completed build result, bound before that repair started. */
   checkRepairs?: readonly CheckRepairEvidence[];
   buildVersions?: Readonly<Record<Id, string>>;
@@ -456,6 +458,8 @@ export interface CheckAttemptEvidence {
   /** Product commands only; hook inputs deliberately do not define a peer match. */
   commands: readonly string[];
   definition: string;
+  /** Stable observed environment of this actual batch; absent historical evidence stays absent. */
+  environment?: CheckEnvironmentBinding;
   /** Every required command and hook passed on this exact version and definition. */
   passed?: boolean;
 }
@@ -488,6 +492,8 @@ export interface JourneyCheckReuse {
   tree?: string;
   definition?: string;
   passed: boolean;
+  /** The new observation that authorized this handoff; never a new execution of the original rows. */
+  environment?: { identity: CheckEnvironmentIdentity; setupAttemptId: Id };
 }
 
 /** The exact text handed to an agent, saved once as an immutable file beside the complete-context files. */
@@ -1139,6 +1145,8 @@ export interface Product {
   learningsDeclined?: readonly string[];
   /** The commands that prove this product works. Petrina runs them itself; unset until found. */
   checks?: readonly ProductCheck[];
+  /** Coordinator-owned local prerequisites. The Check finder never writes this declaration. */
+  checkSetup?: ProductCheckSetup;
   /** Who set the checks: the Check finder agent, or the coordinator by hand (never replaced on its own). */
   checksBy?: "finder" | "coordinator";
   /** A fingerprint of the CI and build files the finder read: when they change, it looks again. */
@@ -1155,6 +1163,69 @@ export interface ProductCheck {
   argv: readonly string[];
   /** Why this command, in plain words (for example: "CI runs it on every pull request"). */
   why?: string;
+}
+
+/** A small read-only setup/identity command, supplied as literal arguments without a shell. */
+export interface CheckPrerequisite {
+  id: Id;
+  name: string;
+  argv: readonly string[];
+}
+
+export interface ProductCheckSetup {
+  revision: Id;
+  requirements: readonly CheckPrerequisite[];
+}
+
+/** Canonical identities compare relevant observations, never a machine, boot, PID or wall clock. */
+export interface CheckEnvironmentIdentity {
+  version: 1;
+  contract: string;
+  executor: string;
+  prerequisites: { kind: "none" } | { kind: "declared"; observations: string };
+}
+
+export interface CheckEnvironmentBinding extends CheckEnvironmentIdentity {
+  /** Provenance only: these attempt ids are deliberately excluded from identity equality. */
+  setupAttempts: { before: Id; after: Id };
+}
+
+export interface CheckSetupInput {
+  sha?: string;
+  tree?: string;
+  definition: string;
+  contract: string;
+  /** An actual coordinator invalidation this operation must consume, not another repair allowance. */
+  invalidationId?: Id;
+}
+
+/** An immutable settled observation; the repository points at its latest attempt. */
+export interface CheckSetupAttempt {
+  id: Id;
+  productId: Id;
+  queuedAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  lifecycle: "pending" | "running" | "settled" | "stopped";
+  position: "before-checks" | "after-checks";
+  input: CheckSetupInput;
+  requirements: readonly CheckPrerequisite[];
+  results: readonly { requirementId: Id; run: CheckRun }[];
+  runningRequirementId?: Id;
+  executor?: CheckExecutorFacts;
+  observationFailure?: { kind: "executor" | "identity" | "inputs" | "restoration" | "execution"; message: string };
+  afterInput?: CheckSetupInput & { trackedChanged: boolean };
+  restoration?: "unchanged" | "restored" | "unconfirmed";
+  /** Derived by the canonical observation owner, never accepted from coordinator configuration. */
+  identity?: CheckEnvironmentIdentity;
+}
+
+/** Configuration/rerun can invalidate authority even before any real setup attempt exists. */
+export interface CheckSetupInvalidation {
+  id: Id;
+  kind: "explicit-rerun" | "requirements-changed";
+  at: number;
+  revision?: Id;
 }
 
 /** Native execution observations; a diagnostic file is separate from the command's own completion. */

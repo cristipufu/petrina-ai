@@ -71,3 +71,6 @@ export type { PlainInstructions, LearningRecords, LearningMergeRecords, Learning
 
 export { DeliveryWorkflow } from "./delivery-workflow.js";
 export type { DeliveryStage, DeliveryRunResult, DeliveryWorkflowAdmission, DeliveryPhaseEffects, DeliveryRecording, DeliveryFailures } from "./ports/delivery-workflow.js";
+
+export { CheckSetup } from "./check-setup.js";
+export type { CheckSetupExecution, CheckSetupHost, CheckSetupRequest } from "./ports/check-setup.js";

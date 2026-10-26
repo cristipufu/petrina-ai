@@ -295,8 +295,8 @@ it("retains an earlier failure and its return allowance until the combined curre
   const f = await fixture();
   const first = await f.add("first"), second = await f.add("second", true);
   const checks = f.engine["checks"];
-  expect(await checks.failing(second.scope, new AbortController().signal)).toBe(true);
-  expect(checks.backToBuilder(second.scope, "before review")).toBe(true);
+  expect((await checks.failing(second.scope, new AbortController().signal)).kind).toBe("product-failed");
+  expect(checks.backToBuilder(second.scope, "before review", new Set((second.scope.task.repositories ?? [second.scope.work]).map(work => work.productId)))).toBe(true);
   const original = structuredClone(second.task.journey!.flatMap(step => step.checkAttempts ?? [])[0]!);
   expect(original.passed).not.toBe(true); expect(second.scope.work.checkReturns).toBe(1);
   // The Builder returned a changed tree; its incomplete repair remains a real failure until fresh proof.

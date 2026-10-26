@@ -24,7 +24,7 @@ describe("explicit repository execution contexts", () => {
     task.brief = { summary: "The task", forUsers: [], areas: [], risks: [], acceptance: [{ text: "The product works" }] };
     const scope = executionFor(task);
     task.stageIndex = 2;
-    expect(engine["checks"].backToBuilder(scope, "before testing")).toBe(true);
+    expect(engine["checks"].backToBuilder(scope, "before testing", new Set((scope.task.repositories ?? [scope.work]).map(work => work.productId)))).toBe(true);
     expect(task.stageIndex).toBe(0);
     expect(repository.checkReturns).toBe(1);
     expect(engine["updates"].message(scope)).toContain("Implementer on Codex");

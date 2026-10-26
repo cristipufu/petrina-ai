@@ -1,3 +1,4 @@
+import { CheckSetupRequirementsSchema } from "./operations.js";
 import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
 // The local API the UI (and scripts) use. It only listens on 127.0.0.1, every request
 // needs the random token, and Host/Origin are checked so a web page cannot reach it.
@@ -70,6 +71,7 @@ const ARGS = {
   addProduct: z.tuple([z.string().min(1).max(4096), z.string().max(200).optional()]),
   removeProduct: z.tuple([z.string()]),
   setProductChecks: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]),
+  setProductCheckSetup: z.tuple([z.string(), CheckSetupRequirementsSchema]),
   updateProduct: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]),
   setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
   setTaskStart: z.tuple([z.string(), WorkChoiceSchema]),

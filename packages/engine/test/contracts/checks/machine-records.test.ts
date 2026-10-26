@@ -1,15 +1,17 @@
-import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
+import type { CheckVerification } from "../../../src/product-checks.js";
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
 import { chmodSync, existsSync, lstatSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckRun, DeepMutable, ProductCheck } from "@petrina/core";
+import type { CheckRun } from "@petrina/core";
+import * as nativeChecks from "@petrina/repositories/check-runner";
 import type { MachineRecords } from "../../../src/check-interruption.js";
 import type { CheckProgress } from "../../../src/checks.js";
 import { Aborted } from "../../../src/kernel.js";
 import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "../../engine.js";
-import { git, heldMachineRecords, makeProduct, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "../../fixtures.js";
+import { git, heldMachineRecords, makeProduct, noMachineRecords, powerLogSleep, removeDir, runChecks, SLOW, tempDir } from "../../fixtures.js";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
@@ -68,11 +70,11 @@ for (const source of ["the fixture's default", "an explicit source"] as const) i
     const scope = executionFor(task);
     Object.assign(scope.work, { worktree: repo, baseSha: base, branch: "task" });
     // Command completion, including both repository hooks: one read for each failed run.
-    expect(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal)).toBe(3);
+    expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, checks, new AbortController().signal))).toBe(3);
     const failed = scope.work.checks!.results.map((run) => [run.name, run.ok, run.interruption, run.output.trim()]);
     expect(failed).toEqual([["Tests", false, undefined, "Original test failure"], ["Pre-commit hook", false, undefined, "Original pre-commit failure"], ["Commit message hook", false, undefined, "Original commit-msg failure"]]);
     // Reusing the saved failures takes one snapshot for the batch.
-    expect(await engine["checks"].failing(scope, new AbortController().signal, checks)).toBe(true);
+    expect((await engine["checks"].failing(scope, new AbortController().signal, checks)).kind).toBe("product-failed");
     expect(task.journey!.flatMap((step) => step.reuses ?? [])).toHaveLength(1);
     await engine.shutdown();
     // Startup recovery takes one more for the saved failures still waiting.
@@ -153,16 +155,18 @@ interface FailureOwner {
   scope: ReturnType<typeof executionFor>;
   controller: AbortController;
   operations: FixtureOperations;
+  runs: CheckRun[];
   close(): Promise<void>;
 }
 
-async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachineRecords>, checks: DeepMutable<ProductCheck>[], saved: CheckRun[], effects: {
+async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachineRecords>, output: string, effects: {
   prepareRepository?(root: string, engine: Engine): Promise<string>;
   beforeHandoff?(owner: FailureOwner): Promise<void>;
 } = {}): Promise<FailureOwner> {
   const dir = tempDir(`petrina-machine-records-${name}-`);
   const controller = new AbortController();
   let current: Engine | undefined;
+  let records: MachineRecords = noMachineRecords, restore: (() => void) | undefined;
   const operations = new FixtureOperations({
     async stop() {
       controller.abort();
@@ -180,9 +184,10 @@ async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachi
     arm(expired, ms) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
   });
   return setupWithCleanup(async () => {
-    const engine = current = new Engine(join(dir, "data"), { agentCommand: () => undefined, terminals: () => [], machineRecords: held.source });
+    const engine = current = new Engine(join(dir, "data"), { agentCommand: () => undefined, terminals: () => [], machineRecords: signal => records(signal) });
     engine.schedule = () => {};
-    const repo = await (effects.prepareRepository ? effects.prepareRepository(dir, engine) : makeProduct(dir));
+    const repo = await (effects.prepareRepository ? effects.prepareRepository(dir, engine) : operations.run(() => makeProduct(dir)));
+    const checks = [{ name: "Tests", argv: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(output)});process.exit(7)`] }];
     engine.s.products.push({ id: "product", name: "Shop", repo: "local/shop", path: repo, tone: "blue", delivery: "local", checksBy: "coordinator", checks });
     const task = engine.task(engine.addTask({ productId: "product", title: `${name} engine's failure` }))!;
     const scope = executionFor(task);
@@ -190,33 +195,51 @@ async function savedFailureWorld(name: string, held: ReturnType<typeof heldMachi
     scope.work.checkReturns = 2;
     task.plan = { stages: [{ id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] }], rationale: "Saved failure", plannerProfileId: "opus-high" };
     task.stageIndex = 0;
-    await operations.run(() => engine["checks"]["runPreparedChecks"](scope, checks, controller.signal, saved));
-    const owner = { root: dir, engine, task, scope, controller, operations, close: () => operations.close() };
+    const runs: CheckRun[] = [], original = nativeChecks.runChecks;
+    try {
+      const capture = spyOn(nativeChecks, "runChecks"); restore = () => capture.mockRestore();
+      capture.mockImplementation(async (...args) => {
+        const produced = await original(...args);
+        if (args[0] === repo && args[1].every(check => checks.some(expected => expected.name === check.name && JSON.stringify(expected.argv) === JSON.stringify(check.argv))))
+          runs.push(...structuredClone(produced));
+        return produced;
+      });
+      await operations.run(() => engine["checks"]["runPreparedChecks"](scope, checks, controller.signal));
+    } finally { restore?.(); restore = undefined; }
+    records = held.source;
+    const owner = { root: dir, engine, task, scope, controller, operations, runs, close: () => operations.close() };
     await effects.beforeHandoff?.(owner);
     return owner;
   }, () => operations.close());
 }
 
 it("keeps two engines' evidence apart through failure reuse, and stopping one leaves the other's collection and result unaffected", async () => {
-  const now = Date.now();
-  const checks = [{ name: "Tests", argv: ["test"] }];
-  const saved = (output: string): CheckRun[] => [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 60_000, output, startedAt: now - 120_000, endedAt: now - 60_000 }];
-  const sleep = powerLogSleep(now - 100_000, 30);
-  // A stopped read answers with the same sleep: arriving after the stop, it must not count.
-  const stoppedRecords = heldMachineRecords(sleep), continuingRecords = heldMachineRecords();
+  let sleep = "";
+  // A stopped read answers with the same actual-run-overlapping sleep: arriving after the stop, it must not count.
+  const stoppedRaw = heldMachineRecords(), continuingRecords = heldMachineRecords();
+  const stoppedRecords = { ...stoppedRaw, source: async (signal?: AbortSignal) => {
+    const records = await stoppedRaw.source(signal);
+    return signal?.aborted ? sleep : records;
+  } };
   let stopped: FailureOwner | undefined, continuing: FailureOwner | undefined;
   try {
-    stopped = await savedFailureWorld("stopped", stoppedRecords, checks, saved("Original stopped failure"));
-    continuing = await savedFailureWorld("continuing", continuingRecords, checks, saved("Original continuing failure"));
+    stopped = await savedFailureWorld("stopped", stoppedRecords, "Original stopped failure");
+    continuing = await savedFailureWorld("continuing", continuingRecords, "Original continuing failure");
+    const starts = [...stopped.runs, ...continuing.runs].map(run => run.startedAt!), ends = [...stopped.runs, ...continuing.runs].map(run => run.endedAt!);
+    const start = Math.min(...starts), end = Math.max(...ends);
+    sleep = powerLogSleep(start - 1000, Math.ceil((end - start + 2000) / 1000));
     const stop = stopped.controller, keepGoing = continuing.controller;
     const stoppedOwner = stopped;
-    let first!: Promise<boolean>;
+    let first!: Promise<CheckVerification>;
     const observedFirst = stopped.operations.run(() => {
-      first = stoppedOwner.engine["checks"].failing(stoppedOwner.scope, stop.signal, checks);
-      return rejectionOf(first);
+      first = stoppedOwner.engine["checks"].failing(stoppedOwner.scope, stop.signal);
+      return rejectionOf(first).then(error => {
+        if (!(error instanceof Aborted)) throw error;
+        return error;
+      });
     });
     const continuingOwner = continuing;
-    const reuse = [first, continuing.operations.run(() => continuingOwner.engine["checks"].failing(continuingOwner.scope, keepGoing.signal, checks))];
+    const reuse = [first, continuing.operations.run(() => continuingOwner.engine["checks"].failing(continuingOwner.scope, keepGoing.signal))];
     await Promise.all([
       waitFor(() => stoppedRecords.reads.length === 1, "the stopped Engine's evidence read", 30_000, { during: first }),
       waitFor(() => continuingRecords.reads.length === 1, "the continuing Engine's evidence read", 30_000, { during: reuse[1] }),
@@ -227,12 +250,12 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
     await observedFirst;
     expect(continuingRecords.reads[0]!.aborted).toBe(false);
     continuingRecords.answer(sleep);
-    expect(await reuse[1]).toBe(true);
-    expect(stopped.scope.work.checks!.results).toEqual(saved("Original stopped failure"));
+    expect((await reuse[1]!).kind).toBe("blocked");
+    expect(stopped.scope.work.checks!.results).toEqual(stopped.runs);
     expect(stopped.task.journey!.flatMap((step) => step.reuses ?? [])).toEqual([]);
     // Recorded sleep leaves verification incomplete: the original failure stays, with no repair or extra return.
     const [run] = continuing.scope.work.checks!.results;
-    expect(run).toEqual({ ...saved("Original continuing failure")[0]!, interruption: { source: "macOS power log", at: Date.parse(sleep.slice(0, 25)), event: expect.stringContaining("Entering Sleep state") } });
+    expect(run).toEqual({ ...continuing.runs[0]!, interruption: { source: "macOS power log", at: Date.parse(sleep.slice(0, 25)), event: expect.stringContaining("Entering Sleep state") } });
     expect(continuing.task.findings.filter((finding) => finding.status === "open")).toEqual([]);
     expect(continuing.task.repair).toBeUndefined();
     expect([stopped.scope.work.checkReturns, continuing.scope.work.checkReturns]).toEqual([2, 2]);
@@ -246,7 +269,7 @@ it("keeps two engines' evidence apart through failure reuse, and stopping one le
 it("stops the actual Engine when repository setup rejects before fixture handoff", async () => {
   const failure = new Error("Repository setup failed before handoff");
   let observed: { root: string; engine: Engine } | undefined;
-  const outcome = await rejectionOf(savedFailureWorld("setup-failure", heldMachineRecords(), [], [], {
+  const outcome = await rejectionOf(savedFailureWorld("setup-failure", heldMachineRecords(), "Unused setup failure", {
     prepareRepository: async (root, engine) => { observed = { root, engine }; throw failure; },
   }));
   expect(outcome).toBe(failure);
@@ -257,16 +280,13 @@ it("stops the actual Engine when repository setup rejects before fixture handoff
 it("keeps setup cleanup pending until its actual direct check and inspected cancellation settle", async () => {
   const failure = new Error("Fixture setup failed after starting a direct check");
   const held = heldMachineRecords(), release = Promise.withResolvers<void>();
-  const checks = [{ name: "Tests", argv: ["test"] }];
-  const at = Date.now() - 120_000;
-  const saved = [{ name: "Tests", command: "test", ok: false, execution: completeCheckExecution(7), ms: 60_000, output: "Saved failure", startedAt: at, endedAt: at + 60_000 }];
   let observed: FailureOwner | undefined, direct: Promise<void> | undefined, cancelled = false, settled = false;
-  const setup = savedFailureWorld("pending-handoff", held, checks, saved, {
+  const setup = savedFailureWorld("pending-handoff", held, "Saved failure", {
     beforeHandoff: async owner => {
       observed = owner;
-      let reading!: Promise<boolean>;
+      let reading!: Promise<CheckVerification>;
       direct = owner.operations.run(async () => {
-        reading = owner.engine["checks"].failing(owner.scope, owner.controller.signal, checks);
+        reading = owner.engine["checks"].failing(owner.scope, owner.controller.signal);
         const result = await rejectionOf(reading);
         if (!(result instanceof Aborted)) throw result;
         cancelled = true;

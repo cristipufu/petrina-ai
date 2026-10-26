@@ -3,9 +3,10 @@ import { DELIVERY_LABEL, productHistory, involvesProduct, taskProductIds, type D
 import { Settings2 } from "lucide-react";
 import { ConfirmDialog } from "./bits";
 import { EditorPanel, FormSection } from "./EditorPanel";
+import { ProductCheckSetup } from "./ProductCheckSetup";
 import { sim, useEngineStatus } from "../engine";
 
-/** Only display names and defaults change here; the repository's identity never does. */
+/** Product settings leave the repository identity unchanged. */
 export function ProductEditor({ product, state, onClose, onRemoved }: { product: Product; state: State; onClose: () => void; onRemoved: () => void }) {
   const [name, setName] = useState(product.name);
   const [delivery, setDelivery] = useState<DeliveryMode>(product.delivery ?? "pull-request");
@@ -14,6 +15,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
   const [confirming, setConfirming] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [checkState, setCheckState] = useState({ busy: false, dirty: false });
+  const [setupState, setSetupState] = useState({ busy: false, dirty: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -24,12 +26,13 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
   const unfinished = liveUnfinished + (archived?.blocked ?? 0);
   const finished = involved.filter((task) => taskProductIds(task).length === 1 && ["done", "cancelled"].includes(task.state)).length + (archived?.done ?? 0) + (archived?.cancelled ?? 0) - (archived?.shared ?? 0);
   const retained = involved.filter((task) => taskProductIds(task).length > 1).length + (archived?.shared ?? 0);
-  const pending = busy || checkState.busy;
-  const dirty = name !== product.name || delivery !== (product.delivery ?? "pull-request") || approveDelivery !== (product.approveDelivery ?? true) || shipLowRisk !== (product.shipLowRisk ?? false) || checkState.dirty;
+  const pending = busy || checkState.busy || setupState.busy;
+  const dirty = name !== product.name || delivery !== (product.delivery ?? "pull-request") || approveDelivery !== (product.approveDelivery ?? true) || shipLowRisk !== (product.shipLowRisk ?? false) || checkState.dirty || setupState.dirty;
   const close = () => { if (!pending) { if (dirty) setDiscarding(true); else onClose(); } };
   const save = async () => {
     if (!live || pending) return;
     if (checkState.dirty) { setError("Save or cancel your check edits first."); return; }
+    if (setupState.dirty) { setError("Save or cancel your local setup edits first."); return; }
     setBusy(true);
     setError(undefined);
     try {
@@ -57,7 +60,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
   };
 
   return <>
-    <EditorPanel id={`product-editor-${product.id}`} title={`${product.name} settings`} description="Defaults for new tasks. Tasks already on the board keep their choices." icon={<Settings2 size={22} />} className="product-editor" onClose={close} busy={pending}
+    <EditorPanel id={`product-editor-${product.id}`} title={`${product.name} settings`} description="Product details, delivery defaults and local checks." icon={<Settings2 size={22} />} className="product-editor" onClose={close} busy={pending}
       footer={<><button className="btn" disabled={pending} onClick={close}>Cancel</button><span className="spacer" /><button className="btn lead" disabled={!live || pending} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button></>}>
       <FormSection title="Product details">
         <label className="form-field"><span className="field-label">Name</span><input autoFocus className="field" value={name} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void save(); }} /></label>
@@ -74,6 +77,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
         </div>
       </FormSection>
       <ProductChecks product={product} live={live} onState={setCheckState} />
+      <ProductCheckSetup product={product} live={live} onState={setSetupState} />
       <FormSection title="Remove product" description="Remove this product and its task history from Petrina. Your repository and GitHub stay as they are.">
         <div><button className="btn danger" disabled={unfinished > 0 || !live || pending} onClick={() => { setError(undefined); setConfirming(true); }}>Remove product</button></div>
         {unfinished > 0 && <p className="setting-hint">{archived?.blocked ? "Resolve the unfinished shared deliveries before removing this product." : `${unfinished} task${unfinished === 1 ? " must" : "s must"} finish or be cancelled before this product can be removed.`}</p>}

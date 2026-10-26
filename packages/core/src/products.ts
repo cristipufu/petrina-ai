@@ -1,5 +1,7 @@
-import { involvesProduct } from "./repositories.js";
-import type { DeliveryMode, Id, Product, Task } from "./model.js";
+import { involvesProduct, repositoryPublished } from "./repositories.js";
+import { normalizeCheckPrerequisites, sameCheckPrerequisites } from "./check-environment.js";
+import type { DeepMutable } from "./flow.js";
+import type { CheckPrerequisite, DeliveryMode, Id, Product, RepositoryState, Task } from "./model.js";
 
 const ABBREVIATIONS = new Set(["ai", "api", "ui", "ux", "cli", "sdk"]);
 
@@ -17,6 +19,26 @@ export interface ProductSettings {
   delivery: DeliveryMode;
   approveDelivery: boolean;
   shipLowRisk?: boolean;
+}
+
+export type CheckSetupSettingWork = DeepMutable<Pick<RepositoryState, "productId" | "checkSetupInvalidated" | "checks" | "approvedSha" | "approvedPatch" | "approvedFor" | "pr" | "release" | "landed" | "localUpdate">>;
+export interface CheckSetupSettingEffects { id(prefix: Id): Id; now(): number }
+
+/** Save a declaration only; hosts supply their actual bound executions and perform no probes here. */
+export function configureProductCheckSetup(product: DeepMutable<Pick<Product, "id" | "checkSetup">> | undefined, requirements: readonly CheckPrerequisite[],
+  executions: Iterable<{ taskId: Id; work: CheckSetupSettingWork }>, effects: CheckSetupSettingEffects): boolean {
+  const normalized = normalizeCheckPrerequisites(requirements);
+  if (!product) throw new Error("This product is no longer in Petrina.");
+  if (product.checkSetup && sameCheckPrerequisites(product.checkSetup.requirements, normalized)) return false;
+  const revision = effects.id(product.id);
+  product.checkSetup = { revision, requirements: normalized.map(requirement => ({ ...requirement, argv: [...requirement.argv] })) };
+  for (const { taskId, work } of executions) {
+    if (work.productId !== product.id || repositoryPublished(work)) continue;
+    work.checkSetupInvalidated = { id: effects.id(taskId), kind: "requirements-changed", at: effects.now(), revision };
+    if (work.checks) work.checks.current = false;
+    delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
+  }
+  return true;
 }
 
 /** Validate before changing anything, so a rejected save leaves every setting alone. */

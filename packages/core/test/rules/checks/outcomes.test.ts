@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
-import { checkOutcome, checkOutcomeLabel, checkExecutionPassed, CHECK_EXIT_UNREPORTED } from "../../../src/check-outcome.js";
+import { checkOutcome, checkOutcomeLabel, checkOwnershipConfirmed, checkExecutionPassed, CHECK_EXIT_UNREPORTED } from "../../../src/check-outcome.js";
 import { checkCounts, checkEntryCommandOutcome, checkEntryResult, evidenceFor, checkProblem } from "../../../src/check-evidence.js";
 import type { CheckRun, JourneyProductCheck } from "../../../src/model.js";
 
@@ -124,4 +124,59 @@ it("does not choose a lifecycle from ambiguous source identities or invent missi
   expect(evidence[0]!.result).toBe("stopped");
   expect(checkOutcome(evidence[0]!.run)).toMatchObject({ kind: "incomplete", reason: "native-evidence-missing", reportedOk: true });
   expect(evidence[0]!.run!.execution).toBeUndefined();
+});
+
+
+it.each([0, 7])("confirms a native reported exit %s and both EOF pipes independently of its verdict", code => {
+  const run = completed(code), before = JSON.stringify(run);
+  expect(checkOwnershipConfirmed(run)).toBe(true);
+  expect(pair(run)).toEqual(code === 0 ? ["passed", "complete"] : ["failed", "command-failed"]);
+  expect(JSON.stringify(run)).toBe(before);
+});
+
+it("confirms the canonical no-start tuple only when no native process or pipe was acquired", () => {
+  const run = completed(7);
+  run.execution = { ...run.execution!, started: false, exit: { status: "unreported" }, stdout: "incomplete", stderr: "incomplete", failure: { kind: "start", message: "Cannot launch" } };
+  expect(checkOwnershipConfirmed(run)).toBe(true);
+  expect(pair(run)).toEqual(["unavailable", "start-failed"]);
+  expect(checkOwnershipConfirmed({ ...run, execution: { ...run.execution, failure: undefined } })).toBe(false);
+  expect(checkOwnershipConfirmed({ ...run, execution: { ...run.execution, exit: { status: "reported", code: 7 } } })).toBe(false);
+  expect(checkOwnershipConfirmed({ ...run, execution: { ...run.execution, exit: { status: "rejected" } } })).toBe(false);
+});
+
+it("requires confirmed stop and output disposal where neither exit nor EOF establishes native settlement", () => {
+  const run = completed(7);
+  run.timedOut = true;
+  run.execution = { ...run.execution!, exit: { status: "unreported" }, timedOut: true, stdout: "incomplete", stderr: "read-error" };
+  expect(checkOwnershipConfirmed(run)).toBe(false);
+  run.execution.cleanup = "confirmed";
+  expect(checkOwnershipConfirmed(run)).toBe(false);
+  run.execution.outputCleanup = "confirmed";
+  expect(checkOwnershipConfirmed(run)).toBe(true);
+  expect(pair(run)).toEqual(["incomplete", "timed-out"]);
+});
+
+for (const reason of ["timeout", "cancelled", "sleep"] as const) for (const owner of ["cleanup", "outputCleanup", "raw"] as const)
+  it(`never hides ${owner} ownership uncertainty behind ${reason} outcome precedence`, () => {
+    const run = completed(7);
+    if (reason === "timeout") { run.timedOut = true; run.execution!.timedOut = true; }
+    if (reason === "cancelled") { run.interrupted = true; run.execution!.cancelled = true; }
+    if (reason === "sleep") run.interruption = { source: "macOS power log", at: 1, event: "Recorded sleep" };
+    if (owner === "raw") run.cleanupIncomplete = true;
+    else run.execution![owner] = "unconfirmed";
+    const before = JSON.stringify(run);
+    expect(checkOwnershipConfirmed(run)).toBe(false);
+    expect(checkOutcome(run).kind).toBe("incomplete");
+    expect(JSON.stringify(run)).toBe(before);
+  });
+
+it.each([null, 0, "confirmed"].map(value => [value]))("rejects a malformed optional raw cleanup observation (%#)", value => {
+  expect(checkOwnershipConfirmed({ ...completed(7), cleanupIncomplete: value } as unknown as CheckRun)).toBe(false);
+});
+
+it.each([undefined, null, {}, { ...completeCheckExecution(7), started: undefined },
+  { ...completeCheckExecution(7), cleanup: "unknown" }, { ...completeCheckExecution(7), outputCleanup: undefined },
+  { ...completeCheckExecution(7), stdout: undefined }, { ...completeCheckExecution(7), exit: { status: "reported" } },
+].map(value => [value]))("missing or malformed native settlement observations stay unknown (%#)", execution => {
+  expect(checkOwnershipConfirmed({ ...completed(7), execution } as unknown as CheckRun)).toBe(false);
 });

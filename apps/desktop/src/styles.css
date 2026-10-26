@@ -1730,6 +1730,22 @@ input.select { cursor: text; }
 .product-check-list li + li { border-top: 1px solid var(--line); }
 .product-check-list strong { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
 .product-check-command { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); overflow-wrap: anywhere; }
+.local-setup-rows { display: grid; gap: 12px; list-style: none; padding: 0; margin: 0; }
+.local-setup-row { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
+.local-setup-row > button { justify-self: start; }
+.local-setup-row textarea { resize: vertical; min-height: 64px; }
+.setup-observation { display: grid; gap: 8px; min-width: 0; }
+.setup-outcome, .setup-observation-meta, .setup-detail-name { margin: 0; overflow-wrap: anywhere; }
+.setup-outcome { font-weight: 600; }
+.setup-outcome.ok-text { color: var(--green-text); }
+.setup-history { margin-top: 12px; min-width: 0; }
+.setup-history > summary, .setup-diagnostics > summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
+.setup-history > summary:focus-visible, .setup-diagnostics > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.setup-history-entry { margin-top: 12px; padding: 12px 0 0; border-top: 1px solid var(--line); }
+.setup-product + .setup-product { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.setup-product h5 { margin: 0 0 8px; font-size: var(--fs-body); }
+.setup-detail-name { font-weight: 600; margin-top: 12px; }
+.setup-diagnostics .check-output { max-height: 180px; overflow: auto; }
 
 .switch { flex: none; position: relative; width: 44px; height: 24px; margin-top: 2px; padding: 0; border: 1px solid var(--field); border-radius: 12px; background: var(--sunken); transition: background 0.15s, border-color 0.15s; }
 .switch .knob { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-3); transition: transform 0.15s, background 0.15s; }

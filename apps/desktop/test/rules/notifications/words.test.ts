@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { notificationFixture } from "../../fixtures/notifications";
+import { setupObservation } from "../../fixtures/check-setup";
 import { beforeEach, describe, expect, it } from "vitest";
-import { historyItem, reviewStats, type InboxItem, type InboxKind, type State } from "@petrina/core";
+import { checkProblem, recordedCheckBatch, historyItem, reviewStats, type CheckRun, type InboxItem, type InboxKind, type State } from "@petrina/core";
 import { noticeFor, plainWords, summaryOf, waitingLine, whoAsks } from "../../../src/notify/words";
 
 const demo = notificationFixture();
@@ -24,15 +25,27 @@ function withInbox(inbox: readonly InboxItem[]): State {
   return { ...demo, inbox };
 }
 
-it.each(["failed", "interrupted", "passing", "outdated", "outdated-failed", "outdated-interrupted"] as const)("keeps %s check decisions consistent in notifications and in-app messages", (result) => {
+/** Modeled complete records for the intentional modern-pass branch, never native qualification. */
+function modernSetup(productId: string, checks: { at: number; current?: boolean; results: readonly CheckRun[] }) {
+  const before = setupObservation(productId, 0, 100), after = setupObservation(productId, 0, 200); after.position = "after-checks";
+  return { checkSetup: after, checks: { ...checks, at: 200, sha: after.input.sha, tree: after.input.tree, definition: after.input.definition,
+    results: checks.results.map(run => ({ ...run, executor: after.executor })), environment: { ...after.identity!, setupAttempts: { before: before.id, after: after.id } } } };
+}
+
+it.each(["failed", "interrupted", "passing", "outdated", "outdated-failed", "outdated-interrupted", "missing"] as const)("keeps %s check decisions consistent in notifications and in-app messages", (result) => {
   const failed = result.endsWith("failed"), interrupted = result.endsWith("interrupted");
-  const task = { ...guestCheckout, findings: [], acceptanceUnverified: false, checks: { at: 1, current: !result.startsWith("outdated"), results: [{ name: "Tests", command: "tests", ms: 1, output: "original result", ok: !failed && !interrupted, execution: completeCheckExecution(failed || interrupted ? 7 : 0), ...(interrupted ? { interruption: { source: "macOS power log" as const, at: 0, event: "Sleep" } } : {}) }] } };
+  const checks = { at: 1, current: !result.startsWith("outdated"), results: [{ name: "Tests", command: "tests", ms: 1, output: "original result", ok: !failed && !interrupted, execution: completeCheckExecution(failed || interrupted ? 7 : 0), ...(interrupted ? { interruption: { source: "macOS power log" as const, at: 0, event: "Sleep" } } : {}) }] };
+  const task = { ...guestCheckout, findings: [], acceptanceUnverified: false, checks, ...(result === "passing" ? modernSetup(guestCheckout.productId, checks) : {}) };
   const decision = item("delivery");
   const state = { ...demo, tasks: [task], inbox: [decision] };
-  const words = failed ? "checks still failing, your call" : interrupted ? "checks unverified, your call" : "a task is ready to ship";
+  const words = failed ? "checks still failing, your call" : interrupted || result.startsWith("outdated") || result === "missing" ? "checks unverified, your call" : "a task is ready to ship";
   expect(noticeFor(decision, state).title).toBe(`Petrina: ${words}`);
   expect(waitingLine(decision, state)).toContain(words);
-  const shared = { ...task, repositories: [{ productId: demo.products[0]!.id, delivery: "local" as const, completedStages: [], checks: task.checks }, { productId: demo.products[1]!.id, delivery: "local" as const, completedStages: [], checks: { at: 1, results: [{ name: "Build", command: "build", ms: 1, ok: true, execution: completeCheckExecution(0), output: "pass" }] } }] };
+  const companion = { at: 1, results: [{ name: "Build", command: "build", ms: 1, ok: true, execution: completeCheckExecution(0), output: "pass" }] };
+  const shared = { ...task, repositories: [
+    { productId: demo.products[0]!.id, delivery: "local" as const, completedStages: [], checks: task.checks, ...(result === "passing" ? { checkSetup: task.checkSetup } : {}) },
+    { productId: demo.products[1]!.id, delivery: "local" as const, completedStages: [], checks: companion, ...(result === "passing" ? modernSetup(demo.products[1]!.id, companion) : {}) },
+  ] };
   expect(noticeFor(decision, { ...state, tasks: [shared] }).title).toBe(`Petrina: ${words}`);
 });
 
@@ -148,4 +161,22 @@ describe("wording", () => {
     expect(waitingLine(permission, withInbox([permission]))).toBe("Builder needs your permission. Guest checkout");
     expect(waitingLine(item("stuck"), demo)).toBe("Petrina: Guest checkout is stuck");
   });
+});
+
+for (const outcome of ["published-pass", "published-fail", "unfinished-fail"] as const) it(`notifies only the remaining delivery authority for ${outcome}, while raw history stays intact`, () => {
+  const run = (code: number): CheckRun => ({ name: "Tests", command: "tests", ms: 1, ok: code === 0, output: "Original recorded diagnostic", execution: completeCheckExecution(code) });
+  const published = { productId: demo.products[0]!.id, delivery: "pull-request" as const, completedStages: [],
+    ...modernSetup(demo.products[0]!.id, { at: 1, current: false, results: [run(outcome === "published-pass" ? 0 : 7)] }),
+    pr: { number: 7, url: "https://github.com/acme/shop/pull/7", state: "open" as const, openedAt: 200 },
+    checkSetupInvalidated: { id: "published-old-declaration", kind: "requirements-changed" as const, at: 250 } };
+  const remaining = { productId: demo.products[1]!.id, delivery: "local" as const, completedStages: [],
+    ...modernSetup(demo.products[1]!.id, { at: 1, current: true, results: [run(outcome === "unfinished-fail" ? 7 : 0)] }) };
+  const task = { ...guestCheckout, findings: [], acceptanceUnverified: false, repositories: [published, remaining] };
+  const decision = item("delivery"), state = { ...demo, tasks: [task], inbox: [decision] }, original = JSON.stringify(published);
+  expect(recordedCheckBatch(remaining).kind).toBe(outcome === "unfinished-fail" ? "product-failed" : "passed");
+  expect(checkProblem(task)).toBe(outcome === "published-pass" ? "unverified" : "failing");
+  const words = outcome === "unfinished-fail" ? "checks still failing, your call" : "a task is ready to ship";
+  expect(noticeFor(decision, state).title).toBe(`Petrina: ${words}`);
+  expect(waitingLine(decision, state)).toContain(words);
+  expect(JSON.stringify(published)).toBe(original);
 });

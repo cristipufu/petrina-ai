@@ -82,7 +82,7 @@ describe("explicit repository execution contexts", () => {
     const update = spyOn(engine["updates"], "upToDate").mockResolvedValue(variant === "moved source" ? "moved" : "current");
     const head = spyOn(gitOps, "head").mockResolvedValue(variant === "changed commit" ? "a".repeat(40) : sha);
     const patch = spyOn(engine["updates"], "patch").mockResolvedValue("different-patch");
-    const checks = spyOn(engine["checks"], "checksBeforeShipping").mockResolvedValue(variant === "failed checks");
+    const checks = spyOn(engine["checks"], "checksBeforeShipping").mockResolvedValue(variant === "failed checks" ? "returned" : "passed");
     try {
       const changed = variant === "changed commit" || variant === "moved source";
       expect(await engine["shipping"]["readyToShip"](scope, new AbortController().signal)).toBe(variant === "unchanged" ? "ready" : "back");
@@ -142,7 +142,7 @@ describe("shared check repair episodes", () => {
         }
         delete task.repair;
         task.stageIndex = from;
-        expect(engine["checks"].backToBuilder(second, "in this test")).toBe(true);
+        expect(engine["checks"].backToBuilder(second, "in this test", new Set((second.task.repositories ?? [second.work]).map(work => work.productId)))).toBe(true);
         expect(task.stageIndex).toBe(0);
         expect(second.work.checkReturns).toBe(1);
         return [task.repair!.returnStage, task.repositories!.map((work) => work.approvedPatch ?? "withdrawn").join()];
@@ -172,7 +172,7 @@ describe("shared check repair episodes", () => {
       // Incomplete execution stays unverified in the same spent episode; a Builder explanation alone establishes no interruption.
       setChecks(engine, "first", [failing]);
       first.work.checks!.results = [{ ...first.work.checks!.results[0]!, timedOut: true }];
-      expect(await checks.failing(first, signal)).toBe(true);
+      expect((await checks.failing(first, signal)).kind).toBe("blocked");
       expect(first.work.checkReturns).toBe(2);
       const answered = task.findings.find((finding) => finding.productIds?.includes("second"))!;
       answered.answer = { fixed: false, text: "The suite timed out while the Mac slept.", at: Date.now() };

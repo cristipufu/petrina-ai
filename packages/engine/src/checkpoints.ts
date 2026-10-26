@@ -1,5 +1,5 @@
 // Coordinator checkpoint decisions. Validation precedes removal; state and recovery stay atomic.
-import { acceptanceGap, afterChangesAsked, CALL_WORDS, checkProblem, endYouStep, JOURNEY_WORDS as W, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
+import { acceptanceGap, afterChangesAsked, CALL_WORDS, deliveryCheckProblem, endYouStep, JOURNEY_WORDS as W, reviewDecisionPending, type AcceptanceGap, type DeepMutable, type Id } from "@petrina/core";
 import type { Kernel } from "./kernel.js";
 import { executionFor, scopesFor, prepareDeliveryReturn } from "@petrina/orchestrator";
 import { destination } from "./shipping.js";
@@ -15,7 +15,7 @@ export class Checkpoints {
     if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
     const pending = this.k.s.inbox.find((entry) => entry.id === itemId);
     const pendingTask = pending && this.k.task(pending.taskId);
-    if (pending?.kind === "delivery" && pendingTask && !reviewDecisionPending(pendingTask) && checkProblem({ repositories: pendingTask.repositories, checks: executionFor(pendingTask).work.checks })) {
+    if (pending?.kind === "delivery" && pendingTask && !reviewDecisionPending(pendingTask) && deliveryCheckProblem({ repositories: pendingTask.repositories, ...executionFor(pendingTask).work })) {
       throw new Error("The product's checks are failing or unverified. Run the checks again or ask for changes; delivery has not been approved.");
     }
     if (pending?.kind === "plan" && pendingTask) this.sources.confirm(pendingTask);

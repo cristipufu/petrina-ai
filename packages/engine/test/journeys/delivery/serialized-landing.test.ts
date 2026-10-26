@@ -57,7 +57,7 @@ process.exit(ok ? 0 : 1);`);
     }
     for (const task of tasks) {
       const scope = executionFor(task);
-      expect(await engine["checks"].failing(scope, signal)).toBe(false);
+      expect((await engine["checks"].failing(scope, signal)).kind).toBe("passed");
       const tested = await git(scope.work.worktree!, "rev-parse", "HEAD");
       scope.work.approvedSha = tested;
       scope.work.approvedPatch = await engine["updates"].patch(scope);

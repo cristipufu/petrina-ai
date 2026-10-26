@@ -1,3 +1,5 @@
+import type { RecordedChecksApplicability } from "./product-checks.js";
+import { checkSetupOutcome, checkSetupWords, recordedCheckBatch } from "@petrina/core";
 import { checkOutcome, checkOutcomeLabel, finalDesignNotes } from "@petrina/core";
 import { productRows, repositoryView, type RepositoryContext } from "@petrina/orchestrator";
 // What each role is shown besides its instructions. Each part of the context is built here once; a role's
@@ -55,7 +57,7 @@ export interface ContextHost extends RelatedCheckEvidenceHost {
   role(id: Id, task?: RuntimeTask): Role | undefined;
 }
 export class Context {
-  private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: boolean, member?: string) => Section[]> = {
+  private readonly parts: Record<ContextPart, (scope: RepositoryContext, roleId: Id, points: readonly string[], currentChecks: RecordedChecksApplicability | undefined, member?: string) => Section[]> = {
     notes: (scope, _role, _points, _checks, member) => coordinatorNotes(scope, member),
     brief: (scope) => this.brief(scope),
     "design-notes": (scope) => this.designNotes(scope),
@@ -77,7 +79,7 @@ export class Context {
   constructor(
     private readonly k: ContextHost,
     private readonly guide: Pick<GuideKeeper, "pendingPoints">,
-    private readonly currentChecks: (scope: RepositoryContext) => Promise<boolean> = async () => false,
+    private readonly currentChecks: (scope: RepositoryContext) => Promise<RecordedChecksApplicability> = async scope => ({ inputs: { kind: "unknown", reason: "source" }, batch: recordedCheckBatch(scope.work) }),
   ) {}
 
   async sectionsFor(scope: RepositoryContext, roleId: Id, member?: string, copies?: Readonly<Record<string, string>>, shownKey?: string, review?: ReviewInput): Promise<Section[]> {
@@ -93,7 +95,7 @@ export class Context {
       : role?.result === "build" && !task.fixing ? task.brief?.sourcePointers ?? fromPlanning : [];
     const [points, currentChecks, pointers] = await Promise.all([
       !review && reads.includes("guide-points") ? this.guide.pendingPoints(scope) : [],
-      !review && reads.includes("check-results") && !!repository.checks?.results.length ? this.currentChecks(scope) : false,
+      !review && reads.includes("check-results") && !!(repository.checks || repository.checkSetup || repository.checkSetupInvalidated) ? this.currentChecks(scope) : undefined,
       currentSourcePointers(repositoryView(scope), references),
     ]);
     // Waiting instructions belong to the actual prompt handoff, not reusable background.
@@ -135,7 +137,7 @@ export class Context {
   async captureReview(scope: RepositoryContext): Promise<ReviewInput> {
     const [points, currentChecks, evidence] = await Promise.all([
       this.guide.pendingPoints(scope),
-      !!scope.work.checks?.results.length && this.currentChecks(scope),
+      scope.work.checks || scope.work.checkSetup || scope.work.checkSetupInvalidated ? this.currentChecks(scope) : undefined,
       verificationContext(this.k.dataDir, repositoryView(scope)),
     ]);
     const parts: ReviewInput["parts"] = {};
@@ -239,16 +241,17 @@ export class Context {
     return sections;
   }
 
-  private checkResults(scope: RepositoryContext, current: boolean): Section[] {
-    const { work: repository } = scope;
-    if (!repository.checks?.results.length) return [];
-    const lines = repository.checks.results.map((run) => `- ${run.name}: ${checkOutcomeLabel(checkOutcome(run))} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})${run.cleanupIncomplete ? ` — ${CLEANUP_INCOMPLETE}` : ""}`);
-    const guidance = current
-      ? repository.checks.results.every((run) => checkOutcome(run).kind === "passed")
-        ? "These complete passing results still match the code, commands and hooks. Use them for automated acceptance; do not rerun the full checks just to confirm them. Exercise every user acceptance item, with focused tests or a build needed to try the product."
-        : "These results match the current work, but some checks failed or did not finish. They are not passing acceptance evidence."
+  private checkResults(scope: RepositoryContext, applicability?: RecordedChecksApplicability): Section[] {
+    const work = scope.work;
+    if (!work.checks && !work.checkSetup && !work.checkSetupInvalidated) return [];
+    const setup = checkSetupOutcome(work.checkSetup, undefined, work.checkSetupInvalidated);
+    const lines = (work.checks?.results ?? []).map(run => `- ${run.name}: ${checkOutcomeLabel(checkOutcome(run))} in ${Math.max(1, Math.round(run.ms / 1000))}s (${run.command})${run.cleanupIncomplete ? ` — ${CLEANUP_INCOMPLETE}` : ""}`);
+    const matched = applicability?.inputs.kind === "matches";
+    const guidance = matched ? "These recorded results match the observed code and definitions. The saved environment describes its last setup observation; this read did not revalidate the local environment. Petrina's verification gate owns live reuse. Use focused tests for acceptance rather than repeating full suites."
       : "Historical results: these have not been established to cover the current code, required commands and hooks. Do not use an older pass as proof that this version passes.";
-    return [{ title: current ? "Current product checks, run by Petrina itself" : "Historical product checks, run by Petrina itself", body: [guidance, ...lines].join("\n") }];
+    return [{ title: matched ? "Recorded product checks, run by Petrina itself" : "Historical product checks, run by Petrina itself", body: [guidance,
+      `${checkSetupWords(setup)}${work.checkSetup?.endedAt ? ` at ${new Date(work.checkSetup.endedAt).toISOString()}` : ""}. Setup prerequisites are separate from product checks and never prove product acceptance.`,
+      ...(applicability?.batch.kind === "blocked" ? [applicability.batch.reason] : []), ...lines].join("\n") }];
   }
 }
 

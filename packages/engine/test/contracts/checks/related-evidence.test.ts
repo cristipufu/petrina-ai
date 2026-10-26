@@ -1,3 +1,4 @@
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { describe as originalDescribe } from "bun:test";
 
 import { expect, it, spyOn } from "bun:test";
@@ -30,7 +31,7 @@ it("records failure ownership and the completed Builder's answer, without borrow
       task.plan = { rationale: "Repair", plannerProfileId: "sol-high", stages: [stage] };
       engine["checks"].claimPreparation(id);
       const signal = new AbortController().signal;
-      expect(await engine["checks"].runProductChecks(scope, [check], signal)).toBe(1);
+      expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], signal))).toBe(1);
       task.fixing = true;
       const failures = assignedCheckFailures(scope);
       expect(failures).toHaveLength(1);
@@ -59,12 +60,12 @@ it("records failure ownership and the completed Builder's answer, without borrow
       const candidateSha = await git(w.clone, "rev-parse", "HEAD");
       writeFileSync(join(w.clone, "update.txt"), "new base contents"); await git(w.clone, "add", "."); await git(w.clone, "commit", "-qm", "Update from main");
       engine["checks"].claimPreparation(id);
-      expect(await engine["checks"].runProductChecks(scope, [check], signal)).toBe(0);
+      expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], signal))).toBe(0);
       expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(true);
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("claimed");
       await git(w.clone, "reset", "--hard", candidateSha);
       engine["checks"].claimPreparation(id);
-      expect(await engine["checks"].runProductChecks(scope, [check], signal)).toBe(0);
+      expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], signal))).toBe(0);
       expect(relatedCheckCandidates(failures, [projectCheckEvidence(task, "p")!], "p")[0]!.status).toBe("checked");
       expect(task.findings.find((finding) => finding.id === findingId)!.status).toBe("fixed");
       expect(scope.work.checkReturns).toBeUndefined();
@@ -73,7 +74,7 @@ it("records failure ownership and the completed Builder's answer, without borrow
         const interrupted = { ...scope.work.checks!.results[0]!, ok, output: "Original reported result retained", interruption: { source: "macOS power log" as const, at: Date.now(), event: "Entering Sleep state" } };
         scope.work.checkReturns = 2;
         engine["checks"].claimPreparation(id);
-        expect(await engine["checks"].runProductChecks(scope, [check], signal, [interrupted])).toBe(1);
+        expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [check], signal, [interrupted]))).toBe(1);
         const recorded = task.journey!.at(-1)!;
         expect(recorded.checkAttempts![0]!.passed).not.toBe(true);
         expect(recorded.outcome).toBe("Interrupted — verification incomplete");

@@ -1,3 +1,4 @@
+import { checkSetupOutcome } from "./check-environment.js";
 // Compact workflow facts and the events their changes produce. The engine compares a task's facts on
 // every recorded change, before a batched save or retirement can hide a transition. The facts are small
 // projections of the journey, inbox and delivery records that already exist, never another account of
@@ -228,6 +229,7 @@ interface NodeFacts {
   reusedFailed?: number;
   asks: AskFacts[];
   acceptance?: { pass: number; fail: number; blocked: number };
+  localSetup?: { count: number; omittedEarlier: number; attempts: readonly { id: Id; productId: Id; position: string; state: string; endedAt?: number }[] };
   checked: readonly (Omit<CheckAttemptEvidence, "id" | "commands"> & { attemptId: string })[];
   reuses: NonNullable<JourneyStep["reuses"]>;
   findingIds?: readonly Id[];
@@ -415,6 +417,9 @@ function nodeFacts(step: JourneyStep, index: number, journey: readonly JourneySt
     ...(step.outcome ? { outcome: step.outcome } : {}), ...(step.reason ? { reason: step.reason } : {}), ...(step.tone ? { tone: step.tone } : {}),
     ...(step.trigger ? { trigger: step.trigger } : {}), ...(step.builderConversation ? { builderConversation: step.builderConversation } : {}), ...(step.legacy ? { legacy: true } : {}),
     inputs, results, checks, ...(step.work === "check-reuse" && step.productChecks ? { reusedFailed: checkCounts(step.productChecks).failed } : {}), asks, ...(acceptance ? { acceptance } : {}),
+    ...(step.checkSetups?.length ? { localSetup: { count: step.checkSetups.length, omittedEarlier: Math.max(0, step.checkSetups.length - EVENT_MANIFEST_ENTRIES),
+      attempts: step.checkSetups.slice(-EVENT_MANIFEST_ENTRIES).map(attempt => ({ id: attempt.id, productId: attempt.productId, position: attempt.position,
+        state: checkSetupOutcome(attempt).kind, ...(attempt.endedAt !== undefined ? { endedAt: attempt.endedAt } : {}) })) } } : {}),
     checked: (step.checkAttempts ?? []).map(({ id, commands: _commands, ...version }) => ({ attemptId: id, ...version })), reuses: step.reuses ?? [],
     ...(step.findingIds ? { findingIds: step.findingIds } : {}),
     resultFindings: (step.result?.findings ?? []).map((finding) => ({ id: finding.id, status: finding.status, severity: finding.severity })),
@@ -605,7 +610,7 @@ export function workflowEvents(prev: WorkflowFacts | undefined, next: WorkflowFa
       // A run resumed on the same step keeps its stopped attempt as history; the step's result is its latest attempt.
       const attempt = node.kind === "petrina" && node.work === "checks" ? checkAttempt(node) : undefined;
       const checkSummary = attempt ? { ...(attempt.attemptId ? { attemptId: attempt.attemptId } : {}), ...(attempt.productId ? { productId: attempt.productId } : {}), attempts: attempt.attempts, ...checkTally(attempt.checks) } : undefined;
-      push({ at: node.endedAt, kind: "node.finished", ...at, summary: `${node.name}: ${node.outcome ?? node.end ?? "ended"}${node.reason ? ` (${node.reason})` : ""}${review && !review.examined ? `; no completed review (${review.acceptedResults} of ${review.seats} accepted result${review.seats === 1 ? "" : "s"})` : ""}`, nodeKind: node.kind, ...(node.roleId ? { roleId: node.roleId } : {}), ...(node.profileId ? { profileId: node.profileId } : {}), ...(node.work ? { work: node.work } : {}), ...(node.waitsFor ? { waitsFor: node.waitsFor } : {}), ...(node.outcome ? { outcome: node.outcome } : {}), ...(node.reason ? { reason: node.reason } : {}), end: node.end ?? "done", ...(node.tone ? { tone: node.tone } : {}), elapsedMs: Math.max(0, node.endedAt - node.startedAt), ...(node.acceptance ? { acceptance: node.acceptance } : {}), ...(attempt && checkSummary ? { checks: checkSummary, versions: attemptVersions(node, attempt.attemptId, attempt.productId) } : {}), ...(role?.result === "build" ? { checks: "separate-step" } : {}), ...(review ? { review } : {}), refs: { node: { taskId: next.id, nodeId: node.id }, ...(attempt ? { checks: attempt.checks.filter((check) => check.ok !== undefined).map((check) => ({ taskId: next.id, nodeId: node.id, index: check.index })) } : {}), ...(review && !review.examined && node.results.length ? { results: resultRefs(next.id, node) } : {}) } });
+      push({ at: node.endedAt, kind: "node.finished", ...at, summary: `${node.name}: ${node.outcome ?? node.end ?? "ended"}${node.reason ? ` (${node.reason})` : ""}${review && !review.examined ? `; no completed review (${review.acceptedResults} of ${review.seats} accepted result${review.seats === 1 ? "" : "s"})` : ""}`, nodeKind: node.kind, ...(node.roleId ? { roleId: node.roleId } : {}), ...(node.profileId ? { profileId: node.profileId } : {}), ...(node.work ? { work: node.work } : {}), ...(node.waitsFor ? { waitsFor: node.waitsFor } : {}), ...(node.outcome ? { outcome: node.outcome } : {}), ...(node.reason ? { reason: node.reason } : {}), end: node.end ?? "done", ...(node.tone ? { tone: node.tone } : {}), elapsedMs: Math.max(0, node.endedAt - node.startedAt), ...(node.localSetup ? { localSetup: node.localSetup } : {}), ...(node.acceptance ? { acceptance: node.acceptance } : {}), ...(attempt && checkSummary ? { checks: checkSummary, versions: attemptVersions(node, attempt.attemptId, attempt.productId) } : {}), ...(role?.result === "build" ? { checks: "separate-step" } : {}), ...(review ? { review } : {}), refs: { node: { taskId: next.id, nodeId: node.id }, ...(attempt ? { checks: attempt.checks.filter((check) => check.ok !== undefined).map((check) => ({ taskId: next.id, nodeId: node.id, index: check.index })) } : {}), ...(review && !review.examined && node.results.length ? { results: resultRefs(next.id, node) } : {}) } });
       if (reconciliation) {
         const counts = reconciliation.reportCounts.closing;
         const reports = outstandingReportsFirst(next.findings).map((finding) => {

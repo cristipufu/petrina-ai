@@ -1,7 +1,7 @@
 import { demoProfileChoices, saveProfile, removeProfile, type ProfileDraft } from "./profiles.js";
 import { messageRemovable } from "./message-delivery.js";
 import { saveRoutine, admitRoutines, prepareMaintenanceTask, type RoutineDraft } from "./routines.js";
-import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource, simVersions, simAcceptance } from "./sim-script.js";
+import { DEMO_RISK, DEMO_CHECKS, scriptFor, laterObjections, callAnswers, briefFor, capitalize, areaFromTitle, simReport, demoSource, simVersions, simAcceptance, simCheckSetup } from "./sim-script.js";
 import type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
 export { readCall } from "./sim-script.js";
 export type { Trigger, Triggers, SimQuirk, SimOpenWork, SimOptions, NewTask, MessageMode } from "./sim-types.js";
@@ -60,7 +60,7 @@ import { reviewClaimIds } from "./workflow-events.js";
 import * as library from "./roles.js";
 import type { RoleDraft } from "./roles.js";
 import { onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenReady, screenReason, screenWait } from "./screen.js";
-import { productHistory, validateProductSettings, type ProductSettings } from "./products.js";
+import { configureProductCheckSetup, productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
 import { continuingAgentTurn, askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type WorkMoment, type WorkStageKind } from "./worklog.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
@@ -395,6 +395,17 @@ export class Simulator {
       Object.assign(product, validated);
       // The permanent list keeps the latest name, so a removed product shows under the name it last had.
       this.work.recordProduct({ id: product.id, name: product.name, repo: product.repo });
+    });
+  }
+
+  setProductCheckSetup(productId: Id, requirements: readonly import("./model.js").CheckPrerequisite[]): void {
+    this.update(d => {
+      const executions = function* () {
+        for (const task of d.tasks) for (const work of task.repositories ?? [task]) yield { taskId: task.id, work };
+      };
+      configureProductCheckSetup(d.products.find(product => product.id === productId), requirements, executions(), {
+        id: prefix => this.id(d, prefix), now: () => d.now,
+      });
     });
   }
 
@@ -1044,9 +1055,15 @@ export class Simulator {
     beginPetrinaStep(task, "checks", d.now);
     const step = openStep(task)!;
     for (const work of (task.repositories ?? [task]).filter((work) => !repositoryPublished(work))) {
-      const results = DEMO_CHECKS.map((run, index) => ({ ...run, startedAt: d.now, endedAt: d.now, source: { stepId: step.id, attemptId: "run-0", checkId: `${task.repositories ? `${work.productId}:` : ""}check-${index}` } }));
+      const tree = simVersions(task)[work.productId]!;
+      const modeled = simCheckSetup(d.products.find(product => product.id === work.productId)!, tree, d.now,
+        { before: this.id(d, "demo-setup"), after: this.id(d, "demo-setup") }, work.checkSetupInvalidated?.id);
+      step.checkSetups = [...(step.checkSetups ?? []), modeled.before, modeled.after];
+      work.checkSetup = modeled.after;
+      delete work.checkSetupInvalidated;
+      const results = DEMO_CHECKS.map((run, index) => ({ ...run, executor: modeled.executor, startedAt: d.now, endedAt: d.now, source: { stepId: step.id, attemptId: "run-0", checkId: `${task.repositories ? `${work.productId}:` : ""}check-${index}` } }));
       step.productChecks = [...(step.productChecks ?? []), ...results.map((run) => ({ id: run.source.checkId, attemptId: "run-0", productId: work.productId, name: run.name, result: "pass" as const, startedAt: run.startedAt, endedAt: run.endedAt, run }))];
-      work.checks = { at: d.now, tree: simVersions(task)[work.productId], current: true, results };
+      work.checks = { at: d.now, tree, definition: modeled.input.definition, environment: modeled.environment, current: true, results };
     }
     this.log(d, task, "done", `Checks passed: ${DEMO_CHECKS.map((run) => run.name).join(", ")}`);
     endPetrinaStep(task, { outcome: W.checks(0, DEMO_CHECKS.length), reason: W.checksPassed }, d.now);

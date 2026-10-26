@@ -4,6 +4,8 @@ import { WORKFLOW_EVENT_KINDS } from "@petrina/core";
 import { StartFromSchema, WorkChoiceSchema } from "./source-schema.js";
 
 const id = z.string().min(1).max(200);
+/** One wire schema for the coordinator operation and window command; Core validates normalization atomically. */
+export const CheckSetupRequirementsSchema = z.array(z.object({ id, name: z.string().min(1).max(40), argv: z.array(z.string()).min(1) }).strict()).max(12);
 const text = z.string().min(1).max(8000);
 const page = { limit: z.number().int().min(1).max(100).default(25), cursor: z.string().max(1000).optional() };
 const evidence = { limit: z.number().int().min(1).max(32000).default(8000), cursor: z.string().max(1000).optional() };
@@ -103,7 +105,7 @@ export const OPERATIONS = [
   op(
     "task.read",
     "Read recorded task detail, conversation, findings, design or queued messages in bounded text pages. findingId selects one current report in section=findings; its status may differ from a historical journey.finding copy. Older missing evidence is unavailable.",
-    { ...task, section: z.enum(["request", "conversation", "timeline", "findings", "design", "messages", "source", "error"]), findingId: id.optional(), ...evidence },
+    { ...task, section: z.enum(["request", "conversation", "timeline", "findings", "design", "messages", "source", "check-setup", "error"]), findingId: id.optional(), ...evidence },
   ),
   ...["hold", "unhold", "pause", "resume", "cancel"].map((name) =>
     op(
@@ -198,7 +200,7 @@ export const OPERATIONS = [
   op(
     "journey.check",
     "Read an original check's diagnostics from beginning to end, with a bounded savedResult including startup failures and other engine explanations. Use section=result and its cursor to continue the saved result separately. Reports command outcome, relevance and log completeness; missing logs never become passes.",
-    { ...task, nodeId: id.optional(), productId: id.optional().describe("Select one product’s latest saved run when nodeId is absent."), ifRevision: id.optional().describe("Pin a latest-run reference supplied by checkpoint inspection; changed evidence returns changed."), index: z.number().int().min(0), section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence },
+    { ...task, nodeId: id.optional(), setupAttemptId: id.optional().describe("Select this exact local setup attempt instead of product check entries; index selects its recorded requirement result."), productId: id.optional().describe("Select one product’s latest saved run when nodeId is absent."), ifRevision: id.optional().describe("Pin a latest-run reference supplied by checkpoint inspection; changed evidence returns changed."), index: z.number().int().min(0), section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence },
   ),
   op("inbox.list", "List compact inbox requests, filtered inside the engine before pagination.", {
     ...filter,
@@ -268,6 +270,7 @@ export const OPERATIONS = [
     },
     true,
   ),
+  op("product.check-setup", "Set coordinator-owned local setup requirements. Commands run through the existing local check owner; no installation or delivery approval.", { productId: id, requirements: CheckSetupRequirementsSchema }, true),
   op("pool.inspect", "Inspect pool limits, scheduling preference, admitted work and drain blockers.", {}),
   op("pool.limit", "Set the existing total agent cap (1–12).", { limit: z.number().int().min(1).max(12) }, true),
   op("tools.inspect", "Inspect tool readiness, usage, profile choices and caps in bounded pages.", evidence),

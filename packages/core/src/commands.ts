@@ -5,7 +5,7 @@
 // argument schema, and its Engine method (and its Simulator method, if the demo should do something).
 
 import type { RoleDraft } from "./roles.js";
-import type { DeliveryMode, Id, ScreenMode, TaskKind } from "./model.js";
+import type { CheckPrerequisite, DeliveryMode, Id, ScreenMode, TaskKind } from "./model.js";
 import type { ProductSettings } from "./products.js";
 import type { Clone, SetupStep } from "./setup.js";
 import type { HandBackPreview, Launched } from "./takeover.js";
@@ -66,6 +66,7 @@ export interface Commands {
   updateProduct(productId: Id, settings: ProductSettings): void;
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void;
   setProductChecks(productId: Id, checks: { name: string; command: string }[] | null): void;
+  setProductCheckSetup(productId: Id, requirements: readonly CheckPrerequisite[]): void;
   // First run and the tools check
   /** Check every tool again, each on its own. The answers arrive in the state, one by one. */
   checkTools(): Promise<void>;
@@ -154,6 +155,7 @@ export const COMMAND_NAMES = [
   "updateProduct",
   "setProductDelivery",
   "setProductChecks",
+  "setProductCheckSetup",
   "checkTools",
   "findClones",
   "setSetupStep",

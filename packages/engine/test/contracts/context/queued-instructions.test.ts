@@ -1,3 +1,5 @@
+import { recordedCheckBatch } from "@petrina/core";
+import type { RecordedChecksApplicability } from "../../../src/product-checks.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { executionFor } from "@petrina/orchestrator";
@@ -45,9 +47,9 @@ for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check 
     const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
     engine.setPoolPaused(true);
     const started: string[] = [];
-    let guideDone!: (points: string[]) => void, checksDone!: (current: boolean) => void;
+    let guideDone!: (points: string[]) => void, checksDone!: (current: RecordedChecksApplicability) => void;
     const guideRead = new Promise<string[]>((resolve) => { guideDone = resolve; });
-    const checkRead = new Promise<boolean>((resolve) => { checksDone = resolve; });
+    const checkRead = new Promise<RecordedChecksApplicability>((resolve) => { checksDone = resolve; });
     let reading: Promise<Awaited<ReturnType<Context["sectionsFor"]>>> | undefined;
     try {
       const productId = registerProduct(engine);
@@ -62,15 +64,15 @@ for (const mode of ["sections", "snapshot"] as const) it(`reads guide and check 
       guideDone(["Preserve the greeting."]);
       await Promise.resolve();
       expect(scope.task.queued).toHaveLength(1);
-      checksDone(true);
+      checksDone({ inputs: { kind: "matches", basis: "same-commit" }, batch: recordedCheckBatch(scope.work) });
       const sections = await reading;
       expect(sections.some((section) => section.body.includes("Keep the latest instruction"))).toBe(false);
       expect(scope.task.queued[0]?.text).toBe("Keep the latest instruction from the coordinator.");
       expect(sections.find((section) => section.title.startsWith("Points the coordinator accepted"))?.body).toContain("Preserve the greeting.");
-      expect(sections.find((section) => section.title === "Current product checks, run by Petrina itself")?.body).toContain("Quick: passed");
+      expect(sections.find((section) => section.title === "Recorded product checks, run by Petrina itself")?.body).toContain("Quick: passed");
       expect(started).toEqual(["guide", "checks"]);
       expect(scope.task.queued[0]?.deliveries).toBeUndefined();
-    } finally { guideDone([]); checksDone(false); await reading?.catch(() => {}); await engine.shutdown(); }
+    } finally { guideDone([]); checksDone({ inputs: { kind: "unknown", reason: "source" }, batch: recordedCheckBatch({}) }); await reading?.catch(() => {}); await engine.shutdown(); }
   });
 });
 

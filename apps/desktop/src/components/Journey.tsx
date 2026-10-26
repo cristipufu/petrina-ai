@@ -16,6 +16,7 @@ import { reviewOutcome, reviewRoundGroups } from "../reviewRound";
 import { ReviewRoundFindings } from "./ReviewRoundFindings";
 import { StepUsage } from "./StepUsage";
 import { CheckAttempts } from "./CheckAttempts";
+import { StepCheckSetups } from "./CheckSetupObservations";
 
 // ── Words ───────────────────────────────────────────────────────────────────────────────
 
@@ -787,6 +788,7 @@ function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, on
         </div>
       ) : node.kind === "agent" && role?.result === "checks" && !planned ? <p className="note">{node.state === "now" || node.state === "you" ? "Acceptance testing in progress. No results recorded yet." : "Acceptance results unavailable for this step."}</p> : null}
 
+      {(ownStep?.checkSetups?.length || (node.kind === "petrina" && node.work === "checks")) ? <StepCheckSetups attempts={ownStep?.checkSetups ?? []} productName={id => find.product(id)?.name ?? task.repositories?.find(work => work.productId === id)?.source?.product.name ?? "Removed product"} /> : null}
       {node.kind !== "you" && (node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
         if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} taskId={task.id} onOriginal={onOriginal} selectedAttempt={selectedAttempt} evidence={node.work === "check-reuse"} />;
         if (checkTimeline) return <div className="journey-context">

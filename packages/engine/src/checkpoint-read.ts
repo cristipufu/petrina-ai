@@ -1,5 +1,5 @@
 // A decision projection of existing task and journey evidence. No new evidence or gate state is saved.
-import { assignedProducts, checkEntryCommandOutcome, checkOutcome, evidenceFor, findingReportCounts, originalCheck, outstandingReportsFirst, resultSeatOf, reviewDecisionPending, roleForTask, taskProductIds, type InboxItem, type Task } from "@petrina/core";
+import { assignedProducts, checkSetupOutcome, recordedCheckBatch, checkEntryCommandOutcome, checkOutcome, evidenceFor, findingReportCounts, originalCheck, outstandingReportsFirst, resultSeatOf, reviewDecisionPending, roleForTask, taskProductIds, type InboxItem, type Task } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { checkCommandOutcome, readCheckLog, SAVED_RESULT_PREVIEW, unreportedCheckExit } from "./check-log-read.js";
 import { fingerprint } from "@petrina/storage/receipt-identity";
@@ -62,10 +62,13 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
       name: work.source?.product.name ?? engine.s.products.find((product) => product.id === work.productId)?.name ?? work.productId,
       delivery: work.delivery, source: work.source ?? null, choice: work.workChoice ?? null,
       checkedSha: work.checkedSha ?? null, checkedPatch: work.checkedPatch ?? null,
+      localSetup: { outcome: checkSetupOutcome(work.checkSetup, undefined, work.checkSetupInvalidated), attempt: work.checkSetup ? { id: work.checkSetup.id, position: work.checkSetup.position, lifecycle: work.checkSetup.lifecycle, queuedAt: work.checkSetup.queuedAt, startedAt: work.checkSetup.startedAt, endedAt: work.checkSetup.endedAt, input: work.checkSetup.input, requirements: work.checkSetup.requirements.map(({ id, name }) => ({ id, name })), results: work.checkSetup.results.map(({ requirementId, run }, index) => ({ requirementId, outcome: checkOutcome(run), logRecorded: !!run.logPath, read: { operation: "journey.check", taskId, productId: work.productId, setupAttemptId: work.checkSetup!.id, index, ifRevision: fingerprint(run) } })) } : null, read: { operation: "task.read", taskId, section: "check-setup" }, invalidation: work.checkSetupInvalidated ?? null, authority: "Recorded observations only; reading does not verify the local environment" },
+      checkBatch: (() => { const batch = recordedCheckBatch(work); return { kind: batch.kind, ...(batch.kind === "blocked" ? { reason: batch.reason, previousProductFailures: batch.productFailures.length } : batch.kind === "product-failed" ? { failed: batch.failed.length } : {}), authority: "Recorded applicability only" }; })(),
       checks: saved ? {
         recordedAt: saved.at,
         versions: { sha: saved.sha ?? null, tree: saved.tree ?? null, definition: saved.definition ?? null },
         binding: "Results use these recorded versions unless an entry records different versions.",
+        environment: saved.environment ?? null,
         freshness: saved.current === false ? "stale" : saved.current === true && (saved.sha || saved.tree) && saved.definition ? "recorded-current" : "unverified",
         state: saved.results.length ? "recorded" : "none-configured",
         results: checks,

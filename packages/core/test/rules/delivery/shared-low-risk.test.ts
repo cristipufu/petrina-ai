@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
+import { setupWork, setupExecutor } from "../../fixtures/check-setup.js";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
-import type { CheckRun } from "../../../src/model.js";
 import { shipsUnasked } from "../../../src/delivery-policy.js";
 import { stateFixture, taskFixture } from "../../fixtures/state.js";
 
@@ -8,9 +8,9 @@ function request() {
   const state = stateFixture();
   state.products.forEach(product => { product.shipLowRisk = true; });
   const task = taskFixture(state, { risk: { level: "low", why: "A small copy change" }, approveDelivery: false, acceptancePassed: true,
-    repositories: state.products.map(product => ({ productId: product.id, delivery: "pull-request", completedStages: [], checks: { at: 1, current: true, results: [{ name: "Tests", command: "tests", ok: true, execution: completeCheckExecution(0), ms: 1, output: "Passed" }] } })),
+    repositories: state.products.map(product => ({ productId: product.id, delivery: "pull-request", completedStages: [], ...setupWork([{ name: "Tests", command: "tests", ok: true, execution: completeCheckExecution(0), executor: setupExecutor, ms: 1, output: "Passed" }]) })),
   });
-  const allowed = () => shipsUnasked(task, { products: state.products, product: state.products[0], checks: task.repositories![0]!.checks });
+  const allowed = () => shipsUnasked(task, { products: state.products, product: state.products[0], ...task.repositories![0]!, checks: task.repositories![0]!.checks });
   return { state, task, allowed };
 }
 
@@ -29,9 +29,15 @@ for (const choice of [
 
 it("requires a real pass from every shared owner, including owners absent from the current catalog", () => {
   const { state, task, allowed } = request();
-  task.repositories![1]!.checks!.results = [];
+  const work = task.repositories![1]!, baseline = work.checkSetup, original = work.checks!.results;
+  work.checks!.results = [];
+  // A real empty baseline still does not satisfy the existing shared opt-in policy.
   expect(allowed()).toBe(false);
-  task.repositories![1]!.checks!.results = [{ name: "Tests", command: "tests", ok: false, execution: completeCheckExecution(7), ms: 1, output: "Failed" }];
+  work.checks!.results = original;
+  work.checkSetup = undefined;
+  expect(allowed()).toBe(false);
+  work.checkSetup = baseline;
+  work.checks!.results = [{ ...original[0]!, ok: false, execution: completeCheckExecution(7), output: "Failed" }];
   expect(allowed()).toBe(false);
   task.repositories![1]!.checks!.results[0]!.ok = true;
   task.repositories![1]!.checks!.results[0]!.execution = completeCheckExecution(0);
@@ -43,7 +49,7 @@ it("keeps the existing single-product opt-in independent of the shared task appr
   const { state, task } = request();
   delete task.repositories;
   task.approveDelivery = true;
-  const allowed = () => shipsUnasked(task, { products: state.products, product: state.products[0], checks: undefined });
+  const allowed = () => shipsUnasked(task, { products: state.products, product: state.products[0], ...setupWork(), checks: setupWork().checks });
   expect(allowed()).toBe(true);
   task.acceptanceUnverified = true;
   expect(allowed()).toBe(false);
@@ -53,8 +59,9 @@ for (const shared of [false, true]) for (const proofDeliveryGate of [false, true
   const { state, task } = request();
   if (!shared) delete task.repositories;
   task.proofDeliveryGate = proofDeliveryGate ? "proof-decision" : undefined;
-  const checks: { at: number; current: boolean; results: CheckRun[] } = { at: 1, current: true, results: [{ name: "Tests", command: "tests", ok: true, ms: 1, output: "Passed", execution: completeCheckExecution(0) }] };
-  const allowed = () => shipsUnasked(task, { products: state.products, product: state.products[0], checks });
+  const recorded = shared ? task.repositories![0]! : setupWork([{ name: "Tests", command: "tests", ok: true, execution: completeCheckExecution(0), executor: setupExecutor, ms: 1, output: "Passed" }]);
+  const checks = recorded.checks!;
+  const allowed = () => shipsUnasked(task, { products: state.products, product: state.products[0], ...recorded, checks });
   expect(allowed()).toBe(true);
   const original = checks.results[0]!;
   checks.results = [{ ...original, execution: undefined }];
@@ -67,4 +74,31 @@ for (const shared of [false, true]) for (const proofDeliveryGate of [false, true
     task.repositories![1]!.checks!.results[0]!.execution = undefined;
     expect(allowed()).toBe(false);
   }
+});
+
+
+it("requires fresh shared authority only for unfinished owners even when the selected published owner becomes stale", () => {
+  const { task, allowed } = request();
+  const published = task.repositories![0]!, unfinished = task.repositories![1]!;
+  published.landed = { branch: "main", sha: "already-published" };
+  published.checks!.current = false;
+  const history = JSON.stringify(published);
+  expect(allowed()).toBe(true);
+  expect(JSON.stringify(published)).toBe(history);
+  unfinished.checks!.current = false;
+  expect(allowed()).toBe(false);
+  unfinished.checks!.current = true;
+  unfinished.checks!.results = [];
+  expect(allowed()).toBe(false);
+});
+
+
+it("keeps the original added-proof gate exception for a bound empty batch without weakening ordinary shared opt-in", () => {
+  const { task, allowed } = request();
+  for (const work of task.repositories!) work.checks!.results = [];
+  expect(allowed()).toBe(false);
+  task.proofDeliveryGate = "required-proof-decision";
+  expect(allowed()).toBe(true);
+  task.repositories![1]!.checkSetup = undefined;
+  expect(allowed()).toBe(false);
 });

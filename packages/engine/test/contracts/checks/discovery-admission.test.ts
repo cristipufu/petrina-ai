@@ -1,3 +1,4 @@
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { expect, it, spyOn } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -76,7 +77,7 @@ for (const waitsAgain of [false, true]) it(`recaptures discovered check inputs $
     if (waitsAgain) { follower = f.engine.checkQueue.acquire(controller.signal); place = await follower; }
     f.releaseDiscovery.resolve();
     if (waitsAgain) { await waitFor(() => f.engine.checkQueue.waiting === 1, "discovered run to rejoin the occupied line"); place!(); }
-    expect(await checking).toBe(0);
+    expect(nonpassingChecks(await checking!)).toBe(0);
     expect(updates).toBe(waitsAgain ? 2 : 1); expect(f.discovery).toHaveBeenCalledTimes(1); expect(f.invocations()).toBe(1);
     const sha = await git(f.copy, "rev-parse", "HEAD"), tree = await git(f.copy, "rev-parse", "HEAD^{tree}");
     expect(await git(f.copy, "merge-base", latest, sha)).toBe(latest);

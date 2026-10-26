@@ -28,6 +28,19 @@ function recordedExecution(execution: CheckExecution): boolean {
     && (execution.failure === undefined || execution.failure !== null && typeof execution.failure === "object" && ["start", "observer", "read", "output", "exit"].includes(execution.failure.kind) && typeof execution.failure.message === "string");
 }
 
+/** Process/pipe settlement is independent of verdict precedence and of saved environment identity. */
+export function checkOwnershipConfirmed(run?: CheckRun): boolean {
+  if (!run || run.cleanupIncomplete !== undefined && typeof run.cleanupIncomplete !== "boolean" || run.cleanupIncomplete === true) return false;
+  const execution = run.execution;
+  if (!execution || !recordedExecution(execution)
+    || execution.cleanup === "unconfirmed" || execution.outputCleanup === "unconfirmed") return false;
+  // No process or pipe existed only when the adapter recorded its canonical launch failure.
+  if (!execution.started) return execution.failure?.kind === "start" && execution.exit.status === "unreported";
+  const processEnded = execution.exit.status === "reported" || execution.cleanup === "confirmed";
+  const pipesEnded = execution.stdout === "eof" && execution.stderr === "eof" || execution.outputCleanup === "confirmed";
+  return processEnded && pipesEnded;
+}
+
 /** One execution meaning for routing and reads. Historical reports remain facts, never invented proof. */
 export function checkOutcome(run?: CheckRun): CheckOutcome {
   const reported = run && typeof run.ok === "boolean" ? { reportedOk: run.ok } : {};

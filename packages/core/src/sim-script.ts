@@ -1,17 +1,49 @@
 // Scripted responses and believable tool reports for the offline demos. No engine bookkeeping.
 import { callOn, type CallAnswer } from "./call.js";
 import type { DeepMutable } from "./flow.js";
-import type { CheckRun, DesignBrief, Id, Objection, Role, Task, TaskKind } from "./model.js";
+import type { CheckExecutorFacts, CheckRun, DesignBrief, Id, Objection, Product, Role, Task, TaskKind } from "./model.js";
 import type { TaskSource, WorkChoice } from "./source.js";
 import type { TurnReport } from "./worklog.js";
 import type { SimQuirk } from "./sim-types.js";
 import { taskProductIds } from "./repositories.js";
+import { commandText } from "./check-commands.js";
+
+/** Opaque offline-model identities, not cryptographic hashes or observed native source identities. */
+function modeledIdentity(value: unknown): string {
+  const text = JSON.stringify(value);
+  return Array.from({ length: 8 }, (_, lane) => hash(`offline-demo:${lane}:${text}`).toString(16).padStart(8, "0")).join("");
+}
 
 /** Stable synthetic contents, changed only by a completed demo build. */
 export function simVersions(task: Task, buildStep?: Id): Record<Id, string> {
-  return Object.fromEntries(taskProductIds(task).map((id) => [id, buildStep
-    ? `demo:${task.id}:${id}:${buildStep}`
-    : task.journey?.findLast((step) => step.buildVersions?.[id])?.buildVersions?.[id] ?? `demo:${task.id}:${id}:initial`]));
+  return Object.fromEntries(taskProductIds(task).map(id => {
+    const recorded = task.journey?.findLast(step => step.buildVersions?.[id])?.buildVersions?.[id];
+    return [id, buildStep ? modeledIdentity(["version", task.id, id, buildStep])
+      : recorded ? /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(recorded) ? recorded : modeledIdentity(["legacy-version", recorded])
+      : modeledIdentity(["version", task.id, id, "initial"])];
+  }));
+}
+
+/** Only a simulated completed check run creates these explicitly modeled observations; no argv is executed. */
+export function simCheckSetup(product: Pick<Product, "id" | "checks" | "checkSetup">, tree: string, at: number,
+  ids: { before: Id; after: Id }, invalidationId?: Id) {
+  const executor: CheckExecutorFacts = { version: 1, adapter: "offline-demo-simulation", contract: 1, launchPolicy: 1,
+    platform: "simulated", architecture: "simulated", osRelease: "simulated", runtime: { name: "simulated", version: "1" } };
+  const requirements = (product.checkSetup?.requirements ?? []).map(requirement => ({ ...requirement, argv: [...requirement.argv] }));
+  const contract = modeledIdentity(["setup", product.checkSetup?.revision ?? "undeclared", requirements]);
+  const input = { tree, definition: modeledIdentity(["commands", product.checks, DEMO_CHECKS.map(run => [run.name, run.command])]), contract,
+    ...(invalidationId ? { invalidationId } : {}) };
+  const empty = { algorithm: "sha256" as const, bytes: 0, digest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" };
+  const identity = { version: 1 as const, contract, executor: modeledIdentity(["executor", executor]),
+    prerequisites: requirements.length ? { kind: "declared" as const, observations: modeledIdentity(["empty-modeled-output", requirements.map(requirement => requirement.id)]) } : { kind: "none" as const } };
+  const attempt = (position: "before-checks" | "after-checks", id: Id) => ({ id, productId: product.id, queuedAt: at, startedAt: at, endedAt: at,
+    lifecycle: "settled" as const, position, input: { ...input }, requirements: requirements.map(requirement => ({ ...requirement, argv: [...requirement.argv] })), executor,
+    results: requirements.map(requirement => ({ requirementId: requirement.id, run: { name: requirement.name, command: commandText(requirement.argv), ok: true, ms: 0, output: "",
+      execution: { started: true, exit: { status: "reported" as const, code: 0 }, stdout: "eof" as const, stderr: "eof" as const, timedOut: false, cancelled: false,
+        cleanup: "not-requested" as const, outputCleanup: "not-requested" as const }, executor, outputIdentity: { stdout: { ...empty }, stderr: { ...empty } } } })),
+    afterInput: { ...input, trackedChanged: false }, restoration: "unchanged" as const, identity });
+  return { before: attempt("before-checks", ids.before), after: attempt("after-checks", ids.after), executor,
+    input, environment: { ...identity, setupAttempts: { ...ids } } };
 }
 
 export function simAcceptance(task: Task) {

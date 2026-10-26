@@ -1,3 +1,4 @@
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -36,15 +37,15 @@ describe("shared check repair episodes", () => {
       first.work.checkReturns = 2;
       second.work.checkReturns = 1;
       // One check fixed while another still fails continues the episode; nothing clears or extends it.
-      expect(await checks.runProductChecks(first, [passing, failing], signal)).toBe(1);
+      expect(nonpassingChecks(await checks.runProductChecks(first, [passing, failing], signal))).toBe(1);
       expect(first.work.checkReturns).toBe(2);
-      expect(await checks.runProductChecks(second, [passing], signal)).toBe(0);
+      expect(nonpassingChecks(await checks.runProductChecks(second, [passing], signal))).toBe(0);
       expect(first.work.checkReturns).toBe(2);
       expect(second.work.checkReturns).toBeUndefined();
       // Rereading a saved failure is no new attempt; a saved pass on the same code and definitions is a genuine pass.
       second.work.checkReturns = 1;
-      expect(await checks.failing(first, signal)).toBe(true);
-      expect(await checks.failing(second, signal)).toBe(false);
+      expect((await checks.failing(first, signal)).kind).toBe("product-failed");
+      expect((await checks.failing(second, signal)).kind).toBe("passed");
       expect(first.work.checkReturns).toBe(2);
       expect(second.work.checkReturns).toBeUndefined();
       expect(first.work.checks!.results.map((run) => run.ok)).toEqual([true, false]);
@@ -63,8 +64,8 @@ describe("shared check repair episodes", () => {
       first.work.checkReturns = 2; second.work.checkReturns = 1;
       const original = first.work.checks!.results[0]!;
       original.interruption = { source: "macOS power log", at: original.startedAt!, event: "Entering Sleep state due to Clamshell Sleep" };
-      expect(await checks.failing(first, signal)).toBe(true);
-      expect(checks.backToBuilder(first, "before review")).toBe(false);
+      expect((await checks.failing(first, signal)).kind).toBe("product-failed");
+      expect(checks.backToBuilder(first, "before review", new Set((first.task.repositories ?? [first.work]).map(work => work.productId)))).toBe(false);
       expect(task.repositories!.map((work) => work.checkReturns)).toEqual([2, 1]);
       expect(task.findings.filter((finding) => finding.status === "open")).toHaveLength(0);
       expect(task.findings[0]!.status).toBe("unverified");
@@ -124,16 +125,16 @@ describe("shared check repair episodes", () => {
       const checks = engine["checks"], signal = new AbortController().signal;
       setChecks(engine, "first", [passing]);
       setChecks(engine, "second", [failing]);
-      expect(await checks.failing(first, signal)).toBe(false);
-      expect(await checks.failing(second, signal)).toBe(true);
+      expect((await checks.failing(first, signal)).kind).toBe("passed");
+      expect((await checks.failing(second, signal)).kind).toBe("product-failed");
       second.work.checkReturns = 2;
       // Petrina's deleted-test warning on the passing product is a blocking finding, but not a failing check.
       task.findings.push({ id: "deleted", text: "A test file was deleted: greeting.test.ts", productIds: ["first"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
       const gate = async () => {
         // Each unchanged return rereads both saved results before the review gate decides.
-        expect(await checks.failing(first, signal)).toBe(false);
-        expect(await checks.failing(second, signal)).toBe(true);
-        const returned = checks.backToBuilder(second, "before review");
+        expect((await checks.failing(first, signal)).kind).toBe("passed");
+        expect((await checks.failing(second, signal)).kind).toBe("product-failed");
+        const returned = checks.backToBuilder(second, "before review", new Set((second.task.repositories ?? [second.work]).map(work => work.productId)));
         const products = task.repair?.products;
         delete task.repair;
         task.stageIndex = 2;
@@ -143,12 +144,12 @@ describe("shared check repair episodes", () => {
       expect(task.findings.find((finding) => finding.id === "deleted")!.status).toBe("open");
       // Control: a real failure on the first product gets its own two returns, and then the blocker opens too.
       setChecks(engine, "first", [failing]);
-      expect(await checks.failing(first, signal)).toBe(true);
+      expect((await checks.failing(first, signal)).kind).toBe("product-failed");
       const turns = [];
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        expect(await checks.failing(first, signal)).toBe(true);
-        expect(await checks.failing(second, signal)).toBe(true);
-        const returned = checks.backToBuilder(second, "before review");
+        expect((await checks.failing(first, signal)).kind).toBe("product-failed");
+        expect((await checks.failing(second, signal)).kind).toBe("product-failed");
+        const returned = checks.backToBuilder(second, "before review", new Set((second.task.repositories ?? [second.work]).map(work => work.productId)));
         turns.push(returned ? [task.repair!.products, first.work.checkReturns] : "blocked");
         delete task.repair;
         task.stageIndex = 2;
@@ -168,7 +169,7 @@ describe("shared check repair episodes", () => {
       task.findings.push({ id: "hook", text: "Check failed: Pre-commit hook (git hook run --ignore-missing pre-commit)", productIds: ["first"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
       setChecks(engine, "first", [passing]);
       first.work.checkReturns = 1;
-      expect(await checks.runProductChecks(first, [passing], signal)).toBe(0);
+      expect(nonpassingChecks(await checks.runProductChecks(first, [passing], signal))).toBe(0);
       expect(task.findings.find((finding) => finding.id === "hook")!.status).toBe("open");
       expect(first.work.checkReturns).toBe(1);
     } finally { await engine.shutdown(); }
@@ -189,18 +190,18 @@ describe("shared check repair episodes", () => {
       writeFileSync(release, "go");
       // The original pass cannot authorize continuation. The current failing requirement is
       // run within this operation, without granting any new Builder returns.
-      expect(await run).toBe(true);
+      expect((await run).kind).toBe("product-failed");
       expect(scope.work.checkReturns).toBe(2);
       const attempts = task.journey!.flatMap(step => step.checkAttempts ?? []);
       expect(attempts).toHaveLength(2);
       expect(attempts[0]!.passed).toBe(false);
       expect(attempts[1]!.definition).not.toBe(attempts[0]!.definition);
-      expect(await checks.failing(scope, signal)).toBe(true);
+      expect((await checks.failing(scope, signal)).kind).toBe("product-failed");
       expect(task.journey!.flatMap(step => step.checkAttempts ?? [])).toHaveLength(2);
       expect(scope.work.checkReturns).toBe(2);
       // Control: a pass on the checks required now does end the episode.
       setChecks(engine, "first", [passing]);
-      expect(await checks.failing(scope, signal)).toBe(false);
+      expect((await checks.failing(scope, signal)).kind).toBe("passed");
       expect(scope.work.checkReturns).toBeUndefined();
       expect(task.journey!.at(-1)!.checkAttempts![0]!.passed).toBe(true);
     } finally { await engine.shutdown(); }

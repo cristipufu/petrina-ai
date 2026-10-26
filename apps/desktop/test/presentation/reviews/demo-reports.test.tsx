@@ -20,7 +20,7 @@ describe("verdict explanations", () => {
     const task = state.tasks.find(task => task.findings.some(finding => finding.votes?.length))!;
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(<ReviewView task={task} now={state.now} find={lookup(state)} />);
-    const details = host.querySelector("details")!;
+    const details = host.querySelector("details.issue-response")!;
     expect(details.textContent).toContain("Grok · Grok 4.7");
     expect(details.textContent).toContain("Antigravity · Gemini 4 Argon");
     expect(details.textContent).toContain("Claude Code · Opus 5.5");

@@ -21,6 +21,25 @@ describe("the demos", () => {
   ] as const;
 
   for (const [name, state] of demos) {
+    it(`${name}: rebases every recorded setup observation with its owning checks step`, () => {
+      let observations = 0;
+      for (const task of state.tasks) {
+        const recorded = task.journey?.flatMap(step => step.checkSetups ?? []) ?? [];
+        for (const step of task.journey ?? []) for (const attempt of step.checkSetups ?? []) {
+          observations++;
+          expect(attempt.queuedAt, `${task.id} ${attempt.id}`).toBe(step.startedAt);
+          expect(attempt.startedAt).toBe(step.startedAt);
+          expect(attempt.endedAt).toBe(step.endedAt);
+          for (const result of attempt.results) {
+            if (result.run.startedAt !== undefined) expect(result.run.startedAt).toBeGreaterThanOrEqual(step.startedAt);
+            if (result.run.endedAt !== undefined) expect(result.run.endedAt).toBeLessThanOrEqual(step.endedAt!);
+          }
+        }
+        if (task.checkSetup) expect(task.checkSetup).toEqual(recorded.find(attempt => attempt.id === task.checkSetup!.id));
+      }
+      expect(observations).toBeGreaterThan(0);
+    });
+
     it(`${name}: every started task has a journey whose times match its timeline`, () => {
       for (const task of state.tasks) {
         if (task.state === "queued" && !task.after) {

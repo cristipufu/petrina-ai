@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
+import { CheckSetupObservations } from "../CheckSetupObservations";
 import { checkCounts, checkOutcome, checkOutcomeLabel, checkProblemWords, checkResult, findingCount, independentVotes, trackingWords, VERDICT_WORDS, voteSummary, type CheckRun, type Finding, type Task, type Vote } from "@petrina/core";
 import { ago, profileText, type Lookup } from "../../lib";
 import { followLink, routeHref } from "../../routes";
@@ -112,6 +113,7 @@ function FollowUpLine({ finding, find, onOpen }: { finding: Finding; find: Looku
 }
 
 export function ReviewView({ task, now, find, onOpen }: { task: Task; now: number; find: Lookup; onOpen?: (taskId: string) => void }) {
+  const setupHistory = task.journey?.flatMap(step => step.checkSetups ?? []) ?? [];
   const reviews = (task.plan?.stages ?? []).flatMap((stage, index) => stage.kind === "review-chain" ? [index] : []);
   const reviewing = reviews.some((index) => index <= task.stageIndex);
   // Reaching review is not completion: all planned review steps must be behind us.
@@ -122,7 +124,8 @@ export function ReviewView({ task, now, find, onOpen }: { task: Task; now: numbe
     {task.repositories.map((work) => <section className="sheet-section repository-row" key={work.productId}>
       <h2>{work.source?.product.name ?? work.productId}</h2><p className="note">{work.source?.product.repo}</p>
       <p className="note">Deleted or skipped tests: {work.tamper ? work.tamper.problems.length ? "Needs attention" : "Passed" : "Not run"}</p>
-      {work.checks?.current === false && <p className="note">These checks cover an earlier version. Current checks: Not run</p>}
+      <CheckSetupObservations latest={work.checkSetup} invalidated={work.checkSetupInvalidated} history={setupHistory.filter(attempt => attempt.productId === work.productId)} />
+      {work.checks?.current === false && <p className="note">Recorded check results need fresh verification before delivery.</p>}
       {!work.checks?.results.length && <p className="note">Product checks: Not run</p>}
       {!!work.checks?.results.length && <ChecksSection runs={work.checks.results} at={work.checks.at} now={now} />}
       <FindingsSection find={find} findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)} empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview} {...(onOpen ? { onOpen } : {})} />
@@ -131,13 +134,15 @@ export function ReviewView({ task, now, find, onOpen }: { task: Task; now: numbe
   </>;
 
   const runs = task.checks?.results ?? [];
-  if (task.findings.length === 0 && runs.length === 0) return <div className="empty-state">{emptyReview}</div>;
+  if (task.findings.length === 0 && runs.length === 0) return <><CheckSetupObservations latest={task.checkSetup} invalidated={task.checkSetupInvalidated} history={setupHistory.filter(attempt => attempt.productId === task.productId)} /><div className="empty-state">{emptyReview}</div></>;
 
   // Petrina's own findings that aren't failing checks come from the tamper check.
   const tampered = task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed"));
 
   return (
     <>
+      <CheckSetupObservations latest={task.checkSetup} invalidated={task.checkSetupInvalidated} history={setupHistory.filter(attempt => attempt.productId === task.productId)} />
+      {task.checks?.current === false && <p className="note">Recorded check results need fresh verification before delivery.</p>}
       {runs.length > 0 && <ChecksSection runs={runs} at={task.checks!.at} now={now} />}
       {reviewing && (
         <p className="tamper">

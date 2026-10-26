@@ -1,3 +1,5 @@
+import { repositoryPublished } from "./repositories.js";
+import { recordedCheckBatch } from "./check-environment.js";
 import type { CheckRun, JourneyProductCheck, RepositoryState, Task } from "./model.js";
 import { checkOutcome, checkCommandOutcome } from "./check-outcome.js";
 
@@ -69,15 +71,34 @@ export function latestCheckResults(checks: readonly JourneyProductCheck[]): Jour
 }
 
 /** Evidence becoming outdated never settles a recorded failure or interruption. */
-export function checkProblem(task: Pick<Task, "repositories" | "checks">): "failing" | "unverified" | undefined {
-  const checks = task.repositories ? task.repositories.map((work) => work.checks) : [task.checks];
-  if (checks.some((entry) => entry?.results.some((run) => checkOutcome(run).kind === "failed"))) return "failing";
-  if (checks.some((entry) => entry?.results.some((run) => checkOutcome(run).kind !== "passed"))) return "unverified";
+type CheckProblemState = Pick<RepositoryState, "checks" | "checkSetup" | "checkSetupInvalidated">;
+type DeliveryCheckState = CheckProblemState & Pick<RepositoryState, "pr" | "release" | "landed" | "localUpdate">;
+type DeliveryCheckTask = DeliveryCheckState & { readonly repositories?: readonly DeliveryCheckState[] };
+
+function problemForWorks(works: readonly CheckProblemState[]): "failing" | "unverified" | undefined {
+  // Previous genuine code failures stay visible under a setup blocker; routing uses live verification separately.
+  const outcomes = works.map(work => recordedCheckBatch(work));
+  if (outcomes.some(outcome => outcome.kind === "product-failed" || outcome.kind === "blocked" && outcome.productFailures.length)) return "failing";
+  if (works.some((work, index) => (work.checks || work.checkSetup || work.checkSetupInvalidated) && outcomes[index]!.kind === "blocked")) return "unverified";
   return undefined;
 }
 
-export function checkDecisionLabel(task: Pick<Task, "repositories" | "checks">): string | undefined {
-  const problem = checkProblem(task);
+/** Historical readers retain every owner, including published work. */
+export function checkProblem(task: Pick<Task, "repositories" | "checks" | "checkSetup" | "checkSetupInvalidated">): "failing" | "unverified" | undefined {
+  return problemForWorks(task.repositories ?? [task]);
+}
+
+/** Published owners need no new authority for the remaining publication; their history stays unchanged. */
+export function deliveryCheckWorks(task: DeliveryCheckTask): readonly DeliveryCheckState[] {
+  return (task.repositories ?? [task]).filter(work => !repositoryPublished(work));
+}
+
+export function deliveryCheckProblem(task: DeliveryCheckTask): "failing" | "unverified" | undefined {
+  return problemForWorks(deliveryCheckWorks(task));
+}
+
+export function checkDecisionLabel(task: DeliveryCheckTask): string | undefined {
+  const problem = deliveryCheckProblem(task);
   return problem === "failing" ? "Your call: checks still failing" : problem ? "Your call: checks unverified" : undefined;
 }
 

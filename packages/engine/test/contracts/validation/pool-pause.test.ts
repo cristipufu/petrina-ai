@@ -1,3 +1,4 @@
+import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ for (const extra of [false, true]) for (const timing of ["before release", "duri
     f.engine.setPoolPaused(false);
     const busy = await f.engine.checkQueue.acquire(new AbortController().signal);
     const controller = new AbortController();
-    const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "console.log('ordinary check passed')"] }], controller.signal).then(failures => ({ failures }), error => ({ error }));
+    const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "console.log('ordinary check passed')"] }], controller.signal).then(result => ({ failures: nonpassingChecks(result) }), error => ({ error }));
     try {
       await waitFor(() => f.engine.checkQueue.waiting === 1 && productTask.journey?.at(-1)?.productChecks?.[0]?.result === "pending", "the product check to join the line with its pending evidence");
       const step = productTask.journey!.at(-1)!;
@@ -88,7 +89,7 @@ for (const phase of ["preparation", "another run", "handoff preparation"] as con
     };
     const busy = phase !== "preparation" ? await f.engine.checkQueue.acquire(new AbortController().signal) : undefined;
     if (busy) f.engine.settling.set(f.task.id, new Promise<void>(() => {}));
-    const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "console.log('ordinary check passed')"] }], controller.signal).then(failures => ({ failures }), error => ({ error })).finally(() => { ended = true; });
+    const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "console.log('ordinary check passed')"] }], controller.signal).then(result => ({ failures: nonpassingChecks(result) }), error => ({ error })).finally(() => { ended = true; });
     f.engine.settling.set(productTask.id, productRun.then(() => undefined));
     try {
       if (phase === "handoff preparation") {
@@ -148,7 +149,7 @@ it("completes a coordinator pool pause while preserving queued check work for re
     f.engine.settling.set(f.task.id, busyWork);
     void busyWork.then(() => f.engine.settling.delete(f.task.id));
     const controller = new AbortController();
-    const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Queued check", argv: [process.execPath, "-e", "process.exit(0)"] }], controller.signal).then(failures => ({ failures }), error => ({ error }));
+    const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Queued check", argv: [process.execPath, "-e", "process.exit(0)"] }], controller.signal).then(result => ({ failures: nonpassingChecks(result) }), error => ({ error }));
     // The real task driver owns this promise until checks and their file handling end.
     const productWork = productRun.then(() => undefined);
     f.engine.settling.set(productTask.id, productWork);

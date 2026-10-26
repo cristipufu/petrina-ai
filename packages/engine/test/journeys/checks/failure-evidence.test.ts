@@ -33,7 +33,7 @@ it("keeps an early static failure current across returns and restart, with heavy
       expect(step.productChecks!.map((check) => [check.name, check.result])).toEqual([["Tests", "skipped"], ["Type check", "fail"]]);
       expect(f.agents.openings("code reviewer")).toEqual([]);
       await f.restart();
-      expect(await f.engine["checks"].current(executionFor(f.engine.task(f.taskId)!))).toBe(true);
+      expect((await f.engine["checks"].current(executionFor(f.engine.task(f.taskId)!))).inputs.kind).toBe("matches");
       expect(f.runs()).toEqual(["failed"]);
       f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       const rerun = await f.delivery();

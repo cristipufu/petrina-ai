@@ -1,6 +1,6 @@
 import { createHash, type Hash } from "node:crypto";
 import { release } from "node:os";
-import { isCheckExecutorFacts, type CheckExecutorFacts, type CheckOutputIdentity, type CheckRun } from "@petrina/core";
+import { checkSetupOutcome, isCheckExecutorFacts, normalizeCheckPrerequisites, sameCheckPrerequisites, type CheckEnvironmentIdentity, type CheckExecutorFacts, type CheckOutputIdentity, type CheckRun, type CheckSetupAttempt, type ProductCheckSetup } from "@petrina/core";
 
 // Bump these when execution/launch semantics change, not for every build or process restart.
 // launchPolicy describes this adapter's argv/env handling; it is not a claim about caller credentials.
@@ -18,6 +18,29 @@ export function observeCheckExecutor(): Pick<CheckRun, "executor" | "executorErr
     if (!isCheckExecutorFacts(executor)) throw new Error("The local check executor facts could not be observed completely");
     return { executor };
   } catch (error) { return { executorError: message(error) }; }
+}
+
+const hash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/** An unset contract keeps its own identity; explicitly clearing requirements keeps the coordinator's revision. */
+export function checkSetupContract(setup?: ProductCheckSetup): string {
+  if (setup === undefined) return hash(["local-check-setup", 1, "undeclared"]);
+  if (typeof setup.revision !== "string" || !setup.revision.trim()) throw new Error("The product's setup declaration has no revision");
+  const requirements = normalizeCheckPrerequisites(setup.requirements);
+  if (!sameCheckPrerequisites(setup.requirements, requirements)) throw new Error("The saved setup declaration is not normalized");
+  return hash(["local-check-setup", 1, setup.revision, requirements.map(requirement => [requirement.id, requirement.argv])]);
+}
+
+/** Canonical composition over actual recorded observations; never a preferred executor/version override. */
+export function deriveCheckEnvironmentIdentity(attempt: CheckSetupAttempt): CheckEnvironmentIdentity {
+  const outcome = checkSetupOutcome(attempt);
+  if (outcome.kind !== "verified") throw new Error("Only a complete setup observation has an environment identity");
+  const facts = outcome.executor;
+  const executor = hash([facts.version, facts.adapter, facts.contract, facts.launchPolicy, facts.platform, facts.architecture, facts.osRelease, [facts.runtime.name, facts.runtime.version]]);
+  return { version: 1, contract: attempt.input.contract, executor, prerequisites: attempt.requirements.length ? {
+    kind: "declared", observations: hash(outcome.observations.map(({ requirementId, output }) => [requirementId,
+      [output.stdout.algorithm, output.stdout.bytes, output.stdout.digest], [output.stderr.algorithm, output.stderr.bytes, output.stderr.digest]])),
+  } : { kind: "none" } };
 }
 
 type OutputObservation = Pick<CheckRun, "outputIdentity" | "outputIdentityError">;
