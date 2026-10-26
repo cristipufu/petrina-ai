@@ -1,3 +1,4 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { CheckVerification } from "../../../src/product-checks.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
@@ -105,6 +106,41 @@ describe("explicit repository execution contexts", () => {
         expect(calls).toBe(4);
 
       } finally { watch.mockRestore(); }
+    });
+  });
+
+  it("saves editing-role changes with one fresh paired version and no intermediate HEAD read", async () => {
+    await withRepositoryRecords("saved-role-commit-budget", { git: ["first"] }, async ({ engine, task, run: ownRun }) => {
+      const scope = executionFor(task), path = scope.work.worktree!;
+      scope.work.checks = { current: true, at: 1, tree: await git(path, "rev-parse", "HEAD^{tree}"), results: [] };
+      writeFileSync(join(path, "saved-edit.txt"), "Saved before another role can clean up\n");
+      const native = Bun.spawn;
+      let reads = 0, watch: ReturnType<typeof spyOn<typeof Bun, "spawn">> | undefined;
+      let versions: ReturnType<typeof spyOn<typeof gitOps, "commitVersion">> | undefined;
+      const cleanup = () => {
+        const errors: unknown[] = [];
+        for (const restore of [() => watch?.mockRestore(), () => versions?.mockRestore()]) try { restore(); } catch (error) { errors.push(error); }
+        if (errors.length) throw new AggregateError(errors, "Saved-role observation controls could not restore their boundaries");
+      };
+      await setupWithCleanup(async () => {
+        versions = spyOn(gitOps, "commitVersion");
+        watch = spyOn(Bun, "spawn");
+        watch.mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+          if (args[0][0] === "git" && args[1]?.cwd === path && args[0].includes("rev-parse")) {
+            reads++;
+            throw new Error("The save owner must use its paired version observation");
+          }
+          return Reflect.apply(native, Bun, args);
+        }) as typeof Bun.spawn);
+        await ownRun(() => engine.saveRoleEdits(scope, "builder", "sol-high"));
+        expect(reads).toBe(0);
+        expect(versions).toHaveBeenCalledTimes(1);
+        expect(scope.work.checks?.current).toBe(false);
+      }, cleanup);
+      cleanup();
+      expect(scope.work.savedVersion).toEqual({ commit: await git(path, "rev-parse", "HEAD"), tree: await git(path, "rev-parse", "HEAD^{tree}") });
+      expect(await git(path, "show", "HEAD:saved-edit.txt")).toBe("Saved before another role can clean up");
+      expect(task.timeline.some(entry => entry.text === "Saved the changes from the Builder on the task's branch")).toBe(true);
     });
   });
 

@@ -48,7 +48,7 @@ export class Learnings {
       this.k.log(scope, "warn", `${AGENTS_FILE} was not updated: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    await git.commitAll(repository.worktree, `Learnings: ${due.length === 1 ? "one more lesson" : `${due.length} more lessons`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina with the coordinator's OK.`);
+    await git.commitChanges(repository.worktree, `Learnings: ${due.length === 1 ? "one more lesson" : `${due.length} more lessons`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina with the coordinator's OK.`);
     await this.k.rememberVersion(scope);
     for (const line of due) line.writtenOn = task.id;
     this.k.log(scope, "done", `Added to ${AGENTS_FILE}: ${due.map((line) => line.text).join("; ")}`);

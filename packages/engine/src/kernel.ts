@@ -1055,15 +1055,15 @@ export abstract class Kernel {
     const conversation = repository.conversation?.roleId === roleId ? repository.conversation : undefined;
     const role = conversation?.role ?? this.role(roleId);
     if (role && (conversation?.access?.canEdit ?? role.canEdit)) {
-      const sha = await git.commitAll(repository.worktree!, `${task.title}: ${role.name}`);
-      const checks = repository.checks, refreshChecks = !!checks && !!(sha || checks.current !== false);
+      const committed = await git.commitChanges(repository.worktree!, `${task.title}: ${role.name}`);
+      const checks = repository.checks, refreshChecks = !!checks && !!(committed || checks.current !== false);
       // An unreadable post-save version cannot leave a previous pass displayed as current.
       if (checks && refreshChecks) checks.current = false;
       const version = await git.commitVersion(repository.worktree!);
       if (checks && refreshChecks) checks.current = !!version.head && !!version.tree
         && git.isSha(version.head) && git.isSha(version.tree) && checks.tree === version.tree;
       await this.rememberVersion(scope, version);
-      if (sha) this.log(scope, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
+      if (committed) this.log(scope, "done", `Saved the changes from the ${role.name} on the task's branch`, roleId, profileId);
     }
   }
 

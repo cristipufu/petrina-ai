@@ -515,11 +515,17 @@ export async function discardChanges(path: string): Promise<void> {
   await run(["git", "clean", "-fd", "--quiet"], path);
 }
 
+/** Commit everything in the worktree; confirmation does not require a second version observation. */
+export async function commitChanges(path: string, message: string): Promise<boolean> {
+  await must(["git", "add", "-A"], path);
+  if ((await run(["git", "diff", "--cached", "--quiet"], path)).code === 0) return false;
+  await must(["git", "commit", "--quiet", "-F", "-"], path, message);
+  return true;
+}
+
 /** Commit everything in the worktree. Returns the new sha, or undefined when there was nothing to commit. */
 export async function commitAll(path: string, message: string): Promise<string | undefined> {
-  await must(["git", "add", "-A"], path);
-  if ((await run(["git", "diff", "--cached", "--quiet"], path)).code === 0) return undefined;
-  await must(["git", "commit", "--quiet", "-F", "-"], path, message);
+  if (!await commitChanges(path, message)) return undefined;
   return must(["git", "rev-parse", "HEAD"], path);
 }
 

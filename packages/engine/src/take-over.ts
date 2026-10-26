@@ -198,7 +198,7 @@ export class TakeOver {
           if (!work?.worktree || copy.path === work.worktree) return undefined;
           const [branch, clean] = await Promise.all([git.currentBranch(copy.path), git.isClean(copy.path)]);
           if (branch) throw new Error(`Keep ${work.source!.product.name} on its saved review snapshot, then hand back again.`);
-          if (!clean) await git.commitAll(copy.path, `${task.title} (changes made by hand)`);
+          if (!clean) await git.commitChanges(copy.path, `${task.title} (changes made by hand)`);
           if (!(await git.changedSince(copy.path, copy.head)).length) return undefined;
           const [head, parent] = await Promise.all([git.head(copy.path), git.head(work.worktree)]);
           const merged = await git.mergeTree(work.worktree, parent, head);

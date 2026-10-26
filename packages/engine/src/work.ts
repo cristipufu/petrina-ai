@@ -122,7 +122,7 @@ export class Work {
       if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
       await this.learnings.note(scope, result.learnings, roleId, by);
       // One commit per task: the builder's work joins the branch's one commit, under its title.
-      await git.commitAll(repository.worktree!, this.updates.message(scope));
+      await git.commitChanges(repository.worktree!, this.updates.message(scope));
       if (updating) {
         // A first review, an unreviewed fix, or work beyond the conflicts needs the whole planned review.
         // Check the saved code too: older updates recorded a head without recording any completed review.

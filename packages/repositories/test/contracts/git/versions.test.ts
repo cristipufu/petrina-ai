@@ -1,3 +1,4 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +22,49 @@ async function currentVersion(repo: string): Promise<{ head: string; tree: strin
 
 describe("Petrina's own git steps", () => {
   afterAll(() => removeDir(temp));
+
+  for (const format of ["sha1", "sha256"] as const) it(`commits ${format} changes without an unused HEAD read, retaining the SHA-returning API`, async () => {
+    const repo = join(temp, `commit-changes-${format}`); mkdirSync(repo);
+    await git(repo, "init", "-q", "-b", "main", `--object-format=${format}`);
+    writeFileSync(join(repo, "README.md"), "Initial\n");
+    await commitAll(repo, "Initial");
+    const initial = await operations.head(repo);
+    writeFileSync(join(repo, "README.md"), "Changed without inspecting HEAD\n");
+    const native = Bun.spawn;
+    let reads = 0, watch: ReturnType<typeof spyOn<typeof Bun, "spawn">> | undefined;
+    const cleanup = () => { watch?.mockRestore(); };
+    await setupWithCleanup(async () => {
+      watch = spyOn(Bun, "spawn");
+      watch.mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+        if (args[0][0] === "git" && args[1]?.cwd === repo && args[0].includes("rev-parse")) {
+          reads++;
+          throw new Error("This commit owner does not need a HEAD observation");
+        }
+        return Reflect.apply(native, Bun, args);
+      }) as typeof Bun.spawn);
+      expect(await operations.commitChanges(repo, "Changed without a version query")).toBe(true);
+      expect(await operations.commitChanges(repo, "No empty commit")).toBe(false);
+      expect(reads).toBe(0);
+    }, cleanup);
+    cleanup();
+    const changed = await operations.head(repo);
+    expect(changed).not.toBe(initial);
+    expect(await git(repo, "show", "-s", "--format=%P", "HEAD")).toBe(initial);
+    expect(await git(repo, "show", "-s", "--format=%B", "HEAD")).toBe("Changed without a version query");
+    expect(await git(repo, "show", "HEAD:README.md")).toBe("Changed without inspecting HEAD");
+    expect(await git(repo, "status", "--porcelain")).toBe("");
+    expect(await commitAll(repo, "Still no empty commit")).toBeUndefined();
+    writeFileSync(join(repo, "README.md"), "A caller still needs the new SHA\n");
+    const named = await commitAll(repo, "A named commit");
+    expect(named).toBe(await operations.head(repo));
+    expect(named).toHaveLength(format === "sha256" ? 64 : 40);
+    writeFileSync(join(repo, "README.md"), "Blocked by the real index lock\n");
+    writeFileSync(join(repo, ".git", "index.lock"), "Another Git operation owns the index\n");
+    try { await expectRejection(operations.commitChanges(repo, "Must not succeed")); }
+    finally { rmSync(join(repo, ".git", "index.lock")); }
+    expect(await operations.head(repo)).toBe(named!);
+    expect(checkedOut(join(repo, "README.md"))).toBe("Blocked by the real index lock\n");
+  });
 
   for (const format of ["sha1", "sha256"] as const) it(`folds ${format} task commits from one observation, preserving edits and returning the exact version`, async () => {
     const repo = join(temp, `fold-${format}`); mkdirSync(repo);
