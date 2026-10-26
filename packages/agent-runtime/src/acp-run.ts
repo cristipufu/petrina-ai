@@ -13,6 +13,8 @@ import type { ClaudeSandbox } from "./sandbox.js";
 import { SandboxUnavailable, sandboxFailure } from "./sandbox-failures.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser, cleanupNote } from "./browser.js";
+import { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
+export { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
 import { CLEANUP_INCOMPLETE, readProcessList, readProcessGroups, type ProcessListRead } from "@petrina/platform/process-tree";
 import { stopAgentPrograms, type StopDiagnostic } from "@petrina/platform/agent-stop";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
@@ -118,9 +120,6 @@ interface RunState {
 }
 
 const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
-
-/** The first words of an agent stop's private note when it cannot confirm that everything stopped: one line in the task's log or a test's output. */
-export const AGENT_CLEANUP_NOTE = "Agent cleanup incomplete:";
 
 /**
  * Stop the tool and every program it started (a build, a test run, a server), which could otherwise keep

@@ -1,3 +1,4 @@
+import { completeAll } from "@petrina/core";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
@@ -10,24 +11,27 @@ import { ToolChecks } from "../../../src/tool-checks.js";
 import { Sources } from "../../../src/sources.js";
 import { Connections } from "../../../src/connection.js";
 import { BuildResult } from "../../../src/roles.js";
-import { Fakes, git, makeWorld, removeDir, SLOW, waitFor } from "../../support.js";
+import { Fakes, git, SLOW, waitFor } from "../../support.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+
+const worlds = nativeWorldFixtures();
+afterAll(worlds.close);
 
 it("builder and read-only reports preserve only chosen images through correction, cleanup, the next stage and restart", async () => {
-  const world = await makeWorld("report-images", { browser: true });
+  let scheduling: ReturnType<typeof spyOn<import("../../engine.js").Engine, "schedule">> | undefined;
+  let saving: ReturnType<typeof spyOn<typeof files, "writeFile">> | undefined;
+  let server: ReturnType<typeof serve> | undefined;
+  await worlds.world("report-images", async fixture => {
+  const world = fixture.world;
   const root = world.dir;
-  roots.push(root, world.browsers!);
   const product = world.clone;
   const home = world.data;
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ planner: "short", builder: "plain", pictures: "repair" });
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));
   const options = { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] };
-  let engine = world.start(options);
-  let scheduling: { mockRestore(): void } | undefined;
-  try {
+  const { id, reports, results, image } = await fixture.engine(async engine => {
     const productId = await engine.addProduct(product);
     engine.setProductDelivery(productId, "local", true);
     const id = engine.addTask({ productId, title: "Check a page" });
@@ -59,39 +63,44 @@ it("builder and read-only reports preserve only chosen images through correction
     }
     const image = reports[0]!.images![0]!;
     await engine.shutdown();
-    engine = world.start(options);
+    return { id, reports, results, image };
+  }, options);
+  const interrupted = await fixture.engine(async engine => {
     await engine.waitUntilReady();
     expect(engine.getState().tasks.find((entry) => entry.id === id)!.session.filter((line) => line.images?.length)).toEqual(reports);
     expect(engine.taskDetails(id)?.journey?.flatMap((step) => step.agentResults ?? [])).toEqual(results);
     expect((await engine.reportImage(id, image.id))?.size).toBeGreaterThan(0);
     expect(await engine.reportImage("another-task", image.id)).toBeUndefined();
     expect(await engine.reportImage(id, "../../outside")).toBeUndefined();
-    const server = serve(engine, { port: 0, token: "test-key" });
+    const serving = server = serve(engine, { port: 0, token: "test-key" });
     try {
-      const url = `http://127.0.0.1:${server.port}/api/images/${id}/${image.id}`;
+      const url = `http://127.0.0.1:${serving.port}/api/images/${id}/${image.id}`;
       expect((await fetch(url)).status).toBe(401);
       const response = await fetch(url, { headers: { authorization: "Bearer test-key", origin: "tauri://localhost" } });
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe("image/png");
       expect(response.headers.get("access-control-allow-origin")).toBe("tauri://localhost");
       expect((await sharp(await response.bytes()).metadata()).width).toBe(8);
-      const coordinated = await fetch(`http://127.0.0.1:${server.port}/api/coordinate`, {
+      const coordinated = await fetch(`http://127.0.0.1:${serving.port}/api/coordinate`, {
         method: "POST", headers: { authorization: "Bearer test-key", "content-type": "application/json" },
         body: JSON.stringify({ name: "task.inspect", args: { taskId: id } }),
       });
       expect(await coordinated.json()).toEqual(expect.objectContaining({ outcome: "completed", task: expect.objectContaining({ id }) }));
-    } finally { server.stop(true); }
+    } finally { await serving.stop(true); server = undefined; }
     const interrupted = join(home, "browser-temp", "interrupted");
     await Bun.write(join(interrupted, "old.png"), "leftover");
     await engine.shutdown();
-    engine = world.start(options);
+    return interrupted;
+  }, options);
+  const { pendingId, accepted } = await fixture.engine(async engine => {
     await engine.waitUntilReady();
     expect(existsSync(interrupted)).toBe(false);
     expect((await engine.reportImage(id, image.id))?.size).toBeGreaterThan(0);
     // Other agents can add activity while a report is being checked, after the history fills up.
     // Drive this turn directly without admitting automatic drivers. Draining
     // intentionally blocks manual turn admissions too.
-    scheduling = spyOn(engine, "schedule").mockImplementation(() => {});
+    scheduling = spyOn(engine, "schedule");
+    scheduling.mockImplementation(() => {});
     engine.s.pool.paused = false;
     fakes.scenario({ planner: "short", builder: "plain", pictures: "valid" });
     const long = engine.s.tasks.find((entry) => entry.id === id)!;
@@ -103,7 +112,8 @@ it("builder and read-only reports preserve only chosen images through correction
     let superseded: string | undefined;
     const history = join(home, "captures", id);
     const writeFile = files.writeFile;
-    const saving = spyOn(files, "writeFile").mockImplementation(async (path, data, options) => {
+    saving = spyOn(files, "writeFile");
+    saving.mockImplementation(async (path, data, options) => {
       await writeFile(path, data, options);
       if (!superseded && typeof path === "string" && path.startsWith(history)) {
         superseded = path;
@@ -120,7 +130,7 @@ it("builder and read-only reports preserve only chosen images through correction
           await Promise.resolve();
         },
       });
-    } finally { saving.mockRestore(); }
+    } finally { saving.mockRestore(); saving = undefined; }
     const heard = fakes.received("builder").slice(heardBefore);
     for (const message of ["Check the smaller layout too", "Show the guest page too"]) expect(heard.filter((entry) => entry.text.includes(message))).toHaveLength(1);
     expect(long.queued).toEqual([]);
@@ -138,9 +148,16 @@ it("builder and read-only reports preserve only chosen images through correction
     engine.s.pool.paused = true;
     delete long.agent;
     await engine.shutdown();
-    engine = world.start(options);
+    return { pendingId, accepted };
+  }, options);
+  await fixture.engine(async engine => {
+    try {
     await engine.waitUntilReady();
     expect(engine.task(id)!.session.find((line) => line.id === pendingId)).toEqual(accepted);
-  } finally { scheduling?.mockRestore(); await engine.shutdown(); }
+    } finally { scheduling?.mockRestore(); await engine.shutdown(); }
+  }, options);
   expect(readdirSync(world.browsers!)).toEqual([]);
+  }, { browser: true }, { async stopPeers() {
+    await completeAll([(async () => { saving?.mockRestore(); })(), (async () => { scheduling?.mockRestore(); })(), (async () => { await server?.stop(true); })()]);
+  } });
 }, 90_000 * SLOW);

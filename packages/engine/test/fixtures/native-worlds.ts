@@ -1,15 +1,17 @@
+import { readdirSync } from "node:fs";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import type { Engine, EngineOptions } from "../engine.js";
 import { completeAll } from "@petrina/core";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { makeWorld, tempDir, type World } from "../support.js";
-import { directDrivers } from "./direct-drivers.js";
+import { makeWorld, tempDir, testBrowserRoot, type World } from "../support.js";
+import { directDrivers, removeFixtureRoot } from "./direct-drivers.js";
 
-type WorldOptions = Omit<NonNullable<Parameters<typeof makeWorld>[1]>, "owner" | "browser">;
-export type NativeWorld = Omit<World, "start" | "browsers">;
+type WorldOptions = Omit<Parameters<typeof makeWorld>[1], "owner"> & { allowOverlap?: true };
+export type NativeWorld = Omit<World, "start">;
 export interface NativeWorldFixture {
   world: NativeWorld;
   /** Preserve makeWorld's native scripted-tool defaults and its ordinary option merging. */
-  engine<T>(body: (engine: Engine) => Promise<T>, options?: EngineOptions): Promise<T>;
+  engine<T>(body: (engine: Engine) => Promise<T>, options?: EngineOptions, mode?: { defaults: "none" }): Promise<T>;
 }
 interface Entry {
   root: string;
@@ -50,23 +52,38 @@ export function nativeWorldFixtures() {
   async function world<T>(name: string, body: (fixture: NativeWorldFixture) => Promise<T>, options: WorldOptions = {},
     resources?: Entry["resources"]): Promise<T> {
     if (!accepting) throw unavailable();
-    const root = tempDir(`petrina-${name}-`), lifetime = directDrivers(root);
+    const root = tempDir(`petrina-${name}-`);
+    let browsers: string | undefined;
+    const lifetime = directDrivers(root, { ...(options.allowOverlap ? { allowOverlap: true } : {}),
+      beforeRemoveRoot() {
+        if (!browsers) return;
+        if (readdirSync(browsers).length) throw new Error("Native world browser files remain after cleanup; world retained");
+        removeFixtureRoot(browsers);
+      },
+    });
     const entry: Entry = { root, lifetime, resources, closed: false };
     active.add(entry);
     const result = await setupWithCleanup(() => lifetime.prepare(async () => {
-      const made = await makeWorld(name, { ...options, owner: { root, open: (data, merged) => lifetime.open(data, merged) } });
+      const { allowOverlap: _overlap, ...recipe } = options;
+      if (recipe.browser) { browsers = testBrowserRoot(); registerFixtureRoot(browsers); }
       available(entry);
-      const engine: NativeWorldFixture["engine"] = async <Value>(run: (current: Engine) => Promise<Value>, extra?: EngineOptions): Promise<Value> => {
+      const made = await makeWorld(name, { ...recipe, owner: { root, browsers, open: (data, merged) => lifetime.open(data, merged) } });
+      available(entry);
+      const engine: NativeWorldFixture["engine"] = async <Value>(run: (current: Engine) => Promise<Value>, extra?: EngineOptions, mode?: { defaults: "none" }): Promise<Value> => {
         available(entry);
-        const current = made.start(extra);
+        const current = mode?.defaults === "none" ? lifetime.open(made.data, extra) : made.start(extra);
         const value = await setupWithCleanup(() => {
           available(entry);
           return lifetime.run(current, () => run(current));
-        }, () => lifetime.stop(current));
+        }, async () => {
+          // Failed callbacks may leave a scripted native peer held; request that release before joining its Engine.
+          const peers = resources ? lifetime.prepare(async () => resources.stopPeers()) : Promise.resolve();
+          await completeAll([peers, lifetime.stop(current)]);
+        });
         await lifetime.stop(current);
         return value;
       };
-      const { start: _start, browsers: _browsers, ...visible } = made;
+      const { start: _start, ...visible } = made;
       return body({ world: visible, engine });
     }), () => closeEntry(entry));
     await closeEntry(entry);

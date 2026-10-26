@@ -1,6 +1,12 @@
 import { createServer, type Socket } from "node:net";
 import { SLOW } from "./slow.js";
 import { CLEANUP_MS } from "./command-budgets.js";
+import { createGuardianLease, guardianWorkerMonitor } from "./process-lease-guardian.js";
+
+export interface ProcessLeaseOptions {
+  /** POSIX stop fixtures whose actors can be paused by the operation under test. */
+  guardian?: "node";
+}
 
 export interface ProcessLeaseProgramOptions {
   /** Only for actors whose main thread deliberately blocks the event loop. */
@@ -22,7 +28,11 @@ export interface ProcessLease {
  * No actor lifetime timer can masquerade as the subject's successful cleanup.
  * Actors must use this wrapper before starting children; wrap each long-lived child as well.
  */
-export async function createProcessLease(): Promise<ProcessLease> {
+export async function createProcessLease(options: ProcessLeaseOptions = {}): Promise<ProcessLease> {
+  if (options.guardian !== undefined) {
+    if (options.guardian !== "node") throw new RangeError("Unknown fixture lease guardian");
+    return createGuardianLease((body, port, token) => workerMonitoredProgram(body, port, token, true));
+  }
   const token = crypto.randomUUID(), sockets = new Set<Socket>();
   let closed = false, closing: Promise<void> | undefined;
   const server = createServer(socket => {
@@ -81,8 +91,8 @@ export async function createProcessLease(): Promise<ProcessLease> {
 }
 
 /** The actor body stays on its main thread; only the existing lease socket moves to a Worker. */
-function workerMonitoredProgram(body: string, port: number, token: string): string {
-  const monitor = `
+function workerMonitoredProgram(body: string, port: number, token: string, guardian = false): string {
+  const monitor = guardian ? guardianWorkerMonitor() : `
 const { parentPort, workerData } = require("node:worker_threads");
 const { createConnection } = require("node:net");
 let disarmed = false, acknowledged = false;

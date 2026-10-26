@@ -11,7 +11,7 @@ afterAll(close);
 describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps trust none of the repository's own settings", () => {
 for (const mode of ["pull-request", "release"] as const) {
     it(`publishes a ${mode} only to the saved address, with no hooks, extra tags or submodules, whatever the remote, push address and hooks now say`, async () => {
-      const w = await world(`redirect-${mode}`);
+      await world(`redirect-${mode}`, async ({ world: w }) => {
       const evil = join(w.dir, "evil.git");
       await git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
       // A submodule whose newest commit is only local; the work being pushed points at it.
@@ -60,6 +60,7 @@ for (const mode of ["pull-request", "release"] as const) {
       // The plain-push control runs after the delivery assertions, in the same explicit private settings.
       expect(await plainGitControl({ ...input, tested })).toBe(true);
       expect(process.env.GIT_CONFIG_GLOBAL).toBe(beforeConfig);
+      });
     });
   }
 

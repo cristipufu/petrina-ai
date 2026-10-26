@@ -10,13 +10,16 @@ const { world, forget, close } = securityWorlds();
 afterAll(close);
 describe.concurrent("Products added before Petrina kept their GitHub address", () => {
 it("shows the current address once, keeps the answer, and then fetches and publishes there", async () => {
-    const w = await world("confirm");
-    let engine = w.start();
-    const productId = await engine.addProduct(w.clone);
-    engine.setProductDelivery(productId, "pull-request", false);
-    await engine.shutdown();
+    await world("confirm", async fixture => {
+    const w = fixture.world;
+    const productId = await fixture.engine(async engine => {
+      const productId = await engine.addProduct(w.clone);
+      engine.setProductDelivery(productId, "pull-request", false);
+      await engine.shutdown();
+      return productId;
+    });
     forget(w);
-    engine = w.start();
+    return fixture.engine(async engine => {
     try {
       expect(engine.getState().products[0]!.remote).toBeUndefined();
       engine.setPoolPaused(true);
@@ -41,16 +44,21 @@ it("shows the current address once, keeps the answer, and then fetches and publi
     } finally {
       await engine.shutdown();
     }
+    });
+    });
   });
 
 it("stops credentialed work after a No, and still delivers locally", async () => {
-    const w = await world("refuse");
-    let engine = w.start();
-    const productId = await engine.addProduct(w.clone);
-    engine.setProductDelivery(productId, "pull-request", false);
-    await engine.shutdown();
+    await world("refuse", async fixture => {
+    const w = fixture.world;
+    const productId = await fixture.engine(async engine => {
+      const productId = await engine.addProduct(w.clone);
+      engine.setProductDelivery(productId, "pull-request", false);
+      await engine.shutdown();
+      return productId;
+    });
     forget(w);
-    engine = w.start();
+    return fixture.engine(async engine => {
     try {
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const refuse = (current: Engine, state: State) => {
@@ -71,16 +79,21 @@ it("stops credentialed work after a No, and still delivers locally", async () =>
     } finally {
       await engine.shutdown();
     }
+    });
+    });
   });
 
 it("publishes nothing when the saved address is not the product's repository", async () => {
-    const w = await world("mismatch");
-    let engine = w.start();
-    const productId = await engine.addProduct(w.clone);
-    engine.setProductDelivery(productId, "pull-request", false);
-    await engine.shutdown();
+    await world("mismatch", async fixture => {
+    const w = fixture.world;
+    const productId = await fixture.engine(async engine => {
+      const productId = await engine.addProduct(w.clone);
+      engine.setProductDelivery(productId, "pull-request", false);
+      await engine.shutdown();
+      return productId;
+    });
     w.editSaved((state) => ((state.products[0] as { remote?: string }).remote = "git@github.com:evil/demo.git"));
-    engine = w.start();
+    return fixture.engine(async engine => {
     try {
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
@@ -92,6 +105,8 @@ it("publishes nothing when the saved address is not the product's repository", a
     } finally {
       await engine.shutdown();
     }
+    });
+    });
   });
 
 });

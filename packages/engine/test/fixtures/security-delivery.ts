@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { quoteGitShellWord } from "@petrina/test-support/git-program";
@@ -6,7 +6,8 @@ import { createProcessLease } from "@petrina/test-support/process-lease";
 import { runCommand } from "@petrina/test-support/commands";
 import { completedCommandRecord } from "@petrina/test-support/completed-command-record";
 import { FALLBACK_TIMEOUT } from "@petrina/test-support/run";
-import { Engine } from "../engine.js";
+import { directDrivers } from "./direct-drivers.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { commitAt, FAKE_GH, finish, git, gitWith, remoteRef, taskOf, testGitEnv } from "../support.js";
 import { ScriptedAgents } from "../scripted-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
@@ -35,6 +36,10 @@ export interface SecurityDeliveryProbe {
 /** A real credentialed Engine/Git scenario in one isolated process environment. No assertions or runner nesting. */
 export async function credentialedDeliveryChild(input: SecurityDeliveryCase): Promise<SecurityDeliveryProbe> {
   const { world, mode } = input;
+  const ownerRoot = join(world.dir, "credentialed-child-owner");
+  mkdirSync(ownerRoot);
+  const owners = directDrivers(ownerRoot);
+  const result = await setupWithCleanup(() => owners.prepare(async () => {
   const replies = sharedAgents(join(world.dir, "provider-replies"));
   replies.scenario({ planner: "short", builder: "plain" });
   const agents = new ScriptedAgents(async (prompt, signal, callbacks) => {
@@ -43,14 +48,14 @@ export async function credentialedDeliveryChild(input: SecurityDeliveryCase): Pr
     }
     return replies.respond(prompt, signal, callbacks);
   });
-  const engine = new Engine(world.data, {
+  const engine = owners.open(world.data, {
     startAgentSession: agents.start,
     toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "ready" }, gh: { status: "ready" }, git: { status: "ready" }, node: { status: "ready" } }),
     gh: [process.execPath, FAKE_GH, join(world.dir, "github.json"), world.remote],
     ...(input.kind === "redirect" ? { remote: world.remote } : {}),
     awakeObserver: () => {},
   });
-  try {
+  return owners.run(engine, async () => {
     const productId = await engine.addProduct(world.clone);
     engine.setProductDelivery(productId, mode, false);
     const registeredAddress = engine.getState().products[0]!.remote;
@@ -78,7 +83,10 @@ export async function credentialedDeliveryChild(input: SecurityDeliveryCase): Pr
       result.libraryBefore = (await commitAt(input.libOrigin, input.unpushed)) !== undefined;
     }
     return result;
-  } finally { await engine.shutdown(); }
+  });
+  }), () => owners.close());
+  await owners.close();
+  return result;
 }
 
 /** The plain-push positive control runs only after the parent accepted the native delivery observations. */

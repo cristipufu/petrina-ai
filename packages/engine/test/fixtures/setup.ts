@@ -3,9 +3,10 @@ import { join } from "node:path";
 import { checkOf, type AgentProfile, type CheckId, type State, type Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "../engine.js";
 import { findProgram } from "@petrina/agent-runtime/tools";
-import { FAKE_GH, makeWorld } from "../support.js";
+import { FAKE_GH } from "../support.js";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
+import { nativeWorldFixtures, type NativeWorld } from "./native-worlds.js";
 import { clone, makeGitHubClone } from "../../../repositories/test/fixtures/discovery.js";
 
 export function setupFixtures() {
@@ -13,10 +14,10 @@ export function setupFixtures() {
   const fakeGh = join(import.meta.dir, "../fake-gh.ts");
   const temp = tempDir("petrina-setup-");
   /** The worlds with a stand-in GitHub, each in a folder of its own. */
-  const worlds: string[] = [];
-  afterAll(() => {
+  const worlds = nativeWorldFixtures();
+  afterAll(async () => {
+    await worlds.close();
     removeDir(temp);
-    for (const dir of worlds) removeDir(dir);
   });
 
   let made = 0;
@@ -81,18 +82,17 @@ export function setupFixtures() {
   };
 
 
-  const run = async (tools: Partial<Record<CheckId, Behaviour>>, options: EngineOptions = {}) => {
-    const w = await makeWorld("tools", { version: "1.0.0" });
-    worlds.push(w.dir);
-    const engine = new Engine(w.data, { agentCommand: agents(tools), gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote], remote: w.remote, toolCheckTimeoutMs: LIMIT, ...options });
-    try {
-      await engine.checkTools();
-      const productId = await engine.addProduct(w.clone);
-      engine.setProductDelivery(productId, "release", false);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
-      return { engine, taskId, w };
-    } catch (error) { await engine.shutdown(); throw error; }
-  };
+  const run = async <T>(tools: Partial<Record<CheckId, Behaviour>>, body: (run: { engine: Engine; taskId: string; w: NativeWorld }) => Promise<T>, options: EngineOptions = {}): Promise<T> =>
+    worlds.world("tools", async fixture => {
+      const w = fixture.world;
+      return fixture.engine(async engine => {
+        await engine.checkTools();
+        const productId = await engine.addProduct(w.clone);
+        engine.setProductDelivery(productId, "release", false);
+        const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
+        return body({ engine, taskId, w });
+      }, { agentCommand: agents(tools), gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote], remote: w.remote, toolCheckTimeoutMs: LIMIT, ...options }, { defaults: "none" });
+    }, { version: "1.0.0" });
 
   return { fakeGh, temp, worlds, fresh, agents, until, status, taskOf, toolsUsed, LIMIT, noGh, sentences, refusal, run, clone, makeGitHubClone };
 }

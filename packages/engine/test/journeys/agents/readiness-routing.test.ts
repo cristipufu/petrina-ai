@@ -10,7 +10,7 @@ for (const [only, other] of [
   ] as const) {
     it(`plans, designs, builds, reviews and ships entirely on ${only} when ${other} is not logged in`, async () => {
       // Each logged out the way its tool is: Claude Code still opens conversations, Codex refuses them.
-      const { engine, taskId } = await run({ [other]: other === "claude-code" ? "not-logged-in" : "logged-out" });
+      await run({ [other]: other === "claude-code" ? "not-logged-in" : "logged-out" }, async ({ engine, taskId }) => {
       try {
         expect(status(engine, other)).toBe("logged-out");
         const state = await until(engine, (current) => ["done", "failed"].includes(taskOf(current, taskId).state));
@@ -34,9 +34,10 @@ for (const [only, other] of [
         await engine.shutdown();
       }
     });
+    });
   }
 it("keeps main's third tool available through planning, review and delivery", async () => {
-    const { engine, taskId } = await run({ "claude-code": "logged-out", codex: "logged-out", grok: "ok" });
+    await run({ "claude-code": "logged-out", codex: "logged-out", grok: "ok" }, async ({ engine, taskId }) => {
     try {
       const state = await until(engine, (current) => ["done", "failed"].includes(taskOf(current, taskId).state));
       const task = taskOf(state, taskId);
@@ -46,5 +47,6 @@ it("keeps main's third tool available through planning, review and delivery", as
     } finally {
       await engine.shutdown();
     }
+    });
   });
 });

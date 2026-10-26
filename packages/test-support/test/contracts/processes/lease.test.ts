@@ -1,8 +1,8 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { childState } from "@petrina/platform/process-tree";
-import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
+import { childState, processList } from "@petrina/platform/process-tree";
+import { createProcessLease, type ProcessLease, type ProcessLeaseOptions } from "@petrina/test-support/process-lease";
 import { CLEANUP_MS, CommandFailure, runCommand, type CommandResult, type Started } from "@petrina/test-support/commands";
 import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
@@ -10,8 +10,10 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { SLOW } from "@petrina/test-support/slow";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { rejectionOf } from "@petrina/test-support/rejections";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 
 const root = tempDir("petrina-process-lease-");
+registerFixtureRoot(root);
 const children = new Set<Actor>(), leases = new Set<ProcessLease>();
 let closing = false;
 const finishEvery = async (work: readonly Promise<unknown>[]) => {
@@ -94,15 +96,48 @@ const stopped = async (child: Actor) => {
 const forceStop = (child: Actor) => child.stop();
 afterAll(() => owners.close());
 
-async function withOwner(work: (owner: ProcessLease) => Promise<void>): Promise<void> {
+async function withOwner(work: (owner: ProcessLease) => Promise<void>, options: ProcessLeaseOptions = {}): Promise<void> {
   const owner = await owners.run(async () => {
-    const lease = await createProcessLease(); leases.add(lease);
+    const lease = await createProcessLease(options); leases.add(lease);
     if (closing) { await lease.close(); throw new Error("Lease fixture acquisition completed after closing"); }
     return lease;
   });
   await setupWithCleanup(() => work(owner), () => owner.close());
   await owner.close();
 }
+
+// Root qualifies this direct, independently owned actor before any true-fork conjunction.
+it.skipIf(process.platform === "win32")("resumes a paused actor on guardian owner EOF before its native handle fallback", () => withOwner(async owner => {
+  const ready = join(root, "guardian-paused.json"), json = new URL("../../../src/fixture-json.ts", import.meta.url).href;
+  const actor = start(owner.program(`const { writeFixtureJson } = await import(${JSON.stringify(json)});
+writeFixtureJson(${JSON.stringify(ready)}, { pid: process.pid });
+process.kill(process.pid, "SIGSTOP");
+await new Promise(() => {});`));
+  const cleanup = async () => { await finishEvery([owner.close(), forceStop(actor)]); };
+  await setupWithCleanup(async () => {
+    await waitFor(() => existsSync(ready), "the guardian actor to be admitted before its self-pause", undefined, { during: actor.completion });
+    expect(JSON.parse(readFileSync(ready, "utf8"))).toEqual({ pid: actor.pid });
+    await waitFor(async () => (await processList(["-o", "stat=", "-p", String(actor.pid)], 4_000 * SLOW))?.trim().startsWith("T"),
+      "the actual leased actor to be physically paused", undefined, { during: actor.completion });
+    // close sends real EOF to the separately owned native Node helper. Actor's handle fallback waits.
+    await owner.close();
+    expect(await stopped(actor)).toBe(78);
+    expect(await childState(actor.pid)).toBe("ended");
+    expect(await actor.completion).toMatchObject({ code: 78, stdout: "", stderr: "" });
+  }, cleanup);
+  await cleanup();
+}, { guardian: "node" }));
+
+it.skipIf(process.platform === "win32")("refuses a late guardian actor before its body runs", () => withOwner(async owner => {
+  const ran = join(root, "guardian-late-body");
+  const program = owner.program(`require("node:fs").writeFileSync(${JSON.stringify(ran)}, "");`);
+  await owner.close();
+  const actor = start(program);
+  try {
+    expect(await stopped(actor)).toBe(78);
+    expect(existsSync(ran)).toBe(false);
+  } finally { await forceStop(actor); }
+}, { guardian: "node" }));
 
 it("stops an actor after a failure before any child record is captured", () => withOwner(async owner => {
   const ready = join(root, "failed-ready");

@@ -13,6 +13,7 @@ export interface BrowserCleanupClock { now(): number; pause(ms: number): Promise
 
 /** The first words of a failed cleanup attempt's private note: one line in the task's log, engine.log or a test's output. */
 export const CLEANUP_NOTE = "Browser cleanup incomplete:";
+export const AGENT_CLEANUP_NOTE = "Agent cleanup incomplete:";
 const NOTE_BYTES = 4096, NOTE_PROCESSES = 16;
 
 /**

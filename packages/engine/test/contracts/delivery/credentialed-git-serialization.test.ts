@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { coordinator, FAKE_AGENT, FAKE_GH, taskOf, until } from "../../support.js";
 import { securityWorlds } from "../../fixtures/security.js";
 
@@ -8,12 +7,14 @@ const { world, close } = securityWorlds();
 afterAll(close);
 describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps trust none of the repository's own settings", () => {
 it("runs a product's credentialed git steps one at a time, task-start updates included", async () => {
-    const w = await world("serial");
+    let server: { stop(closeActiveConnections?: boolean): void } | undefined;
+    await world("serial", async fixture => {
+    const w = fixture.world;
     let open = 0;
     let most = 0;
     let total = 0;
     // GitHub standing in as a server that holds each connection a moment, then hangs up.
-    const server = Bun.listen({
+    const listening = server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
@@ -29,7 +30,7 @@ it("runs a product's credentialed git steps one at a time, task-start updates in
         data() {},
       },
     });
-    const engine = new Engine(w.data, { agentCommand: () => [process.execPath, FAKE_AGENT], gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote], remote: `https://127.0.0.1:${server.port}/acme/demo.git` });
+    return fixture.engine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setPoolPaused(true);
@@ -41,8 +42,10 @@ it("runs a product's credentialed git steps one at a time, task-start updates in
       for (const id of tasks) engine.cancel(id);
     } finally {
       await engine.shutdown();
-      server.stop(true);
+      listening.stop(true);
     }
+    }, { agentCommand: () => [process.execPath, FAKE_AGENT], gh: [process.execPath, FAKE_GH, join(w.dir, "github.json"), w.remote], remote: `https://127.0.0.1:${listening.port}/acme/demo.git` }, { defaults: "none" });
+    }, {}, { stopPeers() { server?.stop(true); } });
   });
 
 });

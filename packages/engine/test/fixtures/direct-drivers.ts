@@ -15,7 +15,7 @@ export function removeFixtureRoot(root: string): void {
 }
 
 /** Actual Engine generations plus manual operations omitted from the Engine's normal drain. */
-export function directDrivers(root: string) {
+export function directDrivers(root: string, policy: { allowOverlap?: true; beforeRemoveRoot?(): void | Promise<void> } = {}) {
   registerFixtureRoot(root);
   const active = new Map<Engine, FixtureOperations>();
   const completed = new WeakSet<Engine>();
@@ -31,13 +31,13 @@ export function directDrivers(root: string) {
       const failed = settled.filter(result => result.status === "rejected");
       if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Engine generations could not all be stopped");
     },
-    dispose: () => removeFixtureRoot(root),
+    dispose: policy.beforeRemoveRoot ? async () => { await policy.beforeRemoveRoot!(); removeFixtureRoot(root); } : () => removeFixtureRoot(root),
   });
   // Repository/peer setup can own native work before there is an Engine generation.
   const prepare = <T>(start: () => Promise<T>): Promise<T> => owner.run(start);
   const open = (dataDir: string, options: EngineOptions = {}): Engine => {
     if (closing) throw new Error("Direct-driver fixture is closing; no Engine may open");
-    if (active.size || constructing) throw new Error("Stop and settle the current Engine before opening its replacement");
+    if (constructing || (active.size && !policy.allowOverlap)) throw new Error("Stop and settle the current Engine before opening its replacement");
     let born!: () => void, failed!: (error: unknown) => void;
     const construction = new Promise<void>((resolve, reject) => { born = resolve; failed = reject; });
     // Constructor callbacks can synchronously reenter close before a generation exists in active.

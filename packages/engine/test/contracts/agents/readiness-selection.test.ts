@@ -32,7 +32,7 @@ it("keeps usage replacements on tools allowed by the login checks, including an 
     }
   });
 it("keeps plans exactly as they were when both tools are ready", async () => {
-    const { engine, taskId } = await run({});
+    await run({}, async ({ engine, taskId }) => {
     try {
       const state = await until(engine, (current) => !!taskOf(current, taskId).plan);
       const task = taskOf(state, taskId);
@@ -47,6 +47,7 @@ it("keeps plans exactly as they were when both tools are ready", async () => {
     } finally {
       await engine.shutdown();
     }
+    });
   });
 it("counts a logged-in Grok, which sends no login report, as Ready at once, so it still stands in when the others run out of usage", async () => {
     const engine = new Engine(fresh("data"), { agentCommand: agents({ grok: "ok" }), which: noGh, toolCheckTimeoutMs: LIMIT });
@@ -84,7 +85,7 @@ it("shows a logged-out Grok as Not logged in: it refuses the conversation, as th
     }
   });
 it("tries a tool it couldn't check when none is ready, and names it in a Stuck item when it will not start", async () => {
-    const { engine, taskId } = await run({ "claude-code": "logged-out", codex: "wont-start" });
+    await run({ "claude-code": "logged-out", codex: "wont-start" }, async ({ engine, taskId }) => {
     try {
       expect(status(engine, "claude-code")).toBe("logged-out");
       expect(status(engine, "codex")).toBe("unknown");
@@ -105,11 +106,12 @@ it("tries a tool it couldn't check when none is ready, and names it in a Stuck i
     } finally {
       await engine.shutdown();
     }
+    });
   });
 it("gives up on a tool that hangs as it starts, and names it in a Stuck item with its fix and what happened", async () => {
     // Readiness is unknown immediately; this case exercises the real agent-start deadline, not another readiness wait.
     const command = agents({ "claude-code": "logged-out", codex: "hang" })!;
-    const { engine, taskId } = await run({ "claude-code": "logged-out", codex: "hang" }, { startTimeoutMs: 1_500, agentCommand: (profile) => profile.toolId === "codex" ? [...command(profile)!, "--exit-in-checks"] : command(profile) });
+    await run({ "claude-code": "logged-out", codex: "hang" }, async ({ engine, taskId }) => {
     try {
       expect(status(engine, "claude-code")).toBe("logged-out");
       expect(status(engine, "codex")).toBe("unknown");
@@ -124,6 +126,7 @@ it("gives up on a tool that hangs as it starts, and names it in a Stuck item wit
     } finally {
       await engine.shutdown();
     }
+    }, { startTimeoutMs: 1_500, agentCommand: (profile) => profile.toolId === "codex" ? [...command(profile)!, "--exit-in-checks"] : command(profile) });
   });
 it("raises a Stuck item for a tool that is not logged in, and Retry checks it again before trying", async () => {
     const fakes = new Fakes(fresh("fakes"));

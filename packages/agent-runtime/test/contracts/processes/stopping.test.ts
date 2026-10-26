@@ -193,6 +193,62 @@ it.skipIf(process.platform === "win32")("stops an agent with no work after one l
   await cleanup();
 }));
 
+// Native conjunctions: real ACP -> detached child ancestry, real signals and final
+// native state. The guardian is fallback ownership only, after all subject assertions.
+for (const exitsOnTerm of [true, false]) it.skipIf(process.platform === "win32")(`stops an actual detached ACP fork whose family ${exitsOnTerm ? "exits" : "ignores TERM"} without touching its unrelated peer`, async () => nativeFixtures.use(async fixture => {
+  const controller = new AbortController();
+  let child: ChildProcess | undefined, run: AgentRun | undefined, incomplete = 0, streamsClosed = false;
+  let closed!: () => void, failed!: (error: unknown) => void;
+  const nativeClosed = new Promise<void>((resolve, reject) => { closed = resolve; failed = reject; });
+  void nativeClosed.catch(() => undefined);
+  let signals: Signals | undefined;
+  const cleanup = async () => {
+    const settled = await Promise.allSettled([run?.stop()]);
+    const errors = settled.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+    try { signals?.mockRestore(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Native detached-fork subject cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+    signals = spyOn(process, "kill");
+    run = await fixture.agent(controller, { profile, stubborn: !exitsOnTerm, fork: { stubborn: !exitsOnTerm },
+      callbacks: { ...callbacks, onCleanupIncomplete() { incomplete++; } },
+      onProcess(actual) {
+        child = actual;
+        actual.once("close", () => { streamsClosed = true; closed(); });
+        actual.once("error", failed);
+      },
+    });
+    const worker = await fixture.worker(), unrelated = await fixture.unrelated();
+    const ancestry = await readProcessList(4_000 * SLOW);
+    expect(ancestry).toBeDefined();
+    expect(ancestry!.split("\n").some(line => {
+      const fields = line.trim().split(/\s+/);
+      return Number(fields[0]) === worker.pid && Number(fields[1]) === child!.pid;
+    })).toBe(true);
+    const group = await processList(["-o", "pgid=", "-p", String(worker.pid)], 4_000 * SLOW);
+    expect(Number(group?.trim())).toBe(worker.pid);
+    expect(worker.parentPid).toBe(child!.pid!);
+    expect(await childState(worker.pid)).toBe("running");
+    expect(await childState(unrelated.pid!)).toBe("running");
+    const from = Date.now();
+    expect(await run.stop()).toBe(true);
+    expect(Date.now() - from).toBeLessThan(7_000);
+    expect(incomplete).toBe(0);
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+    expect(signals.mock.calls.some(([target, signal]) => Math.abs(target) === worker.pid && signal === "SIGTERM")).toBe(true);
+    expect(signals.mock.calls.some(([target, signal]) => Math.abs(target) === worker.pid && signal === "SIGKILL")).toBe(!exitsOnTerm);
+    expectPausesReclaimed(signals);
+    expect(await childState(worker.pid)).toBe("ended");
+    expect(await run.stop()).toBe(true);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+    await waitFor(() => streamsClosed, "the actual forking ACP peer's output to close", 5_000, { during: nativeClosed });
+    expect(streamsClosed).toBe(true);
+    expect(await childState(unrelated.pid!)).toBe("running");
+    expect(signals.mock.calls.some(([target, signal]) => Math.abs(target) === unrelated.pid && signal !== 0)).toBe(false);
+  }, cleanup);
+  await cleanup();
+}));
+
 
 const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(listedLate => ({ firstTimesOut, listedLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: false, overrun: 0 })));
 stopCases.push(

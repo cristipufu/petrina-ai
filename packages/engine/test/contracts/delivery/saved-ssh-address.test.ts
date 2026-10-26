@@ -12,7 +12,7 @@ describe.skipIf(process.platform === "win32")("Petrina's credentialed git steps 
 for (const mode of ["pull-request", "release"] as const) {
     it(`fetches and publishes a ${mode} over the SSH address saved when the product was added, not wherever origin points now`, async () => {
       const saved = "git@github.com:acme/demo.git";
-      const w = await world(`saved-${mode}-controller's copy`, { address: saved });
+      await world(`saved-${mode}-controller's copy`, async ({ world: w }) => {
       const evil = join(w.dir, "evil.git");
       await git(w.dir, "init", "-q", "--bare", "-b", "main", evil);
       // The coordinator's own SSH setup: an ssh that serves the folder standing in for GitHub and notes what it was asked for.
@@ -36,6 +36,7 @@ for (const mode of ["pull-request", "release"] as const) {
       const calls = readFileSync(asked, "utf8").trim().split("\n");
       expect([...new Set(calls)].sort()).toEqual(["git@github.com git-receive-pack 'acme/demo.git'", "git@github.com git-upload-pack 'acme/demo.git'"]);
       expect(process.env.GIT_SSH_COMMAND).toBe(beforeSsh);
+      }, { address: saved });
     });
   }
 

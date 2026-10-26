@@ -1,5 +1,6 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { expect, it, spyOn } from "bun:test";
+import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import type { ChildProcess } from "node:child_process";
@@ -9,7 +10,13 @@ import { browserProcesses } from "@petrina/platform/browser-processes";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { refuseFolder } from "@petrina/test-support/refuse-folder";
 import { Engine } from "../../engine.js";
-import { finish, makeWorld, removeDir, SLOW, taskOf, tempDir, testBrowserRoot, waitFor } from "../../support.js";
+import { finish, removeDir, SLOW, taskOf, tempDir, testBrowserRoot, waitFor } from "../../support.js";
+
+import { completeAll } from "@petrina/core";
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+
+const worlds = nativeWorldFixtures();
+afterAll(worlds.close);
 
 async function crash(browser: AgentBrowser): Promise<void> {
   const child = (browser as unknown as { child: ChildProcess }).child;
@@ -19,11 +26,17 @@ async function crash(browser: AgentBrowser): Promise<void> {
 }
 
 it("finishes a scripted workflow unrelated to browsing while the standard browser folder refuses writes", async () => {
-  const refusal = refuseFolder(browserTempRoot());
-  const started = spyOn(AgentBrowser, "start");
-  try {
-  const world = await makeWorld("browser-free-workflow");
-  const engine = world.start();
+  let currentRefusal: ReturnType<typeof refuseFolder> | undefined;
+  let currentStarted: ReturnType<typeof spyOn<typeof AgentBrowser, "start">> | undefined;
+  const cleanup = async () => {
+    await completeAll([(async () => { currentStarted?.mockRestore(); })(), (async () => { currentRefusal?.restore(); })()]);
+  };
+  await setupWithCleanup(async () => {
+  const refusal = currentRefusal = refuseFolder(browserTempRoot());
+  const started = currentStarted = spyOn(AgentBrowser, "start");
+  await worlds.world("browser-free-workflow", async fixture => {
+  const world = fixture.world;
+  return fixture.engine(async engine => {
   try {
     // The refusal reaches browser startup: the standard folder cannot hold a session here.
     const control = await AgentBrowser.start(undefined, process.env).then(async (browser) => { await browser.close(); return "started"; }, (error: Error) => error.message);
@@ -45,24 +58,32 @@ it("finishes a scripted workflow unrelated to browsing while the standard browse
     expect(existsSync(join(world.data, "browser-temp"))).toBe(false);
   } finally {
     await engine.shutdown();
-    removeDir(world.dir);
   }
-  } finally { started.mockRestore(); refusal.restore(); }
+  });
+  }, {}, { stopPeers: cleanup });
+  }, cleanup);
+  await cleanup();
 }, 120_000 * SLOW);
 
 it.skipIf(process.platform === "win32")("saves a failed browser cleanup's private note in the task's own log and only the shared warning on the task", async () => {
-  const world = await makeWorld("browser-cleanup-note", { browser: true });
   // The first agent's helper dies before its conversation opens, and this engine cannot read the folder scans.
   const opened: AgentBrowser[] = [];
   let unavailable = true;
   const start = AgentBrowser.start;
-  const started = spyOn(AgentBrowser, "start").mockImplementation(async (...args) => {
+  let started: ReturnType<typeof spyOn<typeof AgentBrowser, "start">> | undefined;
+  let closing = false;
+  await worlds.world("browser-cleanup-note", async fixture => {
+  const world = fixture.world;
+  started = spyOn(AgentBrowser, "start");
+  started.mockImplementation(async (...args) => {
     const browser = await start.call(AgentBrowser, args[0], args[1], args[2], args[3], { ...browserProcesses, readFolder: directory => unavailable ? Promise.resolve(undefined) : browserProcesses.readFolder(directory) });
-    if (!opened.length) await crash(browser);
+    const first = !opened.length;
     opened.push(browser);
+    if (closing) { await browser.close(); throw new Error("Browser fixture closed during native browser start"); }
+    if (first) await crash(browser);
     return browser;
   });
-  const engine = world.start();
+  return fixture.engine(async engine => {
   try {
     const productId = await engine.addProduct(world.clone);
     const id = engine.addTask({ productId, title: "Greet the guest", description: "[no-check]" });
@@ -79,11 +100,14 @@ it.skipIf(process.platform === "win32")("saves a failed browser cleanup's privat
   } finally {
     unavailable = false;
     await engine.shutdown();
-    started.mockRestore();
-    for (const browser of opened) await browser.close().catch(() => undefined);
-    removeDir(world.dir);
-    removeDir(world.browsers!);
+    started?.mockRestore();
+    await completeAll(opened.map(browser => browser.close()));
   }
+  });
+  }, { browser: true }, { async stopPeers() {
+    closing = true; unavailable = false;
+    await completeAll([(async () => { started?.mockRestore(); })(), ...opened.map(browser => browser.close())]);
+  } });
 }, 90_000 * SLOW);
 
 it("keeps parallel fixtures' browser folders apart and recovers only an engine's own leftovers at startup", async () => {

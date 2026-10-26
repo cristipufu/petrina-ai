@@ -3,19 +3,21 @@ import { readdirSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
-import { Fakes, makeWorld, removeDir, SLOW, waitFor } from "../../support.js";
+import { Fakes, SLOW, waitFor } from "../../support.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+
+const worlds = nativeWorldFixtures();
+afterAll(worlds.close);
 
 it("delivers a message arriving during picture saving to every unfinished reviewer and keeps only their final pictures", async () => {
-  const world = await makeWorld("report-picture-messages", { browser: true });
-  roots.push(world.dir, world.browsers!);
+  let saving: ReturnType<typeof spyOn<typeof files, "writeFile">> | undefined;
+  await worlds.world("report-picture-messages", async fixture => {
+  const world = fixture.world;
   const fakes = new Fakes(join(world.dir, "fake"));
   fakes.scenario({ planner: "parallel", builder: "plain", pictures: "valid", controlled: true });
   await sharp({ create: { width: 8, height: 8, channels: 3, background: "white" } }).png().toFile(join(fakes.dir, "picture.png"));
-  const engine = world.start({ agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] });
-  let saving: { mockRestore(): void } | undefined;
+  return fixture.engine(async engine => {
   try {
     const productId = await engine.addProduct(world.clone);
     const id = engine.addTask({ productId, title: "Check the guest page" });
@@ -34,7 +36,8 @@ it("delivers a message arriving during picture saving to every unfinished review
     const history = join(world.data, "captures", id);
     const writeFile = files.writeFile;
     let sent = false;
-    saving = spyOn(files, "writeFile").mockImplementation(async (path, data, options) => {
+    saving = spyOn(files, "writeFile");
+    saving.mockImplementation(async (path, data, options) => {
       await writeFile(path, data, options);
       if (!sent && typeof path === "string" && path.startsWith(history)) {
         sent = true;
@@ -60,7 +63,7 @@ it("delivers a message arriving during picture saving to every unfinished review
   } finally {
     saving?.mockRestore();
     await engine.shutdown();
-    removeDir(world.dir);
-    removeDir(world.browsers!);
   }
+  }, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir] });
+  }, { browser: true }, { stopPeers() { saving?.mockRestore(); } });
 }, 60_000 * SLOW);

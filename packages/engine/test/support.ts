@@ -2,11 +2,10 @@ import { displayTask } from "@petrina/core";
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
 // stand-ins only through the Engine's constructor.
-import { cpSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import type { InboxKind, State, Task } from "@petrina/core";
-import { Engine, type EngineOptions } from "./engine.js";
+import type { Engine, EngineOptions } from "./engine.js";
 import { Store } from "@petrina/storage/store";
 import type { AgentScript } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
@@ -14,7 +13,7 @@ import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 export { testGitEnv } from "@petrina/test-support/test-git-env";
 
 export * from "./fixtures.js";
-import { ADDRESS, FAKE_AGENT, FAKE_GH, REPO, currentSlow, git, repositorySeed, testBrowserRoot } from "./fixtures.js";
+import { ADDRESS, FAKE_AGENT, FAKE_GH, REPO, currentSlow, git, repositorySeed } from "./fixtures.js";
 
 export { EngineProcess, engineProcesses, engineProcessCases, engineEnv } from "./fixtures/engine-processes.js";
 export type { EngineProcesses, EngineProcessCases, EngineStartupOptions } from "./fixtures/engine-processes.js";
@@ -47,10 +46,12 @@ export interface World {
  * Scripted agents get no browser; with `browser`, they get real ones in the world's own browser folder.
  */
 export async function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256"; browser?: boolean;
-  owner?: { root: string; open(dataDir: string, options: EngineOptions): Engine };
-} = {}): Promise<World> {
+  owner: { root: string; browsers?: string; open(dataDir: string, options: EngineOptions): Engine };
+}): Promise<World> {
+  if (!options?.owner) throw new Error(`Native world ${name} needs its root and Engine owner before setup`);
+  if (options.browser && !options.owner.browsers) throw new Error("A browser world needs its owned short browser root before setup");
   const seed = await repositorySeed(options.version, false, options.objectFormat);
-  const dir = options.owner?.root ?? mkdtempSync(join(tmpdir(), `petrina-${name}-`));
+  const dir = options.owner.root;
   const remote = join(dir, "github.git");
   const clone = join(dir, "clone");
   cpSync(seed.origin, remote, { recursive: true });
@@ -62,8 +63,8 @@ export async function makeWorld(name: string, options: { version?: string; addre
   const scriptPath = join(dir, "agents.json");
   writeFixtureJson(scriptPath, {});
   const data = join(dir, "data");
-  const browsers = options.browser ? testBrowserRoot() : undefined;
-  const open = (dataDir: string, merged: EngineOptions) => options.owner ? options.owner.open(dataDir, merged) : new Engine(dataDir, merged);
+  const browsers = options.browser ? options.owner.browsers : undefined;
+  const open = (dataDir: string, merged: EngineOptions) => options.owner.open(dataDir, merged);
   return {
     dir,
     clone,

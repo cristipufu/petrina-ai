@@ -1,5 +1,5 @@
-import type { ChildProcess } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../../src/acp-run.js";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
@@ -10,13 +10,15 @@ import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
 import { lstatSync } from "node:fs";
+import { readProcessList, parseChildState } from "@petrina/platform/process-tree";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 
 type Options = Parameters<typeof AgentRun.start>[0];
-type SimpleAgent = Pick<Options, "profile" | "callbacks" | "onProcess" | "onGone"> & { stubborn?: boolean };
+type SimpleAgent = Pick<Options, "profile" | "callbacks" | "onProcess" | "onGone"> & { stubborn?: boolean; fork?: { stubborn: boolean } };
 type Outcome = { run: AgentRun } | { error: unknown };
 const arm = (expired: () => void, ms: number) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
 
-/** Native no-fork ACP peers only; the actual public stop result stays independent of fixture cleanup. */
+/** Native ACP peers; true forks opt into an independent lease guardian. Subject results remain separate. */
 export function stoppingActors() {
   const active = new Set<{ seal(): void; close(): Promise<void> }>(), retained = new Set<string>();
   let closing: Promise<void> | undefined;
@@ -35,11 +37,13 @@ export function stoppingActors() {
     return closing;
   };
   return { close, retained,
-    async use<T>(body: (fixture: { root: string; agent(controller: AbortController, options: SimpleAgent): Promise<AgentRun> }) => Promise<T>): Promise<T> {
+    async use<T>(body: (fixture: { root: string; agent(controller: AbortController, options: SimpleAgent): Promise<AgentRun>; worker(): Promise<{ pid: number; parentPid: number }>; unrelated(): Promise<ChildProcess> }) => Promise<T>): Promise<T> {
       if (closing) throw new Error("Stopping fixtures are closing; no case may open");
       const root = tempDir("petrina-stopping-owned-"), starts: { controller: AbortController; outcome: Promise<Outcome> }[] = [];
+      registerFixtureRoot(root);
       const children: { child: ChildProcess; exited: Promise<number>; closed: Promise<void>; readonly outputClosed: boolean }[] = [];
-      let lease: ProcessLease | undefined, accepting = true;
+      let lease: ProcessLease | undefined, accepting = true, forked = false;
+      const workerRecord = join(root, "worker.json");
       const owner = new FixtureOperations({ label: `Stopping fixture at ${root}`, allowanceMs: CLEANUP_MS * SLOW, arm,
         async stop() {
           accepting = false;
@@ -53,7 +57,7 @@ export function stoppingActors() {
                 get exitCode() { return record.child.exitCode; }, get signalCode() { return record.child.signalCode; },
                 kill: signal => record.child.kill(signal),
               }, { graceMs: 1_000, forceMs: 1_000 }, arm);
-              if (stopped !== "confirmed") throw new Error("The actual no-fork peer did not confirm termination");
+              if (stopped !== "confirmed") throw new Error("The actual captured peer did not confirm termination");
               await waitFor(() => record.outputClosed,
                 "the actual ACP peer's owned output to end", CLEANUP_MS, { during: record.closed });
             }),
@@ -62,7 +66,16 @@ export function stoppingActors() {
             const result = await start.outcome;
             if ("run" in result) await result.run.stop();
           }));
-          const errors = [...domains, ...await cleanup].flatMap(result => result.status === "rejected" ? [result.reason] : []);
+          const physical = await Promise.allSettled([...(forked ? [(async () => {
+            if (!existsSync(workerRecord)) throw new Error("The forked peer's native identity was not published; resources retained");
+            const saved = JSON.parse(readFileSync(workerRecord, "utf8")) as { pid?: number };
+            if (!Number.isSafeInteger(saved.pid) || saved.pid! <= 0) throw new Error("Invalid forked peer identity");
+            await waitFor(async () => {
+              const listed = await readProcessList(4_000 * SLOW);
+              return listed !== undefined && parseChildState(listed, saved.pid!) === "ended";
+            }, "the actual forked peer to be natively ended", CLEANUP_MS);
+          })()] : [])]);
+          const errors = [...domains, ...await cleanup, ...physical].flatMap(result => result.status === "rejected" ? [result.reason] : []);
           if (errors.length) throw new AggregateError(errors, "Stopping fixture cleanup was not confirmed");
         },
         dispose() {
@@ -79,32 +92,53 @@ export function stoppingActors() {
         return result;
       } };
       active.add(entry);
+      const observe = (child: ChildProcess) => {
+        const exited = new Promise<number>((resolve, reject) => {
+          child.once("exit", (code, signal) => Number.isInteger(code) ? resolve(code!) : reject(new Error(`The native peer ended by ${signal}`)));
+          child.once("error", reject);
+          if (child.exitCode !== null) resolve(child.exitCode);
+          else if (child.signalCode !== null) reject(new Error(`The native peer ended by ${child.signalCode}`));
+        });
+        let outputClosed = false;
+        const closed = new Promise<void>((resolve, reject) => { child.once("close", () => { outputClosed = true; resolve(); }); child.once("error", reject); });
+        void exited.catch(() => undefined); void closed.catch(() => undefined);
+        const record = { child, exited, closed, get outputClosed() { return outputClosed; } };
+        children.push(record); return record;
+      };
       const agent = (controller: AbortController, options: SimpleAgent): Promise<AgentRun> => {
         if (!accepting) return Promise.reject(new Error("Stopping fixture is closed; no peer may start"));
-        if (starts.length) return Promise.reject(new Error("Each stopping fixture owns exactly one no-fork ACP peer"));
+        if (starts.length) return Promise.reject(new Error("Each stopping fixture owns exactly one ACP peer"));
         let completed!: (result: Outcome) => void;
         const outcome = new Promise<Outcome>(resolve => { completed = resolve; });
         starts.push({ controller, outcome });
         const opening = owner.run(async () => {
-          if (!lease) lease = await createProcessLease();
+          forked = options.fork !== undefined;
+          if (!lease) lease = await createProcessLease(forked ? { guardian: "node" } : {});
           if (!accepting) { await lease.close(); throw new Error("Stopping fixture lease completed after admission closed"); }
           const program = join(root, `peer-${starts.length}.ts`);
           const original = join(import.meta.dir, "session-agent.ts");
-          writeFileSync(program, lease.program(`process.argv[1] = ${JSON.stringify(original)}; ${options.stubborn ? 'process.argv.push("--stubborn");' : ""} await import(${JSON.stringify(original)}); await new Promise(() => undefined);`));
+          let fork = "";
+          if (options.fork) {
+            const worker = join(root, "detached-worker.ts"), ready = join(root, "worker-ready.json");
+            const json = import.meta.resolve("@petrina/test-support/fixture-json");
+            writeFileSync(worker, lease.program(`const { writeFixtureJson } = await import(${JSON.stringify(json)}); ${options.fork.stubborn ? 'process.on("SIGTERM", () => {});' : ""} writeFixtureJson(${JSON.stringify(ready)}, { pid: process.pid }); await new Promise(() => {});`));
+            fork = `const { spawn } = require("node:child_process"); const { existsSync } = require("node:fs");
+const { writeFixtureJson } = await import(${JSON.stringify(json)});
+const worker = spawn(process.execPath, [${JSON.stringify(worker)}], { detached: true, stdio: "ignore" });
+let workerEnded = false;
+const workerExit = new Promise((resolve, reject) => { worker.once("exit", resolve); worker.once("error", reject); });
+void workerExit.then(() => { workerEnded = true; }, () => { workerEnded = true; });
+writeFixtureJson(${JSON.stringify(workerRecord)}, { pid: worker.pid, parentPid: process.pid });
+while (!existsSync(${JSON.stringify(ready)})) { if (workerEnded) throw new Error("Detached peer ended before readiness"); await Bun.sleep(5); }
+${options.stubborn ? "" : 'process.once("SIGTERM", () => { void workerExit.then(() => process.exit(0), () => process.exit(1)); });'}
+`;
+          }
+          writeFileSync(program, lease.program(`${fork}process.argv[1] = ${JSON.stringify(original)}; ${options.stubborn ? 'process.argv.push("--stubborn");' : ""} await import(${JSON.stringify(original)}); await new Promise(() => undefined);`));
           return AgentRun.start({ profile: options.profile, callbacks: options.callbacks, signal: controller.signal, cwd: root,
             command: [process.execPath, program], browser: false,
             onGone(gone) { void gone.catch(() => undefined); options.onGone?.(gone); },
             onProcess(child) {
-              const exited = new Promise<number>((resolve, reject) => {
-                child.once("exit", (code, signal) => Number.isInteger(code) ? resolve(code!) : reject(new Error(`The native peer ended by ${signal}`)));
-                child.once("error", reject);
-                if (child.exitCode !== null) resolve(child.exitCode);
-                else if (child.signalCode !== null) reject(new Error(`The native peer ended by ${child.signalCode}`));
-              });
-              let outputClosed = false;
-              const closed = new Promise<void>((resolve, reject) => { child.once("close", () => { outputClosed = true; resolve(); }); child.once("error", reject); });
-              void exited.catch(() => undefined); void closed.catch(() => undefined);
-              children.push({ child, exited, closed, get outputClosed() { return outputClosed; } });
+              observe(child);
               options.onProcess?.(child);
             },
           });
@@ -112,7 +146,22 @@ export function stoppingActors() {
         void opening.then(run => completed({ run }), error => completed({ error }));
         return opening;
       };
-      const result = await setupWithCleanup(() => owner.run(() => body({ root, agent })), () => entry.close());
+      const worker = () => owner.run(async () => {
+        if (!forked) throw new Error("This ACP peer has no declared detached worker");
+        const saved = JSON.parse(readFileSync(workerRecord, "utf8")) as { pid: number; parentPid: number };
+        if (!Number.isSafeInteger(saved.pid) || saved.pid <= 0 || !Number.isSafeInteger(saved.parentPid) || saved.parentPid <= 0) throw new Error("Invalid actual worker record");
+        return saved;
+      });
+      const unrelated = () => owner.run(async () => {
+        if (!accepting || !lease) throw new Error("Start the owned ACP peer before its unrelated sentinel");
+        const file = join(root, "unrelated.ts"), ready = join(root, "unrelated-ready");
+        writeFileSync(file, lease.program(`require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready"); await new Promise(() => {});`));
+        const child = spawn(process.execPath, [file], { stdio: "ignore", windowsHide: true }), record = observe(child);
+        if (!accepting) child.kill("SIGKILL");
+        await waitFor(() => existsSync(ready), "the unrelated sentinel to be ready", undefined, { during: record.exited });
+        return child;
+      });
+      const result = await setupWithCleanup(() => owner.run(() => body({ root, agent, worker, unrelated })), () => entry.close());
       await entry.close();
       return result;
     },
