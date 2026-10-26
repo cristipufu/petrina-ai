@@ -1,6 +1,6 @@
 import { SourceBackground } from "@petrina/orchestrator";
 import { executionFor, resolveSource, SourceSelections, type RepositoryContext } from "@petrina/orchestrator";
-import { productName, type TaskSource, type WorkChoice } from "@petrina/core";
+import { type TaskSource, type WorkChoice } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { background, sourcePr } from "@petrina/repositories/source-github";
 import type { Kernel, MTask } from "./kernel.js";
@@ -24,14 +24,15 @@ export class Sources {
     this.selections = new SourceSelections({
       products: () => k.s.products,
       role: (id, task) => k.role(id, task),
-      profileExists: id => !!k.profile(id),
+      profileExists: id => !!k.profile(id), productId: () => k.id("product"), additionChanged: () => k.commitNow(),
       planCheck: taskId => k.s.inbox.find(item => item.taskId === taskId && item.kind === "plan"),
       commitNow: task => k.commitNow(task),
       recordChoice: (task, text) => k.log(task, "you", text),
     }, {
       resolve: (task, choice, candidate) => this.resolve(task, choice, candidate),
       repository: repo => this.queries.repository(repo),
-      isAbsoluteFolder: isAbsolute,
+      isAbsoluteFolder: isAbsolute, folderPath: resolve,
+      folderOccupied: folder => readdir(folder).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; }),
     });
   }
 
@@ -43,28 +44,8 @@ export class Sources {
     return this.selections.propose(task, proposal, coordinator);
   }
 
-  async configureAddition(task: MTask, repo: string, name: string, path: string): Promise<void> {
-    const row = task.workRows?.find((entry) => entry.source?.product.repo.toLowerCase() === repo.toLowerCase());
-    if (!row?.source || this.k.s.products.some((product) => product.repo.toLowerCase() === repo.toLowerCase())) throw new Error("Choose a repository that needs adding.");
-    const displayName = productName(name, this.k.s.products);
-    if (!isAbsolute(path)) throw new Error("Choose a full permanent folder path.");
-    const folder = resolve(path);
-    if (row.addition?.created && row.addition.path === folder) return;
-    const occupied = await readdir(folder).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; });
-    if (occupied) throw new Error("That folder already exists. Choose an unused folder; Petrina leaves existing folders untouched.");
-    const id = row.addition?.productId ?? this.k.id("product");
-    row.addition = { name: displayName, path: folder, productId: id };
-    row.source.product = { ...row.source.product, id, name: displayName, path: folder };
-    row.choice.productId = id;
-    const work = task.repositories?.find((entry) => entry.productId === id);
-    if (work && !work.worktree) {
-      work.source = { ...row.source, confirmed: true };
-      work.workProduct = work.source.product;
-    }
-    try { row.source = await this.resolve(task, row.choice); delete row.error; }
-    catch (error) { row.error = error instanceof Error ? error.message : String(error); }
-    task.workError = task.workRows!.some((entry) => entry.error) ? "Some product choices need your attention." : undefined;
-    this.k.commitNow();
+  configureAddition(task: MTask, repo: string, name: string, path: string): Promise<void> {
+    return this.selections.configureAddition(task, repo, name, path);
   }
 
   async addApproved(task: MTask, productId: string, signal: AbortSignal): Promise<void> {

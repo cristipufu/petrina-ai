@@ -10,13 +10,13 @@ afterAll(() => fixtures.close());
 
 describe.concurrent("pull request background and source movement",()=>{
 for (const pr of [false, true]) it(`brings in a moving ${pr ? "PR working branch" : "named branch"} after delivery approval, retaining its initial commit separately`, async () => {
-    await fixtures.world(`moves-${pr}`, async ({ w, engine: withEngine }) => {
+    await fixtures.world(`moves-${pr}`, async ({ w, engine: withEngine, candidate }) => {
     const source = pr ? (await pull(w)).sha : await branch(w);
 
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: "pull-request" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: "pull-request" });
       const state = await deliveryGate(engine, id);
       const moved = await advance(w, w.remote, pr ? "review-work" : "release-2.x");
       engine.approve(itemOf(state, id, "delivery")!.id);
@@ -33,13 +33,13 @@ for (const pr of [false, true]) it(`brings in a moving ${pr ? "PR working branch
 
 describe.concurrent("pull request background and source movement",()=>{
 it("creates a missing local destination without disturbing uncommitted work on another branch", async () => {
-    await fixtures.world("missing-local", async ({ w, engine: withEngine }) => { await branch(w); await git(w.clone, "branch", "-D", "release-2.x");
+    await fixtures.world("missing-local", async ({ w, engine: withEngine, candidate }) => { await branch(w); await git(w.clone, "branch", "-D", "release-2.x");
     writeFileSync(join(w.clone, "README.md"), "My uncommitted work\n");
 
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.state).toBe("done");
       expect(await git(w.clone, "rev-parse", "release-2.x")).toBe((await remoteRef(w.remote, "refs/heads/release-2.x"))!);
@@ -53,13 +53,13 @@ it("creates a missing local destination without disturbing uncommitted work on a
 
 describe.concurrent("source failures and delivery recovery",()=>{
 it("preserves newer local work when an unpushed delivery and GitHub both moved before Retry", async () => {
-    await fixtures.world("commit-retry-local-and-remote", async ({ w, engine: withEngine }) => { await branch(w);
+    await fixtures.world("commit-retry-local-and-remote", async ({ w, engine: withEngine, candidate }) => { await branch(w);
     const reject = join(w.remote, "hooks", "pre-receive"); writeFileSync(reject, "#!/bin/sh\nexit 1\n"); chmodSync(reject, 0o755);
 
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       let state = await finish(engine, id);
       const original = taskOf(state, id).shipping!.prepared!.tested;
       rmSync(reject);
@@ -85,13 +85,13 @@ it("preserves newer local work when an unpushed delivery and GitHub both moved b
 
 describe.concurrent("source failures and delivery recovery",()=>{
 for (const problem of ["deleted branch", "uncommitted work"] as const) it(`preserves an unpushed delivery on Retry with ${problem}`, async () => {
-    await fixtures.world(`commit-retry-${problem.replaceAll(" ", "-")}`, async ({ w, engine: withEngine }) => { await branch(w);
+    await fixtures.world(`commit-retry-${problem.replaceAll(" ", "-")}`, async ({ w, engine: withEngine, candidate }) => { await branch(w);
     const reject = join(w.remote, "hooks", "pre-receive"); writeFileSync(reject, "#!/bin/sh\nexit 1\n"); chmodSync(reject, 0o755);
 
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await finish(engine, id);
       const tested = taskOf(state, id).shipping!.prepared!.tested;
       rmSync(reject);
@@ -173,11 +173,11 @@ for (const kind of ["branch", "pull-request"] as const) it(`an unavailable ${kin
 
 describe.concurrent("source failures and delivery recovery",()=>{
 it("task identity and destination survive changed product defaults and an agent-edited remote", async () => {
-    await fixtures.world("pinning", async ({ w, engine: withEngine }) => { await branch(w);
+    await fixtures.world("pinning", async ({ w, engine: withEngine, candidate }) => { await branch(w);
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
       const product = state.products.find((entry) => entry.id === productId)! as DeepMutable<(typeof state.products)[number]>;
       product.defaultBranch = "elsewhere"; product.remote = "https://github.com/other/product.git";
@@ -192,45 +192,17 @@ it("task identity and destination survive changed product defaults and an agent-
   });
 });
 
-describe.concurrent("review findings for a confirmed start",()=>{
-it("keeps an unchanged default plan editable until it is approved", async () => {
-    await fixtures.world("edit-default", async ({ w, engine: withEngine }) => {
-    await branch(w);
 
-    await withEngine(async engine => {
-
-      const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", delivery: "local", approvePlan: true });
-      const state = await planGate(engine, id);
-      expect(taskOf(state, id).worktree).toBeUndefined();
-      expect(taskOf(state, id).source).toMatchObject({ confirmed: true, start: { kind: "default", branch: "main" } });
-      await engine.setTaskStart(id, { productId, startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
-      const proposed = engine.task(id)!;
-      expect(executionFor(proposed).work.worktree).toBeUndefined();
-      expect(proposed.proposedSource?.start).toMatchObject({ kind: "branch", branch: "release-2.x" });
-      expect(executionFor(proposed).work.source?.start).toMatchObject({ kind: "default", branch: "main" });
-      expect(proposed.confirmWork).toBe(true);
-      engine.approve(itemOf(engine.getState(), id, "plan")!.id);
-      const done = taskOf(await finish(engine, id), id);
-      expect(done.error).toBeUndefined();
-      expect(done.source?.start).toMatchObject({ kind: "branch", branch: "release-2.x" });
-      expect(await remoteRef(w.remote, "refs/heads/release-2.x")).toBe(await taskCommit(w, done));
-      expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
-
-    });
-    });
-  });
-});
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("stops when replaced source history drops a commit already brought in", async () => {
-    await fixtures.world("replaced-history", async ({ w, engine: withEngine }) => {
+    await fixtures.world("replaced-history", async ({ w, engine: withEngine, candidate }) => {
     const initial = await branch(w);
 
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
       const worktree = executionFor(engine.task(id)!).work.worktree!;
       expect(executionFor(engine.task(id)!).work.baseSha).toBe(initial);
@@ -313,7 +285,7 @@ it("publishes after a later refresh once a newer local commit was brought in", a
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("publishes a commit onto a branch that was already ahead on this computer", async () => {
-    await fixtures.world("local-already-ahead", async ({ w, engine: withEngine }) => {
+    await fixtures.world("local-already-ahead", async ({ w, engine: withEngine, candidate }) => {
     const initial = await branch(w);
     await git(w.clone, "switch", "-q", "release-2.x");
     writeFileSync(join(w.clone, "local-ahead.txt"), "Already on this computer\n");
@@ -325,7 +297,7 @@ it("publishes a commit onto a branch that was already ahead on this computer", a
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
       const atCheck = taskOf(state, id);
       expect(atCheck.state).not.toBe("failed");

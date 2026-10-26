@@ -1,5 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { executionFor } from "@petrina/orchestrator";
+import { deliveryLabel } from "@petrina/core";
+import * as nativeGit from "@petrina/repositories/git";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import type { Engine, EngineOptions } from "../engine.js";
 import { Fakes, coordinator, git, gitWith, itemOf, makeWorld, REPO, taskOf, tempDir, until, type World } from "../support.js";
@@ -12,6 +15,8 @@ interface SourceFixture {
   fakes: Fakes;
   /** Explicit options preserve the existing native-only callers without adding scripted defaults. */
   engine<T>(body: (engine: Engine) => Promise<T>, options?: EngineOptions): Promise<T>;
+  /** Explicit already-written input; real source resolution/copy/checks/approval/publication still run. */
+  candidate(engine: Engine, input: Parameters<Engine["addTask"]>[0]): Promise<string>;
 }
 type Entry = { lifetime: ReturnType<typeof directDrivers>; closed: boolean };
 const closed = () => new Error("Source fixture ownership is closing; no world, Engine or callback may start");
@@ -58,7 +63,36 @@ export function sourceWorlds() {
       };
       const { start: _start, ...visible } = w;
       available(entry);
-      return body({ w: visible, fakes, engine });
+      const candidate: SourceFixture["candidate"] = (current, input) => lifetime.run(current, async () => {
+        available(entry);
+        // This fixture declares a genuine command, never an invented passing result or check binding.
+        if (current.s.products.find(product => product.id === input.productId)?.checks === undefined)
+          current.setProductChecks(input.productId, [{ name: "Version", command: "git --version" }]);
+        const id = current.addTask({ ...input, backlog: true });
+        const task = current.task(id)!, scope = executionFor(task);
+        await current["sources"].propose(task, [task.workChoice!], true);
+        current["sources"].confirm(task);
+        available(entry);
+        const title = deliveryLabel({ source: scope.work.source, delivery: scope.work.delivery });
+        // Only the native source/delivery boundary is claimed, not a Planner/Builder/review execution.
+        task.plan = { rationale: "An explicitly prepared change for the source boundary", plannerProfileId: "sol-high", stages: [
+          { id: "source-delivery-check", kind: "gate", gate: "delivery", title: "Your delivery check", roleId: "coordinator", profileIds: [] },
+          { id: "source-delivery", kind: "do", title, roleId: "release-manager", profileIds: ["sol-high"] },
+        ] };
+        task.stageIndex = 0; task.sub = 0; task.startedAt = Date.now();
+        await current["driver"]["prepare"](scope, current.stopRequested.signal);
+        available(entry);
+        writeFileSync(join(scope.work.worktree!, "greeting.txt"), "Hello (with left-pad)\n");
+        scope.work.report = { summary: "Added a greeting.", changes: ["People see a greeting"],
+          description: "Adds a greeting file.\n\nTested by the actual native check boundary." };
+        await nativeGit.commitChanges(scope.work.worktree!, current["updates"].message(scope));
+        available(entry);
+        task.state = "waiting";
+        current.commitNow(task);
+        current.schedule();
+        return id;
+      });
+      return body({ w: visible, fakes, engine, candidate });
     }), () => closeEntry(entry));
     await closeEntry(entry);
     return result;

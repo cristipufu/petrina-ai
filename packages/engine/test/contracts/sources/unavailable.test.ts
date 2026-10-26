@@ -7,12 +7,12 @@ afterAll(() => fixtures.close());
 
 describe.concurrent("source failures and delivery recovery",()=>{
 for (const pr of [false, true]) it(`recovery confirms the tested ${pr ? "PR update" : "branch delivery"} once when newer commits followed it`, async () => {
-    await fixtures.world(`evidence-${pr}`, async ({ w, engine: withEngine }) => { const initial = pr ? (await pull(w)).sha : await branch(w);
+    await fixtures.world(`evidence-${pr}`, async ({ w, engine: withEngine, candidate }) => { const initial = pr ? (await pull(w)).sha : await branch(w);
 
     let { id, tested, previous } = await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: pr ? "pull-request" : "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: pr ? { kind: "pull-request", value: "7" } : { kind: "branch", name: "release-2.x" }, delivery: pr ? "pull-request" : "local" });
       const done = taskOf(await finish(engine, id), id); const tested = await git(w.clone, "rev-parse", done.branch!);
 
       return { id, tested, previous: engine };

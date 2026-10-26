@@ -23,7 +23,8 @@ export function sourceTask(productId = "shop"): RuntimeTask {
 /** Private scripted queries. Unexpected effects fail instead of consulting the machine. */
 export function sourceFixture() {
   const products = structuredClone(sourceProducts) as Product[];
-  const scripts: Partial<SourceQueries & Pick<SourceSelectionEffects, "repository" | "isAbsoluteFolder">> = {};
+  const scripts: Partial<SourceQueries & Pick<SourceSelectionEffects, "repository" | "isAbsoluteFolder" | "folderPath" | "folderOccupied">> = {};
+  let nextProduct = 0;
   const calls: string[] = [], checkpoints: RuntimeTask[] = [], notes: string[] = [];
   const item = { body: "The plan to approve" };
   const profiles = new Set(["builder", "reviewer", "release", "alternate"]);
@@ -35,12 +36,16 @@ export function sourceFixture() {
   const effects: SourceSelectionEffects = {
     resolve: (task, choice, candidate) => resolveSource(executionFor(task), choice, products, queries, candidate),
     repository(repo) { calls.push(`repo:${repo}`); if (!scripts.repository) throw new Error(`Unexpected repository lookup: ${repo}`); return scripts.repository(repo); },
+    folderPath(path) { calls.push(`path:${path}`); if (!scripts.folderPath) throw new Error(`Unexpected folder path: ${path}`); return scripts.folderPath(path); },
+    folderOccupied(path) { calls.push(`occupied:${path}`); if (!scripts.folderOccupied) throw new Error(`Unexpected folder observation: ${path}`); return scripts.folderOccupied(path); },
     isAbsoluteFolder(path) { calls.push(`folder:${path}`); if (!scripts.isAbsoluteFolder) throw new Error(`Unexpected folder validation: ${path}`); return scripts.isAbsoluteFolder(path); },
   };
   const host: SourceSelectionHost = {
     products: () => products,
     role: (id, task) => roleForTask(BUILT_IN_ROLES, id, task),
     profileExists: id => profiles.has(id),
+    productId: () => { const id = `source-product-${++nextProduct}`; calls.push(`id:${id}`); return id; },
+    additionChanged: task => { checkpoints.push(structuredClone(task)); },
     planCheck: () => item,
     commitNow: task => { checkpoints.push(structuredClone(task)); },
     recordChoice: (_task, text) => { notes.push(text); },

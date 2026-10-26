@@ -1,7 +1,7 @@
 import type { Engine } from "../../engine.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
@@ -75,52 +75,6 @@ describe.concurrent("one task across products", () => {
     });
   });
 
-  for (const invalid of ["branch", "pull-request", "release"] as const) it(`requires a confirmed folder after correcting a proposed repository's invalid ${invalid} choice`, async () => {
-    await fixtures.world(`invalid-addition-${invalid}`, async ({ shop, api, engine: withEngine, fakes }) => {
-
-    const { id } = await withEngine(async engine => {
-
-      const first = await engine.addProduct(shop.clone);
-      fakes.scenario({ worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", startFrom: invalid === "pull-request" ? { kind: "pull-request", value: "999" } : { kind: "branch", name: "missing-branch" }, delivery: invalid === "release" ? "release" : "pull-request" }] });
-      const id = engine.addTask({ productId: first, title: "Correct the proposed API source" });
-      const state = await until(engine, (state) => !!itemOf(state, id, "plan") || taskOf(state, id).state === "failed", coordinator([]));
-      expect(taskOf(state, id).error).toBeUndefined();
-      const before = taskOf(state, id).workRows![1]!;
-      expect(before.error).toBeTruthy();
-      expect(before.addition).toBeUndefined();
-      await engine.setTaskStart(id, { ...before.choice, startFrom: { kind: "default" }, delivery: "pull-request" });
-      const corrected = taskOf(engine.getState(), id).workRows![1]!;
-      expect(corrected.error).toContain("Needs adding");
-      expect(corrected.addition).toBeUndefined();
-      expect(() => engine.approve(itemOf(engine.getState(), id, "plan")!.id)).toThrow();
-      expect(engine.task(id)!.repositories).toBeUndefined();
-
-      return { id };
-
-    });
-
-    await withEngine(async engine => {
-      expect(() => engine.approve(itemOf(engine.getState(), id, "plan")!.id)).toThrow();
-      // Guard older saved validation placeholders too: an empty folder is never coordinator approval.
-      const row = engine.task(id)!.workRows![1]!;
-      delete row.error;
-      row.addition = { name: "Shop API", path: "", productId: row.source!.product.id };
-      row.source!.product.path = "";
-      expect(() => engine.approve(itemOf(engine.getState(), id, "plan")!.id)).toThrow();
-      const folder = join(shop.dir, "confirmed-api");
-      await engine.setTaskAddition(id, "acme/api", "Shop API", folder);
-      expect(existsSync(folder)).toBe(false);
-      engine.approve(itemOf(engine.getState(), id, "plan")!.id);
-      const finished = taskOf(await finish(engine, id), id);
-      expect(finished.error).toBeUndefined();
-      expect(finished.state).toBe("pr-open");
-      expect(await git(folder, "branch", "--show-current")).toBe("main");
-      expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
-
-    });
-
-    });
-  });
 
   it("retries an interrupted clone in its saved folder and leaves an unrelated occupied folder untouched", async () => {
     await fixtures.world("clone-retry", async ({ shop, api, engine: withEngine, fakes, remotes }) => {

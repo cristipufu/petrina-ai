@@ -1,9 +1,11 @@
-import { deliveryLabel, prNumber, workSummary, type WorkChoice } from "@petrina/core";
+import { productName, deliveryLabel, prNumber, workSummary, type WorkChoice } from "@petrina/core";
 import { detachRepositoryState, executionFor } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
 import type { SourceSelectionEffects, SourceSelectionHost } from "./ports/source.js";
 
 export class SourceSelections {
+  // Only the latest choice on the same proposal row may publish its asynchronous observations.
+  private readonly additionAttempts = new WeakMap<NonNullable<RuntimeTask["workRows"]>[number], object>();
   constructor(private readonly host: SourceSelectionHost, private readonly effects: SourceSelectionEffects) {}
 
   async propose(task: RuntimeTask, proposal: readonly WorkChoice[] | undefined, coordinator = false): Promise<void> {
@@ -132,6 +134,44 @@ export class SourceSelections {
     if (item) item.body = task.workRows.map((row) => [row.source ? workSummary(row.source) : row.choice.productId, row.choice.reason, row.error].filter(Boolean).join("\n")).join("\n\n");
     this.host.commitNow(task);
   }
+
+  async configureAddition(task: RuntimeTask, repo: string, name: string, path: string): Promise<void> {
+    const rows = task.workRows;
+    const row = rows?.find((entry) => entry.source?.product.repo.toLowerCase() === repo.toLowerCase());
+    if (!rows || !row?.source || this.host.products().some((product) => product.repo.toLowerCase() === repo.toLowerCase())) throw new Error("Choose a repository that needs adding.");
+    const attempt = {};
+    this.additionAttempts.set(row, attempt);
+    const current = () => task.workRows === rows && rows.includes(row) && this.additionAttempts.get(row) === attempt;
+    const displayName = productName(name, this.host.products());
+    if (!this.effects.isAbsoluteFolder(path)) throw new Error("Choose a full permanent folder path.");
+    const folder = this.effects.folderPath(path);
+    if (!current()) return;
+    if (row.addition?.created && row.addition.path === folder) return;
+    const occupied = await this.effects.folderOccupied(folder);
+    if (!current()) return;
+    if (occupied) throw new Error("That folder already exists. Choose an unused folder; Petrina leaves existing folders untouched.");
+    const id = row.addition?.productId ?? this.host.productId();
+    if (!current()) return;
+    row.addition = { name: displayName, path: folder, productId: id };
+    row.source.product = { ...row.source.product, id, name: displayName, path: folder };
+    row.choice.productId = id;
+    const work = task.repositories?.find((entry) => entry.productId === id);
+    if (work && !work.worktree) {
+      work.source = { ...row.source, confirmed: true };
+      work.workProduct = work.source.product;
+    }
+    try {
+      const source = await this.effects.resolve(task, row.choice);
+      if (!current()) return;
+      row.source = source; delete row.error;
+    } catch (error) {
+      if (!current()) return;
+      row.error = error instanceof Error ? error.message : String(error);
+    }
+    task.workError = task.workRows!.some((entry) => entry.error) ? "Some product choices need your attention." : undefined;
+    this.host.additionChanged(task);
+  }
+
 
   confirm(task: RuntimeTask): void {
     const scope = executionFor(task);

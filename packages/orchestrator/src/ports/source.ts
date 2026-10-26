@@ -22,6 +22,8 @@ export interface SourceSelectionEffects {
   resolve(task: RuntimeTask, choice: WorkChoice, candidate?: TaskSource["product"]): Promise<TaskSource>;
   repository(repo: string): Promise<{ repo: string; defaultBranch: string }>;
   isAbsoluteFolder(path: string): boolean;
+  folderPath(path: string): string;
+  folderOccupied(path: string): Promise<boolean>;
 }
 
 /** Decisions stay task-bound; confirmation is checkpointed atomically by its caller. */
@@ -29,6 +31,8 @@ export interface SourceSelectionHost {
   products(): readonly Product[];
   role(id: string, task: RuntimeTask): Pick<Role, "result"> | undefined;
   profileExists(id: string): boolean;
+  productId(): string;
+  additionChanged(task: RuntimeTask): void;
   planCheck(taskId: string): { body?: string } | undefined;
   commitNow(task: RuntimeTask): void;
   recordChoice(task: RuntimeTask, text: string): void;

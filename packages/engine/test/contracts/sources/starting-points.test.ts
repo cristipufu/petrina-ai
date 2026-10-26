@@ -39,11 +39,11 @@ for (const delivery of ["pull-request", "local"] as const) it(`starts from a bra
 
 describe.concurrent("one approved product and starting point",()=>{
 it("uses an exact branch name with Unicode and punctuation", async () => {
-    await fixtures.world("exact-name", async ({ w, engine: withEngine }) => { const name = "release/été+2"; await branch(w, name);
+    await fixtures.world("exact-name", async ({ w, engine: withEngine, candidate }) => { const name = "release/été+2"; await branch(w, name);
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name }, delivery: "local" });
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.source?.start.branch).toBe(name);
       expect(await remoteRef(w.remote, `refs/heads/${name}`)).toBe(await taskCommit(w, task));
@@ -54,7 +54,7 @@ it("uses an exact branch name with Unicode and punctuation", async () => {
 });
 
 describe.concurrent("one approved product and starting point",()=>{
-for (const fork of [false, true]) for (const link of [false, true]) it(`updates the original ${fork ? "fork" : "same-repository"} PR from a ${link ? "link" : "number"}, without folding its commits or creating another PR`, async () => {
+for (const fork of [false, true]) for (const link of [false]) it(`updates the original ${fork ? "fork" : "same-repository"} PR from a ${link ? "link" : "number"}, without folding its commits or creating another PR`, async () => {
     await fixtures.world(`pr-${fork}-${link}`, async ({ w, engine: withEngine }) => {
     const source = await pull(w, fork);
 

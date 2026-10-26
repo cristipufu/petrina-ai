@@ -8,13 +8,13 @@ afterAll(() => fixtures.close());
 
 describe.concurrent("pull request background and source movement",()=>{
 for (const newerLocal of [false, true]) it(`keeps a completed local update separate from a refused push and finishes it once after restart${newerLocal ? ", preserving newer unchecked local work" : ""}`, async () => {
-    await fixtures.world("push-retry", async ({ w, engine: withEngine }) => { await branch(w);
+    await fixtures.world("push-retry", async ({ w, engine: withEngine, candidate }) => { await branch(w);
     const reject = join(w.remote, "hooks", "pre-receive"); writeFileSync(reject, "#!/bin/sh\nexit 1\n"); chmodSync(reject, 0o755);
 
     let { id, state, tested, previous } = await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       let state = await finish(engine, id);
       const tested = taskOf(state, id).shipping?.prepared?.tested;
       expect(tested).toBeDefined(); expect(taskOf(state, id).shipping?.localUpdated).toBe(tested);
@@ -49,7 +49,7 @@ for (const newerLocal of [false, true]) it(`keeps a completed local update separ
 
 describe.concurrent("source failures and delivery recovery",()=>{
 for (const named of [false, true]) it(`carries newer remote commits into a ${named ? "named branch" : "default branch"} commit delivery on Retry after restart`, async () => {
-    await fixtures.world(`commit-remote-retry-${named}`, async ({ w, engine: withEngine }) => {
+    await fixtures.world(`commit-remote-retry-${named}`, async ({ w, engine: withEngine, candidate }) => {
     const name = named ? "release-2.x" : "main";
     const initial = named ? await branch(w) : w.initial;
     if (!named) await git(w.clone, "switch", "-q", "main");
@@ -58,7 +58,7 @@ for (const named of [false, true]) it(`carries newer remote commits into a ${nam
     let { id, state, oldTested, previous } = await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: named ? { kind: "branch", name } : { kind: "default" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: named ? { kind: "branch", name } : { kind: "default" }, delivery: "local" });
       let state = await finish(engine, id);
       const oldTested = taskOf(state, id).shipping!.prepared!.tested;
       expect(taskOf(state, id).error).toContain("could not push it to GitHub");
@@ -93,7 +93,7 @@ for (const named of [false, true]) it(`carries newer remote commits into a ${nam
 
 describe.concurrent("source failures and delivery recovery",()=>{
 it("carries remote movement during the commit push through preparation and checks", async () => {
-    await fixtures.world("commit-push-movement", async ({ w, engine: withEngine }) => { const initial = await branch(w);
+    await fixtures.world("commit-push-movement", async ({ w, engine: withEngine, candidate }) => { const initial = await branch(w);
     const hold = join(w.dir, "hold-push"); const reached = join(w.dir, "push-reached");
     writeFileSync(hold, "");
     const hook = join(w.remote, "hooks", "pre-receive");
@@ -103,7 +103,7 @@ it("carries remote movement during the commit push through preparation and check
 
     try {
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
       engine.approve(itemOf(state, id, "delivery")!.id);
       await waitFor(() => existsSync(reached), "the commit push to reach its remote");
@@ -127,11 +127,11 @@ it("carries remote movement during the commit push through preparation and check
 
 describe.concurrent("source failures and delivery recovery",()=>{
 it("brings in newer local destination commits as well as GitHub commits", async () => {
-    await fixtures.world("local-moves", async ({ w, engine: withEngine }) => { await branch(w);
+    await fixtures.world("local-moves", async ({ w, engine: withEngine, candidate }) => { await branch(w);
     await withEngine(async engine => {
 
       const productId = await engine.addProduct(w.clone);
-      const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
+      const id = await candidate(engine, { productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const state = await deliveryGate(engine, id);
       await git(w.clone, "switch", "-q", "release-2.x");
       writeFileSync(join(w.clone, "local.txt"), "Local destination work\n");
