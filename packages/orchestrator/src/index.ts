@@ -77,3 +77,6 @@ export type { CheckSetupExecution, CheckSetupHost, CheckSetupRequest } from "./p
 
 export * from "./delivery-checkpoint.js";
 export * from "./ports/delivery-checkpoint.js";
+
+export { CheckRepairs } from "./check-repairs.js";
+export type { CheckRepairHost } from "./ports/check-repairs.js";

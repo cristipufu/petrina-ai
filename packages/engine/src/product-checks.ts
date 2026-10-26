@@ -4,7 +4,7 @@ import { checkSetupOutcome, checkSetupWords, sameCheckEnvironmentIdentity, sameC
 import { acquireCheckPlace } from "@petrina/orchestrator";
 import { executionFor, scopesFor, taskView, type RepositoryContext } from "@petrina/orchestrator";
 import { acceptanceVersion } from "./repositories.js";
-import { beginRepair } from "@petrina/orchestrator";
+import { CheckRepairs } from "@petrina/orchestrator";
 // The product's checks, run by Petrina itself: the Check finder works out the commands, and failing
 // checks become findings with the real output. Running commands is in checks.ts.
 
@@ -70,7 +70,18 @@ export class ProductChecks {
   /** A local delivery keeps its original check order while waiting for its destination turn. */
   readonly deliveryOrders = new Map<Id, number>();
 
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {}
+  private readonly repairs: CheckRepairs;
+  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {
+    this.repairs = new CheckRepairs({
+      role: (id, task) => k.role(id, task), id: task => k.id(task.id),
+      log: (scope, tone, text) => k.log(scope, tone, text), changed: () => k.commit(),
+      commitNow: task => k.commitNow(task), checkpoint: () => k.commitNow(),
+      definition: async (scope, sha) => {
+        const product = k.productOf(scope), worktree = scope.work.worktree!;
+        return (await this.definition(scope, product ? checksFor(product, worktree) : [], await git.commitHookFiles(worktree), sha)).definition;
+      },
+    });
+  }
 
   /** This engine's one source of sleep records, for its checks and hooks, failure reuse and startup recovery. */
   private get machineRecords(): MachineRecords { return this.k.options.machineRecords ?? livePowerRecords; }
@@ -598,38 +609,18 @@ export class ProductChecks {
 
   /** A builder's answer cannot settle a failed check; only a fresh passing run can. */
   private settleFindings(scope: RepositoryContext, results: readonly CheckRun[]): readonly CheckRun[] {
-    const { task, work: repository } = scope;
-    const failed = results.filter((run) => checkOutcome(run).kind === "failed");
+    const { work: repository } = scope;
     const product = this.k.productOf(scope);
     const declared = new Set([
       ...(product && repository.worktree ? checksFor(product, repository.worktree) : []).map((check) => `Check failed: ${check.name} (${commandText(check.argv)})`),
       ...(product?.hooks?.includes("pre-commit") ? ["Check failed: Pre-commit hook (git hook run --ignore-missing pre-commit)"] : []),
       ...(product?.hooks?.includes("commit-msg") ? ["Check failed: Commit message hook (git hook run commit-msg)"] : []),
     ]);
-    // An earlier failure settles on this run, whatever anyone answered about it.
-    for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && (finding.status === "open" || finding.status === "unverified") && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId))) {
-        const matching = results.find((run) => finding.text === `Check failed: ${run.name} (${run.command})`);
-        if (!declared.has(finding.text) || (matching && checkOutcome(matching).kind === "passed")) finding.status = "fixed";
-        else if (matching && checkOutcome(matching).kind !== "failed") finding.status = "unverified";
-      }
-    }
-    this.recordFailedFindings(scope, failed);
-    return failed;
+    return this.repairs.settleFindings(scope, results, declared);
   }
 
-  /** A historical missing-definition failure cannot settle passed or removed-declaration peers. */
   private recordFailedFindings(scope: RepositoryContext, failed: readonly CheckRun[]): void {
-    const { task, work: repository } = scope;
-    for (const run of failed) {
-      const text = `Check failed: ${run.name} (${run.command})`;
-      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text && (!task.repositories || finding.productIds?.includes(repository.productId)));
-      if (finding) {
-        finding.status = "open";
-        finding.severity = "blocking";
-        finding.evidence = run.output.slice(-1500);
-      } else task.findings.push({ ...(task.repositories ? { productIds: [repository.productId] } : {}), id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-    }
+    this.repairs.recordFailedFindings(scope, failed);
   }
 
   /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
@@ -1048,59 +1039,11 @@ export class ProductChecks {
    * proves nothing about the current ones, so the spent returns stay.
    */
   private async closeEpisode(scope: RepositoryContext, state: CheckState, valid: () => boolean): Promise<void> {
-    const { task, work } = scope;
-    if (work.checkReturns === undefined || !work.worktree) return;
-    if (task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(work.productId)))) return;
-    const product = this.k.productOf(scope);
-    const required = product ? checksFor(product, work.worktree) : [];
-    const { definition } = await this.definition(scope, required, await git.commitHookFiles(work.worktree), state.sha);
-    if (valid() && definition === state.definition) delete work.checkReturns;
+    await this.repairs.closeEpisode(scope, state, valid);
   }
 
-  /**
-   * Failing checks send the work back to the builder, twice at most in one failure episode. Each real send-back
-   * counts; rereading a saved failure does not. The fix walks forward from the builder through every stage up to
-   * the one these checks guard, so a fix made after reviews passed is reviewed again, and acceptance retried.
-   */
   backToBuilder(scope: RepositoryContext, when: string, eligibleProducts: ReadonlySet<Id>): boolean {
-    const { task, work: repository } = scope;
-    if (!eligibleProducts.size || !task.repositories && !eligibleProducts.has(repository.productId)) return false;
-    const unresolved = scopesFor(task).find(({ work }) => {
-      if (repositoryPublished(work)) return false;
-      const rows = [...(Array.isArray(work.checks?.results) ? work.checks.results : []),
-        ...(Array.isArray(work.checkSetup?.results) ? work.checkSetup.results.flatMap(result => result?.run ? [result.run] : []) : [])];
-      // An old report with no native observations is unverified history, not a present liveness claim.
-      return rows.some(run => run && (run.execution !== undefined || run.cleanupIncomplete !== undefined) && !checkOwnershipConfirmed(run));
-    });
-    if (unresolved) {
-      this.k.log(unresolved, "warn", "Check cleanup has not been confirmed; no automatic Builder turn starts until the recorded process and output ownership is resolved");
-      return false;
-    }
-    if (task.repositories) {
-      // A shared repair pass returns to one stage. From the delivery check or shipping it returns through the
-      // first review after the builder, as a single product walks forward; nothing it changed is unreviewed.
-      const stages = task.plan?.stages ?? [];
-      const here = stages[task.stageIndex];
-      const late = here?.gate === "delivery" || this.k.role(here?.roleId ?? "", task)?.result === "delivery";
-      const builder = stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId, task)?.result === "build");
-      const review = late && !task.repositories.some(repositoryPublished) ? stages.findIndex((entry, index) => index > builder && index < task.stageIndex && entry.kind === "review-chain") : -1;
-      if (!beginRepair(this.k, task, "checks", review >= 0 ? review : task.stageIndex, { eligibleProducts })) return false;
-      // Through review, the delivery check asks again. A pass returning to shipping keeps the approval, so the
-      // changed work is compared with what was approved there and never ships on a withdrawn approval.
-      if (review >= 0) for (const work of task.repositories) if (!repositoryPublished(work)) withdrawApproval(work);
-      this.k.commitNow();
-      return true;
-    }
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && this.k.role(entry.roleId, task)?.result === "build");
-    if (builder < 0 || (repository.checkReturns ?? 0) >= 2) return false;
-    repository.checkReturns = (repository.checkReturns ?? 0) + 1;
-    withdrawApproval(repository);
-    task.stageIndex = builder;
-    task.sub = 0;
-    task.fixing = true;
-    this.k.log(scope, "warn", `Sent back to the builder: the checks failed ${when}`);
-    this.k.commit();
-    return true;
+    return this.repairs.backToBuilder(scope, when, eligibleProducts);
   }
 
   /**
