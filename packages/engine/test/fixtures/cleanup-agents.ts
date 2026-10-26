@@ -13,7 +13,7 @@ export function cleanupAgents(world: World) {
   }) as typeof start };
 }
 
-export function cleanupBuildOutput(world: World, cwd: string): void {
+export function cleanupBuildOutput(world: Pick<World, "script">, cwd: string): void {
   const installs = world.script().installs;
   if (installs) {
       mkdirSync(join(cwd, "node_modules", "left-pad"), { recursive: true });

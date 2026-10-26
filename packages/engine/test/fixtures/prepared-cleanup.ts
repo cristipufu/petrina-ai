@@ -7,7 +7,7 @@ import type { World } from "../support.js";
 import { cleanupBuildOutput } from "./cleanup-agents.js";
 
 /** Start the real delivery/cleanup boundary from an explicitly completed private build and review. */
-export async function addPreparedCleanupTask(engine: Engine, world: World, request: Parameters<Engine["addTask"]>[0]): Promise<string> {
+export async function addPreparedCleanupTask(engine: Engine, world: Pick<World, "script">, request: Parameters<Engine["addTask"]>[0]): Promise<string> {
   const id = engine.addTask({ ...request, backlog: true });
   const task = engine.task(id)!, scope = executionFor(task), product = engine.s.products.find(product => product.id === scope.work.productId)!;
   task.startedAt = Date.now(); task.state = "paused"; task.stageIndex = 2; task.holdsSlot = false;
