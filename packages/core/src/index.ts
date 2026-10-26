@@ -63,6 +63,7 @@ export type { UsageInfo } from "./usage-info.js";
 export * from "./analytics-holds.js";
 export * from "./wait-clock.js";
 export * from "./check-outcome.js";
+export * from "./check-environment.js";
 export * from "./check-commands.js";
 export * from "./related-check-evidence.js";
 export * from "./task-step.js";

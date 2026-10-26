@@ -7479,6 +7479,18 @@
       "review": "workstreams/returned-fixture-ownership-independent-review/handoff.json; rootreturned-fixture-integrated-review.json",
       "failureControls": "Actual terminal peer/helper/close ordering; exactError/undefined rejection and strict retained-root default; native effects independently confirmed before expected-error cleanup.",
       "resourceScope": "Focused17files/113cases:6904launches/6688Git; new8controls130launches, no missing/unmatched/unfinished/truncated/invalid observations. No full-suite/host-resource claim."
+    },
+    "check-environment-phase1": {
+      "source": "4a6db271a3ab79e16cb8679d5678cb51dcf4747487c50925c7b7186bc602ce20",
+      "rootCore": 1320,
+      "rootSafeNative": 23,
+      "all9TypesExit": 0,
+      "desktopBuildExit": 0,
+      "conventionsExit": 0,
+      "review": "workstreams/check-environment-phase1-independent-review/handoff.json; rootcheck-environment-phase1-integrated-review.json",
+      "preservation": "138oldmatcher sites/22registration guards/names/deadlines/loops retained; additive native pipeline after exact named metadata/hash insertions. Authorized existing Pass child stderr enrichment preserves old stdout/exit and every old assertion.",
+      "limits": "Observations/schema only. No setup declaration, preflight, live environment token/reuse authority/UI or CI implemented by this phase.",
+      "heldRisk": "Existing execution.test registration cleanup still signals a stored PID; no further execution-owner/full runs before its independent handle fix. This risk is not silently absorbed into metadata proof."
     }
   },
   "resourceAudit": {

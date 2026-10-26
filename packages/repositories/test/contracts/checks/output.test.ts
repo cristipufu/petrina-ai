@@ -65,6 +65,11 @@ it("keeps the original failure before later output, with separate durable logs f
       const raw = readFileSync(run.logPath!);
       expect(run.logFileLength).toBe(raw.length);
       expect(run.logFileBeginning).toBe(createHash("sha256").update(raw.subarray(0, 4096)).digest("hex"));
+      expect(run.outputIdentity).toEqual({
+        stdout: { algorithm: "sha256", bytes: Buffer.byteLength(text), digest: digest(text) },
+        stderr: { algorithm: "sha256", bytes: Buffer.byteLength("stderr trace\n"), digest: digest("stderr trace\n") },
+      });
+      expect(run.outputIdentityError).toBeUndefined();
     }
   });
 });
@@ -74,8 +79,9 @@ it("reports a log write failure without changing whether a command passed or fai
     const dir = root("petrina-checks-log-error-");
     const blocked = join(dir, "not-a-directory");
     writeFileSync(blocked, "Keep this file.");
+    const passStderr = new Uint8Array([0, 255, 240, 159, 146, 169, 10]);
     const results = await runChecks(dir, [
-      { name: "Pass", argv: [process.execPath, "-e", "console.log('passed')"] },
+      { name: "Pass", argv: [process.execPath, "-e", `console.log('passed'); process.stderr.write(Uint8Array.from(${JSON.stringify([...passStderr])}));`] },
       { name: "Fail", argv: [process.execPath, "-e", "console.error('real error'); process.exitCode = 7"] },
     ], process.env, 30_000 * SLOW, undefined, blocked);
     expect(results.map((run) => run.ok)).toEqual([true, false]);
@@ -88,9 +94,24 @@ it("reports a log write failure without changing whether a command passed or fai
       expect(run.logFileIdentity).toBeUndefined();
       expect(run.logFileLength).toBeUndefined();
       expect(run.logFileBeginning).toBeUndefined();
+      const stdout = run.name === "Pass" ? "passed\n" : "", stderr = run.name === "Pass" ? passStderr : new TextEncoder().encode("real error\n");
+      expect(run.outputIdentity).toEqual({
+        stdout: { algorithm: "sha256", bytes: Buffer.byteLength(stdout), digest: createHash("sha256").update(stdout).digest("hex") },
+        stderr: { algorithm: "sha256", bytes: stderr.byteLength, digest: createHash("sha256").update(stderr).digest("hex") },
+      });
+      expect(run.outputIdentityError).toBeUndefined();
     }
     expect(readFileSync(blocked, "utf8")).toBe("Keep this file.");
   });
+});
+
+it("records complete empty pipes from an actual command without a diagnostic log", async () => {
+  const [run] = await runChecks(root("petrina-empty-check-output-"), [{ name: "Empty", argv: [process.execPath, "-e", "process.exit(0)"] }], process.env, 30_000 * SLOW);
+  const empty = { algorithm: "sha256" as const, bytes: 0, digest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" };
+  expect(run!.ok).toBe(true);
+  expect(run!.outputIdentity).toEqual({ stdout: empty, stderr: empty });
+  expect(run!.outputIdentityError).toBeUndefined();
+  expect(run!.logPath).toBeUndefined();
 });
 
 originalDescribe("a check that misbehaves", () => {

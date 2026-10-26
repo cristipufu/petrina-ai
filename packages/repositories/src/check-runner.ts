@@ -5,9 +5,10 @@ import { type FileHandle, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import type { CheckExecution, CheckRun, ProductCheck } from "@petrina/core";
-import { checkExecutionPassed, commandText, staticCheck, tidyOutput, CHECK_EXIT_UNREPORTED } from "@petrina/core";
+import { checkExecutionPassed, checkOutcome, commandText, staticCheck, tidyOutput, CHECK_EXIT_UNREPORTED } from "@petrina/core";
 import { CLEANUP_INCOMPLETE, descendantsKnown, lostExit, waitForProcessesToEnd } from "@petrina/platform/process-tree";
 import { livePowerRecords, machineInterruption, type MachineRecords } from "@petrina/platform/power-log";
+import { checkOutputCapture, observeCheckExecutor } from "./check-environment.js";
 
 /** Long enough for a full test suite or build, short enough that a hung one never holds a task. */
 export const CHECK_TIMEOUT_MS = 20 * 60_000;
@@ -58,6 +59,9 @@ export async function runChecks(
       const finished: CheckRun = {
         ...result,
         ok: !signal?.aborted && checkExecutionPassed(run.execution), execution: run.execution,
+        ...(run.executor !== undefined ? { executor: run.executor } : {}),
+        ...(run.executorError !== undefined ? { executorError: run.executorError } : {}),
+        ...(run.outputIdentityError !== undefined ? { outputIdentityError: run.outputIdentityError } : {}),
         ...(log ? { logComplete: run.outputComplete && !result.logError } : {}),
         ...(signal?.aborted || run.postStartError !== undefined ? { interrupted: true } : {}),
         ...(run.timedOut ? { timedOut: true } : {}),
@@ -69,6 +73,8 @@ export async function runChecks(
       // with a power-log read; a stop during evidence collection cancels that read too.
       if (!finished.ok && !finished.interrupted) finished.interruption = await machineInterruption(started, endedAt, signal, machineRecords);
       if (signal?.aborted) finished.interrupted = true;
+      const outcome = checkOutcome(finished);
+      if (run.outputIdentity && (outcome.kind === "passed" || outcome.kind === "failed")) finished.outputIdentity = run.outputIdentity;
       onProgress?.({ kind: "finished", index, at: Date.now(), run: finished });
       runs.push(finished);
       if (!finished.ok && staticCheck(check)) break;
@@ -143,8 +149,12 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<{ code: number | null; output: string; timedOut: boolean; outputComplete: boolean; execution: CheckExecution; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }> {
+type NativeCheckResult = { code: number | null; output: string; timedOut: boolean; outputComplete: boolean; execution: CheckExecution; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }
+  & Pick<CheckRun, "executor" | "executorError" | "outputIdentity" | "outputIdentityError">;
+
+function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<NativeCheckResult> {
   return new Promise((resolve) => {
+    const executor = observeCheckExecutor(), identity = checkOutputCapture();
     const windows = !processHost.groups;
     const execution: CheckExecution = { started: false, exit: { status: "unreported" }, stdout: "incomplete", stderr: "incomplete", timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested" };
     let kept = "", cut = false, settling = false, exitSeen = false, exitUnreported = false;
@@ -200,7 +210,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
         const exitSignal = execution.exit.signal;
         const afterLaunch = error !== undefined && execution.started;
         const facts = { ...execution, exit: { ...execution.exit }, ...(execution.failure ? { failure: { ...execution.failure } } : {}) };
-        resolve({ code, execution: facts, output: `${cut ? "…\n" : ""}${kept}`, timedOut: execution.timedOut,
+        resolve({ code, execution: facts, ...executor, ...identity.finish(fields.every(field => execution[field] === "eof")), output: `${cut ? "…\n" : ""}${kept}`, timedOut: execution.timedOut,
           outputComplete: fields.every(field => execution[field] === "eof"),
           ...(exitSignal ? { exitSignal } : {}), ...(exitUnreported ? { exitUnreported: true } : {}),
           ...(!clean || !closed ? { cleanupIncomplete: true } : {}),
@@ -265,6 +275,7 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
           const next = await reader.read();
           if (settling) break;
           if (next.done) { execution[field] = "eof"; break; }
+          identity.add(field, next.value);
           keep(decoder.decode(next.value, { stream: true }));
           await log?.write(next.value);
         }

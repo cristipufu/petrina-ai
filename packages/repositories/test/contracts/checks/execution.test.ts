@@ -6,6 +6,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { childState } from "@petrina/platform/process-tree";
+import { isCheckExecutorFacts, isCheckOutputIdentity } from "@petrina/core";
 
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
@@ -71,6 +72,8 @@ it("reports what really happened: passed, failed, or could not start", async () 
     expect(results[1]!.execution?.exit.status).toBe("reported");
     expect(results[1]!.execution!.exit.code).toBeGreaterThan(0);
     expect(results[2]!.execution).toMatchObject({ started: false, exit: { status: "unreported" }, failure: { kind: "start" }, cleanup: "not-requested" });
+    expect(results.every(run => isCheckExecutorFacts(run.executor))).toBe(true);
+    expect(results.map(run => isCheckOutputIdentity(run.outputIdentity))).toEqual([true, true, false]);
   });
 });
 
@@ -100,6 +103,8 @@ ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.ex
         released.resolve();
       }
       const [run] = await running;
+      expect(isCheckExecutorFacts(run!.executor)).toBe(true);
+      expect(isCheckOutputIdentity(run!.outputIdentity)).toBe(mode === "successful registration");
       expect(run!.endedAt).toBeDefined(); expect(run!.cleanupIncomplete).toBeUndefined();
       expect(run!.logPath).toBeDefined();
       if (mode === "launch failure") {
@@ -146,6 +151,8 @@ for (const code of [0, 7]) it(`keeps the output and exit code ${code} when the c
       expect(runs[0]!.ms).toBe(runs[0]!.endedAt! - runs[0]!.startedAt!);
       expect(runs[0]!.interruption).toEqual(code === 0 ? undefined : { source: "macOS power log", at: Date.parse(sleep.slice(0, 25)), event: expect.stringContaining("Entering Sleep state") });
       expect(reads).toEqual(code === 0 ? [] : [undefined]);
+      expect(isCheckExecutorFacts(runs[0]!.executor)).toBe(true);
+      expect(isCheckOutputIdentity(runs[0]!.outputIdentity)).toBe(code === 0);
     } finally { spawning.mockRestore(); }
   });
 });
@@ -161,6 +168,8 @@ it("records a cancelled check without starting an environment investigation", as
       expect(runs[0]!.interrupted).toBe(true);
       expect(runs[0]!.output).toBe("Original diagnostic\n");
       expect(runs[0]!.execution?.cancelled).toBe(true);
+      expect(isCheckExecutorFacts(runs[0]!.executor)).toBe(true);
+      expect(runs[0]!.outputIdentity).toBeUndefined();
       expect(reads).toEqual([]);
       expect(spawning).toHaveBeenCalledTimes(1);
     } finally { await owner.close(); }
@@ -189,6 +198,8 @@ it("cancels evidence collection after a completed failure without starting pendi
       expect(runs[0]!.interruption).toBeUndefined();
       expect(runs[0]!.output).toBe("Original failure\n");
       expect(runs[0]!.ms).toBe(runs[0]!.endedAt! - runs[0]!.startedAt!);
+      expect(isCheckExecutorFacts(runs[0]!.executor)).toBe(true);
+      expect(runs[0]!.outputIdentity).toBeUndefined();
       expect(spawning).toHaveBeenCalledTimes(1);
     } finally {
       stop.abort(); held.answer(""); await running;
@@ -204,6 +215,8 @@ it("reports a check that exceeds its deadline as timed out", async () => {
     expect(run!.ok).toBe(false);
     expect(run!.timedOut).toBe(true);
     expect(run!.execution?.timedOut).toBe(true);
+    expect(isCheckExecutorFacts(run!.executor)).toBe(true);
+    expect(run!.outputIdentity).toBeUndefined();
     expect(existsSync(run!.logPath!)).toBe(true);
     expect(run!.logError).toBeUndefined();
   });
@@ -234,6 +247,8 @@ it("stops the current check and never starts pending commands when the task is s
     for (const run of results) {
       expect(existsSync(run.logPath!)).toBe(true);
       expect(run.logError).toBeUndefined();
+      expect(isCheckExecutorFacts(run.executor)).toBe(true);
+      expect(run.outputIdentity).toBeUndefined();
     }
   });
 });

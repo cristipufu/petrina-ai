@@ -1171,6 +1171,30 @@ export interface CheckExecution {
   outputCleanup: "not-requested" | "confirmed" | "unconfirmed";
 }
 
+/** Actual local executor facts, not product platform requirements or physical-machine identity. */
+export interface CheckExecutorFacts {
+  version: 1;
+  adapter: string;
+  contract: number;
+  launchPolicy: number;
+  platform: string;
+  architecture: string;
+  osRelease: string;
+  runtime: { name: string; version: string };
+}
+
+/** Every raw byte of one completely observed output pipe, independently of diagnostic excerpts. */
+export interface CheckPipeIdentity {
+  algorithm: "sha256";
+  bytes: number;
+  digest: string;
+}
+
+export interface CheckOutputIdentity {
+  stdout: CheckPipeIdentity;
+  stderr: CheckPipeIdentity;
+}
+
 /** What really happened when Petrina ran a check. */
 export interface CheckRun {
   name: string;
@@ -1182,6 +1206,14 @@ export interface CheckRun {
   source?: { stepId: Id; attemptId: string; checkId: string };
   /** Present on newly executed commands only. Missing historical facts are never inferred from prose. */
   execution?: CheckExecution;
+  /** Observed at this native command attempt, including failed or incomplete execution. */
+  executor?: CheckExecutorFacts;
+  /** Failure to observe the executor is separate from the command's actual exit. */
+  executorError?: string;
+  /** Complete independent stdout/stderr bytes; never reconstructed from saved text or a log prefix. */
+  outputIdentity?: CheckOutputIdentity;
+  /** Hash capture failed; this does not change the command's own execution result. */
+  outputIdentityError?: string;
   /** Confirmed machine event overlapping this execution, not an inferred failure cause. */
   interruption?: { source: "macOS power log"; at: number; event: string };
   /** The end of the command's output, as plain text. */
