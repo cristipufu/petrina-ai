@@ -51,7 +51,10 @@ export class ToolCheckCoordinator {
   async shutdown(drain?: readonly CheckId[]): Promise<void> {
     this.stopping.abort();
     await Promise.allSettled([...this.checking].filter(([id]) => !drain || drain.includes(id)).map(([, job]) => job));
-    await Promise.allSettled([...this.lingering.values()].flatMap(gone => [...gone]));
+    const outcomes = await Promise.allSettled([...this.lingering.values()].flatMap(gone => [...gone]));
+    const failures = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) throw new AggregateError(failures, "Tool probe cleanup was not confirmed for every owner");
   }
 
   private async observe(id: CheckId): Promise<ToolProbeResult> {

@@ -17,7 +17,14 @@ export class ProfileChoiceController {
   private stopping = new AbortController();
   constructor(private readonly effects: ProfileChoiceEffects) {}
   activity(): { checking: string[]; stopping: string[] } { return { checking: [...this.pending.keys()], stopping: [...this.lingering.keys()] }; }
-  async stop(): Promise<void> { this.stopping.abort(); await Promise.allSettled([...this.pending.values()]); await Promise.allSettled([...this.lingering.values()]); }
+  async stop(): Promise<void> {
+    this.stopping.abort();
+    await Promise.allSettled([...this.pending.values()]);
+    const outcomes = await Promise.allSettled([...this.lingering.values()]);
+    const failures = outcomes.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) throw new AggregateError(failures, "Profile probe cleanup was not confirmed for every owner");
+  }
   read(toolId: string, modelId?: string, refresh = false): Promise<ProfileChoices> {
     if (this.stopping.signal.aborted || this.effects.stopped()) return Promise.reject(new Error("The engine is stopping."));
     const key = JSON.stringify([toolId, modelId]);
