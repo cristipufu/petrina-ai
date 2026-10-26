@@ -1,12 +1,14 @@
 import { nativeAgentProcess } from "../../native-agent.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { directDrivers, closeDirectDrivers } from "../../fixtures/direct-drivers.js";
+import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-runtime.js";
 // A review or vote member whose model is full rejoins its running group when its own wait ends, while a peer is
 // still held mid-turn. Every wait is recorded as the engine sets it, then held until the test ends it.
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
+import { executionFor } from "@petrina/orchestrator";
 import { slotUses, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import type { NativeStep, Scenario } from "../../fake-agent.js";
@@ -31,7 +33,7 @@ const hold = (role: string, model: string): { role: string; model: string; steps
 
 type Recorded = { profileId: string; modelId: string; waitMs: number; stored: boolean };
 
-async function start(scenario: Scenario, options: { tools?: readonly string[]; before?: (engine: Engine) => void } = {}) {
+async function start(scenario: Scenario, options: { focus?: "review"; tools?: readonly string[]; before?: (engine: Engine) => void } = {}) {
   const root = tempDir("petrina-rejoin-");
   const lifetime = directDrivers(root); fixtures.add(lifetime);
   const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
@@ -67,10 +69,28 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
     };
   };
   open();
+  if (options.focus) engine.setPoolPaused(true);
   const productId = await engine.addProduct(await makeProduct(root));
   engine.setProductDelivery(productId, "local", false);
-  taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+  taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]", ...(options.focus ? { backlog: true } : {}) });
   const task = () => engine.s.tasks.find((entry) => entry.id === taskId)!;
+  if (options.focus) {
+    const current = task(), product = engine.s.products.find(entry => entry.id === productId)!;
+    await localFixtureSource(engine, current);
+    const profiles = scenario.planner === "trio" ? ["opus-high", "sol-high", "grok-xhigh"]
+      : scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"];
+    current.plan = { rationale: "Private native parallel-rejoin stage", plannerProfileId: "sol-xhigh", stages: screenFixturePlan(profiles) };
+    current.plan.stages[1]!.maxRounds = scenario.reviewRounds ?? 1;
+    current.approvePlan = false; current.approveDelivery = true;
+    current.risk = { level: "low", why: "Private greeting fixture" };
+    current.stageIndex = 1;
+    const base = await git(product.path!, "rev-parse", "HEAD"), worktree = join(root, "rejoin-work");
+    await git(product.path!, "worktree", "add", "-q", "-b", "rejoin-target", worktree, base);
+    writeFileSync(join(worktree, "greeting.txt"), "Hello from the actual private review fixture\n");
+    await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Prepare the greeting under review");
+    Object.assign(executionFor(current).work, { worktree, branch: "rejoin-target", baseSha: base, base, preparation: "ready" });
+    engine.queueTask(taskId); engine.setPoolPaused(false);
+  }
   const answer = () => {
     for (const item of engine.getState().inbox) {
       if (item.taskId !== taskId) continue;
@@ -81,6 +101,7 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
   };
   const run = {
     data, fakes, productId, recorded, waits, close,
+    run: <T>(body: () => Promise<T>) => lifetime.prepare(body),
     get engine() { return engine; },
     get taskId() { return taskId; },
     task,
@@ -113,6 +134,9 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
       answer();
       const current = engine.getState().tasks.find((entry) => entry.id === taskId) as Task;
       if (current.state === "failed") throw new Error(`The task failed: ${current.error}`);
+      // Focused variants finish at a real completed review and actual delivery decision.
+      if (options.focus) return current.state === "needs-you" && engine.s.inbox.some(item => item.taskId === taskId && item.kind === "delivery")
+        && current.journey?.some(step => step.kind === "agent" && step.roleId === "code-reviewer" && step.endedAt !== undefined) && current;
       return current.state === "done" && current;
     }, "the task to finish", 60_000),
     restart: () => lifetime.prepare(async () => {
@@ -145,6 +169,7 @@ describe.concurrent("a full model beside a working peer", () => {
   it("brings a reviewer back three times beside a held peer, in the same conversation, copy and inputs", async () => {
     const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", partial: true, times: 3 }] });
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       const opus = await heldOne(run, "code reviewer");
       const sol = await sessionOn(run, "code reviewer", SOL);
@@ -194,6 +219,7 @@ describe.concurrent("a full model beside a working peer", () => {
       // Nobody ever left the task waiting for the full model.
       expect(run.waits).toEqual([]);
       expect(task.capacityResume).toBeUndefined();
+      });
     } finally { await run.close(); }
   });
 
@@ -202,8 +228,9 @@ describe.concurrent("a full model beside a working peer", () => {
       planner: "trio",
       nativeRetry: [hold("code reviewer", "opus")],
       capacity: [{ model: SOL, role: "code reviewer", thrown: true, retryAfterMs: 45_000 }, { model: GROK, role: "code reviewer", shape: "grok" }],
-    }, { tools: ["claude-code", "codex", "grok"] });
+    }, { focus: "review", tools: ["claude-code", "codex", "grok"] });
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       await run.paused("review-2", "grok-xhigh", 1);
       const opus = await heldOne(run, "code reviewer");
@@ -244,6 +271,7 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(run.prompts("code reviewer", grok)).toHaveLength(2);
       for (const profileId of ["opus-high", "sol-high", "grok-xhigh"]) expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
       expect(run.waits).toEqual([]);
+      });
     } finally { await run.close(); }
   });
 
@@ -253,8 +281,9 @@ describe.concurrent("a full model beside a working peer", () => {
       nativeRetry: [hold("code reviewer", "opus")],
       capacity: [{ model: SOL, role: "code reviewer", times: 1 }],
       screenRoles: ["code reviewer"], screenModels: [GROK], screenRoleHold: true,
-    }, { tools: ["claude-code", "codex", "grok"] });
+    }, { focus: "review", tools: ["claude-code", "codex", "grok"] });
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       const opus = await heldOne(run, "code reviewer");
       const [sol, grok] = await Promise.all([sessionOn(run, "code reviewer", SOL), sessionOn(run, "code reviewer", GROK)]);
@@ -281,12 +310,13 @@ describe.concurrent("a full model beside a working peer", () => {
       const task = await run.done();
       expect(roundOf(task)).toBe(1);
       for (const profileId of ["opus-high", "sol-high", "grok-xhigh"]) expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
+      });
     } finally { await run.close(); }
   });
 
   for (const busy of [true, false]) it(`hands the seat to another tool after the short retries ${busy ? "once that tool's seat frees up" : "at once when it has a seat"}, beside a held peer`, async () => {
     // No other Codex model: after its short retries the Codex seat goes to Grok, the most independent tool left.
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 4 }] }, {
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 4 }] }, { focus: "review",
       tools: ["claude-code", "codex", "grok"],
       before: (engine) => {
         engine.s.profiles = engine.s.profiles.filter((profile) => profile.toolId !== "codex" || profile.modelId === SOL);
@@ -298,6 +328,7 @@ describe.concurrent("a full model beside a working peer", () => {
     const other = { id: "other-work", roleId: "verifier", profileId: "grok-high", label: "Other work", since: Date.now() };
     if (busy) run.engine.s.backgroundAgents = [other];
     try {
+      await run.run(async () => {
       for (const stops of [1, 2, 3]) {
         await run.paused("review-1", "sol-high", stops);
         run.endWait(SOL);
@@ -330,12 +361,14 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(reviewers.filter((entry) => run.modelOf(entry.session) === GROK)).toHaveLength(1);
       for (const toolId of ["claude-code", "grok"]) expect(task.findings.filter((finding) => run.engine.profile(finding.raisedBy)?.toolId === toolId)).toHaveLength(1);
       expect(run.waits).toEqual([]);
+      });
     } finally { await run.close(); }
   });
 
   it("gives a replacement model its own short retries inside the running group, and never starts the first model's over", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 4 }, { model: ASTRA, role: "code reviewer", times: 1 }] });
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 4 }, { model: ASTRA, role: "code reviewer", times: 1 }] }, { focus: "review" });
     try {
+      await run.run(async () => {
       for (const stops of [1, 2, 3]) {
         await run.paused("review-1", "sol-high", stops);
         run.endWait(SOL);
@@ -364,14 +397,16 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(run.waitsOf("sol-high")).toHaveLength(4);
       expect(task.findings.filter((finding) => finding.raisedBy === "opus-high")).toHaveLength(1);
       expect(run.waits).toEqual([]);
+      });
     } finally { await run.close(); }
   });
 
   it("keeps a verifier's own place on its tool through the five-minute wait beside a held partner", async () => {
-    const run = await start({ planner: "short", reviewer: "important", verifier: "not-a-bug", nativeRetry: [hold("verifier", "opus")], capacity: [{ model: SOL, role: "verifier", times: 4 }, { model: "opus", role: "verifier", shape: "claude", times: 1 }] }, {
+    const run = await start({ planner: "short", reviewer: "important", verifier: "not-a-bug", nativeRetry: [hold("verifier", "opus")], capacity: [{ model: SOL, role: "verifier", times: 4 }, { model: "opus", role: "verifier", shape: "claude", times: 1 }] }, { focus: "review",
       before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.modelId !== ASTRA); },
     });
     try {
+      await run.run(async () => {
       const place = await waitFor(() => run.task().hunt?.panel?.seats.find((seat) => seat.toolId === "codex"), "the verification panel");
       const member = `vote-${place.key}`;
       for (const stops of [1, 2, 3]) {
@@ -432,6 +467,7 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(run.waitsOf("opus-high").map(entry => entry.waitMs)).toEqual([5_000]);
       expect(run.waits.length).toBeGreaterThan(0);
       expect(run.waits.every(words => words.startsWith("The selected model is at capacity"))).toBe(true);
+      });
     } finally { await run.close(); }
   });
 
@@ -456,6 +492,7 @@ describe.concurrent("a full model beside a working peer", () => {
         mostClaude = Math.max(mostClaude, uses.filter((use) => use.toolId === "claude-code").length);
       });
       try {
+      await run.run(async () => {
         await waitFor(() => {
           const own = plannerOf("Add a greeting");
           if (own) run.release(own);
@@ -493,7 +530,8 @@ describe.concurrent("a full model beside a working peer", () => {
         if (busy === "pool") expect(most).toBeLessThanOrEqual(2);
         else expect(mostClaude).toBeLessThanOrEqual(1);
         expect(run.waits).toEqual([]);
-      } finally {
+      });
+    } finally {
         unsubscribe();
         for (const id of others) run.engine.cancel(id);
         await run.close();
@@ -507,6 +545,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
     const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] });
     const owned: ChildProcess[] = [];
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       const opus = await heldOne(run, "code reviewer");
       const sol = await sessionOn(run, "code reviewer", SOL);
@@ -558,6 +597,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
         expect(verdicts.filter((entry) => entry.profileId === profileId)).toHaveLength(1);
         expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
       }
+      });
     } finally {
       try {
         await run.engine.shutdown();
@@ -567,8 +607,9 @@ describe.concurrent("a full model when the group stops or ends", () => {
   });
 
   it("shows the capacity wait once every peer finished first, waits out a paused pool, then continues the same conversation", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] });
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] }, { focus: "review" });
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       const opus = await heldOne(run, "code reviewer");
       run.release(opus);
@@ -596,12 +637,14 @@ describe.concurrent("a full model when the group stops or ends", () => {
       expect(run.waits.length).toBeGreaterThan(0);
       expect(run.waits.every((words) => words.startsWith("The selected model is at capacity"))).toBe(true);
       expect(run.prompts("code reviewer", opus)).toHaveLength(1);
+      });
     } finally { await run.close(); }
   });
 
   it("brings nobody back after the task is cancelled, and removes the working copies", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] });
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 1 }] }, { focus: "review" });
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       await heldOne(run, "code reviewer");
       const sol = await sessionOn(run, "code reviewer", SOL);
@@ -614,12 +657,14 @@ describe.concurrent("a full model when the group stops or ends", () => {
       expect(run.prompts("code reviewer", sol)).toHaveLength(1);
       expect(run.engine.getState().tasks.find((task) => task.id === run.taskId)?.state ?? "cancelled").toBe("cancelled");
       await waitFor(() => !existsSync(join(copies, "review-1")) && !existsSync(join(copies, "review-0")), "the reviewers' copies to be removed");
+      });
     } finally { await run.close(); }
   });
 
   it("brings nobody back while draining, then reopens the same conversation after a restart on the remaining schedule", async () => {
-    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 2 }] });
+    const run = await start({ planner: "parallel", nativeRetry: [hold("code reviewer", "opus")], capacity: [{ model: SOL, role: "code reviewer", times: 2 }] }, { focus: "review" });
     try {
+      await run.run(async () => {
       await run.paused("review-1", "sol-high", 1);
       const opus = await heldOne(run, "code reviewer");
       const sol = await sessionOn(run, "code reviewer", SOL);
@@ -642,6 +687,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
       expectShortContinues(prompts.slice(1));
       expect(run.opens(sol)).toEqual(["new", "resume", "resume"]);
       expect(run.prompts("code reviewer", opus)).toHaveLength(1);
+      });
     } finally { await run.close(); }
   });
 });
