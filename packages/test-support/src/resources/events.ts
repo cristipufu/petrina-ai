@@ -37,7 +37,7 @@ export function finishFile(): void { ending = true; clearInterval(timer); event(
 process.once("exit", () => { event({ kind: "process-end", cpu: process.cpuUsage(), memory: process.memoryUsage() }); flush(); });
 event({ kind: "process-start", ppid: process.ppid }); flush();
 
-const gitOperations = new Set(["add", "init", "clone", "config", "rev-parse", "status", "diff", "show", "log", "worktree", "checkout", "rev-list", "merge-base", "update-ref", "read-tree", "write-tree", "commit", "commit-tree", "cat-file", "ls-tree", "symbolic-ref", "branch", "merge", "reset", "fetch", "push", "update-index", "patch-id", "for-each-ref", "ls-files", "ls-remote", "notes"]);
+const gitOperations = new Set(["add", "init", "clone", "config", "rev-parse", "status", "diff", "diff-index", "show", "log", "worktree", "checkout", "switch", "rev-list", "merge-base", "merge-tree", "update-ref", "read-tree", "write-tree", "commit", "commit-tree", "cat-file", "hash-object", "ls-tree", "symbolic-ref", "branch", "merge", "reset", "clean", "fetch", "push", "update-index", "patch-id", "for-each-ref", "ls-files", "ls-remote", "notes"]);
 const gitOptionValues = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path"]);
 function gitOperation(argv: unknown[]): string | undefined {
   for (let index = 1; index < argv.length; index++) {
