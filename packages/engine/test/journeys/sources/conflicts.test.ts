@@ -1,16 +1,17 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { finish, taskOf } from "../../support.js";
 import { sourceWorlds, branch, advance } from "../../fixtures/source-world.js";
-const { setup, close } = sourceWorlds();
-afterAll(close);
+const fixtures = sourceWorlds();
+afterAll(() => fixtures.close());
 
 describe.concurrent("review findings for a confirmed start",()=>{
 it("names the branch when its movement conflicts", async () => {
-    const { w, start } = await setup("branch-conflict", { builder: undefined });
+    await fixtures.world("branch-conflict", async ({ w, engine: withEngine }) => {
     await branch(w);
-    const engine = start();
+
+    await withEngine(async engine => {
     let landed = false;
-    try {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "branch", name: "release-2.x" }, delivery: "local" });
       const task = taskOf(await finish(engine, id, async (eng, state) => {
@@ -34,6 +35,8 @@ it("names the branch when its movement conflicts", async () => {
       expect(update?.reason).toBe("release-2.x moved on");
       expect(task.timeline.some((entry) => entry.text.includes("release-2.x moved on"))).toBe(true);
       expect(update?.outcome).not.toContain("main");
-    } finally { await engine.shutdown(); }
+
+    });
+    }, { builder: undefined });
   });
 });

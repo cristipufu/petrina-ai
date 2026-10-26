@@ -1,17 +1,17 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { finish, git, itemOf, REPO, remoteRef, taskOf } from "../../support.js";
 import { sourceWorlds, branch, pull, planGate, taskCommit } from "../../fixtures/source-world.js";
-const { setup, close } = sourceWorlds();
-afterAll(close);
+const fixtures = sourceWorlds();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one approved product and starting point",()=>{
 for (const delivery of ["pull-request", "local"] as const) it(`starts from a branch and delivers with ${delivery}, keeping existing source commits`, async () => {
-    const { w, start } = await setup(`branch-${delivery}`);
+    await fixtures.world(`branch-${delivery}`, async ({ w, engine: withEngine }) => {
     const source = await branch(w);
-    const engine = start();
-    try {
+
+    await withEngine(async engine => {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name: "release-2.x" }, delivery, approvePlan: false });
       const task = taskOf(await finish(engine, id), id);
@@ -31,29 +31,35 @@ for (const delivery of ["pull-request", "local"] as const) it(`starts from a bra
         expect(w.github().prs).toHaveLength(0);
       }
       expect(await remoteRef(w.remote, "refs/heads/main")).toBe(w.initial);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("one approved product and starting point",()=>{
 it("uses an exact branch name with Unicode and punctuation", async () => {
-    const { w, start } = await setup("exact-name"); const name = "release/été+2"; await branch(w, name); const engine = start();
-    try {
+    await fixtures.world("exact-name", async ({ w, engine: withEngine }) => { const name = "release/été+2"; await branch(w, name);
+    await withEngine(async engine => {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "branch", name }, delivery: "local" });
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined(); expect(task.source?.start.branch).toBe(name);
       expect(await remoteRef(w.remote, `refs/heads/${name}`)).toBe(await taskCommit(w, task));
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("one approved product and starting point",()=>{
 for (const fork of [false, true]) for (const link of [false, true]) it(`updates the original ${fork ? "fork" : "same-repository"} PR from a ${link ? "link" : "number"}, without folding its commits or creating another PR`, async () => {
-    const { w } = await setup(`pr-${fork}-${link}`);
+    await fixtures.world(`pr-${fork}-${link}`, async ({ w, engine: withEngine }) => {
     const source = await pull(w, fork);
-    const engine = new Engine(w.data, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), `--script=${join(w.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "../../fake-gh.ts"), join(w.dir, "github.json"), w.remote], remote: w.remote, sourceRemotes: { "contributor/demo": source.remote } });
-    try {
+
+    await withEngine(async engine => {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "pull-request", value: link ? `https://github.com/${REPO}/pull/7` : "#7" } });
       const waiting = await planGate(engine, id);
@@ -78,6 +84,8 @@ for (const fork of [false, true]) for (const link of [false, true]) it(`updates 
       expect(w.script().releaseManagerPrompts ?? []).toHaveLength(0);
       for (const args of w.github().calls) if (args[0] === "pr") expect(args.slice(-2)).toEqual(["--repo", REPO]);
       expect(w.github().cwds?.every((cwd) => !cwd.startsWith(w.clone) && !cwd.startsWith(w.data))).toBe(true);
-    } finally { await engine.shutdown(); }
+
+    }, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), `--script=${join(w.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "../../fake-gh.ts"), join(w.dir, "github.json"), w.remote], remote: w.remote, sourceRemotes: { "contributor/demo": source.remote } });
+    });
   });
 });

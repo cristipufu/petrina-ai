@@ -1,15 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { coordinator, finish, git, gitWith, itemOf, taskOf } from "../../support.js";
 import { sourceWorlds, pull, deliveryGate } from "../../fixtures/source-world.js";
-const { setup, close } = sourceWorlds();
-afterAll(close);
+const fixtures = sourceWorlds();
+afterAll(() => fixtures.close());
 
 describe.concurrent("pull request background and source movement",()=>{
 it("reads every comment and reply page and check version, then refreshes a continued builder without changing the accepted brief", async () => {
-    const { w, fakes, start } = await setup("background"); fakes.scenario({ builder: "plain", reopen: "resume" }); const source = await pull(w);
+    await fixtures.world("background", async ({ w, fakes, engine: withEngine }) => { fakes.scenario({ builder: "plain", reopen: "resume" }); const source = await pull(w);
     w.setGitHub((state) => { state.pages = {
       "pulls/7/reviews?per_page=100": [[{ user: { login: "Reviewer" }, state: "CHANGES_REQUESTED", body: "Review summary", commit_id: source.sha }], [{ user: { login: "Second reviewer" }, body: "Last review page" }]],
       "issues/7/comments?per_page=100": [[{ user: { login: "Author" }, body: "First discussion page" }], [{ body: "Last discussion page" }]],
@@ -17,8 +16,9 @@ it("reads every comment and reply page and check version, then refreshes a conti
       [`commits/${source.sha}/check-runs?per_page=100`]: [{ check_runs: [{ name: "Tests", status: "in_progress", head_sha: source.sha }, { name: "Old lint", status: "completed", conclusion: "failure", head_sha: w.initial }] }, { check_runs: [{ name: "Build", status: "completed", conclusion: "success", head_sha: source.sha }, { name: "Shared", app: { id: 1 }, check_suite: { id: 10 }, status: "completed", conclusion: "failure", head_sha: source.sha }, { name: "Shared", app: { id: 2 }, check_suite: { id: 20 }, status: "completed", conclusion: "success", head_sha: source.sha }] }],
       [`commits/${source.sha}/status?per_page=100`]: [{ statuses: [{ context: "Preview", state: "pending", description: "Waiting for preview" }] }],
     }; });
-    const engine = start();
-    try {
+
+    await withEngine(async engine => {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "pull-request", value: "7" } });
       let state = await deliveryGate(engine, id);
@@ -46,14 +46,17 @@ it("reads every comment and reply page and check version, then refreshes a conti
       expect(fakes.prompts("code reviewer").at(-1)).toContain("Fresh coordinator feedback");
       engine.approve(itemOf(state, id, "delivery")!.id);
       expect(taskOf(await finish(engine, id), id).state).toBe("pr-open");
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("pull request background and source movement",()=>{
 it("a failed refresh stops before the resumed conversation receives stale background; Retry refreshes it", async () => {
-    const { w, fakes, start } = await setup("refresh-fails"); await pull(w); const engine = start();
-    try {
+    await fixtures.world("refresh-fails", async ({ w, fakes, engine: withEngine }) => { await pull(w);
+    await withEngine(async engine => {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", startFrom: { kind: "pull-request", value: "7" } });
       let state = await deliveryGate(engine, id); const old = taskOf(state, id).prBackground;
@@ -67,15 +70,18 @@ it("a failed refresh stops before the resumed conversation receives stale backgr
       engine.retry(itemOf(state, id, "stuck")!.id);
       state = await deliveryGate(engine, id);
       expect(fakes.prompts("builder").at(-1)!).toContain("Refreshed after Retry");
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("source failures and delivery recovery",()=>{
 for (const problem of ["closed", "deleted", "fork-refused"] as const) it(`preserves PR work when its destination becomes ${problem}`, async () => {
-    const { w } = await setup(`unavailable-${problem}`); const source = await pull(w, problem === "fork-refused");
-    const engine = new Engine(w.data, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), `--script=${join(w.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "../../fake-gh.ts"), join(w.dir, "github.json"), w.remote], remote: w.remote, sourceRemotes: { "contributor/demo": source.remote } });
-    try {
+    await fixtures.world(`unavailable-${problem}`, async ({ w, engine: withEngine }) => { const source = await pull(w, problem === "fork-refused");
+
+    await withEngine(async engine => {
+
       const productId = await engine.addProduct(w.clone);
       const id = engine.addTask({ productId, title: "A greeting", description: "[quick]", startFrom: { kind: "pull-request", value: "7" } });
       const state = await deliveryGate(engine, id);
@@ -88,6 +94,8 @@ for (const problem of ["closed", "deleted", "fork-refused"] as const) it(`preser
       expect(await git(task.worktree!, "show", "HEAD:greeting.txt")).toContain("Hello");
       expect(w.github().prs).toHaveLength(1);
       if (problem === "fork-refused") expect(task.error).toContain("contributor/demo");
-    } finally { await engine.shutdown(); }
+
+    }, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), `--script=${join(w.dir, "agents.json")}`], gh: [process.execPath, join(import.meta.dir, "../../fake-gh.ts"), join(w.dir, "github.json"), w.remote], remote: w.remote, sourceRemotes: { "contributor/demo": source.remote } });
+    });
   });
 });
