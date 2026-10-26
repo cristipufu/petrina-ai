@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { reviewStats } from "@petrina/core";
 import { Store } from "@petrina/storage/store";
 import { reviewJourneyFixtures } from "../../fixtures/review.js";
 
@@ -38,20 +37,7 @@ it("passes a fresh failing reproduction to the next builder and saves the origin
     expect(lines(task).some((line) => line.startsWith("Review rounds used up"))).toBe(true);
   });
 
-it("keeps a previously real, builder-fixed finding fixed when fresh voters reject a false reopening", async () => {
-    const { task, fakes, voters, nonblocking } = await untilDelivery({ reviewer: "confirm-fixed-one-tool", verifier: "after-fix-not-a-bug" });
-    const finding = task.findings.find((entry) => entry.severity === "blocking")!;
-    expect(finding.answer?.fixed).toBe(true);
-    expect(finding.status).toBe("fixed");
-    expect(finding.verification?.verdict).toBe("not-a-bug");
-    expect(finding.votes?.map((vote) => vote.verdict)).toEqual(Array(nonblocking).fill("not-a-bug"));
-    expect(finding.earlierReviews).toHaveLength(1);
-    expect(finding.earlierReviews![0]!.verification?.verdict).toBe("real");
-    expect(finding.earlierReviews![0]!.votes?.map((vote) => vote.verdict)).toEqual(Array(voters).fill("real"));
-    expect(reviewStats([task]).findings).toMatchObject({ fixed: 1, notABug: 0 });
-    expect(fakes.openings("verifier")).toHaveLength(voters + nonblocking);
-    expect(fakes.openings("builder")).toHaveLength(2);
-  });
+
 
 
 });

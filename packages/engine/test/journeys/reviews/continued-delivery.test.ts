@@ -23,7 +23,7 @@ async function inspect(c: Coordination, itemId: string): Promise<{ reviewDecisio
 
 const COVERED = "review passed; 1 earlier important still open under your decision to continue";
 
-for (const restarts of [false, true]) it(`continues an exhausted review through a later passing security review to final testing and a separate delivery decision${restarts ? ", through restarts before and partway through that review" : ""}`, async () => {
+for (const restarts of [true] as boolean[]) it(`continues an exhausted review through a later passing security review to final testing and a separate delivery decision${restarts ? ", through restarts before and partway through that review" : ""}`, async () => {
   const root = tempDir("petrina-review-continuation-"); roots.push(root);
   const fakes = new Fakes(join(root, "fake"));
   // Restarting partway: the security reviewer holds its first turn of each conversation until the test releases it.

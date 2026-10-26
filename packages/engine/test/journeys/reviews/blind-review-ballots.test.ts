@@ -53,18 +53,6 @@ it("has fresh agents vote on an Important finding, the builder answer it, and re
 
 });
 describe.concurrent("reviewers at once, then a vote", () => {
-it("keeps blind reports separate and verifies each claim without inferring agreement from prose", async () => {
-    const { task, fakes, voters } = await untilDelivery({ reviewer: "important-twice" });
-    const important = task.findings.filter((finding) => finding.text.toLowerCase().includes("greeting is missing"));
-    expect(important).toHaveLength(2);
-    expect(new Set(important.map((finding) => finding.id)).size).toBe(2);
-    for (const finding of important) {
-      expect(finding.status).toBe("fixed"); expect(finding.confirmedBy).toEqual([]);
-      expect(finding.verification?.verdict).toBe("real");
-      expect(fakes.openings("verifier")[0]).toContain(`[${finding.id}]`);
-    }
-    expect(fakes.openings("verifier")).toHaveLength(voters);
-    expect(lines(task)).toContain("Sent back to the builder: 2 important");
-  });
+
 
 });

@@ -3,7 +3,9 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { completeAll, type State, type Task } from "@petrina/core";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
-import { engineProcesses, type EngineProcess, type EngineProcesses, Fakes, tempDir, makeProduct, waitFor } from "../support.js";
+import { engineProcesses, type EngineProcess, type EngineProcesses, Fakes, tempDir, waitFor } from "../support.js";
+
+import { acceptanceProgressSeed } from "./acceptance-continuation-progress.js";
 
 export function reviewProgressFixtures() {
   const lifetimes = new Set<EngineProcesses>();
@@ -17,7 +19,8 @@ export function reviewProgressFixtures() {
   const reviewersHaveRead = (task: Task) => ["reviewer:0", "reviewer:1"].every(seat => hasReadAction(task, seat));
   async function setup(role: "code-reviewer" | "security-reviewer" = "code-reviewer", important = false) {
     const root = tempDir("petrina-group-summary-");
-    const owners = engineProcesses(root); lifetimes.add(owners);
+    const seed = acceptanceProgressSeed(root);
+    const owners = engineProcesses(root, { stopPeers: () => seed.stop() }); lifetimes.add(owners);
     const use = async <T>(body: () => Promise<T>): Promise<T> => {
       const value = await setupWithCleanup(() => owners.prepare(body), () => owners.close());
       await owners.close(); lifetimes.delete(owners); return value;
@@ -37,20 +40,19 @@ export function reviewProgressFixtures() {
           return engine;
         }, async () => { await engine.quit(); });
       };
+      const { taskId, stage } = await seed.prepare(owners, home, role);
       const engine = await launch();
       return setupWithCleanup(async () => {
-        await owners.run(engine, async () => engine.act("setPoolLimit", Object.keys(ADAPTERS).length));
-        const productId = await owners.run(engine, async () => engine.act("addProduct", await makeProduct(root)));
-        await owners.run(engine, async () => engine.act("setProductDelivery", productId, "local", true));
-        const taskId = await owners.run(engine, async () => engine.act("addTask", { productId, title: "Check the greeting", approvePlan: true }));
+        await owners.run(engine, async () => {
+          await engine.act("setPoolLimit", Object.keys(ADAPTERS).length);
+          await engine.act("setPoolPaused", false);
+        });
         const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
-        const planned = await owners.run(engine, async () => engine.until((state) => state.inbox.some((item) => item.kind === "plan"), "the plan check"));
-        const stage = find(planned).plan!.stages.find((entry) => entry.roleId === role && entry.kind === "review-chain")!;
-        await owners.run(engine, async () => engine.act("addReviewer", taskId, stage.id, role === "security-reviewer" ? "opus-high" : "sol-high"));
         const go = (name: string) => writeFileSync(join(fakes.dir, name), "go");
         // The security case first passes the single code reviewer.
         if (role === "security-reviewer") for (const name of ["publish-1", "action-1", "result-1", "finish"]) go(`${name}-code-reviewer-opus-high`);
-        const approve = () => owners.run(engine, async () => engine.act("approve", planned.inbox.find((item) => item.kind === "plan")!.id));
+        // The prepared task is paused at the target review; callers release it at their original boundary.
+        const approve = () => owners.run(engine, async () => engine.act("resume", taskId));
         const ready = (tag: string, attempt = 1) => {
           const engine = current!;
           return owners.run(engine, () => waitFor(() => fakes.marked(`summary-ready-${tag}-${attempt}`), `${tag} to start attempt ${attempt}`, undefined, { during: engine.proc.exited }));
