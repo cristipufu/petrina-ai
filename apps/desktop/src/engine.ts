@@ -578,7 +578,6 @@ const DEMO_OWN = {
   shipAgain: () => () => undefined,
   markDone: () => () => undefined,
   setTerminal: () => () => undefined,
-  setProductChecks: () => async () => undefined,
   /** Only first run's demo adds products: the made-up clones it "found". */
   addProduct: (simulator: Simulator) => async (path: string): Promise<Id> => {
     const setup = simulator.getState().setup;

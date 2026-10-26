@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 import { completeAll, type DeepMutable, type Product } from "@petrina/core";
 import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../../src/checks.js";
+import { commandInputText } from "../../src/checks.js";
 
 const TEST_FIXTURE_ROOT = resolve(import.meta.dir, "..");
 
@@ -58,7 +58,7 @@ export function requiredGapFixtures(required: string) {
         const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
         const id = await engine.addProduct(repo);
         engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: false });
-        engine.setProductChecks(id, [{ name: "Test", command: commandText([process.execPath, "-e", "process.exit(0)"]) }]);
+        engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
         const product = engine.s.products.find(product => product.id === id)!;
         if (github) {
           // As after Petrina's earlier reads of GitHub's main, the product's copy knows where it is.

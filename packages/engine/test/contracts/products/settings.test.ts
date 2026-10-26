@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import type { State } from "@petrina/core";
+import { commandInputText, type State } from "@petrina/core";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { directDrivers } from "../../fixtures/direct-drivers.js";
+import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "../../engine.js";
 import { serve } from "../../../src/server.js";
 import { Store } from "@petrina/storage/store";
@@ -96,4 +99,55 @@ describe("product settings in the engine", () => {
   });
 
 
+});
+
+it("saves literal check input through the real API and restart without executing it", async () => {
+  const root = tempDir("petrina-check-input-"), owners = directDrivers(root), data = join(root, "data");
+  let server: ReturnType<typeof serve> | undefined;
+  const close = async () => {
+    // Register stop before closing admission, so an uncertain server retains its private root.
+    const stopped = owners.prepare(async () => { await server?.stop(true); server = undefined; });
+    const settled = await Promise.allSettled([stopped, owners.close()]);
+    const failed = settled.filter(result => result.status === "rejected");
+    if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Check-input API fixture cleanup was not confirmed");
+  };
+  await setupWithCleanup(() => owners.prepare(async () => {
+    const options = { agentCommand: () => undefined, terminals: () => [] };
+    const engine = owners.open(data, options); await engine.waitUntilReady(); engine.setPoolPaused(true);
+    engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
+    const taskId = engine.addTask({ productId: "product", title: "Preserve the saved record", backlog: true });
+    const work = executionFor(engine.task(taskId)!).work;
+    // Deliberate legacy data: the saved current flag is not setup/native pass evidence.
+    work.checks = { at: 1, current: true, results: [] }; work.checkReturns = 2;
+    const beforeProduct = structuredClone(engine.s.products[0]), beforeWork = structuredClone(work);
+    server = serve(engine, { port: 0, token: "literal-command-input-test-key" });
+    const rejected = await fetch(`http://127.0.0.1:${server.port}/api/action`, { method: "POST", headers: {
+      authorization: "Bearer literal-command-input-test-key", "content-type": "application/json",
+    }, body: JSON.stringify({ name: "setProductChecks", args: ["product", []] }) });
+    expect(await rejected.json()).toMatchObject({ ok: false, error: expect.stringContaining("Give at least one check") });
+    expect(engine.s.products[0]).toEqual(beforeProduct);
+    expect(work).toEqual(beforeWork);
+    const marker = join(root, "must-not-run.txt");
+    const argv = [process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'must not run')`,
+      "", `both 'single' and "double"`, String.raw`C:\Users\O'Neil\Program Files\tool.exe`, "line one\nline two", String.raw`literal\n`];
+    const name = "Owner's: checks\nsecond line";
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/action`, { method: "POST", headers: {
+      authorization: "Bearer literal-command-input-test-key", "content-type": "application/json",
+    }, body: JSON.stringify({ name: "setProductChecks", args: ["product", [{ name, command: commandInputText(argv) }]] }) });
+    expect(await response.json()).toEqual({ ok: true, result: null });
+    expect(engine.getState().products[0]!.checks).toEqual([{ name, argv }]);
+    expect(engine.getState().products[0]!.checksBy).toBe("coordinator");
+    expect(engine.getState().products[0]!.checkSetup).toBeUndefined();
+    expect(engine.getState().tasks.map(task => task.id)).toEqual([taskId]);
+    expect(engine.task(taskId)!.journey ?? []).toEqual([]);
+    expect(work.checks!.current).toBe(false); expect(work.checkReturns).toBe(2);
+    expect(existsSync(marker)).toBe(false);
+    await server.stop(true); server = undefined;
+    await owners.stop(engine);
+    const reopened = owners.open(data, options); await reopened.waitUntilReady(); reopened.setPoolPaused(true);
+    expect(reopened.getState().products[0]!.checks).toEqual([{ name, argv }]);
+    expect(reopened.getState().products[0]!.checkSetup).toBeUndefined();
+    expect(existsSync(marker)).toBe(false);
+  }), close);
+  await close();
 });

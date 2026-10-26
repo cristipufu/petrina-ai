@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { commandInputText } from "../../../src/check-commands.js";
 import { Simulator } from "../../../src/sim.js";
 import { productState as state } from "../../fixtures/products.js";
 
@@ -37,4 +38,19 @@ describe("product settings in the simulator", () => {
     expect(sim.getState().tasks.map((task) => task.productId)).toEqual(["q"]);
     expect(sim.getState().inbox.map((item) => item.id)).toEqual(["other"]);
   });
+});
+
+it("saves actual demo check declarations without creating execution or setup evidence", () => {
+  const sim = new Simulator(state());
+  const id = sim.addTask({ productId: "p", title: "Existing task", backlog: true });
+  const before = sim.getState(), task = before.tasks.find(task => task.id === id)!;
+  const argv = [String.raw`C:\Tools\My App\tool.exe`, "", `both 'single' and "double"`, "line one\nline two"];
+  sim.setProductChecks("p", [{ name: "Owner's: checks", command: commandInputText(argv) }]);
+  expect(sim.getState().products.find(product => product.id === "p")!.checks).toEqual([{ name: "Owner's: checks", argv }]);
+  expect(sim.getState().products.find(product => product.id === "p")!.checksBy).toBe("coordinator");
+  expect(sim.getState().tasks.find(entry => entry.id === id)).toEqual(task);
+  expect(sim.getState().tasks.find(entry => entry.id === id)!.checkSetup).toBeUndefined();
+  sim.setProductChecks("p", null);
+  expect(sim.getState().products.find(product => product.id === "p")!.checks).toBeUndefined();
+  expect(sim.getState().products.find(product => product.id === "p")!.checksBy).toBeUndefined();
 });

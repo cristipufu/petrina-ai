@@ -9,7 +9,7 @@ import type { EngineOptions } from "../engine.js";
 import { Fakes, git, makeProduct, tempDir } from "../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 import { changesOf, versionsOf } from "../../src/repositories.js";
-import { commandText } from "../../src/checks.js";
+import { commandInputText } from "../../src/checks.js";
 
 export function proofRequestFixtures() {
 const roots: string[] = [];
@@ -30,7 +30,7 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
       const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
       const id = await engine.addProduct(repo);
       engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: true });
-      engine.setProductChecks(id, [{ name: "Test", command: commandText([process.execPath, "-e", "process.exit(0)"]) }]);
+      engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
       products.push(engine.s.products.find(product => product.id === id)!);
     }
     const task = engine.task(engine.addTask({ productId: products[0]!.id, title: "Keep required Linux proof current", backlog: true }))!;

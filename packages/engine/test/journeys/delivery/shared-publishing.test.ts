@@ -1,3 +1,4 @@
+import { commandInputText } from "@petrina/core";
 import { prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
 import { fileURLToPath } from "node:url";
 import { type RepositoryContext } from "@petrina/orchestrator";
@@ -209,7 +210,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      engine.setProductChecks(first, [{ name: "Update peer release record", command: `${process.execPath} mutate-peer-release.cjs` }]);
+      engine.setProductChecks(first, [{ name: "Update peer release record", command: commandInputText([process.execPath, "mutate-peer-release.cjs"]) }]);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "release" })), title: "Prepare two releases" });
       await prepareSharedDelivery(engine, id, { build: "run" });
       engine.schedule();
@@ -279,7 +280,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
     let engine = start();
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
-      engine.setProductChecks(second, [{ name: "Release version", command: `${process.execPath} version-check.cjs` }]);
+      engine.setProductChecks(second, [{ name: "Release version", command: commandInputText([process.execPath, "version-check.cjs"]) }]);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "release" }], title: "Check release preparation" });
       await prepareSharedDelivery(engine, id, { build: "run" });
       engine.schedule();

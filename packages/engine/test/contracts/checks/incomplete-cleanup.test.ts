@@ -5,7 +5,7 @@ import { afterAll, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 
@@ -53,7 +53,7 @@ for (const kind of ["check", "hook"] as const) {
       try {
         engine = await EngineProcess.start(home, [launcher, home, fakes.dir]);
         const productId = await engine.act("addProduct", repo) as string;
-        await engine.act("setProductChecks", productId, [{ name: "Detached", command: commandText([process.execPath, parent]) }]);
+        await engine.act("setProductChecks", productId, [{ name: "Detached", command: commandInputText([process.execPath, parent]) }]);
         await engine.act("setProductDelivery", productId, "local", true);
         const id = await engine.act("addTask", { productId, title: "Add a greeting", description: "[no-check]" }) as string;
         await waitFor(async () => {

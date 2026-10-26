@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyView, nextLine } from "@petrina/core";
 import { waitFor } from "@petrina/test-support/fixtures";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { acceptanceRepairFixtures, GREETING, PHONE, UNAVAILABLE, failing, passed, blocked, REPAIR_CHECK, FINAL_TEST, STILL_FAILS, ALL_SEATS } from "../../fixtures/acceptance-repairs.js";
 
 const { fixture, close: closeFixtures } = acceptanceRepairFixtures();
@@ -228,7 +228,7 @@ if (fs.existsSync("welcome.txt") && !fs.existsSync(${JSON.stringify(failed)})) {
   process.exit(1);
 }
 `);
-    f.engine.setProductChecks(first, [{ name: "Test", command: commandText([process.execPath, script]) }]);
+    f.engine.setProductChecks(first, [{ name: "Test", command: commandInputText([process.execPath, script]) }]);
     const read = () => {
       const state = f.engine.getState(), shown = state.tasks.find(task => task.id === f.task.id)!;
       return [nextLine(state, shown), journeyView(shown, { roles: state.roles, profiles: state.profiles, tasks: state.tasks, inbox: state.inbox }).nodes.filter(node => ["now", "next", "ahead"].includes(node.state)).map(node => `${node.name}: ${node.state}`)];

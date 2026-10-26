@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { commandText, checkOutcome, checkSetupOutcome, recordedCheckBatch, type ExtraValidation } from "@petrina/core";
+import { commandText, commandInputText, checkOutcome, checkSetupOutcome, recordedCheckBatch, type ExtraValidation } from "@petrina/core";
 
 import { git, waitFor } from "../../fixtures.js";
 
@@ -141,7 +141,7 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
     f.engine.setPoolPaused(false);
     const productTask = await f.add(); productTask.state = "running";
     const ordinary = { name: "Ordinary check", argv: [process.execPath, "-e", "process.exit(0)"] };
-    f.engine.setProductChecks(f.productId, [{ name: ordinary.name, command: commandText(ordinary.argv) }]);
+    f.engine.setProductChecks(f.productId, [{ name: ordinary.name, command: commandInputText(ordinary.argv) }]);
     const controller = new AbortController();
     let productRun: Promise<unknown> | undefined;
     let confirmSecond = false;

@@ -1,7 +1,7 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
 
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 
 import { continuedReviewFixtures } from "../../fixtures/continued-review.js";
 const { signal, important, rounds, passedCovered, close } = continuedReviewFixtures();
@@ -30,7 +30,7 @@ it("never covers failing product checks before the later review or before delive
     try {
       f.task.findings = [important("accepted")];
       await f.exhaust();
-      f.engine.setProductChecks(f.task.productId, [{ name: "Tests", command: commandText([process.execPath, "-e", "console.error('reproduced check failure');process.exit(1)"]) }]);
+      f.engine.setProductChecks(f.task.productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "console.error('reproduced check failure');process.exit(1)"]) }]);
       // Checks need the pool; nothing else is scheduled.
       f.engine.setPoolPaused(false);
       f.task.stageIndex = f.task.plan!.stages.findIndex((stage) => stage.id === (where === "review" ? "security" : "delivery"));

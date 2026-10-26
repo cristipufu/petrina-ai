@@ -7868,6 +7868,18 @@
     "artifacts": "workstreams/capacity-native-reduction-next/root-native-v1/summary.json; workstreams/capacity-native-reduction-independent-review/handoff.json",
     "limits": "Focused Mac evidence; earlier cfdb1968launches used different production/host conditions. No paired/full/platform improvement claim."
   },
+  "literalCommandInputsFocused": {
+    "paths": 44,
+    "inputProducers": 28,
+    "originalProducerMatcherSites": 1606,
+    "formatterAndParser": "Recorded commandText and parseCommand bytes unchanged; separate literal commandInputText",
+    "setting": "Engine and Simulator share the declaration transition; rejected input validates before any applicability mutation",
+    "qualification": "Initialportable23 andlater4overlappingatomic controls; components13; actualAPI1 withSQLite restart/no execution; six theme/demo browser variants/14screenshots; exactsource-specific reports retained",
+    "rootIntegration": "42exact authorV5files; two source-reviewed import/input-call compositions preserve owned wrappers and capacity preparation",
+    "rootChecks": "all9types, conventions and desktop build passed",
+    "artifacts": "workstreams/command-input-roundtrip-next/handoff.json; root-composition-v5/integrated-source.json; workstreams/command-input-roundtrip-independent-review/handoff-v5.json",
+    "limits": "Focused/compile/render proof only; complete normal-worker integration and native platforms still due. Earlier failures remain recorded."
+  },
   "resourceAudit": {
     "status": "in progress",
     "source": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",

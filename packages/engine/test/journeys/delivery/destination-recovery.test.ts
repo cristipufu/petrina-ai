@@ -4,7 +4,7 @@ import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../../engine.js";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { destination } from "../../../src/shipping.js";
 import { Aborted } from "../../../src/kernel.js";
@@ -50,7 +50,7 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
     for (const name of products) {
       const path = await makeProduct(join(root, name)); await git(path, "remote", "remove", "origin");
       const id = await engine.addProduct(path, name.toUpperCase());
-      engine.setProductChecks(id, [{ name: "Tests", command: commandText([process.execPath, check, log, root, name]) }]);
+      engine.setProductChecks(id, [{ name: "Tests", command: commandInputText([process.execPath, check, log, root, name]) }]);
       owners.push({ id, path, name });
     }
     const add = (name: string, indices = [0], branch = "main") => {

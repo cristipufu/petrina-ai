@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { git, makeProduct, removeDir, tempDir, waitForFile } from "../../fixtures.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { checkContext } from "../../fixtures/check-context.js";
@@ -99,7 +99,7 @@ process.exit(mode === "new-fail" ? 1 : 0);`);
     const task = engine.task(engine.addTask({ productId, title: "Check freshness" }))!;
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;
-    const definitions = (mode: string) => [{ name: "Tests", command: commandText([process.execPath, script, mode, started, release, log]) }];
+    const definitions = (mode: string) => [{ name: "Tests", command: commandInputText([process.execPath, script, mode, started, release, log]) }];
     engine.setProductChecks(productId, definitions("old-pass"));
     const running = engine["checks"].failing(scope, new AbortController().signal);
     try {
@@ -130,7 +130,7 @@ writeFileSync(started, "ready"); while (!existsSync(release)) await Bun.sleep(10
     const task = engine.task(engine.addTask({ productId, title: "Unstable requirements" }))!;
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;
-    const define = (index: number) => engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, join(root, `started-${index}`), join(root, `release-${index}`)]) }]);
+    const define = (index: number) => engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, join(root, `started-${index}`), join(root, `release-${index}`)]) }]);
     define(0);
     const running = engine["checks"].failing(scope, new AbortController().signal);
     // Attach the rejection handler before deliberately releasing the last invalidated pass.

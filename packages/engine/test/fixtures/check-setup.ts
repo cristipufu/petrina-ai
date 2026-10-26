@@ -8,7 +8,7 @@ import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { tempDir } from "../fixtures.js";
 import { directDrivers } from "./direct-drivers.js";
-import { commandText } from "../../src/checks.js";
+import { commandInputText } from "../../src/checks.js";
 
 export interface SetupCommand {
   code?: number;
@@ -90,7 +90,7 @@ process.exit(choice.code ?? 0);`);
       command(kind: string, choice: SetupCommand) { commands = { ...commands, [kind]: { ...choice } }; writeFixtureJson(config, commands); },
       setChecks(kinds: readonly string[]) {
         if (!kinds.length) { engine.s.products.find(product => product.id === "product")!.checks = []; engine.s.products.find(product => product.id === "product")!.checksBy = "coordinator"; }
-        else engine.setProductChecks("product", kinds.map(kind => ({ name: kind, command: commandText(argv(kind)) })));
+        else engine.setProductChecks("product", kinds.map(kind => ({ name: kind, command: commandInputText(argv(kind)) })));
       },
       setSetup(kinds: readonly string[]) { engine.setProductCheckSetup("product", kinds.map(kind => ({ id: kind, name: kind, argv: argv(kind) }))); },
       check: () => run(),

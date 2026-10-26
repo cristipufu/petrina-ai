@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { DELIVERY_LABEL, productHistory, involvesProduct, taskProductIds, type DeliveryMode, type Product, type State } from "@petrina/core";
+import { DELIVERY_LABEL, commandInputText, parseCommand, productHistory, involvesProduct, taskProductIds, type DeliveryMode, type Product, type State } from "@petrina/core";
 import { Settings2 } from "lucide-react";
 import { ConfirmDialog } from "./bits";
 import { EditorPanel, FormSection } from "./EditorPanel";
 import { ProductCheckSetup } from "./ProductCheckSetup";
+import { ProductCommandRows, hasOpenCommandQuote, type ProductCommandRow, type ProductCommandErrors } from "./ProductCommandRows";
 import { sim, useEngineStatus } from "../engine";
 
 /** Product settings leave the repository identity unchanged. */
@@ -101,17 +102,19 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
  */
 function ProductChecks({ product, live, onState }: { product: Product; live: boolean; onState: (state: { busy: boolean; dirty: boolean }) => void }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState("");
+  const [rows, setRows] = useState<ProductCommandRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [rowErrors, setRowErrors] = useState<ProductCommandErrors>({});
   const checks = product.checks ?? [];
-  const savedText = checks.map(check => `${check.name}: ${check.argv.map(part => (/\s/.test(part) ? `"${part}"` : part)).join(" ")}`).join("\n");
-  const dirty = editing && text !== savedText;
+  const savedRows = checks.length ? checks.map((check, index) => ({ id: `check-${index}`, name: check.name, command: commandInputText(check.argv) }))
+    : [{ id: "check-0", name: "", command: "" }];
+  const values = (entries: readonly ProductCommandRow[]) => entries.map(({ name, command }) => ({ name, command }));
+  const dirty = editing && JSON.stringify(values(rows)) !== JSON.stringify(values(savedRows));
   useEffect(() => { onState({ busy, dirty }); }, [busy, dirty, onState]);
-  const start = () => {
-    setText(checks.map((check) => `${check.name}: ${check.argv.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ")}`).join("\n"));
-    setError(undefined);
-    setEditing(true);
+  const start = () => { setRows(savedRows); setRowErrors({}); setError(undefined); setEditing(true); };
+  const edit = (id: string, update: Partial<ProductCommandRow>) => {
+    setRows(current => current.map(row => row.id === id ? { ...row, ...update } : row)); setRowErrors({}); setError(undefined);
   };
   const run = async (checksOrNull: { name: string; command: string }[] | null) => {
     if (!live || busy) return;
@@ -127,27 +130,31 @@ function ProductChecks({ product, live, onState }: { product: Product; live: boo
     }
   };
   const save = () => {
-    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-    const parsed = lines.map((line) => {
-      const colon = line.indexOf(":");
-      return colon > 0 ? { name: line.slice(0, colon).trim(), command: line.slice(colon + 1).trim() } : { name: line.split(/\s+/)[0] ?? line, command: line };
-    });
-    void run(parsed.filter((check) => check.name && check.command));
+    if (!rows.length) { setError("Give at least one check, as a name and a command."); return; }
+    const errors: ProductCommandErrors = {};
+    for (const row of rows) {
+      const name = !row.name.trim() ? "Give this check a name." : undefined;
+      const command = !row.command.trim() ? "Enter a command for this check."
+        : hasOpenCommandQuote(row.command) ? "Close the quotation mark in this command."
+        : !parseCommand(row.command)[0]?.trim() ? "Start with the program to run." : undefined;
+      if (name || command) errors[row.id] = { name, command };
+    }
+    setRowErrors(errors);
+    if (Object.keys(errors).length) { setError("Check the highlighted checks before saving."); return; }
+    void run(rows.map(row => ({ name: row.name.trim(), command: row.command })));
   };
   const source = product.checksBy === "coordinator" ? "Set by you." : product.checksBy === "finder" ? "Found by the Check finder from the repository, its CI first. It looks again when the CI or build files change." : "Not found yet: the Check finder works them out at this product's first review.";
   return (
     <FormSection title="Automated checks" description={<>Run before review and the delivery check. {source}</>}>
       {editing ? (
         <>
-          <textarea className="field mono" rows={Math.max(3, text.split("\n").length + 1)} value={text} onChange={(event) => setText(event.target.value)} aria-label="Checks, one per line as Name: command" placeholder={"Tests: dotnet test\nBuild: dotnet build --nologo"} />
-          <p className="setting-hint">One per line, as Name: command. Commands run from the repository root without a shell, so no pipes or &&.</p>
+          <ProductCommandRows kind="check" rows={rows} busy={busy} errors={rowErrors} onEdit={edit}
+            onRemove={id => { setRows(current => current.filter(row => row.id !== id)); setRowErrors({}); setError(undefined); }} />
+          <div className="row-actions"><button type="button" className="btn" disabled={busy} onClick={() => { setRows(current => [...current, { id: `check-${crypto.randomUUID()}`, name: "", command: "" }]); setRowErrors({}); }}>Add check</button></div>
+          <p className="setting-hint">A program and its arguments, run directly from the repository root without a shell.</p>
           <div className="row-actions">
-            <button className="btn primary" disabled={!live || busy} onClick={save}>
-              Save checks
-            </button>
-            <button className="btn quiet" disabled={busy} onClick={() => setEditing(false)}>
-              Cancel
-            </button>
+            <button className="btn primary" disabled={!live || busy} onClick={save}>Save checks</button>
+            <button className="btn quiet" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </>
       ) : (
@@ -155,31 +162,17 @@ function ProductChecks({ product, live, onState }: { product: Product; live: boo
           {checks.length > 0 && (
             <ul className="product-check-list">
               {checks.map((check) => (
-                <li key={check.name}>
-                  <strong>{check.name}</strong>
-                  <span className="product-check-command mono">{check.argv.join(" ")}</span>
-                  {check.why && <span className="setting-hint">{check.why}</span>}
-                </li>
+                <li key={check.name}><strong>{check.name}</strong><span className="product-check-command mono">{check.argv.join(" ")}</span></li>
               ))}
             </ul>
           )}
           <div className="row-actions">
-            <button className="btn" disabled={!live || busy} onClick={start}>
-              {checks.length ? "Edit checks" : "Set checks by hand"}
-            </button>
-            {product.checksBy !== undefined && (
-              <button className="btn quiet" disabled={!live || busy} onClick={() => void run(null)}>
-                Find again
-              </button>
-            )}
+            <button className="btn" disabled={!live || busy} onClick={start}>{checks.length ? "Edit checks" : "Set checks by hand"}</button>
+            {product.checksBy !== undefined && <button className="btn quiet" disabled={!live || busy} onClick={() => void run(null)}>Find again</button>}
           </div>
         </>
       )}
-      {error && (
-        <p className="error-text" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <p className="error-text" role="alert">{error}</p>}
     </FormSection>
   );
 }

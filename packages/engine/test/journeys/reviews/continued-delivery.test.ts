@@ -5,7 +5,7 @@ import { roleForTask, type JourneyStep, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { coordinator, Fakes, git, itemOf, makeProduct, removeDir, taskOf, tempDir, until, waitFor } from "../../support.js";
 
 const roots: string[] = [];
@@ -45,7 +45,7 @@ for (const restarts of [false, true]) it(`continues an exhausted review through 
     const clone = await makeProduct(root);
     const productId = await engine.addProduct(clone);
     engine.setProductDelivery(productId, "local", true);
-    engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, "-e", "process.exit(0)"]) }]);
+    engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
     const main = await git(clone, "rev-parse", "main");
     const id = engine.addTask({ productId, title: "A reviewed greeting", description: "[no-check]" });
     const task = () => engine.task(id)!;

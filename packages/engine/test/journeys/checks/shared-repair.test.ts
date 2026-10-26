@@ -1,5 +1,5 @@
 import { prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
-import { checkDecisionLabel, decisionEvidence } from "@petrina/core";
+import { commandInputText, checkDecisionLabel, decisionEvidence } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,7 +42,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", affectedProducts: products });
       const log = join(shop.dir, "checks-ran.txt"), script = join(shop.dir, "fails.cjs");
       writeFileSync(script, 'require("node:fs").appendFileSync(process.argv[2], process.argv[3] + "\\n"); process.exit(1);');
-      const check = (productId: string) => [{ name: "Tests", command: `${process.execPath} ${script} ${log} ${productId}` }];
+      const check = (productId: string) => [{ name: "Tests", command: commandInputText([process.execPath, script, log, productId]) }];
       for (const productId of products) engine.setProductChecks(productId, check(productId));
       const id = engine.addTask({ backlog: true, productId: first, worksOn: products.map(productId => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Investigate both products' failed checks" });
       await prepareSharedDelivery(engine, id);
@@ -74,7 +74,7 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const products = [first, second];
       fakes.scenario({ planner: "tester-first", builder: "plain", reopen: "resume", affectedProducts: products, fixes: "change" });
-      const script = (name: string, body: string) => { const path = join(api.dir, name); writeFileSync(path, body); return `${process.execPath} ${path}`; };
+      const script = (name: string, body: string) => { const path = join(api.dir, name); writeFileSync(path, body); return commandInputText([process.execPath, path]); };
       engine.setProductChecks(second, [{ name: "Welcome", command: script("welcome-passes.cjs", "process.exit(0)") }]);
       const id = engine.addTask({ productId: first, worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Welcome people in both products" });
       const ready = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));

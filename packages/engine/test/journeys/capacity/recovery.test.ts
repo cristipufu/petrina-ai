@@ -6,7 +6,7 @@ import { rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { usageLines, type RoutineDraft, type Task } from "@petrina/core";
+import { commandInputText, usageLines, type RoutineDraft, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 
 
@@ -717,7 +717,7 @@ describe("a scheduled run whose model is at capacity", () => {
     }), close);
     try {
       const productId = await engine.addProduct(clone);
-      engine.setProductChecks(productId, [{ name: "Tests", command: `${process.execPath} -e 'process.exit(0)'` }]);
+      engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
       const draft: RoutineDraft = { name: "Focused maintenance", productId, roleId: "maintenance-bug-finder", profileId: "sol-medium", focus: "Inspect checkout behavior", zone: "UTC", schedule: { kind: "daily", time: "09:00" }, enabled: true };
       const routineId = engine.saveRoutine(draft);
       const due = engine.getState().routines!.find((routine) => routine.id === routineId)!.nextAt;

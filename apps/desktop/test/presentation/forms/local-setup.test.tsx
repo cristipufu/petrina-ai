@@ -55,6 +55,7 @@ it("keeps dismissal and other settings disabled while the actual save is pending
   await click("Save local setup"); expect(host.querySelector(".editor-panel")?.getAttribute("aria-busy")).toBe("true");
   await escape(); await act(async () => host.querySelector<HTMLElement>(".editor-scrim")!.click());
   expect(closed).not.toHaveBeenCalled(); expect(button("Save").disabled).toBe(true);
+  expect([...row().querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>("input, textarea, button")].every(field => field.disabled)).toBe(true);
   await act(async () => finish()); expect(host.querySelector(".editor-panel")?.hasAttribute("aria-busy")).toBe(false);
 });
 

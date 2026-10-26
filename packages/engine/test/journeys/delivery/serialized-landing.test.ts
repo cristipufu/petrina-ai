@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { git, makeProduct, removeDir, tempDir } from "../../fixtures.js";
 
 const roots: string[] = [];
@@ -30,7 +30,7 @@ const result = Bun.spawnSync(["git", "rev-parse", "HEAD^{tree}"], { stdout: "pip
 const ok = !(existsSync("feature-a") && existsSync("feature-b"));
 appendFileSync(process.argv[2], JSON.stringify({ tree: result.stdout.toString().trim(), ok }) + "\\n");
 process.exit(ok ? 0 : 1);`);
-    engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, log]) }]);
+    engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log]) }]);
     const signal = new AbortController().signal;
     const tasks: NonNullable<ReturnType<typeof engine.task>>[] = [];
     // These direct calls exercise the last ref-movement defense with two already-prepared candidates.

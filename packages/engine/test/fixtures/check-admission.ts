@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../engine.js";
-import { commandText } from "../../src/checks.js";
+import { commandInputText } from "../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import { git, makeProduct, tempDir } from "../fixtures.js";
 
@@ -26,7 +26,7 @@ appendFileSync(log, JSON.stringify({ name, sha, tree, fix, command }) + "\\n");
 writeFileSync(root + "/" + name + ".started", "ready");
 if (name === "first") while (!existsSync(root + "/release-first")) await Bun.sleep(10);
 process.exit(existsSync("needs-main-fix.txt") && !fix ? 1 : 0);`);
-  const define = (command: string) => engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, log, root, command]) }]);
+  const define = (command: string) => engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, root, command]) }]);
   define("original");
   const add = async (name: string, needsFix = false, conflict = false) => {
     const task = engine.task(engine.addTask({ productId, title: name, delivery: "local", backlog: true }))!;

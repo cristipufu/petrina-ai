@@ -60,7 +60,7 @@ import { reviewClaimIds } from "./workflow-events.js";
 import * as library from "./roles.js";
 import type { RoleDraft } from "./roles.js";
 import { onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenReady, screenReason, screenWait } from "./screen.js";
-import { configureProductCheckSetup, productHistory, validateProductSettings, type ProductSettings } from "./products.js";
+import { configureProductChecks, configureProductCheckSetup, productHistory, validateProductSettings, type ProductSettings } from "./products.js";
 import { usageView, type UsageRequest, type UsageViewFor } from "./analytics.js";
 import { continuingAgentTurn, askMomentId, MemoryWorkLog, turnTokens, type AskAnswer, type MomentOutcome, type TurnEnd, type TurnReason, type WorkMoment, type WorkStageKind } from "./worklog.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
@@ -395,6 +395,15 @@ export class Simulator {
       Object.assign(product, validated);
       // The permanent list keeps the latest name, so a removed product shows under the name it last had.
       this.work.recordProduct({ id: product.id, name: product.name, repo: product.repo });
+    });
+  }
+
+  setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
+    this.update(d => {
+      const executions = function* () {
+        for (const task of d.tasks) for (const work of task.repositories ?? [task]) yield work;
+      };
+      configureProductChecks(d.products.find(product => product.id === productId), checks, executions());
     });
   }
 

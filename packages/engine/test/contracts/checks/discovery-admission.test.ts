@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, endAgentStep, type ProductCheck } from "@petrina/core";
 import { CheckPreparationChanged } from "../../../src/product-checks.js";
-import { checksFingerprint, commandText } from "../../../src/checks.js";
+import { checksFingerprint, commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "../../engine.js";
 import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
@@ -31,7 +31,7 @@ async function fixture(conflictingTask = false) {
   const log = join(root, "invocations"), script = join(root, "check.ts");
   writeFileSync(script, `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(log)}, "ran\\n");`);
   const command: ProductCheck = { name: "Tests", argv: [process.execPath, script] };
-  engine.setProductChecks(productId, [{ name: command.name, command: commandText(command.argv) }]);
+  engine.setProductChecks(productId, [{ name: command.name, command: commandInputText(command.argv) }]);
   const product = engine.productOf(scope)!;
   product.checksBy = "finder"; product.checksFingerprint = checksFingerprint(copy);
   const checks = engine["checks"], entered = Promise.withResolvers<void>(), releaseDiscovery = Promise.withResolvers<void>();

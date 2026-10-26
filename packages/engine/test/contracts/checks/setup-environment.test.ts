@@ -3,7 +3,7 @@ import { rejectionOf } from "@petrina/test-support/rejections";
 import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 import { readFileSync } from "node:fs";
 import { Coordination } from "../../../src/coordination.js";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import * as fs from "node:fs/promises";
 import { cpSync } from "node:fs";
 import { detachRepositoryState, executionFor } from "@petrina/orchestrator";
@@ -307,7 +307,7 @@ it(peer === "unmet" ? "actual review routing repairs only the live failed produc
       detachRepositoryState(f.task);
     });
     f.setChecks(["product"]); f.command("product", { code: 7, stdout: "first product failure\n" });
-    f.engine.setProductChecks("second", [{ name: "second", command: commandText(f.argv("second")) }]);
+    f.engine.setProductChecks("second", [{ name: "second", command: commandInputText(f.argv("second")) }]);
     f.command("second", { code: 7, stdout: "second product failure\n" });
     expect((await f.check()).kind).toBe("product-failed");
     const signal = f.engine.stopRequested.signal, second = executionFor(f.task, "second");
@@ -585,7 +585,7 @@ it("approves the remaining shared delivery after published checks change, while 
     const published = executionFor(f.task, "product").work, remaining = executionFor(f.task, "remaining");
     expect((await f.native(() => f.engine["checks"].failing(remaining, f.engine.stopRequested.signal))).kind).toBe("passed");
     const oldRows = structuredClone(published.checks!.results), invocations = f.invocations();
-    f.engine.setProductChecks("product", [{ name: "Changed after delivery", command: commandText(f.argv("product")) }]);
+    f.engine.setProductChecks("product", [{ name: "Changed after delivery", command: commandInputText(f.argv("product")) }]);
     expect(published.checks!.current).toBe(false);
     expect(checkProblem(f.task)).toBe("unverified");
     expect(deliveryCheckProblem(f.task)).toBeUndefined();

@@ -3,7 +3,7 @@ import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../../engine.js";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import { destination } from "../../../src/shipping.js";
 import { Coordination } from "../../../src/coordination.js";
@@ -62,7 +62,7 @@ const ok = !existsSync("fail-check");
 appendFileSync(process.argv[2], JSON.stringify({ sha, tree, files, outside: existsSync("outside-change"), ok }) + "\\n");
 if (!existsSync("feature-second")) while (!existsSync(process.argv[3])) await Bun.sleep(10);
 process.exit(ok ? 0 : 1);`);
-    engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, log, release]) }]);
+    engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, release]) }]);
     const evidence = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { sha: string; tree: string; files: string[]; outside: boolean; ok: boolean }) : [];
     return { root, service, productId, engine, repo, tasks, evidence, dispose, release: () => writeFileSync(release, "Continue"), schedule: () => engine["driver"].schedule() };
 
@@ -133,7 +133,7 @@ it.skipIf(process.platform === "win32")("runs another review and its saved extra
       writeFileSync(check, `import { existsSync, writeFileSync } from "node:fs";
 writeFileSync(process.argv[2], "Started");
 while (!existsSync(process.argv[3])) await Bun.sleep(10);`);
-      f.engine.setProductChecks(productId, [{ name: "Review checks", command: commandText([process.execPath, check, started, released]) }]);
+      f.engine.setProductChecks(productId, [{ name: "Review checks", command: commandInputText([process.execPath, check, started, released]) }]);
       // Keep the independent review outside the scheduler until its explicit check request below.
       task.state = "needs-you";
       f.schedule();

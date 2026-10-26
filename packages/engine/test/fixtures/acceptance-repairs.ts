@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { completeAll, type DeepMutable, type Product, type Task, type WorkflowEvent } from "@petrina/core";
 import { git, makeProduct, tempDir, waitFor } from "../fixtures.js";
 import { directDrivers, closeDirectDrivers } from "./direct-drivers.js";
-import { commandText } from "../../src/checks.js";
+import { commandInputText } from "../../src/checks.js";
 import { Coordination } from "../../src/coordination.js";
 
 /** The parts of a review's completion report these cases read. */
@@ -52,7 +52,7 @@ export function acceptanceRepairFixtures() {
         const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
         const id = await engine.addProduct(repo);
         engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: options.gate });
-        engine.setProductChecks(id, [{ name: "Test", command: commandText([process.execPath, "-e", "process.exit(0)"]) }]);
+        engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
         products.push(engine.s.products.find(product => product.id === id)!);
       }
       const task = engine.task(engine.addTask({ productId: products[0]!.id, title: "Show the greeting", backlog: true }))!;

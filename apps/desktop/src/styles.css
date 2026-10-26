@@ -1730,10 +1730,11 @@ input.select { cursor: text; }
 .product-check-list li + li { border-top: 1px solid var(--line); }
 .product-check-list strong { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
 .product-check-command { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); overflow-wrap: anywhere; }
-.local-setup-rows { display: grid; gap: 12px; list-style: none; padding: 0; margin: 0; }
-.local-setup-row { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
-.local-setup-row > button { justify-self: start; }
-.local-setup-row textarea { resize: vertical; min-height: 64px; }
+.local-setup-rows, .product-check-rows { display: grid; gap: 12px; list-style: none; padding: 0; margin: 0; }
+.local-setup-row, .product-check-row { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
+.local-setup-row > button, .product-check-row > button { justify-self: start; }
+.local-setup-row textarea, .product-check-row textarea { resize: vertical; min-height: 64px; }
+.product-check-row textarea.product-check-name { min-height: 44px; }
 .setup-observation { display: grid; gap: 8px; min-width: 0; }
 .setup-outcome, .setup-observation-meta, .setup-detail-name { margin: 0; overflow-wrap: anywhere; }
 .setup-outcome { font-weight: 600; }

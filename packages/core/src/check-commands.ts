@@ -13,6 +13,11 @@ export function commandText(argv: readonly string[]): string {
   return argv.map((part) => (/^[\w@%+=:,./-]+$/.test(part) ? part : JSON.stringify(part))).join(" ");
 }
 
+/** Literal text for editable command input; display/record identities use commandText instead. */
+export function commandInputText(argv: readonly string[]): string {
+  return argv.map(part => !part || /[\s'"]/.test(part) ? `'${part.replaceAll("'", `'"'"'`)}'` : part).join(" ");
+}
+
 /** Split a command the coordinator typed into arguments, honouring quotes. Never run through a shell. */
 export function parseCommand(text: string): string[] {
   const argv: string[] = [];

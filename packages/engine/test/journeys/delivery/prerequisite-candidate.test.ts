@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId, type DeliveryMode } from "@petrina/core";
 import { Coordination } from "../../../src/coordination.js";
 import { WaitingForUsage } from "../../../src/usage.js";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import { git, makeWorld, remoteRef, removeDir, waitFor, type World } from "../../support.js";
 
@@ -50,7 +50,7 @@ const sha = await git(process.cwd(), "rev-parse", "HEAD");
 const ok = !existsSync("required-check-failure");
 appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-fix.txt"), ok }) + "\\n");
 process.exit(ok ? 0 : 1);`);
-  engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, log]) }]);
+  engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log]) }]);
   expect(await engine["shipping"]["readyToShip"](scope, signal)).toBe("ready");
   scope.work.checkedSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
   scope.work.checkedPatch = await engine["updates"].patch(scope);
@@ -92,7 +92,7 @@ process.exit(ok ? 0 : 1);`);
   const publish = () => engine["shipping"].deliver(task, task.plan!.stages[2]!, signal);
   const blockFinalChecks = () => {
     const gate = join(world.dir, "final-check");
-    engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, script, log, gate]) }]);
+    engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, gate]) }]);
     return { started: () => waitFor(() => existsSync(`${gate}.started`), "the final check to start"), release: () => writeFileSync(`${gate}.release`, "Continue") };
   };
   return { world, productId, id, prerequisite, before, checkedBefore, hold, land, release, restart, refresh, publish, evidence, blockFinalChecks, engine: () => engine, task: () => task, scope: () => scope };

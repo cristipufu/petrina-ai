@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { draftOf, MAINTENANCE_ROLES, type RoutineDraft, type Task } from "@petrina/core";
+import { commandInputText, draftOf, MAINTENANCE_ROLES, type RoutineDraft, type Task } from "@petrina/core";
 import { makeWorld, Fakes, FAKE_AGENT, until, removeDir } from "../../support.js";
 import type { Engine } from "../../engine.js";
 import { git } from "../../fixtures.js";
@@ -19,7 +19,7 @@ async function setup(name: string, behavior: Parameters<Fakes["scenario"]>[0]["m
 }
 async function create(engine: Engine, clone: string, roleId = "maintenance-bug-finder", profileId = "sol-medium") {
   const productId = await engine.addProduct(clone);
-  engine.setProductChecks(productId, [{ name: "Tests", command: `${process.execPath} -e 'process.exit(0)'` }]);
+  engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
   const draft: RoutineDraft = { name: "Focused maintenance", productId, roleId, profileId, focus: "Inspect checkout behavior", zone: "UTC", schedule: { kind: "daily", time: "09:00" }, enabled: true };
   const routineId = engine.saveRoutine(draft);
   const due = engine.getState().routines!.find(r => r.id === routineId)!.nextAt;
@@ -344,7 +344,7 @@ describe("real queue maintenance", () => {
     const { world, fakes, start } = await setup("check-repair", { change: true }); const engine = start();
     try {
       const run = await create(engine, world.clone, "maintenance-dead-code");
-      engine.setProductChecks(run.productId, [{ name: "Confirmed repair", command: `${process.execPath} -e 'process.exit(1)'` }]);
+      engine.setProductChecks(run.productId, [{ name: "Confirmed repair", command: commandInputText([process.execPath, "-e", "process.exit(1)"]) }]);
       // Change the fake's next turn after the first result has been produced, at check preparation.
       const unsubscribe = engine.subscribe(() => {
         if (engine.taskDetails(run.taskId)?.stageIndex === 1) fakes.scenario({ maintenance: { withdraw: true } });

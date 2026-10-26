@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from "bun:test";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { BuildResult } from "../../../src/roles.js";
 import { promptApplication } from "../../fixtures/prompt-application.js";
 
@@ -12,7 +12,7 @@ for (const instructions of [undefined, "Use a focused test for the changed behav
   const root = tempDir("prompt-application-"); roots.push(root);
   const f = await promptApplication(root, instructions);
   try {
-    const command = commandText([process.execPath, "checks/welcome.ts", "runs.txt", "--pass"]);
+    const command = commandInputText([process.execPath, "checks/welcome.ts", "runs.txt", "--pass"]);
     f.engine.setProductChecks("product", [{ name: "Welcome", command }]);
     await f.engine["turns"].turn(f.scope, "builder", "sol-high", () => f.engine["context"].sectionsFor(f.scope, "builder"), BuildResult, new AbortController().signal);
     const received = f.agents.received("build");

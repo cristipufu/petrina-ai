@@ -63,7 +63,6 @@ import {
 } from "@petrina/core";
 import * as library from "@petrina/core";
 import * as git from "@petrina/repositories/git";
-import { parseCommand } from "./checks.js";
 import { CODEX_USAGE_EVERY_MS } from "@petrina/agent-runtime/codex-usage";
 import { Kernel, TONES, stepKey, type EngineOptions, type MTask } from "./kernel.js";
 import { browserCommand } from "./setup.js";
@@ -480,23 +479,11 @@ export class Engine extends Kernel implements Commands {
    * the Check finder looks again at the next review.
    */
   setProductChecks(productId: Id, checks: readonly { name: string; command: string }[] | null): void {
-    const product = this.s.products.find((entry) => entry.id === productId);
-    if (!product) throw new Error("This product is no longer in Petrina.");
-    for (const task of this.s.tasks) for (const { work } of scopesFor(task)) {
-      if (work.productId === productId && work.checks) work.checks.current = false;
-    }
-    if (checks === null) {
-      delete product.checks;
-      delete product.checksBy;
-      delete product.checksFingerprint;
-      delete product.checksSeen;
-    } else {
-      const parsed = checks.map((check) => ({ name: check.name.trim(), argv: parseCommand(check.command) })).filter((check) => check.name && check.argv.length);
-      if (!parsed.length) throw new Error("Give at least one check, as a name and a command.");
-      product.checks = parsed;
-      product.checksBy = "coordinator";
-      delete product.checksFingerprint;
-    }
+    const engine = this;
+    const executions = function* () {
+      for (const task of engine.s.tasks) for (const { work } of scopesFor(task)) yield work;
+    };
+    library.configureProductChecks(this.s.products.find(product => product.id === productId), checks, executions());
     this.commit();
   }
 

@@ -1,3 +1,4 @@
+import { parseCommand } from "./check-commands.js";
 import { involvesProduct, repositoryPublished } from "./repositories.js";
 import { normalizeCheckPrerequisites, sameCheckPrerequisites } from "./check-environment.js";
 import type { DeepMutable } from "./flow.js";
@@ -19,6 +20,29 @@ export interface ProductSettings {
   delivery: DeliveryMode;
   approveDelivery: boolean;
   shipLowRisk?: boolean;
+}
+
+export type ProductCheckSettingWork = DeepMutable<Pick<RepositoryState, "productId" | "checks">>;
+
+/** Save editable check declarations only; the caller owns persistence and supplies its actual executions. */
+export function configureProductChecks(product: DeepMutable<Pick<Product, "id" | "checks" | "checksBy" | "checksFingerprint" | "checksSeen">> | undefined,
+  checks: readonly { name: string; command: string }[] | null, executions: Iterable<ProductCheckSettingWork>): void {
+  if (!product) throw new Error("This product is no longer in Petrina.");
+  const parsed = checks === null ? [] : checks.map((check) => ({ name: check.name.trim(), argv: parseCommand(check.command) })).filter((check) => check.name && check.argv.length);
+  if (checks !== null && !parsed.length) throw new Error("Give at least one check, as a name and a command.");
+  for (const work of executions) {
+    if (work.productId === product.id && work.checks) work.checks.current = false;
+  }
+  if (checks === null) {
+    delete product.checks;
+    delete product.checksBy;
+    delete product.checksFingerprint;
+    delete product.checksSeen;
+  } else {
+    product.checks = parsed;
+    product.checksBy = "coordinator";
+    delete product.checksFingerprint;
+  }
 }
 
 export type CheckSetupSettingWork = DeepMutable<Pick<RepositoryState, "productId" | "checkSetupInvalidated" | "checks" | "approvedSha" | "approvedPatch" | "approvedFor" | "pr" | "release" | "landed" | "localUpdate">>;

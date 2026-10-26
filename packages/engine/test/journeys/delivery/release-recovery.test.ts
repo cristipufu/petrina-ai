@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId } from "@petrina/core";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import { FAKE_AGENT, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, waitFor, type World } from "../../support.js";
 
@@ -55,7 +55,7 @@ appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-
   writeFileSync(join(scope.work.worktree!, "task-change.txt"), "The accepted task change\n");
   await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Improve the product");
   scope.work.report = { summary: "Improved the product", title: "Improve the product", changes: ["The approved improvement"], description: "The approved product improvement" };
-  engine.setProductChecks(productId, [{ name: "Tests", command: commandText([process.execPath, check, log]) }]);
+  engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, check, log]) }]);
   expect(await engine["shipping"]["readyToShip"](scope, signal)).toBe("ready");
   scope.work.checkedSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
   scope.work.checkedPatch = await engine["updates"].patch(scope);

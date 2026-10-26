@@ -6,7 +6,7 @@ import { Fakes, git, tempDir } from "../../fixtures.js";
 import { acceptanceAgents } from "../../fixtures/acceptance-agents.js";
 import { versionsOf } from "../../../src/repositories.js";
 import { recordReviewProofs } from "@petrina/orchestrator";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 import { MAY_CHANGE } from "../../../src/prompts.js";
 import { checkpointView } from "../../../src/checkpoint-read.js";
 import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
@@ -95,7 +95,7 @@ for (const output of ["checks", "tester"] as const) it(`settles requested proof 
   const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
   try {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
-    if (output === "checks") f.engine.setProductChecks(f.task.productId, [{ name: "Test", command: commandText([process.execPath, "-e", "require('node:fs').writeFileSync('check-output.log', 'ran\\n')"]) }]);
+    if (output === "checks") f.engine.setProductChecks(f.task.productId, [{ name: "Test", command: commandInputText([process.execPath, "-e", "require('node:fs').writeFileSync('check-output.log', 'ran\\n')"]) }]);
     const versions = await versionsOf(f.task);
     fakes.configure({ builder: "plain", testerChecks: [greetingPass], testerProofAnswers: passes([request.id]) });
     await f.drive();

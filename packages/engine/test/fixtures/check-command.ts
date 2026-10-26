@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { commandText } from "../../src/checks.js";
+import { commandInputText } from "../../src/checks.js";
 
 /** A private real check process: caller-controlled outcomes and an invocation log outside Git restoration. */
 export function checkCommand(root: string) {
@@ -23,7 +23,7 @@ process.exit(ok ? 0 : 1);
 `);
   return {
     file, log,
-    command: (...args: string[]) => commandText([process.execPath, file, log, ...args]),
+    command: (...args: string[]) => commandInputText([process.execPath, file, log, ...args]),
     runs: () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [],
   };
 }

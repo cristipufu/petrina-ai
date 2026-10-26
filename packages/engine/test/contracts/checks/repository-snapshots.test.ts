@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
-import { commandText } from "@petrina/core";
+import { commandInputText } from "@petrina/core";
 import { gitCommand, writeGitProgram } from "@petrina/test-support/git-program";
 import { git, waitFor } from "../../support.js";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
@@ -266,7 +266,7 @@ describe("explicit repository execution contexts", () => {
         const checks = engine["checks"];
         const signal = engine.stopRequested.signal;
         const commands = [{ name: "First product only", argv: [process.execPath, "-e", "console.error('Failure from the first product'); process.exit(1)"] }];
-        engine.setProductChecks("first", commands.map(check => ({ name: check.name, command: commandText(check.argv) })));
+        engine.setProductChecks("first", commands.map(check => ({ name: check.name, command: commandInputText(check.argv) })));
         release = await checks["turnToRun"](second, signal);
         pending = run(() => checks.runProductChecks(first, commands, signal));
         await waitFor(() => engine.checkQueue.waiting === 1, "the first product's check to queue", 30_000, { during: pending });

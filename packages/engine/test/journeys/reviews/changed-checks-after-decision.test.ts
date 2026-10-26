@@ -4,7 +4,7 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { coordinator, Fakes, itemOf, makeProduct, removeDir, tempDir, until } from "../../support.js";
-import { commandText } from "../../../src/checks.js";
+import { commandInputText } from "../../../src/checks.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -18,7 +18,7 @@ it("keeps the early decision through restart, then runs changed checks and accep
   const log = join(root, "check-runs");
   const check = join(root, "check.ts");
   writeFileSync(check, `import { appendFileSync } from "node:fs"; appendFileSync(process.argv[2], process.argv[3] + "\\n");`);
-  const definitions = (name: string) => [{ name: "Tests", command: commandText([process.execPath, check, log, name]) }];
+  const definitions = (name: string) => [{ name: "Tests", command: commandInputText([process.execPath, check, log, name]) }];
   try {
     const productId = await engine.addProduct(await makeProduct(root));
     engine.setProductDelivery(productId, "local", true);
