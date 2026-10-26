@@ -178,6 +178,15 @@ async function fixture(pair = false, roleId = "code-reviewer", trace?: FixtureTr
   return { engine, task, scope, stage, fakes, choose,
     first: () => lifetime.run(engine, first),
     round: (...args: Parameters<typeof round>) => lifetime.run(engine, () => round(...args)),
+    // Expected rejection assertions belong inside the owned operation. Even an inspector that
+    // fails immediately cannot release ownership while the real round is still settling.
+    withRound: <T>(number: number, inspectRound: (raw: ReturnType<typeof round>) => T | Promise<T>, peers: Record<string, string> = {}) => lifetime.run(engine, async () => {
+      const raw = round(number, peers);
+      const inspection = Promise.resolve().then(() => inspectRound(raw));
+      const [, inspected] = await Promise.allSettled([raw, inspection]);
+      if (inspected.status === "rejected") throw inspected.reason;
+      return inspected.value;
+    }),
     run: <T>(start: () => T | Promise<T>) => lifetime.run(engine, async () => start()),
     diagnostics, closeTrace, close };
   }), close);

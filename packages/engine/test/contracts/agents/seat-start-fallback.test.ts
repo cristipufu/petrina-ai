@@ -13,7 +13,9 @@ for (const pair of [false, true]) it(`records the attempted ${pair ? "parallel" 
       const command = f.engine.options.agentCommand!;
       f.engine.options.agentCommand = (profile) => profile.toolId === "claude-code"
         ? [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), "--wont-start"] : command(profile);
-      expect(await rejectionOf(f.round(1))).toMatchObject({ toolId: "claude-code", status: "wont-start" });
+      await f.withRound(1, async raw => {
+        expect(await rejectionOf(raw)).toMatchObject({ toolId: "claude-code", status: "wont-start" });
+      });
       expect(f.task.timeline.filter((entry) => entry.tone === "milestone" && entry.roleId === f.stage.roleId && entry.profileId === "opus-high")).toHaveLength(1);
       expect(f.task.session.filter((entry) => entry.from === "system" && entry.profileId === "opus-high" && entry.text.includes("joined ·"))).toHaveLength(1);
       expect(f.task.journey!.flatMap((step) => step.agentInputs ?? []).filter((input) => input.profileId === "opus-high")).toHaveLength(0);
