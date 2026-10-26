@@ -18,7 +18,7 @@ const observed = <T>(work: Promise<T>): Promise<Observed<T>> => work.then(value 
 /** Actor-free provider sessions; only the main read-only restoration cases need real private Git. */
 export function turnCleanupFixtures() {
   const closers = new Set<() => Promise<void>>();
-  async function fixture(input: { stop?: StopReply; bodyFailure?: { error: unknown }; nativeOpening?: true } = {}) {
+  async function fixture(input: { stop?: StopReply; bodyFailure?: { error: unknown }; nativeOpening?: true; reply?: ConstructorParameters<typeof ScriptedAgents>[0] } = {}) {
     const root = tempDir("petrina-turn-cleanup-"), owner = directDrivers(root), abort = new AbortController();
     const restores: (() => void)[] = [], originalStops: (() => Promise<boolean>)[] = [], operations: Promise<unknown>[] = [];
     const cleanupFailure = new Error("The actual scripted session's stop rejected");
@@ -62,8 +62,9 @@ export function turnCleanupFixtures() {
     closers.add(finish);
     return setupWithCleanup(async () => {
       const starting = owner.prepare(async () => {
-        const agents = new ScriptedAgents(prompt => {
+        const agents = new ScriptedAgents((prompt, signal, callbacks) => {
           prompts++;
+          if (input.reply) return input.reply(prompt, signal, callbacks);
           writeFileSync(join(prompt.cwd, "README.md"), "Changed by the read-only Tester\n");
           if (input.bodyFailure) throw input.bodyFailure.error;
           return scriptedResult({ summary: "The controlled acceptance hand-back is complete", checks: [], learnings: [] });
