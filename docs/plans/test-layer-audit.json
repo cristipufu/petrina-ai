@@ -1532,7 +1532,8 @@
         "packages/engine/test/contracts/context/held-acceptance.test.ts",
         "packages/engine/test/contracts/context/legacy-acceptance.test.ts",
         "packages/storage/test/contracts/acceptance/repair-recovery.test.ts",
-        "packages/engine/test/contracts/testing/acceptance-repair-ownership.test.ts"
+        "packages/engine/test/contracts/testing/acceptance-repair-ownership.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/repair-reviews.test.ts"
       ],
       "layer": "journeys",
       "area": "acceptance",
@@ -4717,7 +4718,10 @@
         "packages/engine/test/contracts/acceptance/reopened-proof-evidence.test.ts",
         "packages/engine/test/contracts/acceptance/proof-run-versions.test.ts",
         "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts",
-        "packages/orchestrator/test/orchestration/acceptance/proof-run-versions.test.ts"
+        "packages/orchestrator/test/orchestration/acceptance/proof-run-versions.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/proof-freshness.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/proof-repair-routing.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/restored-proof.test.ts"
       ],
       "layer": "contracts",
       "area": "acceptance",
@@ -5026,7 +5030,10 @@
         "packages/engine/test/journeys/context/shared-edits.test.ts",
         "packages/engine/test/journeys/acceptance/shared-exhaustion.test.ts",
         "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts",
-        "packages/orchestrator/test/orchestration/delivery/release-family.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/release-family.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/shared-ownership.test.ts",
+        "packages/core/test/rules/repositories/ownership.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/release-preview-family.test.ts"
       ],
       "layer": "journeys",
       "area": "repositories",
@@ -5079,7 +5086,8 @@
         "packages/engine/test/contracts/delivery/release-preparation.test.ts",
         "packages/engine/test/contracts/delivery/shared-confirmation.test.ts",
         "packages/engine/test/contracts/guidance/shared-lessons.test.ts",
-        "packages/engine/test/contracts/checks/shared-episodes.test.ts"
+        "packages/engine/test/contracts/checks/shared-episodes.test.ts",
+        "packages/core/test/rules/repositories/ownership.test.ts"
       ],
       "layer": "contracts",
       "area": "repositories",
@@ -5598,7 +5606,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/runtime-wait-prepared-delivery.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/delivery/prerequisite-candidate.test.ts"
+        "packages/engine/test/journeys/delivery/prerequisite-candidate.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/prerequisite-family.test.ts"
       ],
       "layer": "journeys",
       "area": "runtime",
@@ -6192,6 +6201,10 @@
             "ignores a superseded single-product result (failed: true) without releasing newer validation"
           ]
         }
+      ],
+      "splitFiles": [
+        "packages/engine/test/contracts/sources/validation.test.ts",
+        "packages/orchestrator/test/orchestration/sources/addition-folders.test.ts"
       ]
     },
     {
@@ -6260,7 +6273,8 @@
         "packages/engine/test/contracts/sources/unavailable.test.ts",
         "packages/engine/test/journeys/sources/check-recovery.test.ts",
         "packages/engine/test/contracts/sources/cancellation.test.ts",
-        "packages/engine/test/journeys/sources/conflicts.test.ts"
+        "packages/engine/test/journeys/sources/conflicts.test.ts",
+        "packages/orchestrator/test/orchestration/sources/approved-permutations.test.ts"
       ],
       "layer": "orchestration",
       "area": "context",
@@ -6580,7 +6594,8 @@
       "from": "packages/engine/test/tester.test.ts",
       "splitFiles": [
         "packages/engine/test/journeys/acceptance/tester-evidence.test.ts",
-        "packages/engine/test/contracts/acceptance/read-only-restoration.test.ts"
+        "packages/engine/test/contracts/acceptance/read-only-restoration.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/tester-evidence.test.ts"
       ],
       "layer": "journeys",
       "area": "acceptance",
