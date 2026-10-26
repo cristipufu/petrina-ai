@@ -6731,7 +6731,9 @@
       "splitFiles": [
         "packages/core/test/rules/delivery/release-version.test.ts",
         "packages/engine/test/contracts/formats/version-files.test.ts",
-        "packages/engine/test/journeys/delivery/release-versions.test.ts"
+        "packages/engine/test/journeys/delivery/release-versions.test.ts",
+        "packages/engine/test/contracts/delivery/release-versions.test.ts",
+        "packages/engine/test/contracts/testing/release-version-ownership.test.ts"
       ],
       "layer": "rules",
       "area": "delivery",
@@ -6750,6 +6752,21 @@
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
         "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
         "fullQualification": "8f7e2893"
+      },
+      "releaseBoundaryCost": {
+        "base": "a9b473b7",
+        "originalNativeCases": 15,
+        "approvedBoundaryCases": 10,
+        "retainedFullJourneys": 5,
+        "originalCompleteAssertionChainsPreserved": 81,
+        "newNativeOwnershipControls": 3,
+        "originalObservedLaunchesBefore": 1925,
+        "originalObservedLaunchesAfter": 1612,
+        "newControlLaunches": 9,
+        "allObservedStartsAndExits": 1621,
+        "artifact": "workstreams/release-version-cost-next/handoff.json",
+        "review": "Real Git/source/checks/native release error routing and publication/refusal retained. Native hidden-before-execution premise passed. Canonical root/generation ownership replaces blind removal; three failure/late admission controls pass.",
+        "limits": "Historical cross-revision count comparison; no full-suite speed/platform/global-orphan claim."
       }
     },
     {
@@ -7732,6 +7749,18 @@
       },
       "artifacts": "full-5514ef7a/manifest-verification.json; case-reconciliation.json",
       "limits": "Mac only; no post-change whole-suite resource count or speed improvement. Setup-phase2/API/UI, cost target, required native platforms and generic protected delivery remain open."
+    },
+    "release-version-boundary-focused": {
+      "authorNative": 18,
+      "failed": 0,
+      "skipped": 0,
+      "normalNativeWorkers": 14,
+      "rootEngineTypes": "passed",
+      "authorConventions": "passed",
+      "originalCases": 15,
+      "assertionChains": 81,
+      "artifacts": "workstreams/release-version-cost-next/{qualification.json,runtime-reconciliation.json,native-resources-summary.json,root-integrated-source.json}",
+      "limits": "Native focused Mac only; console99 expectations and raw JUnit17 kept separately. Full integrated qualification remains due."
     }
   },
   "resourceAudit": {

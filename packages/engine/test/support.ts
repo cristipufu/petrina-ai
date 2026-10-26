@@ -217,9 +217,11 @@ export interface World {
  * A product whose GitHub address is acme/demo, with a folder standing in for GitHub, a fake gh and scripted agents.
  * Scripted agents get no browser; with `browser`, they get real ones in the world's own browser folder.
  */
-export async function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256"; browser?: boolean } = {}): Promise<World> {
+export async function makeWorld(name: string, options: { version?: string; address?: string; objectFormat?: "sha1" | "sha256"; browser?: boolean;
+  owner?: { root: string; open(dataDir: string, options: EngineOptions): Engine };
+} = {}): Promise<World> {
   const seed = await repositorySeed(options.version, false, options.objectFormat);
-  const dir = mkdtempSync(join(tmpdir(), `petrina-${name}-`));
+  const dir = options.owner?.root ?? mkdtempSync(join(tmpdir(), `petrina-${name}-`));
   const remote = join(dir, "github.git");
   const clone = join(dir, "clone");
   cpSync(seed.origin, remote, { recursive: true });
@@ -232,6 +234,7 @@ export async function makeWorld(name: string, options: { version?: string; addre
   writeFixtureJson(scriptPath, {});
   const data = join(dir, "data");
   const browsers = options.browser ? testBrowserRoot() : undefined;
+  const open = (dataDir: string, merged: EngineOptions) => options.owner ? options.owner.open(dataDir, merged) : new Engine(dataDir, merged);
   return {
     dir,
     clone,
@@ -239,7 +242,7 @@ export async function makeWorld(name: string, options: { version?: string; addre
     data,
     initial: seed.head,
     ...(browsers ? { browsers } : {}),
-    start: (extra = {}) => new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...(browsers ? { browser: true, browserTempRoot: browsers } : {}), ...extra }),
+    start: (extra = {}) => open(data, { agentCommand: () => [process.execPath, FAKE_AGENT, `--script=${scriptPath}`], gh: [process.execPath, FAKE_GH, ghState, remote], remote, awakeObserver: () => {}, ...(browsers ? { browser: true, browserTempRoot: browsers } : {}), ...extra }),
     github: () => readGitHub(ghState),
     setGitHub: (change) => updateGitHub(ghState, change),
     script: () => JSON.parse(readFileSync(scriptPath, "utf8")) as AgentScript,
