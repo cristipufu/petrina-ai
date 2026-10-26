@@ -7490,7 +7490,18 @@
       "review": "workstreams/check-environment-phase1-independent-review/handoff.json; rootcheck-environment-phase1-integrated-review.json",
       "preservation": "138oldmatcher sites/22registration guards/names/deadlines/loops retained; additive native pipeline after exact named metadata/hash insertions. Authorized existing Pass child stderr enrichment preserves old stdout/exit and every old assertion.",
       "limits": "Observations/schema only. No setup declaration, preflight, live environment token/reuse authority/UI or CI implemented by this phase.",
-      "heldRisk": "Existing execution.test registration cleanup still signals a stored PID; no further execution-owner/full runs before its independent handle fix. This risk is not silently absorbed into metadata proof."
+      "heldRisk": "Existing execution.test registration cleanup still signals a stored PID; no further execution-owner/full runs before its independent handle fix. This risk is not silently absorbed into metadata proof.",
+      "heldRiskResolvedBy": "registration-cleanup"
+    },
+    "registration-cleanup": {
+      "source": "31f4346c63081e2db06eaecdfd35c4fd2c1119c16702b8762d9d536c27e24b8c",
+      "rootNative": 15,
+      "repositoryTypesExit": 0,
+      "conventionsExit": 0,
+      "review": "workstreams/registration-cleanup-independent-review/handoff-v4.json",
+      "preservation": "All14original runtime names and79original matcher sites retained; one actual held-log preparation/no-child case added.",
+      "newBoundary": "Actualheldlogpreparation joinsbefore disposal and startsnochildunderclosedadmission",
+      "limits": "Other legacy timeout/cancel cases need independentfixture handles; fast24 serialcase needs nonvacuous cardinality and targeted native/policy decomposition. No claim those are fixed."
     }
   },
   "resourceAudit": {

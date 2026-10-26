@@ -2,34 +2,61 @@ import { describe as originalDescribe } from "bun:test";
 import { afterAll, expect, it, spyOn } from "bun:test";
 
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, writeFileSync } from "node:fs";
+import * as files from "node:fs/promises";
 import { join } from "node:path";
 
 import { childState } from "@petrina/platform/process-tree";
+import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { isCheckExecutorFacts, isCheckOutputIdentity } from "@petrina/core";
 
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
+import { FixtureOperations } from "@petrina/test-support/fixture-operations";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { runChecks, checkCommandOutcome, powerLogSleep, heldMachineRecords } from "../../fixtures/check-runner.js";
 import { checkExecutionFixture } from "../../fixtures/check-execution.js";
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 const root = (prefix: string) => { const dir = tempDir(prefix); roots.push(dir); return dir; };
+const arm = (expired: () => void, ms: number) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
+const dispose = (dir: string) => {
+  removeDir(dir);
+  try { lstatSync(dir); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  throw new Error(`The check fixture could not remove ${dir}`);
+};
+function checkOwner(dir: string, stop: () => void | Promise<void>) {
+  let closing = false;
+  const operations = new FixtureOperations({
+    arm, allowanceMs: CLEANUP_MS * SLOW, label: `Check fixture at ${dir}`,
+    stop: () => { closing = true; return stop(); }, dispose: () => dispose(dir),
+  });
+  return {
+    run: <T>(start: () => Promise<T>) => operations.run(start),
+    close: () => operations.close(),
+    beforeStart: () => !closing,
+  };
+}
 
 originalDescribe("a product's checks", () => {
 it("reports each check's start and result while another check is still running", async () => {
-    const dir = root("petrina-check-progress-");
+    const dir = tempDir("petrina-check-progress-");
     const release = join(dir, "release");
     const updates: { index: number; kind: string; at: number }[] = [];
     const held = `import { existsSync } from "node:fs"; while (!existsSync(process.argv[1])) await Bun.sleep(20);`;
-    const running = runChecks(dir, [{ name: "Quick", argv: ["git", "--version"] }, { name: "Held", argv: [process.execPath, "-e", held, release] }], process.env, 30_000 * SLOW, undefined, undefined, undefined, (event) => updates.push(event));
-    try {
-      await waitFor(() => updates.some((event) => event.index === 0 && event.kind === "finished") && updates.some((event) => event.index === 1 && event.kind === "started"), "one completed check and another still running");
+    const owner = checkOwner(dir, () => { writeFileSync(release, "go"); });
+    await setupWithCleanup(async () => {
+      const running = owner.run(() => runChecks(dir, [{ name: "Quick", argv: ["git", "--version"] }, { name: "Held", argv: [process.execPath, "-e", held, release] }], process.env, 30_000 * SLOW, undefined, undefined, undefined, (event) => updates.push(event), undefined, undefined, undefined, owner.beforeStart));
+      await waitFor(() => updates.some((event) => event.index === 0 && event.kind === "finished") && updates.some((event) => event.index === 1 && event.kind === "started"), "one completed check and another still running", undefined, { during: running });
       expect(updates.some((event) => event.index === 1 && event.kind === "finished")).toBe(false);
-    } finally { writeFileSync(release, "go"); }
-    const results = await running;
-    expect(results.every((run) => run.ok)).toBe(true);
-    expect(updates.map((event) => `${event.index}:${event.kind}`)).toEqual(["0:started", "0:finished", "1:started", "1:finished"]);
+      writeFileSync(release, "go");
+      const results = await running;
+      expect(results.every((run) => run.ok)).toBe(true);
+      expect(updates.map((event) => `${event.index}:${event.kind}`)).toEqual(["0:started", "0:finished", "1:started", "1:finished"]);
+    }, () => owner.close());
+    await owner.close();
   });
 });
 
@@ -79,26 +106,56 @@ it("reports what really happened: passed, failed, or could not start", async () 
 
 originalDescribe("a product's checks", () => {
 for (const mode of ["launch failure", "successful registration", "registration failure"] as const) it.skipIf(process.platform === "win32" && mode === "registration failure")(`distinguishes ${mode} at the launched-process callback`, async () => {
-    const dir = root("petrina-check-registration-");
+    const dir = tempDir("petrina-check-registration-");
     const ready = join(dir, "ready"), program = join(dir, "check.ts");
-    writeFileSync(program, `import { writeFileSync, renameSync } from "node:fs";
+    const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
+    let pid: number | undefined, returned = false;
+    let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined, restore = () => {};
+    const owner = checkOwner(dir, async () => {
+      released.resolve();
+      const errors: unknown[] = [];
+      try { restore(); } catch (error) { errors.push(error); }
+      try {
+        if (pid !== undefined && !child) throw new Error("The registration fixture did not capture its launched child");
+        if (child && await stopOwnedProcess(child, { graceMs: CLEANUP_MS * SLOW, forceMs: CLEANUP_MS * SLOW }, arm) !== "confirmed")
+          throw new Error("The registration fixture's actual child did not stop");
+      } catch (error) { errors.push(error); }
+      if (errors.length) throw new AggregateError(errors, "Registration fixture cleanup could not be confirmed");
+    });
+    await setupWithCleanup(async () => {
+      writeFileSync(program, `import { writeFileSync, renameSync } from "node:fs";
 writeFileSync(${JSON.stringify(ready)} + ".tmp", "ready"); renameSync(${JSON.stringify(ready)} + ".tmp", ${JSON.stringify(ready)});
 console.log("Original command output");
 ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.exit(0);"}`);
-    const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
-    let pid: number | undefined, returned = false;
-    const running = runChecks(dir, [{ name: "Registered check", argv: mode === "launch failure" ? ["petrina-no-such-program"] : [process.execPath, program] }],
+      const command = mode === "launch failure" ? ["petrina-no-such-program"] : [process.execPath, program];
+      const nativeSpawn = Bun.spawn.bind(Bun);
+      const dispatch = ((...args: unknown[]) => {
+        const first = args[0];
+        const argv = Array.isArray(first) ? first : first && typeof first === "object" && "cmd" in first ? first.cmd : undefined;
+        const options = Array.isArray(first) ? args[1] : first;
+        const matches = Array.isArray(argv) && argv.length === command.length && argv.every((value, index) => value === command[index]) &&
+          options && typeof options === "object" && "cwd" in options && options.cwd === dir;
+        const started = Reflect.apply(nativeSpawn, undefined, args);
+        if (matches) {
+          const owned = started as Bun.Subprocess<"ignore", "pipe", "pipe">;
+          child = owned; void owned.exited.catch(() => undefined);
+        }
+        return started;
+      }) as typeof Bun.spawn;
+      const spawning = spyOn(Bun, "spawn");
+      restore = () => spawning.mockRestore();
+      spawning.mockImplementation(dispatch);
+      const running = owner.run(() => runChecks(dir, [{ name: "Registered check", argv: command }],
       process.env, 30_000 * SLOW, undefined, join(dir, "logs"), async () => {
         entered.resolve(); await released.promise;
         return `${pid} ${process.pid} S\n`; // The fixture's single owned process cannot fork or finish by itself.
       }, undefined, undefined, launched => {
         pid = launched;
         if (mode === "registration failure") throw new Error("Client registration unavailable");
-      }).then(runs => { returned = true; return runs; });
-    try {
+      }, undefined, owner.beforeStart).then(runs => { returned = true; return runs; }));
       if (mode === "registration failure") {
         await Promise.race([entered.promise, running.then(() => { throw new Error("The runner returned before stopping its launched process"); })]);
-        await waitFor(() => existsSync(ready), "the owned command to be running while cleanup is held");
+        await waitFor(() => existsSync(ready), "the owned command to be running while cleanup is held", undefined, { during: running });
         expect(returned).toBe(false); expect(pid).toBeDefined(); expect(() => process.kill(pid!, 0)).not.toThrow();
         released.resolve();
       }
@@ -111,7 +168,7 @@ ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.ex
         expect(pid).toBeUndefined(); expect(run!.ok).toBe(false); expect(run!.interrupted).toBeUndefined();
         expect(run!.output).toStartWith("Could not start:"); expect(checkCommandOutcome(run)).toBe("unavailable");
       } else {
-        expect(pid).toBeDefined(); expect(await childState(pid!)).toBe("ended");
+        expect(pid).toBeDefined(); expect(child?.pid).toBe(pid); expect(await childState(pid!)).toBe("ended");
         expect(run!.ok).toBe(mode === "successful registration");
         expect(checkCommandOutcome(run)).toBe(mode === "successful registration" ? "passed" : "unfinished");
         if (mode === "registration failure") {
@@ -119,14 +176,57 @@ ${mode === "registration failure" ? "setInterval(() => {}, 1000);" : "process.ex
           expect(run!.output).not.toContain("Could not start");
         } else { expect(run!.logComplete).toBe(true); expect(run!.output).toContain("Original command output"); }
       }
-    } finally {
+    }, () => owner.close());
+    await owner.close();
+  });
+});
+
+originalDescribe("a product's checks", () => {
+it("closes fixture admission while diagnostic creation is still pending", async () => {
+    const dir = tempDir("petrina-check-admission-"), logs = join(dir, "logs"), forbidden = join(dir, "never-launch");
+    const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
+    let restoreDirectory = () => {}, restoreSpawn = () => {}, forbiddenStarts = 0;
+    const owner = checkOwner(dir, () => {
       released.resolve();
-      if (pid !== undefined) {
-        try { process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL"); } catch { /* The owned process already ended. */ }
-        await waitFor(async () => await childState(pid!) === "ended", "the owned registration-test process to end");
-      }
-      await running;
-    }
+      restoreDirectory();
+    });
+    const close = async () => {
+      const errors: unknown[] = [];
+      try { await owner.close(); } catch (error) { errors.push(error); }
+      try { restoreSpawn(); } catch (error) { errors.push(error); }
+      if (errors.length) throw new AggregateError(errors, "The held diagnostic fixture could not close");
+    };
+    await setupWithCleanup(async () => {
+      const nativeDirectory = files.mkdir.bind(files), nativeSpawn = Bun.spawn.bind(Bun);
+      const directories = spyOn(files, "mkdir");
+      restoreDirectory = () => directories.mockRestore();
+      directories.mockImplementation((async (...args: unknown[]) => {
+        if (args[0] === logs) { entered.resolve(); await released.promise; }
+        return Reflect.apply(nativeDirectory, undefined, args);
+      }) as typeof files.mkdir);
+      const spawning = spyOn(Bun, "spawn");
+      restoreSpawn = () => spawning.mockRestore();
+      spawning.mockImplementation(((...args: unknown[]) => {
+        const first = args[0];
+        const argv = Array.isArray(first) ? first : first && typeof first === "object" && "cmd" in first ? first.cmd : undefined;
+        if (Array.isArray(argv) && argv[0] === forbidden) {
+          forbiddenStarts++;
+          throw new Error("The closed fixture attempted to launch its command");
+        }
+        return Reflect.apply(nativeSpawn, undefined, args);
+      }) as typeof Bun.spawn);
+      const running = owner.run(() => runChecks(dir, [{ name: "Not admitted", argv: [forbidden] }], process.env, 30_000 * SLOW,
+        undefined, logs, undefined, undefined, async () => "", undefined, undefined, owner.beforeStart));
+      await Promise.race([entered.promise, running.then(() => { throw new Error("The run returned before its diagnostic creation was held"); })]);
+      const closing = owner.close();
+      void closing.catch(() => undefined);
+      expect(existsSync(dir)).toBe(true);
+      expect(await running).toEqual([]);
+      await closing;
+      expect(forbiddenStarts).toBe(0);
+      expect(existsSync(dir)).toBe(false);
+    }, close);
+    await close();
   });
 });
 
