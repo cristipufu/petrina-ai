@@ -7640,13 +7640,105 @@
       "ps": 4,
       "artifacts": "workstreams/delivery-workflow-next/qualification.json; native-resources-summary.json; delivery-workflow-integrated-source.json; learning-delivery-final-*",
       "limits": "Console334expectations and raw JUnit264assertions retained separately; no post-change complete suite/resource/native-platform result."
+    },
+    "complete-5514ef7a": {
+      "source": {
+        "head": "5514ef7aaf545527b2de4c9c67288be3bd6e87b6",
+        "tree": "971419bfaf1ff57a44dc7021b19ac49c6a0a0dae",
+        "fingerprint": "ee79ee46f483e4e7f78cfedeeaadeec449340a8665c1ad1e64f438ba076a37bd",
+        "clean": true
+      },
+      "environment": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "bun": "1.4.2"
+      },
+      "normalNativeWorkers": 14,
+      "requiredFiles": 876,
+      "actualFiles": 876,
+      "executions": 4,
+      "workspaces": 9,
+      "ms": 242295,
+      "counts": {
+        "tests": 5584,
+        "passed": 5573,
+        "failed": 0,
+        "skipped": 11
+      },
+      "rawCaseCount": 5584,
+      "perWorkspace": {
+        "packages/core": {
+          "tests": 1320,
+          "passed": 1320,
+          "failed": 0,
+          "skipped": 0
+        },
+        "apps/desktop": {
+          "tests": 572,
+          "passed": 572,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/orchestrator": {
+          "tests": 508,
+          "passed": 508,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/agent-runtime": {
+          "tests": 250,
+          "passed": 247,
+          "failed": 0,
+          "skipped": 3
+        },
+        "packages/engine": {
+          "tests": 2298,
+          "passed": 2291,
+          "failed": 0,
+          "skipped": 7
+        },
+        "packages/repositories": {
+          "tests": 126,
+          "passed": 126,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/test-support": {
+          "tests": 325,
+          "passed": 325,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/platform": {
+          "tests": 140,
+          "passed": 139,
+          "failed": 0,
+          "skipped": 1
+        },
+        "packages/storage": {
+          "tests": 45,
+          "passed": 45,
+          "failed": 0,
+          "skipped": 0
+        }
+      },
+      "report": ".test-results/2026-10-26T04-08-18-620Z-913fdfa3/results.json",
+      "rawIdentityPreservation": {
+        "previous": 5556,
+        "identical": 5522,
+        "reviewedChanged": 34,
+        "addedOrTransferred": 62,
+        "netNew": 28
+      },
+      "artifacts": "full-5514ef7a/manifest-verification.json; case-reconciliation.json",
+      "limits": "Mac only; no post-change whole-suite resource count or speed improvement. Setup-phase2/API/UI, cost target, required native platforms and generic protected delivery remain open."
     }
   },
   "resourceAudit": {
     "status": "in progress",
     "source": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",
     "report": ".test-results/resources/2026-10-26T02-23-04-514Z-a30934be/summary.json",
-    "remainingMeasuredProblem": "92561Git launches (-783/0.84% fromf3), required full227494ms/5545passes atnormal14workers. Actual cost exit remains open. Caller locations cover92482Git starts;79 unavailable. Larger actual learning-merge/delivery controller families are next; do not substitute file moves or scripted observations for native proof.",
+    "remainingMeasuredProblem": "Latest complete normal14 Mac source5514:5573passes/11existing skips/0fail242295ms. Last resource sourcecfdb still92561Git and103707observed PID launches. Focused Learning and Delivery cuts are integrated/qualified but no post-change full resource result or cost exit. Trace and reduce remaining major native cost without weaker coverage.",
     "exitCriteria": [
       "Trace every top20 expensive case to actual fixture/production callers",
       "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",
