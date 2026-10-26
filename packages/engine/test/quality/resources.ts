@@ -5,6 +5,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cpus } from "node:os";
 import { runCommand, CommandFailure, type Start, type Started } from "@petrina/test-support/commands";
+import { runSettlements } from "@petrina/test-support/run-settlement";
 import { createTestRun } from "@petrina/test-support/environment";
 import { SUITE_RUN_TIMEOUT_MS } from "@petrina/test-support/run-process";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
@@ -66,12 +67,14 @@ if (args.length) {
   const folder = join(ROOT, ".test-results", "resources", `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`);
   mkdirSync(folder, { recursive: true });
   console.log(`Measuring the required full suite with normal workers. Resource artifacts: ${folder}`);
-  const owned = createTestRun(), controller = new AbortController();
-  const onInt = () => controller.abort("SIGINT"), onTerm = () => controller.abort("SIGTERM");
+  const owned = createTestRun(), controller = new AbortController(), settlements = runSettlements();
+  let interrupted: number | undefined;
+  const onInt = () => { interrupted = 130; controller.abort("SIGINT"); }, onTerm = () => { interrupted = 143; controller.abort("SIGTERM"); };
   process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
   const began = performance.now();
-  let child: ReturnType<typeof Bun.spawn> | undefined, finished = false, removable = true;
+  let child: ReturnType<typeof Bun.spawn> | undefined, finished = false;
   let code: number | undefined, failure: string | undefined;
+  let fullExitCode: number | null | undefined;
   const errors: string[] = [];
   const logBytes = { stdout: 0, stderr: 0 }, outputTruncated = new Set<string>();
   const observerTails = { stdout: "", stderr: "" };
@@ -84,7 +87,7 @@ if (args.length) {
       get exitCode() { return current.exitCode; }, get signalCode() { return current.signalCode as string | null; },
       ...(options.detached ? { interrupt: (signal: "SIGINT" | "SIGTERM") => current.kill(signal) } : {}), kill: signal => current.kill(signal) };
   };
-  const full = runCommand([process.execPath, "--no-env-file", join(ROOT, "packages/engine/test/quality/full-run.ts")], {
+  const full = settlements.observe({ run: () => runCommand([process.execPath, "--no-env-file", join(ROOT, "packages/engine/test/quality/full-run.ts")], {
     cwd: ROOT, env: { ...owned.env, PETRINA_TEST_RESOURCE_DIR: folder, PETRINA_TEST_RESOURCE_PARENT: String(process.pid) }, timeoutMs: SUITE_RUN_TIMEOUT_MS + 30_000, signal: controller.signal, start,
     retainOutput: false,
     onOutput: (text, stream) => {
@@ -96,10 +99,15 @@ if (args.length) {
       if (remaining) { const kept = chunk.subarray(0, remaining); appendFileSync(join(folder, `full.${stream}.log`), kept); logBytes[stream] += kept.length; }
       return undefined;
     },
-  }).then(result => { code = result.code; }, error => {
-    failure = error instanceof Error ? error.message : String(error);
-    if (error instanceof CommandFailure && error.cleanup === "unconfirmed") removable = false;
-    code = controller.signal.aborted ? controller.signal.reason === "SIGINT" ? 130 : 143 : 1;
+  }) }).then(observation => {
+    if (observation.kind === "completed") { fullExitCode = observation.result.code; code = observation.result.code; }
+    else {
+      const error = observation.error;
+      if (error instanceof CommandFailure) fullExitCode = error.code ?? null;
+      failure = error instanceof Error ? error.message : String(error);
+      code = interrupted ?? 1;
+      if (!observation.safeToDispose) controller.abort("Full test command settlement was not confirmed");
+    }
   }).finally(() => { finished = true; });
 
   let samples = 0, sampleBytes = 0, peakRssBytes = 0, peakProcesses = 0, peakRollingCpuPercent: number | undefined;
@@ -111,7 +119,18 @@ if (args.length) {
         const final = finished;
         const tick = performance.now();
         try {
-          const observation = await runCommand(plan.argv, { cwd: ROOT, env: { ...owned.env, ...plan.env }, timeoutMs: 3_000, signal: controller.signal });
+          const observed = await settlements.observe({ run: () => runCommand(plan.argv, { cwd: ROOT, env: { ...owned.env, ...plan.env }, timeoutMs: 3_000, signal: controller.signal }) });
+          if (observed.kind === "rejected") {
+            if (!observed.safeToDispose) {
+              const detail = observed.error instanceof Error ? observed.error.message : String(observed.error);
+              errors.push(`Process sampler settlement was not confirmed: ${detail}`);
+              // The full command is still an actual bounded owner; stop it before doing further sampling.
+              controller.abort("Process sampler settlement was not confirmed");
+              return;
+            }
+            throw observed.error;
+          }
+          const observation = observed.result;
           if (observation.code !== 0) throw new Error(`Process sampler exited ${observation.code}.`);
           const selected = tree.select(parseProcessMetrics(observation.stdout, plan.format));
           if (final) afterExitProcesses = selected.processes;
@@ -136,16 +155,21 @@ if (args.length) {
     await Promise.all([full, child ? sample() : Promise.resolve()]);
     let rootUsage: unknown;
     try { rootUsage = resourceUsageRecord(child?.resourceUsage()); } catch { /* An unavailable counter remains absent. */ }
-    writeFixtureJson(join(folder, "run.json"), { kind: "resource-diagnostic", deliveryEligible: false, command: "bun run test", workers: "unchanged defaults", code, failure, ms: performance.now() - began,
+    const diagnosticCode = interrupted ?? (settlements.safeToDispose ? code ?? 1 : 1);
+    writeFixtureJson(join(folder, "run.json"), { kind: "resource-diagnostic", deliveryEligible: false, command: "bun run test", workers: "unchanged defaults", code: diagnosticCode, fullExitCode, failure, ms: performance.now() - began,
       instrumentation: { gitCallers: process.env.PETRINA_TEST_RESOURCE_GIT_CALLERS === "1" },
+      privateEnvironment: settlements.safeToDispose ? "disposable" : "retained",
       environment: { platform: process.platform, arch: process.arch, bun: Bun.version, logicalCpus: cpus().length }, rootUsage, observerErrors, outputTruncated: [...outputTruncated], afterExitProcesses,
       sampling: { intervalMs: 1_000, samples, errors, ...(samples ? { peakAggregateRssBytes: peakRssBytes, peakObservedProcessEntries: peakProcesses, peakRollingCpuPercent } : {}),
         limits: "One-second samples miss short-lived children. Present process entries include zombies. RSS sums shared pages. ps CPU is rolling; Windows exposes cumulative CPU instead. Processes are associated by observed parent/birth identities; same-second PID reuse between samples can be indistinguishable." } }, 2);
-    await report(folder);
-    process.exitCode = code ?? 1;
+    if (settlements.safeToDispose) await report(folder);
+    else {
+      if (failure !== undefined) console.error(failure);
+      for (const error of errors) console.error(error);
+    }
+    process.exitCode = interrupted ?? diagnosticCode;
   } finally {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-    if (removable) owned.close();
-    else console.error("Owned process cleanup could not be confirmed; retained its fixture folder for investigation.");
+    if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
   }
 }

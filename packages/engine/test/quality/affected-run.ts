@@ -11,6 +11,7 @@ import { fingerprint, impactPlan, isTest } from "./impact.js";
 import { NATIVE_SCOPE, nativeScriptProblems } from "./required-plan.js";
 import { feedbackFiles, feedbackPlan } from "./feedback-plan.js";
 import { executeTests } from "./execution.js";
+import { runSettlements } from "@petrina/test-support/run-settlement";
 
 const args = process.argv.slice(2);
 const usage = "Use bun run test:affected [--base <revision>]. This is early feedback; delivery still requires bun run test.";
@@ -49,10 +50,11 @@ const onInt = () => { interrupted = 130; controller.abort("SIGINT"); };
 const onTerm = () => { interrupted = 143; controller.abort("SIGTERM"); };
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
 const owned = createTestRun();
+const settlements = runSettlements();
 const coordinator = executionPlan.length ? new SuiteCoordinator(executionPlan, { revision, fingerprint: plan.fingerprint }) : undefined;
 try {
   await coordinator?.run(execution => executeTests(execution, {
-    root: ROOT, folder, expectedFiles: plan.selected, env: owned.env, signal: controller.signal,
+    root: ROOT, folder, expectedFiles: plan.selected, env: owned.env, signal: controller.signal, settlements,
     ...(execution.id === NATIVE_SCOPE.id ? { files: plan.selected.filter(file => execution.workspaces.some(workspace => file.startsWith(`${workspace}/`))) } : {}),
   }), controller.signal);
 } finally {
@@ -74,5 +76,7 @@ try {
       for (const work of records.results) console.log(`  ${work.workspace}: ${workspaceOutcome(work, records.executions.find(execution => execution.id === work.executionId)!)}`);
     }
     process.exitCode = interrupted ?? (stableInputs && (!coordinator || conclusion?.successful) ? 0 : 1);
-  } finally { owned.close(); }
+  } finally {
+    if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+  }
 }

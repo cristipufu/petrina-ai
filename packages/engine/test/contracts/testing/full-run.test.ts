@@ -1,14 +1,18 @@
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, afterEach, expect, it } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { namedCheckFailures } from "../../../src/related-check-evidence.js";
 import { removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "../../fixtures.js";
 import { TEST_WORKSPACES } from "../../quality/workspaces.js";
 import { CommandFailure, type Started } from "@petrina/test-support/commands";
-import { entryFixture as prepareEntry, prepareSuite, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn, type BrowserStandIn, type ObservationStandIn } from "../../fixtures/required-suite.js";
+import { entryFixture as prepareEntry, prepareSuite, installRunFailure, isolatedRunnerEnvironment, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn, type BrowserStandIn, type ObservationStandIn } from "../../fixtures/required-suite.js";
+import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
+const settlementCases = coordinatorLifetimes();
+afterEach(() => settlementCases.close());
+afterAll(() => settlementCases.close());
 
 function entryFixture(browser: BrowserStandIn = "ready", observation: ObservationStandIn = "unchanged"): string {
   const root = tempDir("petrina-quality-runner-"); roots.push(root);
@@ -37,6 +41,32 @@ function expectRuns(ran: string[], native: boolean) {
   expect(ran.slice(0, 3)).toEqual(["core", "desktop", "orchestrator"]);
   expect(ran.slice(3).sort()).toEqual(native ? ["agent-runtime", "engine", "platform", "repositories", "storage", "test-support"] : []);
 }
+
+for (const failure of ["unconfirmed", "undefined"] as const) it(`retains the full runner's private environment and starts no later workspace after ${failure} settlement`, async () => {
+  const root = tempDir("petrina-full-settlement-"), lifetime = await settlementCases.open(root);
+  try {
+    await lifetime.prepare(async () => {
+      prepareEntry(root); installRunFailure(root, failure);
+      await prepareSuite(root);
+      const child = lifetime.start(root, [join(root, "packages/engine/test/quality/full-run.ts")], isolatedRunnerEnvironment(root));
+      const result = await child.completion;
+      expect(result.code, result.stdout + result.stderr).toBe(1);
+      expect(existsSync(join(root, "runs.log"))).toBe(false);
+      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
+      expect(relative(root, observed.folder)).not.toStartWith("..");
+      expect(observed.folder).not.toBe(root);
+      expect(existsSync(observed.folder)).toBe(true);
+      expect(existsSync(observed.home)).toBe(true);
+      expect(existsSync(observed.browsers)).toBe(true);
+      expect(result.stderr).toContain("Test command settlement was not confirmed; private files retained");
+      const reported = result.stdout.match(/Reports: ([^\r\n]+)/)?.[1];
+      expect(reported).toBeDefined();
+      const folder = resolve(root, reported!);
+      expect(JSON.parse(readFileSync(join(folder, "results.json"), "utf8"))).toMatchObject({ scope: "partial", stableInputs: true });
+      expect(existsSync(join(folder, "timing-cache-updates.json"))).toBe(false);
+    });
+  } finally { await lifetime.close(); }
+});
 
 for (const args of [["test/chosen.test.ts"], ["--watch"], ["-t", "chosen"], ["--reporter=json"], ["--help", "chosen"], ["chosen", "-h"]]) it(`rejects root arguments before any repository scan: ${args.join(" ")}`, async () => {
   const root = entryFixture(), result = await runCommand([...command(root), ...args], { cwd: root, env: environment() });

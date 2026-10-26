@@ -1,16 +1,11 @@
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { bundledChromiumExecutablePath } from "./bundled-browser.js";
-import { CommandFailure, type CommandResult } from "@petrina/test-support/commands";
+import type { CommandResult } from "@petrina/test-support/commands";
+import type { RunObservation } from "@petrina/test-support/run-settlement";
+export { observeRun as observeBrowserPrerequisiteCommand } from "@petrina/test-support/run-settlement";
 
-export type BrowserPrerequisiteCommand = { kind: "completed"; result: CommandResult; safeToDispose: true }
-  | { kind: "rejected"; error: unknown; safeToDispose: boolean };
-
-/** A thrown starter/reader error is not proof that no helper exists. Require positive settlement authority. */
-export async function observeBrowserPrerequisiteCommand(effects: { run(): Promise<CommandResult> }): Promise<BrowserPrerequisiteCommand> {
-  try { return { kind: "completed", result: await effects.run(), safeToDispose: true }; }
-  catch (error) { return { kind: "rejected", error, safeToDispose: error instanceof CommandFailure && error.cleanup === "confirmed" }; }
-}
+export type BrowserPrerequisiteCommand = RunObservation<CommandResult>;
 
 export type BrowserFileObservation = { kind: "available-file" } | { kind: "missing" } | { kind: "not-file" }
   | { kind: "unavailable"; detail: string };

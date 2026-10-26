@@ -1,8 +1,9 @@
 // Bun's isolated test workers bypass process exit hooks. Own their temporary files outside the
-// workers, so even a failing run removes fixtures, private Git helpers, the run's Git configuration
-// and fixtures' private browser folders after every worker stops.
+// workers, reclaiming them after confirmed command settlement, including a completed failing run.
+// Uncertain command cleanup retains the private files instead of deleting resources still in use.
 import { createTestRun } from "./environment.js";
 import { runProcess, SUITE_RUN_TIMEOUT_MS } from "./run-process.js";
+import { runSettlements } from "./run-settlement.js";
 import { testSelection } from "./test-arguments.js";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -25,6 +26,7 @@ export function testCommand(args: readonly string[]): string[] {
 
 if (import.meta.main) {
   const owned = createTestRun();
+  const settlements = runSettlements();
   const controller = new AbortController();
   const onInt = () => controller.abort("SIGINT"), onTerm = () => controller.abort("SIGTERM");
   process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
@@ -37,15 +39,17 @@ if (import.meta.main) {
     const errors = inspected.flatMap((result, index) => result.status === "rejected"
       ? [`${selection.paths[index]}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
     if (errors.length) throw new Error(`No tests ran. Explicit test paths must exist in ${cwd}:\n${errors.join("\n")}`);
-    const outcome = await runProcess(testCommand(args), {
+    const observation = await settlements.observe({ run: () => runProcess(testCommand(args), {
       env: owned.env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal: controller.signal, output: "inherit",
-    });
+    }) });
+    if (observation.kind === "rejected") throw observation.error;
+    const outcome = observation.result;
     process.exitCode = outcome.kind === "interrupted" ? outcome.signal === "SIGINT" ? 130 : 143 : outcome.result.code;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = controller.signal.aborted ? controller.signal.reason === "SIGINT" ? 130 : 143 : 1;
   } finally {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-    owned.close();
+    if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
   }
 }

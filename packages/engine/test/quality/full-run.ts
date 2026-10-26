@@ -13,7 +13,7 @@ import { SuiteCoordinator } from "@petrina/test-support/suite-coordinator";
 import { executeTests } from "./execution.js";
 import { suiteRecords, workspaceOutcome } from "@petrina/test-support/suite-results";
 import { runCommand } from "@petrina/test-support/commands";
-import { observeBrowserPrerequisiteCommand } from "./browser-prerequisite.js";
+import { runSettlements } from "@petrina/test-support/run-settlement";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -41,15 +41,14 @@ const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted 
 const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM", 143);
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
 const owned = createTestRun();
-let prerequisiteCleanupUnconfirmed = false;
+const settlements = runSettlements();
 try {
-  const observedPrerequisite = await observeBrowserPrerequisiteCommand({
+  const observedPrerequisite = await settlements.observe({
     run: () => runCommand([process.execPath, "--no-env-file", join(import.meta.dir, "browser-prerequisite.ts")], {
       cwd: ROOT, env: owned.env, signal: controller.signal, timeoutMs: 15_000,
     }),
   });
   if (observedPrerequisite.kind === "rejected") {
-    prerequisiteCleanupUnconfirmed = !observedPrerequisite.safeToDispose;
     throw observedPrerequisite.error;
   }
   const prerequisite = observedPrerequisite.result;
@@ -93,7 +92,7 @@ try {
       details.set(execution.id, { durationHints: seedTestTimings(ROOT, NATIVE_SCOPE, timings, expectedFiles) });
       timingOutput = timings;
     }
-    return executeTests(execution, { root: ROOT, folder, expectedFiles, env: owned.env, signal: controller.signal,
+    return executeTests(execution, { root: ROOT, folder, expectedFiles, env: owned.env, signal: controller.signal, settlements,
       ...(native ? { timings } : {}),
       ...(resources ? { resources } : {}),
     });
@@ -124,6 +123,5 @@ try {
   process.exitCode = interrupted ?? 1;
 } finally {
   process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-  if (prerequisiteCleanupUnconfirmed) console.error(`Browser prerequisite cleanup was not confirmed; private files retained at ${owned.env.TMPDIR}`);
-  else owned.close();
+  if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
 }

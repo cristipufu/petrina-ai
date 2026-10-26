@@ -1,14 +1,41 @@
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, afterEach, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { removeDir, runCommand, tempDir, testGitEnv, waitFor } from "../../fixtures.js";
 import { TEST_GIT_IDENTITY, TEST_RUNNER } from "@petrina/test-support/run";
 import { testTempParent } from "@petrina/test-support/temp-parent";
+import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
+import { installRunFailure, isolatedRunnerEnvironment } from "../../fixtures/required-suite.js";
 
 const fixture = tempDir("petrina-test-runner-");
 afterAll(() => removeDir(fixture));
+const settlementCases = coordinatorLifetimes();
+afterEach(() => settlementCases.close());
+afterAll(() => settlementCases.close());
+
+for (const failure of ["unconfirmed", "undefined"] as const) it(`retains focused-run files after an actual runner boundary rejects with ${failure}`, async () => {
+  const root = tempDir("petrina-focused-settlement-"), lifetime = await settlementCases.open(root);
+  try {
+    await lifetime.prepare(async () => {
+      const runner = installRunFailure(root, failure, "focused"), file = join(root, "not-started.test.ts");
+      const marker = join(root, "test-started");
+      writeFileSync(file, `import { it } from "bun:test"; import { writeFileSync } from "node:fs"; it("must not start", () => writeFileSync(${JSON.stringify(marker)}, ""));`);
+      const child = lifetime.start(root, [runner, file], isolatedRunnerEnvironment(root));
+      const result = await child.completion;
+      expect(result.code, result.stdout + result.stderr).toBe(1);
+      expect(existsSync(marker)).toBe(false);
+      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
+      expect(relative(root, observed.folder)).not.toStartWith("..");
+      expect(observed.folder).not.toBe(root);
+      expect(existsSync(observed.folder)).toBe(true);
+      expect(existsSync(observed.home)).toBe(true);
+      expect(existsSync(observed.browsers)).toBe(true);
+      expect(result.stderr).toContain("Test command settlement was not confirmed; private files retained");
+    });
+  } finally { await lifetime.close(); }
+});
 
 
 it("does not reload account configuration from the working folder's dotenv file after filtering the environment", async () => {

@@ -1,12 +1,16 @@
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, afterEach, expect, it } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { removeDir, runCommand, tempDir, testGitEnv, git } from "../../fixtures.js";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { entryFixture, prepareSuite, EXAMPLE, type StandIn, type Suite } from "../../fixtures/required-suite.js";
+import { entryFixture, prepareSuite, installRunFailure, isolatedRunnerEnvironment, EXAMPLE, type StandIn, type Suite } from "../../fixtures/required-suite.js";
+import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
+const settlementCases = coordinatorLifetimes();
+afterEach(() => settlementCases.close());
+afterAll(() => settlementCases.close());
 async function run(workspaces: readonly Suite[], scenario: Partial<Record<Suite, StandIn>> = {}, base = "HEAD", arrange?: (root: string) => Promise<void>) {
   const root = tempDir("petrina-affected-run-"); roots.push(root);
   await prepareSuite(entryFixture(root), scenario);
@@ -26,6 +30,32 @@ async function run(workspaces: readonly Suite[], scenario: Partial<Record<Suite,
   const ran = existsSync(join(root, "runs.log")) ? readFileSync(join(root, "runs.log"), "utf8").trim().split("\n").sort() : [];
   return { root, report, selection, ran, ...outcome };
 }
+
+for (const failure of ["none", "error"] as const) it(`retains selected feedback's environment and stops its independent peer after ${failure} settlement`, async () => {
+  const root = tempDir("petrina-affected-settlement-"), lifetime = await settlementCases.open(root);
+  try {
+    await lifetime.prepare(async () => {
+      entryFixture(root); installRunFailure(root, failure);
+      await prepareSuite(root);
+      for (const workspace of ["packages/core", "apps/desktop"]) appendFileSync(join(root, workspace, EXAMPLE), "\n// Select these independent workspaces.\n");
+      const child = lifetime.start(root, [join(root, "packages/engine/test/quality/affected-run.ts"), "--base", "HEAD"], isolatedRunnerEnvironment(root));
+      const result = await child.completion;
+      expect(result.code, result.stdout + result.stderr).toBe(1);
+      expect(existsSync(join(root, "runs.log"))).toBe(false);
+      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
+      expect(relative(root, observed.folder)).not.toStartWith("..");
+      expect(observed.folder).not.toBe(root);
+      expect(existsSync(observed.folder)).toBe(true);
+      expect(existsSync(observed.home)).toBe(true);
+      expect(existsSync(observed.browsers)).toBe(true);
+      expect(result.stderr).toContain("Test command settlement was not confirmed; private files retained");
+      const reported = result.stdout.match(/Reports: ([^\r\n]+)/)?.[1];
+      expect(reported).toBeDefined();
+      const evidence = JSON.parse(readFileSync(join(resolve(root, reported!), "results.json"), "utf8"));
+      expect(evidence).toMatchObject({ kind: "affected-feedback", scope: "partial", stableInputs: true, deliveryEligible: false });
+    });
+  } finally { await lifetime.close(); }
+});
 
 it("runs a complete short Vitest workspace with its real runner despite colliding filename filters", async () => {
   const { report, selection, code } = await run(["core"], {}, "HEAD", async root => {

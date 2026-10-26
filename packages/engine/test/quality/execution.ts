@@ -4,7 +4,7 @@ import { executionTestResults, requireFiles } from "@petrina/test-support/test-r
 import type { ExecutionEvidence, SuiteExecution, WorkspaceEvidence } from "@petrina/test-support/suite-coordinator";
 import { runProcess, SUITE_RUN_TIMEOUT_MS } from "@petrina/test-support/run-process";
 import { testCommand } from "@petrina/test-support/run";
-import { CommandFailure } from "@petrina/test-support/commands";
+import type { RunSettlements } from "@petrina/test-support/run-settlement";
 import { NATIVE_SCOPE } from "./required-plan.js";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,8 @@ export interface TestExecution {
   expectedFiles: readonly string[];
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
+  /** One shared record prevents disposal or a later execution after uncertain command cleanup. */
+  settlements: Pick<RunSettlements, "observe">;
   /** Exact native file selection; Vitest feedback runs complete selected workspaces. */
   files?: readonly string[];
   /** Only the complete run owns required-suite duration hints. */
@@ -45,11 +47,12 @@ export async function executeTests(execution: SuiteExecution, options: TestExecu
       ...(options.resources ? [`--reporter=${fileURLToPath(import.meta.resolve("@petrina/test-support/resources/vitest-reporter"))}`, "--logHeapUsage"] : [])];
   const start = performance.now();
   let code: number | null = null, executionError: string | undefined;
-  try {
-    const outcome = await runProcess(command, { cwd, env: options.resources ? { ...env, PETRINA_TEST_RESOURCE_DIR: options.resources } : env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal, output: "inherit" });
-    code = outcome.result.code;
-  } catch (error) {
-    if (!(error instanceof CommandFailure)) throw error;
+  const observation = await options.settlements.observe({ run: () => runProcess(command, { cwd, env: options.resources ? { ...env, PETRINA_TEST_RESOURCE_DIR: options.resources } : env, timeoutMs: SUITE_RUN_TIMEOUT_MS, signal, output: "inherit" }) });
+  if (observation.kind === "completed") code = observation.result.result.code;
+  else {
+    // Do not read a report that an unconfirmed process may still write, or start another workspace.
+    if (!observation.safeToDispose) throw observation.error;
+    const error = observation.error;
     code = error.code ?? null;
     executionError = error.message;
   }

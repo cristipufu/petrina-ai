@@ -2,7 +2,8 @@ import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { git } from "../fixtures.js";
+import { fileURLToPath } from "node:url";
+import { git, testGitEnv } from "../fixtures.js";
 import { sourceFacts } from "../quality/source.js";
 import { TEST_WORKSPACES } from "../quality/workspaces.js";
 
@@ -25,6 +26,41 @@ export const NOT_STARTED = "core and desktop and orchestrator did not all pass";
 export const EXAMPLE = "test/contracts/testing/example.test.ts";
 export type BrowserStandIn = "ready" | "missing" | "directory" | "resolver-error" | "changed-command";
 export type ObservationStandIn = "unchanged" | "changed-command-after-observation";
+export type RunFailure = "error" | "undefined" | "none" | "unconfirmed";
+
+/** An explicitly private caller environment keeps a controlled retained run inside this case's root. */
+export function isolatedRunnerEnvironment(root: string): NodeJS.ProcessEnv {
+  const home = join(root, "caller-home"), temporary = join(root, "caller-temporary");
+  mkdirSync(home, { recursive: true }); mkdirSync(temporary, { recursive: true });
+  return { ...testGitEnv(), HOME: home, USERPROFILE: home, TMPDIR: temporary, TMP: temporary, TEMP: temporary, PETRINA_TEST_BASE: "HEAD" };
+}
+
+/** Substitute only the actual runProcess boundary; plans, parsing, coordination and disposal stay actual. */
+export function installRunFailure(root: string, failure: RunFailure, entry: "suite" | "focused" = "suite"): string {
+  const runner = import.meta.resolve("@petrina/test-support/run");
+  const target = entry === "suite" ? join(root, "packages/engine/test/quality/execution.ts") : join(root, "focused-runner.ts");
+  let source = readFileSync(entry === "suite" ? target : fileURLToPath(runner), "utf8");
+  if (entry === "focused") source = source.replace(/from "(\.\/[^"\n]+)\.js"/g, (_all, path: string) => `from ${JSON.stringify(new URL(path + ".ts", runner).href)}`);
+  const actual = import.meta.resolve("@petrina/test-support/run-process");
+  const marker = entry === "suite" ? 'from "@petrina/test-support/run-process"' : `from ${JSON.stringify(actual)}`;
+  if (source.split(marker).length !== 2) throw new Error("The fixture needs exactly one actual runProcess import");
+  source = source.replace(marker, 'from "./fixture-run-process.js"');
+  const reason = failure === "undefined" ? "undefined" : failure === "error" ? 'new Error("controlled unknown runner rejection")'
+    : `new CommandFailure("controlled runner cleanup ${failure}", ${JSON.stringify(failure === "none" ? "start" : "unreadable")}, "", "", ${JSON.stringify(failure)})`;
+  writeFileSync(join(dirname(target), "fixture-run-process.ts"), `import { runProcess as actualRunProcess, SUITE_RUN_TIMEOUT_MS } from ${JSON.stringify(actual)};
+import { CommandFailure } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
+import { writeFixtureJson } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-json"))};
+export { SUITE_RUN_TIMEOUT_MS };
+export const runProcess: typeof actualRunProcess = async (argv, options) => {
+  if (${entry === "focused" ? "true" : `options.cwd === ${JSON.stringify(join(root, "packages/core"))}`}) {
+    writeFixtureJson(${JSON.stringify(join(root, "command-observation.json"))}, { folder: options.env?.TMPDIR, home: options.env?.HOME, browsers: options.env?.PETRINA_TEST_BROWSERS, argv });
+    throw ${reason};
+  }
+  return actualRunProcess(argv, options);
+};\n`);
+  writeFileSync(target, source);
+  return target;
+}
 
 /** Copy the actual runner; control Vitest reports and only the browser-path boundary. Native packages run real Bun cases. */
 export function entryFixture(root: string, browser: BrowserStandIn = "ready", observation: ObservationStandIn = "unchanged"): string {
@@ -66,7 +102,7 @@ export async function observe(...args: Parameters<typeof fixtureActualObserve>):
 
 export async function prepareSuite(root: string, scenario: Partial<Record<Suite, StandIn>> = {}) {
   const log = join(root, "runs.log"), environments = join(root, "environments.log");
-  writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\nbrowser-environment.json\n");
+  writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\nbrowser-environment.json\ncommand-observation.json\n/caller-home/\n/caller-temporary/\n");
   const runner = join(root, "vitest-report.ts");
   writeFileSync(runner, `import { appendFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
