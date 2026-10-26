@@ -5337,7 +5337,10 @@
         "packages/engine/test/contracts/repositories/reviewer-tamper.test.ts",
         "packages/engine/test/contracts/agents/serial-review-seats.test.ts",
         "packages/engine/test/journeys/delivery/reviewed-squash.test.ts",
-        "packages/core/test/rules/reviews/finding-count.test.ts"
+        "packages/core/test/rules/reviews/finding-count.test.ts",
+        "packages/core/test/rules/reviews/builder-answers.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/finding-repairs.test.ts",
+        "packages/engine/test/rules/agents/repeated-finding-prompt.test.ts"
       ],
       "layer": "contracts",
       "area": "storage",
@@ -5346,7 +5349,8 @@
         "artifact": "workstreams/review-flow-next/{case-audit.json,runtime-reconciliation.json,assertion-dispositions.json,source-parity.json,handoff.json}",
         "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
         "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
-        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
+        "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due.",
+        "findingRepairFollowThrough": "All44original finding-reopening matcher sites mapped:28 in two byte-identical native callbacks;16 transferred to actual workflow controllers, normalized result evidence validation and actual next-Builder prompt formatting. Nine portable+two native cases pass; Root all9types/conventions0; full/resource qualification remains due. workstreams/finding-reopening-next/{oracle-map.json,root-review.json,qualification.json}"
       }
     },
     {
@@ -7909,6 +7913,21 @@
       "report": ".test-results/2026-10-26T09-07-00-611Z-115838c5/results.json",
       "artifacts": "full-3bacd233/manifest-verification.json; case-reconciliation.json",
       "limits": "Named Mac source only. Subsequent ownership/cost work, native Linux/Windows and generic protected delivery remain open."
+    },
+    "finding-repair-layers-focused": {
+      "originalCases": 4,
+      "originalMatcherSites": 44,
+      "nativeRetainedCases": 2,
+      "nativeRetainedMatcherSites": 28,
+      "portableCases": 9,
+      "nativePassed": 2,
+      "failed": 0,
+      "newCasesIncludingNative": 11,
+      "allNineTypesExit": 0,
+      "conventionsExit": 0,
+      "sourcePatch": "6c165769f366656c2ebdf77473b80fcc49eede78cfc79d6388be97ec8e853ad1",
+      "artifacts": "workstreams/finding-reopening-next/{handoff.json,oracle-map.json,qualification.json,root-review.json}",
+      "limits": "Focused source-specific proof, not complete qualification or global speed saving."
     }
   },
   "latestIntegratedAttempt": {

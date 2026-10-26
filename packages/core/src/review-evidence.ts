@@ -1,5 +1,31 @@
 import type { DeepMutable } from "./flow.js";
 import type { Finding, Id, Task } from "./model.js";
+import { recordStepResult } from "./journey.js";
+
+/** Apply an accepted Builder's answers to the exact finding references supplied before its turn. */
+export function recordBuilderFindingAnswers(
+  task: DeepMutable<Pick<Task, "fixing" | "journey">>,
+  given: readonly DeepMutable<Finding>[],
+  answers: readonly { id: Id; fixed: boolean; text: string }[],
+  owner: { productId: Id; shared: boolean; at: number },
+): number {
+  let fixed = 0;
+  for (const answer of answers) {
+    const finding = given.find((entry) => entry.id === answer.id && entry.status === "open");
+    if (!finding) continue;
+    finding.answer = { fixed: answer.fixed, text: answer.text, at: owner.at };
+    if (owner.shared) {
+      finding.answers = { ...finding.answers, [owner.productId]: finding.answer };
+      // Shared work stays open until every owner has answered, then combined review verifies it.
+      if (answer.fixed && finding.raisedBy !== "petrina" && finding.productIds?.length === 1) finding.status = "fixed";
+      // A failed check stays open whatever the builder says: only a passing run on the new code settles it.
+    } else if (answer.fixed && !(finding.raisedBy === "petrina" && finding.text.startsWith("Check failed"))) finding.status = "fixed";
+    if (answer.fixed) fixed += 1;
+  }
+  task.fixing = false;
+  recordStepResult(task, { findings: given });
+  return fixed;
+}
 
 /** Normalized references to findings supplied in the participant's saved review input. */
 export interface ReviewEvidenceInput {

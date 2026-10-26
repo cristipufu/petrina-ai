@@ -6,7 +6,7 @@ import { openProofs, refreshProofs } from "@petrina/core";
 // request's description, and Petrina keeps its work as one commit; the tester checks acceptance, and any other
 // role hands back notes. The delivery step is Petrina's own (shipping.ts).
 
-import { builderFindings, builderReturnWords, checkProblem, recordStepResult, endAgentStep, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
+import { builderFindings, builderReturnWords, checkProblem, recordBuilderFindingAnswers, endAgentStep, JOURNEY_WORDS as W, openStep, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { formatFindings } from "./prompts.js";
 import { BuildResult, freshBuilderRethink, NotesResult, TestResult, TEXT_LIMITS } from "./roles.js";
@@ -164,24 +164,7 @@ export class Work {
       const conversation = repository.conversation;
       if (conversation?.briefed && conversation.roleId === roleId) repository.builderSession = { stageId: stage.id, profileId: by, plannedProfileId: profileId, toolId: conversation.toolId, model: conversation.model, sessionId: conversation.sessionId, ...(conversation.context ? { context: conversation.context } : {}), ...(rethink || back?.rethought ? { rethought: true } : {}) };
       const fixing = task.fixing;
-      let fixed = 0;
-      if (fixing) {
-        const at = Date.now();
-        for (const answer of result.answers) {
-          const finding = given.find((entry) => entry.id === answer.id && entry.status === "open");
-          if (!finding) continue;
-          finding.answer = { fixed: answer.fixed, text: answer.text, at };
-          if (task.repositories) {
-            finding.answers = { ...finding.answers, [repository.productId]: finding.answer };
-            // Shared work stays open until every owner has answered, then combined review verifies it.
-            if (answer.fixed && finding.raisedBy !== "petrina" && finding.productIds?.length === 1) finding.status = "fixed";
-            // A failed check stays open whatever the builder says: only a passing run on the new code settles it.
-          } else if (answer.fixed && !(finding.raisedBy === "petrina" && finding.text.startsWith("Check failed"))) finding.status = "fixed";
-          if (answer.fixed) fixed += 1;
-        }
-        task.fixing = false;
-        recordStepResult(task, { findings: given });
-      }
+      const fixed = fixing ? recordBuilderFindingAnswers(task, given, result.answers, { productId: repository.productId, shared: !!task.repositories, at: Date.now() }) : 0;
       // A changed return awaits verification. An unchanged return retains the unresolved problem,
       // including when an earlier edit or check-definition change made that evidence outdated.
       const problem = changed === true ? undefined : checkProblem(repository);
