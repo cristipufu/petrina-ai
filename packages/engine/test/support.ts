@@ -1,4 +1,3 @@
-import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { displayTask } from "@petrina/core";
 // Shared by the tests: engines run as separate processes, and the delivery tests' world, a product
 // with a folder standing in for GitHub, a fake gh and scripted agents. Petrina gets the
@@ -8,187 +7,17 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { InboxKind, State, Task } from "@petrina/core";
 import { Engine, type EngineOptions } from "./engine.js";
-import { readConnection } from "../src/instance.js";
-import type { ShellMessage } from "../src/launch.js";
 import { Store } from "@petrina/storage/store";
 import type { AgentScript } from "./fake-agent.js";
 import { readGitHub, updateGitHub, writeGitHub, type FakeGitHub } from "./fake-gh.js";
-import { testGitEnv } from "@petrina/test-support/test-git-env";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
-import { CommandFailure, runCommand, type CommandResult, type Started } from "@petrina/test-support/commands";
-import { FALLBACK_TIMEOUT } from "@petrina/test-support/run";
 export { testGitEnv } from "@petrina/test-support/test-git-env";
 
 export * from "./fixtures.js";
-import { ADDRESS, FAKE_AGENT, FAKE_GH, HARNESS, REPO, currentSlow, git, repositorySeed, testBrowserRoot, waitFor } from "./fixtures.js";
+import { ADDRESS, FAKE_AGENT, FAKE_GH, REPO, currentSlow, git, repositorySeed, testBrowserRoot } from "./fixtures.js";
 
-// Git's config environment is inherited by child processes even when Bun's mutable process.env is
-// cleaned up. Every test Git process gets its own explicitly sanitized environment instead.
-
-type Spawned = ReturnType<typeof spawnEngine>;
-
-/**
- * The environment test engines run in. Git settings passed down through the environment are
- * dropped (inside a Petrina agent they switch pushing off), so Petrina can push to the
- * test's own bare repository wherever the tests run. The coordinator's logins are stand-ins, a
- * GitHub token and an SSH agent, so a fake agent can tell whether it got them.
- */
-export function engineEnv(home: string): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...testGitEnv(), PETRINA_HOME: home, GH_TOKEN: "petrina-test-gh-login", SSH_AUTH_SOCK: join(home, "ssh-agent.sock") };
-  delete env.GH_CONFIG_DIR;
-  return env;
-}
-
-export function spawnEngine(args: readonly string[], home: string, detached = false) {
-  return Bun.spawn([process.execPath, ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: engineEnv(home), detached, windowsHide: true });
-}
-
-/** An app-mode engine process, and what it told its "shell". */
-export class EngineProcess {
-  private constructor(
-    readonly proc: Spawned,
-    readonly hello: ShellMessage,
-    readonly home: string,
-    private readonly completion: Promise<CommandResult>,
-    private readonly controller: AbortController,
-  ) {}
-
-  static async start(home: string, args: readonly string[], options: { startupTimeoutMs?: number; onProcess?: (proc: Spawned) => void } = {}): Promise<EngineProcess> {
-    const ms = options.startupTimeoutMs ?? 30_000 * currentSlow();
-    if (!(ms > 0 && ms <= 2_147_483_647)) throw new RangeError("Engine fixture startup needs a positive, finite deadline.");
-    const controller = new AbortController();
-    let proc: Spawned | undefined, output = "", errors = "", supplied = false, first!: (line: string) => void;
-    const opening = new Promise<string>(resolve => { first = resolve; });
-    const completion = runCommand([process.execPath, ...args], {
-      env: engineEnv(home), signal: controller.signal, timeoutMs: FALLBACK_TIMEOUT,
-      start: (_argv, launch) => {
-        proc = spawnEngine(args, home, launch.detached);
-        return proc as unknown as Started;
-      },
-      onOutput: (chunk, stream) => {
-        if (stream === "stderr") errors = (errors + chunk).slice(-8000);
-        else if (!supplied) {
-          output += chunk;
-          const end = output.indexOf("\n");
-          if (end >= 0) { supplied = true; first(output.slice(0, end)); output = ""; }
-        }
-      },
-    });
-    // A process can exit after a ready message, before the test next waits for it.
-    void completion.catch(() => undefined);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      if (proc) options.onProcess?.(proc);
-      const line = await Promise.race([
-        opening,
-        completion.then(result => {
-          if (!result.stdout) throw new Error(`The engine exited with code ${result.code} without a startup answer`);
-          return result.stdout.split("\n")[0]!;
-        }),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`The engine gave no startup answer within ${ms}ms`)), ms); }),
-      ]);
-      if (!line) throw new Error("The engine said nothing");
-      return new EngineProcess(proc!, JSON.parse(line) as ShellMessage, home, completion, controller);
-    } catch (error) {
-      controller.abort();
-      const stopped = await completion.catch(failure => failure as unknown);
-      const unconfirmed = stopped instanceof CommandFailure && stopped.cleanup === "unconfirmed";
-      throw new Error(`${error instanceof Error ? error.message : String(error)}${errors ? `\n${errors}` : ""}${unconfirmed ? "\nEngine fixture cleanup could not be confirmed." : ""}`, { cause: stopped instanceof Error ? stopped : error });
-    } finally { clearTimeout(timer); }
-  }
-
-  /** The engine on fake agents, with its fake dir, and the folder standing in for GitHub when there is one. */
-  static harness(home: string, dir: string, remote?: string): Promise<EngineProcess> {
-    return EngineProcess.start(home, [HARNESS, home, dir, ...(remote ? [remote] : [])]);
-  }
-
-  async act(name: string, ...args: unknown[]): Promise<unknown> {
-    const { api, token } = readConnection(this.home)!;
-    const response = await fetch(`${api}/api/action`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name, args }) });
-    const body = (await response.json()) as { ok: boolean; result?: unknown; error?: string };
-    if (!body.ok) throw new Error(`${name} failed: ${body.error}`);
-    return body.result;
-  }
-
-  /** A WebSocket the way the desktop window opens one: Petrina's own page, the key as a subprotocol. */
-  socket(): Promise<WebSocket> {
-    const { url, token } = readConnection(this.home)!;
-    const socket = new WebSocket(url, { protocols: ["petrina.v1", `petrina.token.${token}`], headers: { origin: "tauri://localhost" } } as unknown as string[]);
-    return new Promise((resolve, reject) => {
-      socket.onopen = () => resolve(socket);
-      socket.onerror = () => reject(new Error("The engine refused the connection"));
-    });
-  }
-
-  /** The exact bounded snapshot sent to the desktop window. */
-  async windowState(): Promise<State> {
-    const { api, token } = readConnection(this.home)!;
-    return (await (await fetch(`${api}/api/state`, { headers: { authorization: `Bearer ${token}` } })).json()) as State;
-  }
-
-  /** Logical engine state for fixture assertions, like Engine.getState(). Window tests use windowState(). */
-  async state(): Promise<State> {
-    const current = await this.windowState();
-    const active = await Promise.all(current.tasks.map((task) => this.act("taskDetails", task.id) as Promise<Task>));
-    if (!current.history?.total) return { ...current, tasks: active };
-    const { history: _history, ...rest } = current;
-    const archived: Task[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await this.act("historyPage", { limit: 100, ...(cursor ? { cursor } : {}) }) as import("@petrina/core").HistoryPage;
-      archived.push(...await Promise.all(page.items.map((item) => this.act("taskDetails", item.id) as Promise<Task>)));
-      cursor = page.nextCursor;
-    } while (cursor);
-    return { ...rest, tasks: [...active, ...archived] };
-  }
-
-  async task(id: string): Promise<Task> {
-    return await this.act("taskDetails", id) as Task;
-  }
-
-  until(check: (state: State) => boolean, what: string, ms = 30_000): Promise<State> {
-    return waitFor(async () => {
-      const state = await this.state();
-      return check(state) ? state : undefined;
-    }, what, ms);
-  }
-
-  /** The app quits: the line closes, and the engine stops by itself. Returns how long it took. */
-  async quit(): Promise<number> {
-    const started = Date.now();
-    void this.proc.stdin.end();
-    await this.exited(10_000);
-    return Date.now() - started;
-  }
-
-  /** A forced kill: nothing gets saved on the way out. */
-  async kill(): Promise<void> {
-    this.proc.kill("SIGKILL");
-    await this.exited(10_000);
-  }
-
-  async exited(ms: number): Promise<number> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([this.completion.then(result => result.code), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`The engine did not stop within ${ms / 1000} seconds`)), ms);
-      })]);
-    } catch (error) {
-      this.controller.abort();
-      const stopped = await this.completion.catch(failure => failure as unknown);
-      if (stopped instanceof CommandFailure && stopped.cleanup === "unconfirmed") throw new Error(`${error instanceof Error ? error.message : String(error)}\nEngine fixture cleanup could not be confirmed.`, { cause: stopped });
-      throw error;
-    } finally { clearTimeout(timer); }
-  }
-
-  /** A private external stop was already requested; retain actual fully drained completion before forcing cleanup. */
-  settleAfterStop() {
-    return settleCommandAfterStop({ result: this.completion, abort: () => this.controller.abort() });
-  }
-
-  /** Collected while running, so a full stderr pipe never holds up startup or shutdown. */
-  async errors(): Promise<string> { return (await this.completion).stderr; }
-}
+export { EngineProcess, engineProcesses, engineProcessCases, engineEnv } from "./fixtures/engine-processes.js";
+export type { EngineProcesses, EngineProcessCases, EngineStartupOptions } from "./fixtures/engine-processes.js";
 
 // ── The delivery tests' world ──────────────────────────────────────────
 

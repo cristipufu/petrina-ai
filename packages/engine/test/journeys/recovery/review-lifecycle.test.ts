@@ -1,19 +1,21 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { FolderLock, readConnection } from "../../../src/instance.js";
-import { removeDir, waitFor, SLOW } from "../../support.js";
+import { waitFor, SLOW } from "../../support.js";
 import { lifecycleFixture } from "../../fixtures/coordinator-lifecycle.js";
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
+const lifetimes = coordinatorLifetimes();
+afterEach(() => lifetimes.close());
 
 describe("graceful coordination lifecycle", () => {
 for (const paused of [false, true])
     {
 it(`restarts concurrent reviewers once, preserving finished peers and ${paused ? "paused" : "running"} scheduling`, async () => {
-      const f = await lifecycleFixture(roots);
+      const f = await lifecycleFixture(lifetimes);
       try {
+      await f.run(async () => {
         const taskId = f.taskId;
         await waitFor(
           async () => {
@@ -70,7 +72,9 @@ it(`restarts concurrent reviewers once, preserving finished peers and ${paused ?
         expect(task.hunt ? Object.keys(task.hunt.reported).length : 2).toBe(2);
         if (paused) expect((await f.client.call("engine.resume", { requestId: "explicit-resume", wait: true })).outcome).toBe("completed");
         expect(readFileSync(join(f.home, "engine.log"), "utf8")).not.toContain(before.token);
-      } finally {
+
+      });
+} finally {
         for (const r of f.fakes.received()) f.release(r.session);
         await f.stop();
       }
@@ -80,8 +84,9 @@ it(`restarts concurrent reviewers once, preserving finished peers and ${paused ?
 
 describe("graceful coordination lifecycle", () => {
 it("leaves unadmitted reviewers pending when pausing a partly started round, then resumes only the missing peers", async () => {
-    const f = await lifecycleFixture(roots, { title: "One reviewer at a time", limit: 1 });
+    const f = await lifecycleFixture(lifetimes, { title: "One reviewer at a time", limit: 1 });
     try {
+      await f.run(async () => {
       await f.engine.act("setPoolLimit", 1);
       const taskId = f.taskId;
       await waitFor(
@@ -103,7 +108,9 @@ it("leaves unadmitted reviewers pending when pausing a partly started round, the
       await f.client.call("engine.resume", { requestId: "continue-missing" });
       await waitFor(() => f.fakes.received("code reviewer").length === 2, "the missing reviewer to start");
       expect(f.fakes.opens().filter((o) => o.session === f.fakes.received("code reviewer")[0]!.session)).toHaveLength(1);
-    } finally {
+
+      });
+} finally {
       for (const r of f.fakes.received()) f.release(r.session);
       await f.stop();
     }
@@ -112,9 +119,10 @@ it("leaves unadmitted reviewers pending when pausing a partly started round, the
 
 describe("graceful coordination lifecycle", () => {
 it("keeps a partly admitted ballot unfinished across pause and restart, then votes only with missing tools", async () => {
-    const f = await lifecycleFixture(roots, { title: "Finish every ballot", limit: 1, reviewer: "important" });
-    f.fakes.scenario({ controlled: true, reviewer: "important" });
+    const f = await lifecycleFixture(lifetimes, { title: "Finish every ballot", limit: 1, reviewer: "important" });
     try {
+      await f.run(async () => {
+      f.fakes.scenario({ controlled: true, reviewer: "important" });
       await f.engine.act("setPoolLimit", 1);
       const taskId = f.taskId;
       await waitFor(
@@ -151,7 +159,9 @@ it("keeps a partly admitted ballot unfinished across pause and restart, then vot
       await f.client.call("engine.resume", { requestId: "ballot-resume" });
       await waitFor(() => f.fakes.received("verifier").length === 2, "the next missing voter");
       expect(f.fakes.opens().filter((o) => o.session === first.session)).toHaveLength(1);
-    } finally {
+
+      });
+} finally {
       for (const r of f.fakes.received()) f.release(r.session);
       await f.stop();
     }

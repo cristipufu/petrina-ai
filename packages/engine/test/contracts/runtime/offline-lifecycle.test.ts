@@ -1,9 +1,12 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { completeAll } from "@petrina/core";
 import { afterEach } from "bun:test";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 import type { CoordinatorProcess } from "../../fixtures/coordinator-process.js";
 import { disconnectedCoordinator } from "../../fixtures/disconnected-coordinator.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { Engine } from "../../engine.js";
 import { EngineClient } from "../../client.js";
 
@@ -14,17 +17,27 @@ import { describe } from "bun:test";
 
 import { readConnection } from "../../../src/instance.js";
 import { CLI } from "../../support.js";
+import { engineProcessCases } from "../../fixtures/engine-processes.js";
+import { coordinatorStoreAfterSeed } from "../../fixtures/coordinator-lifecycle.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
+import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 const roots: string[] = [];
 const lifetimes = coordinatorLifetimes();
-afterEach(() => lifetimes.close());
+const cases = engineProcessCases();
+afterEach(() => completeAll([lifetimes.close(), cases.close()]));
 afterAll(() => roots.filter(root => !lifetimes.retained.has(root)).forEach(removeDir));
 
 it("does not claim a silent, still living pause owner is ready or replace it", async () => {
   const home = tempDir("petrina-silent-pause-owner-");
-  roots.push(home);
-  const store = new LifecycleStore(home);
+  let ownedStore: LifecycleStore | undefined;
+  let ownedPeer: Awaited<ReturnType<typeof disconnectedCoordinator>> | undefined;
+  const closeStore = () => { ownedStore?.close(); ownedStore = undefined; };
+  const closePeer = async () => { await ownedPeer?.close(); ownedPeer = undefined; };
+  await cases.use(home, async owners => {
+  const store = ownedStore = new LifecycleStore(home);
   store.begin("pause", { requestId: "pause" }, "paused");
-  const peer = await disconnectedCoordinator();
+  const peer = ownedPeer = await disconnectedCoordinator();
+  if (owners.signal.aborted) { await closePeer(); throw new Error("Coordinator setup closed while acquiring its peer"); }
   writeConnection(home, { api: peer.api, url: peer.url, pid: process.pid, token: "silent-owner-connection-key-12345" });
   let launches = 0;
   const client = new EngineClient(home, () => { launches++; });
@@ -34,23 +47,38 @@ it("does not claim a silent, still living pause owner is ready or replace it", a
     expect(store.receipt("start")).toBeUndefined();
     expect(store.current?.phase).toBe("draining");
     expect(launches).toBe(0);
-  } finally { try { store.close(); } finally { await peer.close(); } }
+  } finally { try { closeStore(); } finally { await closePeer(); } }
+  }, { async stopPeers() { await completeAll([Promise.resolve().then(closeStore), Promise.resolve().then(closePeer)]); } });
 });
 
 for (const previous of ["unfinished-removed", "unfinished-stale", "completed"] as const) {
 it(`starts once with saved paused scheduling after a ${previous} pause lost its engine`, async () => {
   const root = tempDir("petrina-start-after-pause-");
   roots.push(root);
-  const lifetime = await lifetimes.open(root);
-  const peer = previous === "unfinished-stale" ? await disconnectedCoordinator() : undefined;
+  let pendingSeed: Engine | undefined;
+  const stopSeed = async () => { await pendingSeed?.shutdown(); pendingSeed = undefined; };
+  let pendingStore: LifecycleStore | undefined;
+  const closeStore = () => { pendingStore?.close(); pendingStore = undefined; };
+  let pendingPeer: Awaited<ReturnType<typeof disconnectedCoordinator>> | undefined;
+  const closePeer = async () => { await pendingPeer?.close(); pendingPeer = undefined; };
+  const lifetime = await lifetimes.open(root, { async stopPeers() { await completeAll([Promise.resolve().then(stopSeed), Promise.resolve().then(closeStore), Promise.resolve().then(closePeer)]); } });
+  let cleanup: (() => Promise<void>) | undefined;
+  const close = async () => {
+    await setupWithCleanup(async () => { await cleanup?.(); }, () => lifetime.close());
+    await lifetime.close();
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
+  const peer = pendingPeer = previous === "unfinished-stale" ? await disconnectedCoordinator() : undefined;
+  if (lifetime.signal.aborted) { await closePeer(); throw new Error("Coordinator setup closed while acquiring its peer"); }
   const home = join(root, "home"), fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
   // Persist the state an app leaves behind when it closes during a pause. Its connection
   // is normally removed; a crash may instead leave a dead connection on disk.
-  const before = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+  const before = pendingSeed = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   before.setPoolPaused(true);
-  await before.shutdown();
-  const store = new LifecycleStore(home);
+  const store = await coordinatorStoreAfterSeed(lifetime.signal, async () => {
+    await before.shutdown(); pendingSeed = undefined;
+  }, () => pendingStore = new LifecycleStore(home));
   store.begin("pause", { requestId: "old-pause" }, "paused");
   if (previous === "completed") store.finish("completed");
   if (previous === "unfinished-stale") {
@@ -65,7 +93,12 @@ it(`starts once with saved paused scheduling after a ${previous} pause lost its 
     child = lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" });
     return child.pid;
   });
-  try {
+
+  cleanup = async () => {
+    try { await lifetime.prepare(() => client.call("engine.stop", { requestId: "cleanup", wait: true, timeoutMs: 10000 * SLOW })); }
+    finally { try { await child?.settle(); } finally { try { await closePeer(); } finally { closeStore(); } } }
+
+  };
     const args = { requestId: "start-once", wait: true, timeoutMs: 30000 * SLOW };
     const started = await client.call("engine.start", args);
     expect(started.outcome).toBe("completed");
@@ -76,10 +109,9 @@ it(`starts once with saved paused scheduling after a ${previous} pause lost its 
     expect(launches).toBe(1);
     const lock = FolderLock.take(home);
     try { expect(lock).toBeUndefined(); } finally { lock?.release(); }
-  } finally {
-    try { await client.call("engine.stop", { requestId: "cleanup", wait: true, timeoutMs: 10000 * SLOW }); }
-    finally { try { await child?.settle(); } finally { try { await peer?.close(); } finally { store.close(); } } }
-  }
+
+  }), close);
+  await close();
 });
 }
 
@@ -88,22 +120,32 @@ it("keeps the connection key on restart even when its original launch requested 
     const root = tempDir("petrina-lifecycle-fresh-key-");
     roots.push(root);
     const lifetime = await lifetimes.open(root);
+  let cleanup: (() => Promise<void>) | undefined;
+  const close = async () => {
+    await setupWithCleanup(async () => { await cleanup?.(); }, () => lifetime.close());
+    await lifetime.close();
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
     const home = join(root, "home"),
       fakes = new Fakes(join(root, "fakes"));
     fakes.scenario({ controlled: true });
     const original = await lifetime.harness(home, fakes.dir, undefined, ["--new-key"]);
     const client = new EngineClient(home);
     const before = readConnection(home)!;
-    try {
+
+  cleanup = async () => {
+      await lifetime.prepare(() => client.call("engine.stop", { requestId: "stop-fresh-key-test", wait: true, timeoutMs: 30000 * SLOW }));
+      await original.exited(10000 * SLOW);
+
+  };
       expect((await client.call("engine.restart", { requestId: "preserve-fresh-key", wait: true, timeoutMs: 30000 * SLOW })).outcome).toBe("completed");
       const after = readConnection(home)!;
       expect(after.pid).not.toBe(before.pid);
       expect(after.token === before.token).toBe(true);
       expect(after.api).toBe(before.api);
-    } finally {
-      await client.call("engine.stop", { requestId: "stop-fresh-key-test", wait: true, timeoutMs: 30000 * SLOW });
-      await original.exited(10000 * SLOW);
-    }
+
+  }), close);
+  await close();
   });
 });
 
@@ -111,7 +153,15 @@ describe("graceful coordination lifecycle", () => {
 it("distinguishes stopped, unresponsive ownership, failed startup and safe concurrent starts", async () => {
     const root = tempDir("petrina-lifecycle-offline-");
     roots.push(root);
-    const lifetime = await lifetimes.open(root);
+    let pendingStore: LifecycleStore | undefined;
+  const closeStore = () => { pendingStore?.close(); pendingStore = undefined; };
+  const lifetime = await lifetimes.open(root, { async stopPeers() { await completeAll([Promise.resolve().then(closeStore)]); } });
+  let cleanup: (() => Promise<void>) | undefined;
+  const close = async () => {
+    await setupWithCleanup(async () => { await cleanup?.(); }, () => lifetime.close());
+    await lifetime.close();
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
     const home = join(root, "home"),
       fakes = new Fakes(join(root, "fakes"));
     fakes.scenario({ controlled: true });
@@ -123,7 +173,11 @@ it("distinguishes stopped, unresponsive ownership, failed startup and safe concu
         lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1" }, { input: "ignore" }),
       );
     });
-    try {
+
+  cleanup = async () => {
+      await Promise.all(children.map(child => child.settle()));
+
+  };
       expect((await client.call("engine.status")).status).toBe("stopped");
       const lock = FolderLock.take(home)!;
       try {
@@ -143,23 +197,89 @@ it("distinguishes stopped, unresponsive ownership, failed startup and safe concu
       expect(app.hello.type).toBe("error");
       expect(await app.exited(10000 * SLOW)).toBe(0);
       expect(launches).toBe(1);
-      const store = new LifecycleStore(home);
+      const store = pendingStore = new LifecycleStore(home);
       store.begin("start", { requestId: "startup-failed" }, "paused");
       store.finish("starting");
-      store.close();
+      closeStore();
       const occupied = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("stand-in") });
       try {
         // This is the explicitly requested startup, not another desktop reconnect following it.
         const child = lifetime.start(home, [lifetime.entry, home, fakes.dir, `--agent-program=${lifetime.actor}`], { PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: String(occupied.port) }, { input: "ignore" });
         expect(await child.exited).toBe(1);
       } finally {
-        occupied.stop(true);
+        await occupied.stop(true);
       }
       expect((await client.call("engine.status")).status).toBe("failed");
       expect((await client.call("engine.start", { requestId: "startup-failed", wait: true })).outcome).toBe("failed");
       expect(launches).toBe(1);
-    } finally {
-      await Promise.all(children.map(child => child.settle()));
-    }
+
+  }), close);
+  await close();
   });
+});
+
+it("does not open lifecycle storage when cleanup starts during held seed shutdown", async () => {
+  const root = tempDir("petrina-late-lifecycle-store-"), controller = new AbortController();
+  let release!: () => void, store: LifecycleStore | undefined, opens = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const opening = coordinatorStoreAfterSeed(controller.signal, () => held, () => {
+    opens++; return store = new LifecycleStore(root);
+  });
+  const outcome = opening.then(value => ({ value }), (error: unknown) => ({ error }));
+  const close = () => { store?.close(); store = undefined; removeFixtureRoot(root); };
+  await setupWithCleanup(async () => {
+    try {
+      expect(opens).toBe(0);
+      controller.abort(); release();
+      const result = await outcome;
+      expect("error" in result).toBe(true);
+      if (!("error" in result)) throw new Error("Lifecycle storage opened after cleanup began");
+      expect(result.error).toBeInstanceOf(Error);
+      expect((result.error as Error).message).toBe("Coordinator setup closed while stopping its seed");
+      expect(opens).toBe(0);
+      expect(existsSync(join(root, "lifecycle.db"))).toBe(false);
+    } finally { release(); await outcome; }
+  }, close);
+  close();
+});
+
+it("opens actual lifecycle storage only after seed shutdown while admission stays open", async () => {
+  const root = tempDir("petrina-ready-lifecycle-store-"), controller = new AbortController();
+  let release!: () => void, store: LifecycleStore | undefined, opens = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const opening = coordinatorStoreAfterSeed(controller.signal, () => held, () => {
+    opens++; return store = new LifecycleStore(root);
+  });
+  const outcome = opening.then(value => ({ value }), (error: unknown) => ({ error }));
+  const close = () => { store?.close(); store = undefined; removeFixtureRoot(root); };
+  await setupWithCleanup(async () => {
+    try {
+      expect(opens).toBe(0);
+      release();
+      const result = await outcome;
+      if (!("value" in result)) throw result.error;
+      expect(result.value).toBe(store!);
+      expect(result.value.current).toBeUndefined();
+      expect(opens).toBe(1);
+      expect(existsSync(join(root, "lifecycle.db"))).toBe(true);
+    } finally { release(); await outcome; }
+  }, close);
+  close();
+});
+
+for (const failure of [new Error("seed shutdown rejected"), undefined]) it(`preserves a rejected seed shutdown before storage opens: ${String(failure)}`, async () => {
+  const root = tempDir("petrina-failed-lifecycle-store-");
+  let store: LifecycleStore | undefined, opens = 0;
+  const opening = coordinatorStoreAfterSeed(new AbortController().signal, () => Promise.reject(failure), () => {
+    opens++; return store = new LifecycleStore(root);
+  });
+  const close = () => { store?.close(); store = undefined; removeFixtureRoot(root); };
+  await setupWithCleanup(async () => {
+    try {
+      expect(await rejectionOf(opening)).toBe(failure);
+      expect(opens).toBe(0);
+      expect(existsSync(join(root, "lifecycle.db"))).toBe(false);
+    } finally { await opening.catch(() => undefined); }
+  }, close);
+  close();
 });

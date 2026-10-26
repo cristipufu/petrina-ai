@@ -1,5 +1,9 @@
+import { afterEach } from "bun:test";
+import { engineProcessCases } from "../../support.js";
+import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
+import { childState } from "@petrina/platform/process-tree";
 import { describe as originalDescribe } from "bun:test";
-import { afterAll, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -10,10 +14,11 @@ import { commandInputText } from "../../../src/checks.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 
 import { Store } from "@petrina/storage/store";
-import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, waitFor } from "../../support.js";
+import { EngineProcess, Fakes, HARNESS, makeProduct, tempDir, waitFor } from "../../support.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const cases = engineProcessCases();
+afterEach(() => cases.close());
+
 // Check behavior and cleanup limits do not depend on the host's power-log read: the fixtures' check runs and
 // engines supply no records. Evidence cases pass their own; the native reader's contract lives in check-interruption.test.ts.
 
@@ -22,6 +27,9 @@ originalDescribe("a stopped check keeps an incomplete cleanup warning", () => {
 for (const kind of ["check", "hook"] as const) {
     it.skipIf(process.platform === "win32")(`saves it when cancelling a ${kind} cannot list the programs it started`, async () => {
       const dir = tempDir("petrina-check-stop-warn-");
+      let workerLease: ProcessLease | undefined;
+      let stopWorker = async (): Promise<void> => {};
+      return cases.use(dir, async owners => {
       const home = join(dir, "data");
       const fakes = new Fakes(join(dir, "fake"));
       fakes.scenario({ planner: "short", builder: "plain" });
@@ -34,7 +42,18 @@ for (const kind of ["check", "hook"] as const) {
       const worker = join(dir, "worker.ts");
       const childPid = join(dir, "child.pid");
       const ready = join(dir, "ready");
-      writeFileSync(worker, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(childPid)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`);
+      workerLease = await createProcessLease();
+      stopWorker = () => workerLease!.close();
+      if (owners.signal.aborted) { await workerLease.close(); throw new Error("Detached-worker preparation was stopped"); }
+      stopWorker = async () => {
+        await workerLease!.close();
+        if (existsSync(childPid)) {
+          const pid = Number(readFileSync(childPid, "utf8"));
+          if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("The private worker did not report a valid native process identity");
+          await waitFor(async () => await childState(pid) === "ended", "the independently leased worker to report native ended state", 5_000);
+        }
+      };
+      writeFileSync(worker, workerLease.program(`const { writeFixtureJson } = await import(${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-json"))});\nwriteFixtureJson(${JSON.stringify(childPid)}, process.pid);\nsetInterval(() => {}, 1000); await new Promise(() => undefined);\n`));
       const hang = `import { spawn } from "node:child_process";\nimport { existsSync, writeFileSync } from "node:fs";\nconst child = spawn(process.execPath, [${JSON.stringify(worker)}], { detached: true, stdio: "ignore" });\nchild.unref();\nwhile (!existsSync(${JSON.stringify(childPid)})) await Bun.sleep(20);\nwriteFileSync(${JSON.stringify(ready)}, "ready");\nsetInterval(() => {}, 1000);\n`;
       const parent = join(dir, kind === "check" ? "parent.ts" : "pass.ts");
       const hookScript = join(dir, "hook.ts");
@@ -50,8 +69,8 @@ for (const kind of ["check", "hook"] as const) {
       writeFileSync(launcher, `process.env.PATH = ${JSON.stringify(bin)} + ":" + process.env.PATH;\nawait import(${JSON.stringify(HARNESS)});\n`);
       let engine: EngineProcess | undefined;
       const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-      try {
-        engine = await EngineProcess.start(home, [launcher, home, fakes.dir]);
+
+        engine = await owners.app(home, [launcher, home, fakes.dir]);
         const productId = await engine.act("addProduct", repo) as string;
         await engine.act("setProductChecks", productId, [{ name: "Detached", command: commandInputText([process.execPath, parent]) }]);
         await engine.act("setProductDelivery", productId, "local", true);
@@ -96,11 +115,9 @@ for (const kind of ["check", "hook"] as const) {
           expect(saved.repository!.checks?.results.some((entry) => entry.cleanupIncomplete)).toBe(true);
           expect(saved.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
         } finally { store.close(); }
-      } finally {
-        if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());
-        try { process.kill(Number(readFileSync(childPid, "utf8")), "SIGKILL"); } catch { /* Already gone. */ }
-        removeDir(dir);
-      }
+
+
+      }, { stopPeers: () => stopWorker() });
     });
   }
 });

@@ -1,3 +1,5 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { completeAll } from "@petrina/core";
 import { afterEach } from "bun:test";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
 import type { CoordinatorProcess } from "../../fixtures/coordinator-process.js";
@@ -18,7 +20,15 @@ for (const [kind, survives] of [["restart", true], ["restart", false], ["start",
 it(`desktop recovery during ${kind} ${survives ? "follows a live replacement without a competitor" : "replaces a launcher that dies while recovery is already waiting"}`, async () => {
   const root = tempDir("petrina-desktop-handoff-");
   roots.push(root);
-  const lifetime = await lifetimes.open(root);
+  let pendingStore: LifecycleStore | undefined;
+  const closeStore = () => { pendingStore?.close(); pendingStore = undefined; };
+  const lifetime = await lifetimes.open(root, { async stopPeers() { await completeAll([Promise.resolve().then(closeStore)]); } });
+  let cleanup: (() => Promise<void>) | undefined;
+  const close = async () => {
+    await setupWithCleanup(async () => { await cleanup?.(); }, () => lifetime.close());
+    await lifetime.close();
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
   const home = join(root, "home"), fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
   const release = join(root, "release-replacement"), replacement = join(root, "replacement-started"), observed = join(root, "recovery-observed");
@@ -54,7 +64,17 @@ await import(${JSON.stringify(HARNESS)});
     return requested.pid;
   });
   let recovery: CoordinatorProcess | undefined;
-  try {
+
+  cleanup = async () => {
+    try {
+      writeFileSync(release, "go");
+      await lifetime.prepare(() => client.call("engine.stop", { requestId: "stop-desktop-test", wait: true, timeoutMs: 10000 * SLOW }));
+    } finally { await lifetime.close(); }
+    await recovery?.exited;
+    await requested?.exited;
+    await original.exited(10000 * SLOW);
+
+  };
     if (kind === "start") expect((await client.call("engine.stop", { requestId: "stop-before-start", wait: true, timeoutMs: 10000 * SLOW })).outcome).toBe("completed");
     expect((await client.call(`engine.${kind}`, { requestId: "desktop-handoff" })).outcome).toBe("pending");
     await waitFor(() => existsSync(replacement), "the replacement launcher to wait");
@@ -69,8 +89,8 @@ await import(${JSON.stringify(HARNESS)});
       free?.release();
       return !!free;
     }, "the recovery probe to release ownership", undefined, { during: recovery.completion });
-    const store = new LifecycleStore(home);
-    try { expect(store.current?.phase).toBe("starting"); } finally { store.close(); }
+    const store = pendingStore = new LifecycleStore(home);
+    try { expect(store.current?.phase).toBe("starting"); } finally { closeStore(); }
     if (survives) writeFileSync(release, "go");
     else {
       const pid = Number(readFileSync(replacement, "utf8"));
@@ -95,14 +115,8 @@ await import(${JSON.stringify(HARNESS)});
     expect(log).toContain(`starting (process ${after.pid},`);
     expect(after.pid).toBe(survives ? Number(readFileSync(replacement, "utf8")) : recovery.pid);
     expect(log.includes(before.token)).toBe(false);
-  } finally {
-    try {
-      writeFileSync(release, "go");
-      await client.call("engine.stop", { requestId: "stop-desktop-test", wait: true, timeoutMs: 10000 * SLOW });
-    } finally { await lifetime.close(); }
-    await recovery?.exited;
-    await requested?.exited;
-    await original.exited(10000 * SLOW);
-  }
+
+  }), close);
+  await close();
 });
 }

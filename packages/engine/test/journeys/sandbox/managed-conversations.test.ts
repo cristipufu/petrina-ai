@@ -1,30 +1,33 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterEach } from "bun:test";
+import { engineProcessCases } from "../../support.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { directDrivers } from "../../fixtures/direct-drivers.js";
+import { describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ActiveAgent, State, Task, TaskUsage } from "@petrina/core";
 
-import { Engine } from "../../engine.js";
 
 import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "../../fake-agent.js";
-import { EngineProcess, Fakes, makeProduct, removeDir, tempDir, traceTaskWait, waitFor, type Open } from "../../support.js";
+import { EngineProcess, Fakes, makeProduct, tempDir, traceTaskWait, waitFor, type Open } from "../../support.js";
 
-// Conversations started here keep their browsers, in this file's own browser folder.
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const cases = engineProcessCases();
+afterEach(() => cases.close());
 
 const REFUSED = "Running without Claude Code's sandbox: this computer lacks what it needs (bubblewrap (bwrap) not installed, socat not installed)";
 
 /** A product committing to main (no shipper), a task on it, and an engine on fake agents. */
 async function start(scenario: Scenario, description = "", approvePlan = false) {
   const root = tempDir("petrina-sandbox-");
-  roots.push(root);
+  const owners = cases.open(root);
+  return setupWithCleanup(() => owners.prepare(async () => {
   const product = await makeProduct(root);
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const engine = await EngineProcess.harness(home, fakes.dir);
+  const engine = await owners.harness(home, fakes.dir);
   // A task started while only one tool's check has answered is planned on that tool alone.
   await engine.until(
     (state) => ["claude-code", "codex"].every((id) => state.setup?.checks.some((check) => check.id === id && check.status === "ready" && !check.checking)),
@@ -35,7 +38,8 @@ async function start(scenario: Scenario, description = "", approvePlan = false) 
   const taskId = (await engine.act("addTask", { productId, title: "Add a greeting", description, ...(approvePlan ? { approvePlan } : {}) })) as string;
   const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
   const finished = async (engine: EngineProcess) => find(await engine.until((state) => find(state).state === "done", "the task to finish", 60_000));
-  return { home, fakes, engine, taskId, find, finished };
+  return { home, fakes, engine, taskId, find, finished, owners };
+  }), () => owners.close());
 }
 
 /**
@@ -58,6 +62,7 @@ function toolsByRole(fakes: Fakes): Map<string, Set<string>> {
 describe("Claude Code's own sandbox", () => {
   it("every Claude Code conversation opens in it, Codex gets nothing new, and every agent has the coordinator's logins", async () => {
     const run = await start({ planner: "short", builder: "plain", controlled: true });
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
     const { engine, fakes } = run;
     // While the planner, on Claude Code, works: the Session tab says it is sandboxed.
     // The prompt can be recorded a moment before that status is on the agent, so wait for the status.
@@ -84,16 +89,22 @@ describe("Claude Code's own sandbox", () => {
     }
     expect(done.session.some((line) => line.text.startsWith("Running without Claude Code's sandbox"))).toBe(false);
     await engine.quit();
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
   });
 
   it("a planner that starts while Claude Code is still being checked opens on Codex, and no usage limit caused it", async () => {
     const root = tempDir("petrina-sandbox-race-");
-    roots.push(root);
+    const owners = directDrivers(root);
+    const caseOwner = cases.open(root, { stopPeers: () => owners.close() });
     const fakes = new Fakes(join(root, "fake"));
     fakes.scenario({ planner: "short", controlled: true });
-    const engine = new Engine(join(root, "home"), {
+    const engine = owners.open(join(root, "home"), {
       agentCommand: (profile) => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir, `--record-tool=${profile.toolId}`],
     });
+    const result = await setupWithCleanup(() => owners.prepare(async () => {
     try {
       // The same window the full suite hit: Codex has answered, Claude Code's check is still running.
       engine.s.setup!.checks = [
@@ -118,10 +129,15 @@ describe("Claude Code's own sandbox", () => {
     } finally {
       await engine.shutdown();
     }
+
+    }), () => caseOwner.close());
+    await caseOwner.close();
+    return result;
   });
 
   it("when it cannot start, agents run as before, each says so once, and later ones do not try it again", async () => {
     const run = await start({ planner: "short", builder: "plain", sandbox: "unavailable", controlled: true });
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
     const { engine, fakes } = run;
     await waitFor(() => fakes.received("planner")[0], "the planner to start");
     const running = await engine.until((state) => {
@@ -144,6 +160,10 @@ describe("Claude Code's own sandbox", () => {
     expect(lines.some((line) => line.roleId === "planner") && lines.some((line) => line.roleId === "code-reviewer")).toBe(true);
     expect(lines.some((line) => line.roleId === "builder")).toBe(false);
     await engine.quit();
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
   });
 
   for (const unavailable of [false, true]) {
@@ -151,6 +171,7 @@ describe("Claude Code's own sandbox", () => {
       it(`group ${voting ? "voters" : "reviewers"} keep each agent's sandbox status, including when the header changes${unavailable ? " without Claude Code's sandbox" : ""}`, async () => {
         // Codex reports the vote's finding, so the bounded pair is Claude Code and Grok; Antigravity gives the third answer.
         const run = await start({ planner: "pair", builder: "plain", controlled: true, ...(voting ? { reviewer: "important" as const, importantBy: "gpt-6.1-sol", verifier: "not-a-bug" as const } : {}), ...(unavailable ? { sandbox: "unavailable" as const } : {}) });
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         const { engine, fakes } = run;
         if (voting) {
           await engine.until(state => Object.keys(ADAPTERS).every(id => state.setup?.checks.some(check => check.id === id && check.status === "ready" && !check.checking)), "every voter's tool to be ready");
@@ -208,7 +229,11 @@ describe("Claude Code's own sandbox", () => {
           clearInterval(release);
           await engine.quit();
         }
-      });
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
+  });
     }
   }
 
@@ -219,6 +244,7 @@ describe("Claude Code's own sandbox", () => {
   ]) {
     it(`a group reviewer's usage handoff to ${swap.replacement} gets its own sandbox settings and status`, async () => {
       const run = await start({ planner: "pair", builder: "plain", controlled: true, limited: [{ model: swap.model, role: "code reviewer", ...(swap.type ? { type: swap.type } : {}) }], ...(swap.unavailable ? { sandbox: "unavailable" as const } : {}) });
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       const { engine, fakes } = run;
       const go = (role?: string) => fakes.received(role).forEach((entry) => writeFileSync(join(fakes.dir, `release-${entry.session}`), "go"));
       const before = setInterval(() => ["planner", "builder", "check finder"].forEach(go), 50);
@@ -260,11 +286,16 @@ describe("Claude Code's own sandbox", () => {
         clearInterval(release);
         await engine.quit();
       }
-    });
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
+  });
   }
 
   it("a Grok reviewer keeps auto mode and gets no Claude Code sandbox settings or sandbox label", async () => {
     const run = await start({ planner: "short", builder: "plain", controlled: true, sandbox: "unavailable" });
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
     const { engine, fakes } = run;
     const go = (role?: string) => fakes.received(role).forEach((entry) => writeFileSync(join(fakes.dir, `release-${entry.session}`), "go"));
     const before = setInterval(() => ["planner", "check finder"].forEach(go), 50);
@@ -286,15 +317,21 @@ describe("Claude Code's own sandbox", () => {
       clearInterval(release);
       await engine.quit();
     }
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
   });
 
   it("a reopened conversation whose sandbox cannot start is reopened without it, not started fresh", async () => {
     const run = await start({ builder: "plain", reopen: "resume", sandbox: "unavailable" }, "[no-check]");
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
     let engine = run.engine;
     const asked = await engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "question"), "the architect's question");
     const question = asked.inbox.find((item) => item.taskId === run.taskId)!;
     await engine.quit();
-    engine = await EngineProcess.harness(run.home, run.fakes.dir);
+    await run.owners.stop(engine);
+    engine = await run.owners.harness(run.home, run.fakes.dir);
     await engine.act("answer", question.id, "Formal", { taskId: run.taskId, about: question.title, clientId: "answer-1" });
     const done: Task = await run.finished(engine);
 
@@ -311,10 +348,15 @@ describe("Claude Code's own sandbox", () => {
     // Said once for the conversation: not again when it is reopened.
     expect(done.session.filter((line) => line.roleId === "architect" && line.text === REFUSED)).toHaveLength(1);
     await engine.quit();
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
   });
 
   it("a Claude Code builder going back to its own conversation for a fix round does not say it again", async () => {
     const run = await start({ builder: "plain", reviewer: "important", reopen: "resume", sandbox: "unavailable" }, "[no-check]", true);
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
     const { engine, fakes } = run;
     // The builder works on Claude Code: set at the plan check, before it starts.
     const asked = await engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "plan"), "the plan check");
@@ -335,5 +377,9 @@ describe("Claude Code's own sandbox", () => {
     ]);
     expect(done.session.filter((line) => line.roleId === "builder" && line.text === REFUSED)).toHaveLength(1);
     await engine.quit();
+
+    }), () => run.owners.close());
+    await run.owners.close();
+    return result;
   });
 });

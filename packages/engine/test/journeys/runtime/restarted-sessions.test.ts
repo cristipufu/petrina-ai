@@ -1,36 +1,20 @@
+import { afterAll } from "bun:test";
+import { engineProcessCases } from "../../support.js";
+import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { FAKE_AGENT } from "../../fixtures.js";
-import { afterAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { State, Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { EARLIER_ATTEMPT, WHERE_YOU_WERE } from "../../../src/prompts.js";
 import { claudeSandbox } from "@petrina/agent-runtime/sandbox";
 import { Store } from "@petrina/storage/store";
 import type { Scenario } from "../../fake-agent.js";
-import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, SLOW, tempDir, traceTaskWait, waitFor } from "../../support.js";
+import { EngineProcess, Fakes, git, makeProduct, makeWorld, remoteRef, SLOW, tempDir, traceTaskWait, waitFor } from "../../support.js";
 
-const roots: string[] = [];
-afterAll(async () => {
-  roots.forEach(removeDir);
-}, 30_000 * SLOW);
-
-async function harness(root: string, home: string, dir: string, remote?: string): Promise<EngineProcess> {
-  try { return await EngineProcess.harness(home, dir, remote); }
-  catch (error) {
-    // EngineProcess owns failed-start cleanup; retain its files if that cleanup was uncertain.
-    const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-    throw error;
-  }
-}
-
-async function closeApp(engine: EngineProcess, root: string) {
-  const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-  if (engine.proc.exitCode === null) await engine.quit();
-  else await engine.exited(10_000);
-  if (at >= 0) removeDir(root);
-}
+const cases = engineProcessCases();
+afterAll(() => cases.close());
 
 type Reopen = "resume" | "load" | undefined;
 type Stop = "quit" | "kill";
@@ -44,33 +28,19 @@ const heardWorking = (task: Task | undefined) => !!task?.conversation?.briefed &
 /** A product delivering locally with no checks, a task on it, and an engine on fake agents. */
 async function start(scenario: Scenario, description = "", holdBuilder = false) {
   const root = tempDir("petrina-pickup-");
-  roots.push(root);
+  const hold = holdBuilder ? join(root, "hold-builder") : undefined;
+  const owners = cases.open(root, { stopPeers() { if (hold) rmSync(hold, { force: true }); } });
+  return setupWithCleanup(() => owners.prepare(async () => {
   const product = await makeProduct(root);
   const home = join(root, "home");
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario(scenario);
-  const hold = holdBuilder ? join(root, "hold-builder") : undefined;
   if (hold) {
     writeFileSync(hold, "");
     writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Add a greeting", file: hold } }));
   }
-  let current: EngineProcess | undefined;
-  let failedStart = false;
-  const close = async () => {
-    const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-    if (hold) rmSync(hold, { force: true });
-    if (current) {
-      if (current.proc.exitCode === null) await current.quit();
-      else await current.exited(10_000);
-      current = undefined;
-    }
-    if (!failedStart) removeDir(root);
-  };
-  const reopen = async () => {
-    try { const next = await harness(root, home, fakes.dir); current = next; return next; }
-    catch (error) { failedStart = true; throw error; }
-  };
-  return setupWithCleanup(async () => {
+  const close = () => owners.close();
+  const reopen = () => owners.prepare(() => owners.harness(home, fakes.dir));
     const engine = await reopen();
     // These tests assert exact tools and saved conversation identities. A still-checking Codex may
     // otherwise be replaced by the first ready peer before the scenario even starts.
@@ -82,19 +52,20 @@ async function start(scenario: Scenario, description = "", holdBuilder = false) 
     await engine.act("setProductDelivery", productId, "local", false);
     const taskId = (await engine.act("addTask", { productId, title: "Add a greeting", description })) as string;
     const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
-    const restart = async (engine: EngineProcess, stop: Stop) => {
+    const restart = (engine: EngineProcess, stop: Stop) => owners.prepare(async () => {
       if (stop === "quit") await engine.quit();
       else await engine.kill();
+      await owners.stop(engine);
       return reopen();
-    };
-    const finished = async (engine: EngineProcess) => find(await engine.until((state) => find(state).state === "done", "the task to finish", 60_000));
+    });
+    const finished = (engine: EngineProcess) => owners.run(engine, async () => find(await engine.until((state) => find(state).state === "done", "the task to finish", 60_000)));
     // The fake marks the moment it starts working; the engine reads what it said a moment later.
-    const working = async (engine: EngineProcess) => {
+    const working = (engine: EngineProcess) => owners.run(engine, async () => {
       await waitFor(() => fakes.marked("builder-working"), "the builder to start working");
       await engine.until((state) => heardWorking(find(state)), "the engine to hear the builder at work");
-    };
-    return { product, home, fakes, engine, taskId, find, restart, finished, working, hold, reopen, close };
-  }, close);
+    });
+    return { product, home, fakes, engine, taskId, find, restart, finished, working, hold, reopen, close, owners };
+  }), () => owners.close());
 }
 
 describe.concurrent("an agent waiting on a question when Petrina restarts", () => {
@@ -107,7 +78,7 @@ describe.concurrent("an agent waiting on a question when Petrina restarts", () =
   for (const [reopen, stop] of cases) {
     it(`${named(reopen)}, after ${after(stop)}: the question waits once, the answer arrives once`, async () => {
       const run = await start({ builder: "plain", ...(reopen ? { reopen } : {}) }, "[no-check]");
-      try {
+      const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         let engine = run.engine;
         const asked = await engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "question"), "the architect's question");
         const question = asked.inbox.find((item) => item.taskId === run.taskId)!;
@@ -165,7 +136,10 @@ describe.concurrent("an agent waiting on a question when Petrina restarts", () =
         expect(done.conversation).toBeUndefined();
         await engine.quit();
 
-      } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
     });
   }
 });
@@ -180,7 +154,7 @@ describe.concurrent("a builder working when Petrina restarts", () => {
   for (const [reopen, stop] of cases) {
     it(`${named(reopen)}, after ${after(stop)}: a message still in line arrives once, and nothing is heard twice`, async () => {
       const run = await start({ planner: "short", builder: "work", ...(reopen ? { reopen } : {}) });
-      try {
+      const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         let engine = run.engine;
         await run.working(run.engine);
         // Heard before the restart: an interruption.
@@ -243,13 +217,16 @@ describe.concurrent("a builder working when Petrina restarts", () => {
         expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
         await engine.quit();
 
-      } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
     });
   }
 
   it("keeps the same conversation through several restarts in a row", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume", restarts: 2 });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       let engine = run.engine;
       await run.working(run.engine);
       engine = await run.restart(engine, "kill");
@@ -263,12 +240,15 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       expect(run.fakes.openings("builder")).toHaveLength(1);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
   });
 
   it("starts fresh after a pause and resume, as before", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await run.working(run.engine);
       await run.engine.act("sendMessage", run.taskId, "Keep it short", "queue", "message-1");
       await run.engine.act("pause", run.taskId);
@@ -287,12 +267,15 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       expect(done.timeline.some((entry) => entry.text === "Picked up where it left off" || entry.text.startsWith("Started this step again"))).toBe(false);
       await run.engine.quit();
 
-    } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
   });
 
   it("starts the step again when the saved conversation was on another model", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await run.working(run.engine);
       await run.engine.kill();
       const store = new Store(join(run.home, "petrina.db"));
@@ -307,12 +290,15 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       expect(done.timeline.some((entry) => entry.text === "Started this step again: it now runs on a different tool or model")).toBe(true);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
   });
 
   it("starts the step again when Petrina stopped before the agent got its instructions", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await run.working(run.engine);
       await run.engine.kill();
       const store = new Store(join(run.home, "petrina.db"));
@@ -329,12 +315,15 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       expect(done.timeline.some((entry) => entry.text === "Started this step again: it had not received its instructions yet")).toBe(true);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
   });
 
   it("starts the step again as before for a task an older Petrina saved, with no conversation note", async () => {
     const run = await start({ planner: "short", builder: "work", reopen: "resume" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await run.working(run.engine);
       await run.engine.act("sendMessage", run.taskId, "Keep it short", "queue", "message-1");
       await run.engine.kill();
@@ -357,14 +346,17 @@ describe.concurrent("a builder working when Petrina restarts", () => {
       expect(done.timeline.some((entry) => entry.text === "Picked up where it left off" || entry.text.startsWith("Started this step again"))).toBe(false);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
   });
 });
 
 describe.concurrent("coordinator notes during a builder turn", () => {
   it("hands a short queue of notes over in one follow-up while preserving every note in order", async () => {
     const run = await start({ planner: "short", builder: "plain" }, "[no-check]", true);
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       try {
         await waitFor(() => existsSync(`${run.hold}.reached`), "the builder to reach the hold");
         const messages = ["Keep it short", "Use a friendly tone", "Sign it from the team"];
@@ -384,7 +376,10 @@ describe.concurrent("coordinator notes during a builder turn", () => {
         await run.engine.quit();
       }
 
-    } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
   });
 });
 
@@ -392,7 +387,7 @@ describe.concurrent("a permission request open when Petrina restarts", () => {
   for (const reopen of ["resume", undefined] as const) {
     it(`${named(reopen)}: leaves the inbox with a note, and the agent asks again`, async () => {
       const run = await start({ planner: "short", ...(reopen ? { reopen } : {}) });
-      try {
+      const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         const asked = await run.engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "permission"), "the permission request");
         const request = asked.inbox.find((item) => item.taskId === run.taskId)!;
         const engine = await run.restart(run.engine, "quit");
@@ -410,7 +405,10 @@ describe.concurrent("a permission request open when Petrina restarts", () => {
         expect(await git(run.product, "show", "main:greeting.txt")).toBe("Hello (with left-pad)");
         await engine.quit();
 
-      } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
     });
   }
 });
@@ -419,7 +417,7 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
   for (const reopen of ["resume", undefined] as const) {
     it(`${named(reopen)}: the clean-up goes back to the commit from when the step first started`, async () => {
       const run = await start({ planner: "short", builder: "plain", reviewer: "commit", ...(reopen ? { reopen } : {}) });
-      try {
+      const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         await waitFor(() => run.fakes.marked("reviewer-committed"), "the reviewer to commit");
         const before = run.find(await run.engine.state());
         const built = await git(before.worktree!, "rev-parse", "HEAD~1");
@@ -432,7 +430,10 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
         if (!reopen) expect(run.fakes.openings("code reviewer")[1]).toContain("- added: stray.txt");
         await engine.quit();
 
-      } finally { await run.close(); }
+
+      }), () => run.close());
+      await run.close();
+      return result;
     });
   }
 });
@@ -440,13 +441,13 @@ describe.concurrent("a read-only agent that committed before a restart", () => {
 describe.concurrent("a Release Manager interrupted by a restart", () => {
   it("never reopens its conversation, even on a tool that can: it gets the release ready again from the start", async () => {
     // Only a release has a Release Manager: this product publishes releases.
-    const w = await makeWorld("pickup-release-manager");
-    const root = w.dir;
-    roots.push(root);
+    const root = tempDir("petrina-pickup-release-manager-");
+    return cases.use(root, async owners => {
+    const w = await makeWorld("pickup-release-manager", { owner: { root, open() { throw new Error("This app-mode world must use its owned native harness"); } } });
     const home = join(w.dir, "home");
     const fakes = new Fakes(w.dir);
     fakes.scenario({ planner: "short", builder: "plain", releaseManager: "hang", reopen: "resume" });
-    let engine = await harness(root, home, w.dir, w.remote);
+    let engine = await owners.harness(home, w.dir, w.remote);
     try {
       const productId = (await engine.act("addProduct", w.clone)) as string;
       await engine.act("setProductDelivery", productId, "release", false);
@@ -456,7 +457,8 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
         () => waitFor(() => fakes.marked("release-manager-started"), "the Release Manager to start"));
       expect(find(await engine.state()).conversation).toBeUndefined();
       await engine.kill();
-      engine = await harness(root, home, w.dir, w.remote);
+      await owners.stop(engine);
+      engine = await owners.harness(home, w.dir, w.remote);
       const done = find(await engine.until((state) => find(state).state === "done", "the release", 60_000));
       expect(done.release?.tag).toBe("v0.1.0");
       expect(await remoteRef(w.remote, "refs/tags/v0.1.0")).toBe(await git(w.clone, "rev-parse", done.branch!));
@@ -464,7 +466,8 @@ describe.concurrent("a Release Manager interrupted by a restart", () => {
       expect(fakes.opens().some((open) => open.how !== "new")).toBe(false);
       await engine.quit();
 
-    } finally { await closeApp(engine, root); }
+    } finally { await owners.stop(engine); }
+    });
   });
 });
 
@@ -473,7 +476,9 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
   for (const trouble of ["no answer", "no answer at all", "conversation gone"] as const) {
     it(`starts the step again when there is ${trouble === "no answer" ? "no answer in time" : trouble === "no answer at all" ? "no answer even to the first handshake" : "no such conversation any more"}`, async () => {
       const root = tempDir("petrina-pickup-");
-      roots.push(root);
+      const owners = directDrivers(root);
+      const caseOwner = cases.open(root, { stopPeers: () => owners.close() });
+      const result = await setupWithCleanup(() => owners.prepare(async () => {
       const product = await makeProduct(root);
       const fakes = new Fakes(join(root, "fake"));
       fakes.scenario({ planner: "short", builder: "work", reopen: "resume" });
@@ -487,7 +492,7 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
       // The missing-conversation case must hear the agent's error before the deadline; the two
       // silent-agent cases deliberately exercise the short deadline itself.
       const options = { agentCommand, reopenTimeoutMs: trouble === "conversation gone" ? 12_000 * SLOW : 1500 };
-      let engine = new Engine(join(root, "data"), options);
+      let engine = owners.open(join(root, "data"), options);
       try {
         const productId = await engine.addProduct(product);
         engine.setProductDelivery(productId, "local", false);
@@ -500,7 +505,8 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
         // The new engine checks the saved Builder's login first, then tries reopening it.
         else if (trouble === "no answer at all") silentAfter = 1;
         else fakes.forgetConversations();
-        engine = new Engine(join(root, "data"), options);
+        await owners.stop(engine);
+        engine = owners.open(join(root, "data"), options);
         const done = await waitFor(() => {
           const task = engine.getState().tasks.find((entry) => entry.id === taskId);
           return task?.state === "done" && task;
@@ -512,11 +518,10 @@ describe.concurrent("a tool that cannot reopen the conversation after all", () =
         const fresh = fakes.openings("builder")[1]!;
         expect(fresh).toContain("- added: notes.txt");
 
-      } finally {
-      const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-      await engine.shutdown();
-      removeDir(root);
-    }
+      } finally { await engine.shutdown(); }
+      }), () => caseOwner.close());
+      await caseOwner.close();
+      return result;
     });
   }
 });

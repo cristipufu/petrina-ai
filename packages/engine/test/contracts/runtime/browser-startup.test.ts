@@ -1,3 +1,6 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { afterEach } from "bun:test";
+import { engineProcessCases } from "../../support.js";
 import { afterAll, expect, it } from "bun:test";
 import * as processes from "node:child_process";
 import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -9,11 +12,14 @@ import { CLEANUP_NOTE, recoverBrowserTemps } from "@petrina/agent-runtime/browse
 import { browserProcesses } from "@petrina/platform/browser-processes";
 import { connectionPath } from "../../../src/instance.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
-import { EngineProcess, Fakes, FAKE_AGENT, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "../../support.js";
+import { Fakes, FAKE_AGENT, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "../../support.js";
 import { expectRejection } from "@petrina/test-support/rejections";
+
+const cases = engineProcessCases();
+afterEach(() => cases.close());
 const root = tempDir("petrina-browser-startup-");
 const browsers = testBrowserRoot();
-afterAll(() => { removeDir(root); removeDir(browsers); });
+afterAll(() => { removeDir(root); if (!cases.retained.size) removeDir(browsers); });
 const notePattern = (fields: string) => new RegExp(`^${`${CLEANUP_NOTE} ${fields}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("elapsed=\\?", "elapsed=\\d+ms")}\n?$`);
 
 const BROWSER_RECOVERY_FAILURE = fileURLToPath(new URL("../../fixtures/browser-startup-failure.ts", import.meta.url));
@@ -160,17 +166,29 @@ for (const mode of ["not observed", "failed", "bypassed"] as const) it(`restores
 
 for (const replacement of [false, true]) it(`does not advertise a ready engine or discard browser ownership when startup recovery fails${replacement ? " during replacement" : ""}`, async () => {
   const work = tempDir("petrina-browser-launch-recovery-fails-");
+  let lifecycle: LifecycleStore | undefined;
+  const closeLifecycle = () => { const current = lifecycle; current?.close(); if (lifecycle === current) lifecycle = undefined; };
+  return cases.use(work, async owners => {
   const home = join(work, "home");
   const registry = join(home, "browser-temp");
   const session = mkdtempSync(join(browsers, "petrina-browser-"));
   mkdirSync(registry, { recursive: true });
   writeFileSync(join(registry, "interrupted.json"), JSON.stringify(session));
-  const lifecycle = replacement ? new LifecycleStore(home) : undefined;
+  lifecycle = replacement ? new LifecycleStore(home) : undefined;
   lifecycle?.begin("restart", { requestId: "browser-recovery" }, "paused");
   lifecycle?.finish("starting");
-  const engine = await EngineProcess.start(home, [BROWSER_RECOVERY_FAILURE, home, browsers, ...(replacement ? ["--replacement"] : [])]);
+  const engine = await owners.app(home, [BROWSER_RECOVERY_FAILURE, home, browsers, ...(replacement ? ["--replacement"] : [])]);
   const proc = engine.proc;
-  try {
+
+  const cleanup = async () => {
+    const failures: unknown[] = [];
+    try { if (proc.exitCode === null) await engine.kill(); else await engine.exited(10_000); }
+    catch (error) { failures.push(error); }
+    try { closeLifecycle(); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, "Startup recovery fixture cleanup could not be confirmed");
+    removeDir(session);
+  };
+  const result = await setupWithCleanup(async () => {
     const hello = engine.hello as { type: string; message?: string };
     expect(hello.type).toBe("error");
     expect(hello.message).toContain(process.platform === "win32" ? "The headless browser did not stop." : "Petrina could not confirm that a background browser from an earlier session stopped. Petrina could not read the list of running programs.");
@@ -189,10 +207,9 @@ for (const replacement of [false, true]) it(`does not advertise a ready engine o
     await recoverBrowserTemps(registry, browsers);
     expect(existsSync(registry)).toBe(false);
     expect(existsSync(session)).toBe(false);
-  } finally {
-    if (proc.exitCode === null) await engine.kill();
-    lifecycle?.close();
-    removeDir(session);
-    removeDir(work);
-  }
+
+  }, cleanup);
+  await cleanup();
+  return result;
+  }, { stopPeers: () => closeLifecycle() });
 });

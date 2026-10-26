@@ -6,20 +6,20 @@ import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyProblems, type DeliveryMode, type State, type Task } from "@petrina/core";
 import { Store } from "@petrina/storage/store";
-import { EngineProcess, Fakes, git, makeWorld, remoteRef, removeDir, waitFor, type World } from "../../support.js";
+import { EngineProcess, engineProcessCases, Fakes, git, makeWorld, remoteRef, tempDir, waitFor, type World } from "../../support.js";
 
-const worlds: World[] = [];
-const holds: string[] = [];
-afterAll(() => {
-  // A fake gh left holding by a killed engine lets go.
-  for (const hold of holds) rmSync(hold, { force: true });
-  for (const made of worlds) removeDir(made.dir);
-});
+const cases = engineProcessCases();
+// A timed-out concurrent body remains owned until this file's peers have finished.
+afterAll(() => cases.close());
 
 /** A product delivering in `mode` without asking, a task on its way there, and an engine running it. `hold`: a gh command that waits after doing its work. */
 async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?: string; notes?: "hang" } = {}) {
-  const w = await makeWorld(`shipping-${mode}`, options.notes ? { version: "1.0.0" } : {});
-  worlds.push(w);
+  const root = tempDir(`petrina-shipping-${mode}-`), hold = join(root, "hold");
+  const owners = cases.open(root, { stopPeers() { rmSync(hold, { force: true }); } });
+  return setupWithCleanup(() => owners.prepare(async () => {
+  const w = await makeWorld(`shipping-${mode}`, { ...(options.notes ? { version: "1.0.0" } : {}),
+    owner: { root, open() { throw new Error("This app-mode world must use its owned native harness"); } },
+  });
   if (options.notes) {
     // An existing version and release make preparation change the version, so its checks rerun on resume.
     await git(w.remote, "update-ref", "refs/tags/v1.0.0", w.initial);
@@ -28,37 +28,20 @@ async function shipping(mode: DeliveryMode, options: { hold?: string; holdMatch?
   const home = join(w.dir, "home");
   const fakes = new Fakes(w.dir);
   fakes.scenario({ planner: "short", builder: "plain", ...(options.notes ? { releaseManager: options.notes } : {}) });
-  const hold = join(w.dir, "hold");
   if (options.hold) {
     writeFileSync(hold, "");
-    holds.push(hold);
     w.setGitHub((github) => (github.hold = { command: options.hold!, file: hold, ...(options.holdMatch ? { match: options.holdMatch } : {}) }));
   }
-  let current: EngineProcess | undefined;
-  let failedStart = false;
-  const close = async () => {
-    const at = worlds.indexOf(w); if (at >= 0) worlds.splice(at, 1);
-    rmSync(hold, { force: true });
-    if (current) {
-      if (current.proc.exitCode === null) await current.quit();
-      else await current.exited(10_000);
-      current = undefined;
-    }
-    if (!failedStart) removeDir(w.dir);
-  };
-  const restart = async () => {
-    try { const next = await EngineProcess.harness(home, w.dir, w.remote); current = next; return next; }
-    catch (error) { failedStart = true; throw error; }
-  };
-  return setupWithCleanup(async () => {
+  const close = () => owners.close();
+  const restart = () => owners.prepare(() => owners.harness(home, w.dir, w.remote));
     const engine = await restart();
     const productId = (await engine.act("addProduct", w.clone)) as string;
     await engine.act("setProductDelivery", productId, mode, false);
     const taskId = (await engine.act("addTask", { productId, title: "Add a greeting" })) as string;
     const find = (state: State) => state.tasks.find((task) => task.id === taskId)!;
 
-    return { w, home, fakes, engine, taskId, find, hold, restart, close };
-  }, close);
+    return { w, home, fakes, engine, taskId, find, hold, restart, close, owners };
+  }), () => owners.close());
 }
 
 const delivered = (task: Task | undefined) => task?.state === "done" || task?.state === "pr-open";
@@ -70,7 +53,7 @@ describe.concurrent("shipping is never repeated blindly", () => {
     for (const stop of ["quit", "kill"] as const) {
       it(`${mode}: finds what GitHub published just before ${stop === "quit" ? "an ordinary quit" : "a forced kill"}, and records it`, async () => {
         const run = await shipping(mode, { hold: mode === "pull-request" ? "pr create" : "release create" });
-        try {
+        const result = await setupWithCleanup(() => run.owners.prepare(async () => {
           await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to publish");
           // Saved before the step started.
           expect(run.find(await run.engine.state()).shipping?.step).toBe(mode === "pull-request" ? "open" : "release");
@@ -101,14 +84,17 @@ describe.concurrent("shipping is never repeated blindly", () => {
           expect(run.w.github().cwds?.length).toBe(run.w.github().calls.length);
           await engine.quit();
 
-        } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
       });
     }
   }
 
   it("local: finds a move of main that went through but was not saved, after a forced kill", async () => {
     const run = await shipping("local");
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       // Simulate a lost delivery save after cleanup completes, rather than interrupting the removal itself.
       const done = run.find(await run.engine.until((state) => delivered(run.find(state)) && run.find(state).cleanup?.removedAt !== undefined, "the local delivery and cleanup"));
       const tested = await git(run.w.clone, "rev-parse", "main");
@@ -137,12 +123,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(run.fakes.openings("release manager")).toHaveLength(0);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("does not push local main when recovering a task cancelled just after its local move", async () => {
     const run = await shipping("local");
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       let engine: Awaited<ReturnType<typeof run.restart>> | undefined;
       try {
         const done = run.find(await run.engine.until((state) => delivered(run.find(state)) && !!run.find(state).cleanup?.removedAt, "the local delivery and cleanup"));
@@ -175,12 +164,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
         if (engine) await engine.quit();
       }
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("carries on publishing when GitHub clearly has nothing, and 'Try again' on a stuck step checks first", async () => {
     const run = await shipping("pull-request");
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       run.w.setGitHub((github) => (github.fail = { "pr create": 1 }));
       const stuck = await run.engine.until((state) => state.inbox.some((item) => item.taskId === run.taskId && item.kind === "stuck"), "the publishing step to get stuck");
       expect(run.find(stuck).shipping?.step).toBe("open");
@@ -196,12 +188,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(run.fakes.openings("release manager")).toHaveLength(0);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("waits for 'Check again' while GitHub cannot be reached, and never takes that for nothing published", async () => {
     const run = await shipping("pull-request", { hold: "pr create" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
       await run.engine.kill();
       run.w.setGitHub((github) => (github.offline = true));
@@ -232,12 +227,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(creates(run.w)).toHaveLength(1);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("waits while the login cannot see the repository, though GitHub says 'not found', and 'Ship it again' still publishes once", async () => {
     const run = await shipping("release", { hold: "release create" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to create the release");
       await run.engine.kill();
       run.w.setGitHub((github) => (github.hidden = true));
@@ -256,12 +254,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(creates(run.w)).toHaveLength(1);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("'Ship it again' gets it ready again and still opens only one pull request", async () => {
     const run = await shipping("pull-request", { hold: "pr create" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
       await run.engine.kill();
       run.w.setGitHub((github) => (github.offline = true));
@@ -278,12 +279,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(creates(run.w)).toHaveLength(1);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("asks when something else is on GitHub, and 'Mark as done' finishes the task without publishing", async () => {
     const run = await shipping("pull-request", { hold: "pr create" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to open the pull request");
       await run.engine.kill();
       // Someone replaced the task branch with different work: the tested commit is absent.
@@ -324,12 +328,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(creates(run.w)).toHaveLength(1);
       await closed.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("pausing while Petrina works out the version keeps the Release Manager from starting, and resuming ships once", async () => {
     const run = await shipping("release", { hold: "release view", holdMatch: "tagName" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to look up the latest release");
       await run.engine.act("pause", run.taskId);
       rmSync(run.hold, { force: true });
@@ -346,13 +353,16 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(run.w.github().releases).toHaveLength(1);
       await run.engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   for (const stop of ["pause", "restart"] as const) {
     it(`${stop} while writing release notes continues the same Journey box through repeated preparation checks`, async () => {
       const run = await shipping("release", { notes: "hang" });
-      try {
+      const result = await setupWithCleanup(() => run.owners.prepare(async () => {
         let engine: EngineProcess | undefined = run.engine;
         try {
           await waitFor(() => run.fakes.marked("release-manager-started"), "the Release Manager to start writing notes");
@@ -392,13 +402,16 @@ describe.concurrent("shipping is never repeated blindly", () => {
           await engine?.quit();
         }
 
-      } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
     });
   }
 
   it("failed preparation checks interrupt resumed notes without marking them complete", async () => {
     const run = await shipping("release", { notes: "hang" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       try {
         await waitFor(() => run.fakes.marked("release-manager-started"), "the Release Manager to start writing notes");
         const before = run.find(await run.engine.state());
@@ -418,12 +431,15 @@ describe.concurrent("shipping is never repeated blindly", () => {
         await run.engine.quit();
       }
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 
   it("resuming a delivery paused while GitHub published it, even after Petrina is reopened, checks first", async () => {
     const run = await shipping("release", { hold: "release create" });
-    try {
+    const result = await setupWithCleanup(() => run.owners.prepare(async () => {
       await waitFor(() => existsSync(`${run.hold}.reached`), "Petrina to create the release");
       await run.engine.act("pause", run.taskId);
       rmSync(run.hold, { force: true });
@@ -440,6 +456,9 @@ describe.concurrent("shipping is never repeated blindly", () => {
       expect(creates(run.w)).toHaveLength(1);
       await engine.quit();
 
-    } finally { await run.close(); }
+
+    }), () => run.close());
+    await run.close();
+    return result;
   });
 });

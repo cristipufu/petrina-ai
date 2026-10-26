@@ -5,16 +5,25 @@ import { executionFor } from "@petrina/orchestrator";
 import { Engine } from "../engine.js";
 import { EngineClient } from "../client.js";
 import { CLI, Fakes, makeProduct, tempDir, SLOW, git } from "../support.js";
-import { coordinatorLifetime } from "./coordinator-lifetime.js";
+import { coordinatorLifetimes } from "./coordinator-lifetime.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import type { LifecycleStore } from "@petrina/storage/lifecycle-store";
+
+/** A seed can finish stopping after cleanup began; no replacement storage may open then. */
+export async function coordinatorStoreAfterSeed(signal: AbortSignal, shutdown: () => Promise<void>, openStore: () => LifecycleStore): Promise<LifecycleStore> {
+  await shutdown();
+  if (signal.aborted) throw new Error("Coordinator setup closed while stopping its seed");
+  return openStore();
+}
 
 /** Actual native review/restart composition, starting at the review rather than replaying unrelated agents. */
-export async function lifecycleFixture(roots: string[], options: { title?: string; limit?: number; reviewer?: "important" } = {}) {
+export async function lifecycleFixture(lifetimes: ReturnType<typeof coordinatorLifetimes>, options: { title?: string; limit?: number; reviewer?: "important" } = {}) {
   const root = tempDir("petrina-coordination-lifecycle-");
-  roots.push(root);
-  const home = join(root, "home"), fakes = new Fakes(join(root, "fakes"));
-  const lifetime = await coordinatorLifetime(root);
-  let seed: Engine | undefined, seedClosed = false;
-  try {
+  let seed: Engine | undefined;
+  const lifetime = await lifetimes.open(root, { async stopPeers() { await seed?.shutdown(); seed = undefined; } });
+  return setupWithCleanup(() => lifetime.prepare(async () => {
+    await lifetime.ready;
+    const home = join(root, "home"), fakes = new Fakes(join(root, "fakes"));
     seed = new Engine(home, { agentCommand: () => undefined });
     seed.setPoolPaused(true);
     await seed.waitUntilReady(); await Promise.all([...seed.backgroundWork]);
@@ -42,34 +51,26 @@ export async function lifecycleFixture(roots: string[], options: { title?: strin
     seed.setPoolLimit(options.limit ?? 3);
     seed.s.pool.paused = false;
     seed.commitNow(task);
-    await seed.shutdown(); seedClosed = true;
+    await seed.shutdown(); seed = undefined;
     const engine = await lifetime.harness(home, fakes.dir), client = new EngineClient(home);
     const release = (id: string) => writeFileSync(join(fakes.dir, `release-${id}`), "go");
-    const settle = async (s: State) => {
+    const settle = (s: State) => lifetime.prepare(async () => {
       for (const item of s.inbox)
         if (item.kind === "plan") await engine.act("approve", item.id);
         else if (item.kind === "question") await engine.act("answer", item.id, "Yes");
         else if (item.kind === "permission") await engine.act("allow", item.id, "once");
       for (const received of fakes.received()) if (received.role !== "code reviewer" && received.role !== "verifier") release(received.session);
-    };
+    });
     const stop = async () => {
-      try {
+      await setupWithCleanup(() => lifetime.prepare(async () => {
         try {
           const state = await engine.state();
           for (const entry of state.tasks) if (!["done", "cancelled", "pr-open"].includes(entry.state)) await engine.act("cancel", entry.id);
         } catch { /* The native owner may have already stopped; independent command/lease cleanup still confirms it. */ }
         await client.call("engine.stop", { requestId: "cleanup-review-lifecycle", wait: true, timeoutMs: 3000 * SLOW });
-      } finally {
-        try { await lifetime.close(); }
-        catch (error) { const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1); throw error; }
-      }
+      }), () => lifetime.close());
+      await lifetime.close();
     };
-    return { root, home, fakes, engine, client, productId, taskId, release, settle, stop, openDesktop: () => lifetime.app(home, [CLI, "app"]) };
-  } catch (error) {
-    const errors = [error];
-    if (!seedClosed) try { await seed?.shutdown(); } catch (cleanup) { errors.push(cleanup); }
-    try { await lifetime.close(); } catch (cleanup) { errors.push(cleanup); }
-    if (errors.length > 1) { const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1); throw new AggregateError(errors, "Lifecycle setup failed and cleanup was not confirmed"); }
-    throw error;
-  }
+    return { root, home, fakes, engine, client, productId, taskId, release, settle, stop, run: lifetime.prepare, openDesktop: () => lifetime.app(home, [CLI, "app"]) };
+  }), () => lifetime.close());
 }

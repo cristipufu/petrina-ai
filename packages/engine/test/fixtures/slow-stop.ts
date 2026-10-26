@@ -1,14 +1,17 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { runCommand } from "@petrina/test-support/commands";
 import { shutdownActors } from "./shutdown-actors.js";
 import { expect } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Fakes, HARNESS, tempDir } from "../support.js";
+import { Fakes, HARNESS, type EngineProcesses } from "../support.js";
 import { ENGINE_TEST_ROOT } from "./runtime-paths.js";
 
 /** Native stop/read-deadline contract recipe. POSIX group and defunct semantics are deliberately confined here. */
-export async function slowStopFixture(stubborn: boolean, killFirst: boolean, native: boolean) {
-    const dir = tempDir("petrina-slow-agent-stop-");
+export async function slowStopFixture(dir: string, owners: EngineProcesses, stubborn: boolean, killFirst: boolean, native: boolean) {
     const actors = await shutdownActors(dir);
+    return setupWithCleanup(async () => {
+    if (owners.signal.aborted) throw new Error("Slow-stop fixture preparation was stopped");
     const home = join(dir, "data");
     const fakes = new Fakes(join(dir, "fake"));
     const hold = join(dir, "hold");
@@ -42,14 +45,21 @@ process.exit(ps.exitCode);
 `);
     chmodSync(join(bin, "ps"), 0o755);
     // Complete the Mac's first run of this fresh stand-in before measuring the stop deadline.
-    const ready = Bun.spawn([join(bin, "ps"), "-A", "-o", "pid=,ppid="], { stdout: "ignore", stderr: "pipe" });
-    expect(await ready.exited, await new Response(ready.stderr).text()).toBe(0);
+    const readiness = (argv: readonly string[], output: "stdout" | "stderr") => owners.prepare(() => runCommand(argv, { signal: owners.signal,
+      start: (args, settings) => {
+        const child = Bun.spawn(args, { detached: settings.detached, stdout: output === "stdout" ? "pipe" : "ignore", stderr: output === "stderr" ? "pipe" : "ignore" });
+        return { pid: child.pid, exited: child.exited, get exitCode() { return child.exitCode; }, get signalCode() { return child.signalCode; },
+          ...(child.stdout ? { stdout: child.stdout } : {}), ...(child.stderr ? { stderr: child.stderr } : {}), kill: signal => child.kill(signal) };
+      },
+    }));
+    const ready = await readiness([join(bin, "ps"), "-A", "-o", "pid=,ppid="], "stderr");
+    expect(ready.code, ready.stderr).toBe(0);
     if (!native) {
       // Unavailable scripted data is a failed read, never a successful empty process list.
       writeFileSync(slow, "");
-      const absent = Bun.spawn([join(bin, "ps"), "-A", "-o", "pid=,ppid=,stat="], { stdout: "pipe", stderr: "ignore" });
-      expect(await absent.exited).toBe(1);
-      expect(await new Response(absent.stdout).text()).toBe("");
+      const absent = await readiness([join(bin, "ps"), "-A", "-o", "pid=,ppid=,stat="], "stdout");
+      expect(absent.code).toBe(1);
+      expect(absent.stdout).toBe("");
       expect(existsSync(scanned)).toBe(false);
       rmSync(slow);
     }
@@ -132,5 +142,7 @@ AgentRun.prototype.stop = function(...args) {
 await import(${JSON.stringify(HARNESS)});`);
     writeFileSync(hold, "");
     writeFileSync(join(fakes.dir, "agents.json"), JSON.stringify({ hold: { title: "Long build", file: hold }, background: { title: "Long build", pids: buildPids, program: actors.background } }));
+    if (owners.signal.aborted) throw new Error("Slow-stop fixture preparation was stopped");
     return { dir, actors, home, fakes, hold, slow, scanned, recover, killed, buildPids, finalLists, stops, launcher };
+    }, () => actors.close());
 }

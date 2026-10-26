@@ -1,3 +1,6 @@
+import { afterAll } from "bun:test";
+import { engineProcessCases } from "../../support.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { shutdownActors, alive, pidsIn } from "../../fixtures/shutdown-actors.js";
 import { slowStopFixture } from "../../fixtures/slow-stop.js";
 // Quit the real engine process while fake agents are active, then restart: none may survive the old engine.
@@ -7,22 +10,36 @@ import { join } from "node:path";
 import { Engine } from "../../engine.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { parseChildState, readProcessList } from "@petrina/platform/process-tree";
-import { EngineProcess, Fakes, HARNESS, makeProduct, removeDir, tempDir, waitFor, waitForFile } from "../../support.js";
+import { EngineProcess, Fakes, HARNESS, makeProduct, tempDir, waitFor, waitForFile } from "../../support.js";
+
+const cases = engineProcessCases();
+afterAll(() => cases.close());
 
 
 describe("Stopping during startup", () => {
   it("quits while startup tool checks ignore being stopped, leaving none of their agents running", async () => {
     const dir = tempDir("petrina-probes-quit-");
+    let stopPeers = async (): Promise<void> => {};
+    return cases.use(dir, async owners => {
     const actors = await shutdownActors(dir);
+    stopPeers = () => actors.close();
     const fakes = new Fakes(join(dir, "fake"));
     const engine = new Engine(join(dir, "data"), {
       agentCommand: () => [process.execPath, actors.actor, fakes.dir, "--hang", "--stubborn"],
       which: (name) => name === "gh" ? null : Bun.which(name),
     });
+    stopPeers = async () => { const settled = await Promise.allSettled([engine.shutdown(), actors.close()]); const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []); if (errors.length) throw new AggregateError(errors, "Startup fixture peers did not all stop"); };
     const pids = () => pidsIn(join(fakes.dir, "pids"));
-    const checking = engine.checkTools();
+    const checking = owners.prepare(() => engine.checkTools());
     const probeCount = Object.keys(ADAPTERS).length;
-    try {
+
+    const cleanup = async () => {
+      await engine.shutdown();
+      await checking;
+      await actors.close();
+
+    };
+    const result = await setupWithCleanup(async () => {
       await waitFor(() => pids().filter(alive).length === probeCount, "every startup probe");
       await engine.shutdown();
       await checking;
@@ -30,12 +47,11 @@ describe("Stopping during startup", () => {
       // Nothing new starts after quitting, even if another check was requested meanwhile.
       await engine.checkTools();
       expect(pids()).toHaveLength(probeCount);
-    } finally {
-      await engine.shutdown();
-      await checking;
-      await actors.close();
-      removeDir(dir);
-    }
+
+    }, cleanup);
+    await cleanup();
+    return result;
+    }, { stopPeers: () => stopPeers() });
   });
 
 
@@ -44,8 +60,11 @@ describe("Stopping during startup", () => {
 describe.concurrent("Quitting stops agents before the engine exits", () => {
   for (const when of ["starting", "working", "reviewing in parallel"] as const) it(`stops every agent ${when}, before a restart can touch the same files`, async () => {
     const dir = tempDir("petrina-agent-quit-");
+    let stopPeers = async (): Promise<void> => {};
+    return cases.use(dir, async owners => {
     const home = join(dir, "data");
     const actors = await shutdownActors(dir);
+    stopPeers = () => actors.close();
     const fakes = new Fakes(join(dir, "fake"));
     const pids = () => pidsIn(join(fakes.dir, "processes"));
     fakes.scenario(when === "starting" ? { silent: true } : { controlled: true, builder: "plain" });
@@ -53,8 +72,14 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     // (our process group), pass the startup wait, or be signalled by cleanup.
     if (when === "starting") writeFileSync(join(fakes.dir, "processes"), "");
     let engine: EngineProcess | undefined;
-    try {
-      engine = await EngineProcess.start(home, [HARNESS, home, fakes.dir, `--agent-program=${actors.actor}`]);
+
+    const cleanup = async () => {
+      if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());
+      await actors.close();
+
+    };
+    const result = await setupWithCleanup(async () => {
+      engine = await owners.app(home, [HARNESS, home, fakes.dir, `--agent-program=${actors.actor}`]);
       const productId = await engine.act("addProduct", await makeProduct(dir));
       await engine.act("addTask", { productId, title: "Work through a quit", description: "[no-check]" });
       await waitFor(async () => {
@@ -75,17 +100,17 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
       expect(await engine.quit()).toBeLessThan(10_000);
       expect(before.filter(alive)).toEqual([]);
       fakes.scenario({ controlled: true, builder: "plain" });
-      engine = await EngineProcess.start(home, [HARNESS, home, fakes.dir, `--agent-program=${actors.actor}`]);
+      engine = await owners.app(home, [HARNESS, home, fakes.dir, `--agent-program=${actors.actor}`]);
       await waitFor(() => pids().some((pid) => !before.includes(pid) && alive(pid)), "the restarted step's agent");
       expect(before.filter(alive)).toEqual([]);
       const next = pids().filter(alive);
       await engine.quit();
       expect(next.filter(alive)).toEqual([]);
-    } finally {
-      if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());
-      await actors.close();
-      removeDir(dir);
-    }
+
+    }, cleanup);
+    await cleanup();
+    return result;
+    }, { stopPeers: () => stopPeers() });
   });
 
   for (const { stubborn, killFirst, native } of [
@@ -94,10 +119,20 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
     { stubborn: true, killFirst: true, native: false },
     { stubborn: true, killFirst: false, native: true },
   ]) it.skipIf(process.platform === "win32")(`waits for a ${native ? "native" : "slow"} process lookup before removing a cancelled build's copy, and still quits on time${stubborn ? " with an agent that ignores stopping" : ""}${killFirst ? " when the first lookup is killed" : ""}`, async () => {
-    const { dir, actors, home, fakes, hold, slow, scanned, recover, killed, buildPids, finalLists, stops, launcher } = await slowStopFixture(stubborn, killFirst, native);
+    const dir = tempDir("petrina-slow-agent-stop-");
+    let stopPeers = async (): Promise<void> => {};
+    return cases.use(dir, async owners => {
+    const { actors, home, fakes, hold, slow, scanned, recover, killed, buildPids, finalLists, stops, launcher } = await slowStopFixture(dir, owners, stubborn, killFirst, native);
+    stopPeers = () => actors.close();
     let engine: EngineProcess | undefined;
-    try {
-      engine = await EngineProcess.start(home, [launcher, home, fakes.dir, ...(stubborn ? ["--stubborn"] : [])]);
+
+    const cleanup = async () => {
+      if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());
+      await actors.close();
+
+    };
+    const result = await setupWithCleanup(async () => {
+      engine = await owners.app(home, [launcher, home, fakes.dir, ...(stubborn ? ["--stubborn"] : [])]);
       const productId = await engine.act("addProduct", await makeProduct(dir));
       for (const end of ["cancel", "quit"] as const) {
         // A first lookup near its limit may time out under contention. Recovery must then
@@ -155,10 +190,10 @@ describe.concurrent("Quitting stops agents before the engine exits", () => {
         expect([...pids, ...agents].filter(pid => parseChildState(after, pid) !== "ended")).toEqual([]);
         if (existsSync(recover)) console.info(`Used the recovery process lookup during ${end} (stubborn: ${stubborn}, first killed: ${killFirst}).`);
       }
-    } finally {
-      if (engine?.proc.exitCode === null) await engine.quit().catch(() => engine!.kill());
-      await actors.close();
-      removeDir(dir);
-    }
+
+    }, cleanup);
+    await cleanup();
+    return result;
+    }, { stopPeers: () => stopPeers() });
   });
 });

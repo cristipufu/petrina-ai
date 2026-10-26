@@ -1,5 +1,8 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { completeAll } from "@petrina/core";
 import { afterEach } from "bun:test";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
+import { coordinatorStoreAfterSeed } from "../../fixtures/coordinator-lifecycle.js";
 import { disconnectedCoordinator } from "../../fixtures/disconnected-coordinator.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
@@ -21,15 +24,29 @@ for (const staleConnection of [false, true])
 it(`desktop reconnects once after an interrupted pause noticed by ${noticedBy}, with a ${staleConnection ? "stale" : "removed"} connection`, async () => {
   const root = tempDir("petrina-desktop-after-pause-");
   roots.push(root);
-  const lifetime = await lifetimes.open(root);
+  let pendingSeed: Engine | undefined;
+  const stopSeed = async () => { await pendingSeed?.shutdown(); pendingSeed = undefined; };
+  let pendingStore: LifecycleStore | undefined;
+  const closeStore = () => { pendingStore?.close(); pendingStore = undefined; };
+  let pendingPeer: Awaited<ReturnType<typeof disconnectedCoordinator>> | undefined;
+  const closePeer = async () => { await pendingPeer?.close(); pendingPeer = undefined; };
+  const lifetime = await lifetimes.open(root, { async stopPeers() { await completeAll([Promise.resolve().then(stopSeed), Promise.resolve().then(closeStore), Promise.resolve().then(closePeer)]); } });
+  let cleanup: (() => Promise<void>) | undefined;
+  const close = async () => {
+    await setupWithCleanup(async () => { await cleanup?.(); }, () => lifetime.close());
+    await lifetime.close();
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
   const home = join(root, "home"), fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
-  const before = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+  const before = pendingSeed = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
   before.setPoolPaused(true);
-  await before.shutdown();
-  const store = new LifecycleStore(home);
+  const store = await coordinatorStoreAfterSeed(lifetime.signal, async () => {
+    await before.shutdown(); pendingSeed = undefined;
+  }, () => pendingStore = new LifecycleStore(home));
   store.begin("pause", { requestId: "interrupted-pause" }, "paused");
-  const peer = staleConnection ? await disconnectedCoordinator() : undefined;
+  const peer = pendingPeer = staleConnection ? await disconnectedCoordinator() : undefined;
+  if (lifetime.signal.aborted) { await closePeer(); throw new Error("Coordinator setup closed while acquiring its peer"); }
   if (staleConnection) {
     const dead = lifetime.start(home, ["-e", "process.exit(0)"], {}, { input: "ignore" });
     await dead.exited;
@@ -37,7 +54,12 @@ it(`desktop reconnects once after an interrupted pause noticed by ${noticedBy}, 
   }
   const client = new EngineClient(home, () => { throw new Error("the desktop owns recovery"); });
   const children: EngineProcess[] = [];
-  try {
+
+  cleanup = async () => {
+    try { await lifetime.prepare(() => client.call("engine.stop", { requestId: "cleanup-desktop-pause", wait: true, timeoutMs: 10000 * SLOW })); }
+    finally { try { await lifetime.close(); } finally { try { closeStore(); } finally { await closePeer(); } } }
+
+  };
     if (noticedBy === "status") expect((await client.call("engine.status")).status).toBe("failed");
     if (noticedBy === "resume") expect((await client.call("engine.resume", { requestId: "resume-closed-engine" })).outcome).toBe("invalid");
     if (noticedBy !== "app") expect(store.receipt("interrupted-pause")!.outcome).toBe("failed");
@@ -56,10 +78,9 @@ it(`desktop reconnects once after an interrupted pause noticed by ${noticedBy}, 
     }
     const lock = FolderLock.take(home);
     try { expect(lock).toBeUndefined(); } finally { lock?.release(); }
-  } finally {
-    try { await client.call("engine.stop", { requestId: "cleanup-desktop-pause", wait: true, timeoutMs: 10000 * SLOW }); }
-    finally { try { await lifetime.close(); } finally { try { store.close(); } finally { await peer?.close(); } } }
-  }
+
+  }), close);
+  await close();
 });
 }
 }
@@ -68,14 +89,22 @@ for (const ending of ["restart-starting", "restart-draining", "stop-stopping"] a
 it(`desktop recovery fails a dead ${ending} handoff and concurrent reconnects start exactly one engine`, async () => {
   const root = tempDir("petrina-dead-desktop-handoff-");
   roots.push(root);
-  const lifetime = await lifetimes.open(root);
+  let pendingStore: LifecycleStore | undefined;
+  const closeStore = () => { pendingStore?.close(); pendingStore = undefined; };
+  const lifetime = await lifetimes.open(root, { async stopPeers() { await completeAll([Promise.resolve().then(closeStore)]); } });
+  let cleanup: (() => Promise<void>) | undefined;
+  const close = async () => {
+    await setupWithCleanup(async () => { await cleanup?.(); }, () => lifetime.close());
+    await lifetime.close();
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
   const home = join(root, "home"), fakes = new Fakes(join(root, "agents"));
   fakes.scenario({ controlled: true });
   const original = await lifetime.harness(home, fakes.dir);
   const paused = ending === "restart-starting";
   if (paused) await original.act("setPoolPaused", true);
   await original.kill();
-  const store = new LifecycleStore(home);
+  const store = pendingStore = new LifecycleStore(home);
   const [kind, phase] = ending.split("-") as ["restart" | "stop", "starting" | "draining" | "stopping"];
   store.begin(kind, { requestId: "dead-handoff" }, paused ? "paused" : "running");
   store.finish(phase);
@@ -84,7 +113,11 @@ it(`desktop recovery fails a dead ${ending} handoff and concurrent reconnects st
     removeConnection(home, original.proc.pid);
   }
   const children: EngineProcess[] = [];
-  try {
+
+  cleanup = async () => {
+    try { await lifetime.close(); } finally { closeStore(); }
+
+  };
     await Promise.all([0, 1].map(async () => { children.push(await lifetime.harness(home, fakes.dir)); }));
     expect(children.map((child) => child.hello.type).sort()).toEqual(["ready", "running"]);
     expect(store.receipt("dead-handoff")!.outcome).toBe("failed");
@@ -97,8 +130,8 @@ it(`desktop recovery fails a dead ${ending} handoff and concurrent reconnects st
     const owner = children.find((child) => child.hello.type === "ready")!;
     expect((await client.call("engine.status")).operation).toHaveProperty("id", store.current!.id);
     await owner.quit();
-  } finally {
-    try { await lifetime.close(); } finally { store.close(); }
-  }
+
+  }), close);
+  await close();
 });
 }

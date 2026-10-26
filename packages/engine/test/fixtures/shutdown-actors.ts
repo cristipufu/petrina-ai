@@ -1,3 +1,4 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { browserProcesses } from "@petrina/platform/browser-processes";
@@ -10,7 +11,9 @@ export const pidsIn = (path: string): number[] => existsSync(path) ? readFileSyn
 
 /** Every native actor has an independent loopback owner; PID files are observations, never signal authority. */
 export async function shutdownActors(root: string) {
-  const lease = await createProcessLease(), actor = join(root, "leased-agent.ts"), background = join(root, "leased-background.ts"), pids = join(root, "leased-actors");
+  const lease = await createProcessLease();
+  return setupWithCleanup(() => {
+  const actor = join(root, "leased-agent.ts"), background = join(root, "leased-background.ts"), pids = join(root, "leased-actors");
   const record = `require("node:fs").appendFileSync(${JSON.stringify(pids)}, String(process.pid) + "\\n");`;
   writeFileSync(actor, lease.program(`${record} await import(${JSON.stringify(join(ENGINE_TEST_ROOT, "fake-agent.ts"))}); await new Promise(() => undefined);`));
   // Same output and delayed final TERM write as the native fake's default build, without a self-expiry
@@ -24,4 +27,5 @@ export async function shutdownActors(root: string) {
     await lease.close();
     await waitFor(() => !pidsIn(pids).some(alive), "the independent shutdown fixture owner to stop all its actors", 5_000);
   } };
+  }, () => lease.close());
 }
