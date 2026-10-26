@@ -1,9 +1,12 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import type { Scenario } from "../../fake-agent.js";
 import { reviewJourneyFixtures } from "../../fixtures/review.js";
+import { contextStageFixtures } from "../../fixtures/context-stage.js";
 
 const { untilDelivery, lines, close } = reviewJourneyFixtures();
+const prepared = contextStageFixtures();
 afterAll(close);
+afterAll(() => prepared.close());
 describe.concurrent("reviews that converge", () => {
 for (const [name, scenario, role, corrections] of [
     ["single code review", { planner: "short", reviewRounds: 2 }, "code reviewer", 1],
@@ -13,7 +16,8 @@ for (const [name, scenario, role, corrections] of [
     ["added findings role", { planner: "mixed-review" }, "security specialist", 1],
   ] as [string, Scenario, string, number][]) {
     it(`requires current reopening evidence in ${name}, then accepts a correction in the same conversation`, async () => {
-      const { task, fakes } = await untilDelivery({ ...scenario, builder: "plain", reviewer: "important", reviewConfirmation: { role, correction: "omit" } });
+      const input: Scenario = { ...scenario, builder: "plain", reviewer: "important", reviewConfirmation: { role, correction: "omit" } };
+      const { task, fakes } = await (scenario.screenRoles ? untilDelivery(input) : prepared.evidence(input));
       const findings = task.findings.filter((finding) => finding.severity === "blocking");
       expect(findings.length).toBeGreaterThan(0);
       for (const finding of findings) {

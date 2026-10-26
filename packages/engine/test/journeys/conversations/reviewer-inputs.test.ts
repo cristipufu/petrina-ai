@@ -1,3 +1,4 @@
+import { contextStageFixtures } from "../../fixtures/context-stage.js";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
@@ -11,6 +12,9 @@ import { git, waitFor } from "../../fixtures.js";
 import { reviewContextFixtures } from "../../fixtures/review-context.js";
 const { run, close } = reviewContextFixtures();
 afterAll(close);
+
+const prepared = contextStageFixtures();
+afterAll(() => prepared.close());
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("records compact frozen evidence for three fresh reviewers after a real conflict, restart and usage replacement", async () => {
@@ -85,87 +89,92 @@ it("records compact frozen evidence for three fresh reviewers after a real confl
 describe.concurrent("reviewer conversations across fix rounds", () => {
 for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`continues each own ${mode} reviewer after main advances, with current full and incremental evidence`, async () => {
     const reopen = mode === "single" ? "load" : "resume";
-    const f = await run(reopen, { advance: true, single: mode === "single", shared: mode === "shared" });
-    try {
-      await f.beforeFix();
-      const moved = await f.advanceMain();
-      const saved = structuredClone(f.task().reviewSessions!);
-      if (mode === "builder-update") {
-        const worktree = executionFor(f.task()).work.worktree!;
-        await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "The Builder's fix");
-        await git(worktree, "merge", "--no-edit", "-m", "The Builder brings main in itself", moved.base);
-      }
-      f.task().notes = [{ at: 1, text: "REFRESHED-COORDINATOR-INSTRUCTION" }];
-      const task = await f.done();
-      const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer");
-      expect(rounds).toHaveLength(2);
-      // A conflict-free update keeps the conversations, so no seat has a dropped-conversation reason waiting.
-      expect(task.reviewFreshReasons).toBeUndefined();
-      expect(rounds[0]!.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription?.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
-      expect(rounds[0]!.agentInputs!.every((input) => !input.sections.some((section) => section.title.startsWith("Findings so far")))).toBe(true);
-      const works = scopesFor(task).map(({ work }) => work);
-      const current = works.find((work) => work.productId === moved.productId)!;
-      const head = await git(current.worktree!, "rev-parse", "HEAD");
-      expect(current.baseSha).toBe(moved.base);
-      expect(current.checks!.sha).toBe(head);
-      expect(current.checks!.results.every((run) => run.ok && run.output.includes(`CHECKED-CODE:${head}`))).toBe(true);
-      for (const input of rounds[1]!.agentInputs!) {
-        expect(input.mode).toBe("continued");
-        expect(input.freshReason).toBeUndefined();
-        expect(input.taskDescription).toBeUndefined();
-        expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
-        expect(input.sections.some((section) => section.title === "Recorded product checks, run by Petrina itself")).toBe(true);
-        expect(input.sections.some((section) => section.title === "Related check evidence")).toBe(false);
-        expect(input.at).toBeNumber();
-        expect(current.checks!.at).toBeLessThanOrEqual(input.at!);
-        const update = input.sections.find((section) => section.title === "The review base advanced since your last review")!.body;
-        expect(input.manifest).toContainEqual(expect.objectContaining({ name: "The review base advanced since your last review", kind: "text", size: update.length }));
-        const exact = readFileSync(input.exact!.file, "utf8");
-        expect(exact).toContain(update);
-        expect(f.fakes.received("code reviewer").filter((entry) => entry.session === input.sessionId).map((entry) => entry.text)).toContain(exact);
-        expect(input.reviewInput).toEqual(rounds[1]!.reviewInput);
-        expect(input.reviewInput!.heads[moved.productId]).toBe(head);
-        for (const value of [moved.before, moved.base, head, "Main gained 1 commit.", "without an engine conflict port", "overlap.txt", "read their current versions again", "Main's incoming changes are not in the incremental comparison", "complete prepared comparison", "including beyond the files listed above"]) expect(update).toContain(value);
-        expect(update.match(/^### /gm)).toHaveLength(1);
-        expect(update).toContain(`(${moved.productId})`);
-        expect(input.sections.some((section) => section.body.includes("REFRESHED-COORDINATOR-INSTRUCTION"))).toBe(true);
-        const material = input.sections.find((section) => section.title === "Prepared review material")!.body;
-        const files = [...material.matchAll(/("[^"\n]+\.md") \(reference/g)].map((match) => JSON.parse(match[1]!) as string);
-        expect(files).toHaveLength(works.length * 2);
-        for (const work of works) {
-          expect(material).toContain(`base ${work.baseSha}`);
-          expect(work.baseSha).toBe(work.productId === moved.productId ? moved.base : Object.values(saved)[0]!["0"]!.bases![work.productId]);
-          expect(work.checks!.current).toBe(true);
-          expect(task.journey!.flatMap((step) => step.checkReviews ?? [])).toContainEqual(expect.objectContaining({ productId: work.productId, tree: work.checks!.tree, round: rounds[1]!.round }));
+    const exercise = async (f: Awaited<ReturnType<typeof run>>) => {
+      try {
+        await f.beforeFix();
+        const moved = await f.advanceMain();
+        const saved = structuredClone(f.task().reviewSessions!);
+        if (mode === "builder-update") {
+          const worktree = executionFor(f.task()).work.worktree!;
+          await git(worktree, "add", "."); await git(worktree, "commit", "-qm", "The Builder's fix");
+          await git(worktree, "merge", "--no-edit", "-m", "The Builder brings main in itself", moved.base);
         }
-        const changedFiles = files.map((file) => ({ file, body: readFileSync(file, "utf8") })).filter(({ body }) => body.includes(`Product: ${moved.productId}\n`));
-        expect(changedFiles).toHaveLength(2);
-        for (const { body } of changedFiles) {
-          const guide = body.split(/## Complete change|## Changes since/)[0]!;
-          expect(guide).toContain("NEW-BASE-GUIDE"); expect(guide).not.toContain("OLD-BASE-GUIDE");
-          expect(body).toContain(`Reviewed commit: ${head}`);
+        f.task().notes = [{ at: 1, text: "REFRESHED-COORDINATOR-INSTRUCTION" }];
+        const task = await f.done();
+        const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer");
+        expect(rounds).toHaveLength(2);
+        // A conflict-free update keeps the conversations, so no seat has a dropped-conversation reason waiting.
+        expect(task.reviewFreshReasons).toBeUndefined();
+        expect(rounds[0]!.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription?.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
+        expect(rounds[0]!.agentInputs!.every((input) => !input.sections.some((section) => section.title.startsWith("Findings so far")))).toBe(true);
+        const works = scopesFor(task).map(({ work }) => work);
+        const current = works.find((work) => work.productId === moved.productId)!;
+        const head = await git(current.worktree!, "rev-parse", "HEAD");
+        expect(current.baseSha).toBe(moved.base);
+        expect(current.checks!.sha).toBe(head);
+        expect(current.checks!.results.every((run) => run.ok && run.output.includes(`CHECKED-CODE:${head}`))).toBe(true);
+        for (const input of rounds[1]!.agentInputs!) {
+          expect(input.mode).toBe("continued");
+          expect(input.freshReason).toBeUndefined();
+          expect(input.taskDescription).toBeUndefined();
+          expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
+          expect(input.sections.some((section) => section.title === "Recorded product checks, run by Petrina itself")).toBe(true);
+          expect(input.sections.some((section) => section.title === "Related check evidence")).toBe(false);
+          expect(input.at).toBeNumber();
+          expect(current.checks!.at).toBeLessThanOrEqual(input.at!);
+          const update = input.sections.find((section) => section.title === "The review base advanced since your last review")!.body;
+          expect(input.manifest).toContainEqual(expect.objectContaining({ name: "The review base advanced since your last review", kind: "text", size: update.length }));
+          const exact = readFileSync(input.exact!.file, "utf8");
+          expect(exact).toContain(update);
+          expect(f.fakes.received("code reviewer").filter((entry) => entry.session === input.sessionId).map((entry) => entry.text)).toContain(exact);
+          expect(input.reviewInput).toEqual(rounds[1]!.reviewInput);
+          expect(input.reviewInput!.heads[moved.productId]).toBe(head);
+          for (const value of [moved.before, moved.base, head, "Main gained 1 commit.", "without an engine conflict port", "overlap.txt", "read their current versions again", "Main's incoming changes are not in the incremental comparison", "complete prepared comparison", "including beyond the files listed above"]) expect(update).toContain(value);
+          expect(update.match(/^### /gm)).toHaveLength(1);
+          expect(update).toContain(`(${moved.productId})`);
+          expect(input.sections.some((section) => section.body.includes("REFRESHED-COORDINATOR-INSTRUCTION"))).toBe(true);
+          const material = input.sections.find((section) => section.title === "Prepared review material")!.body;
+          const files = [...material.matchAll(/("[^"\n]+\.md") \(reference/g)].map((match) => JSON.parse(match[1]!) as string);
+          expect(files).toHaveLength(works.length * 2);
+          for (const work of works) {
+            expect(material).toContain(`base ${work.baseSha}`);
+            expect(work.baseSha).toBe(work.productId === moved.productId ? moved.base : Object.values(saved)[0]!["0"]!.bases![work.productId]);
+            expect(work.checks!.current).toBe(true);
+            expect(task.journey!.flatMap((step) => step.checkReviews ?? [])).toContainEqual(expect.objectContaining({ productId: work.productId, tree: work.checks!.tree, round: rounds[1]!.round }));
+          }
+          const changedFiles = files.map((file) => ({ file, body: readFileSync(file, "utf8") })).filter(({ body }) => body.includes(`Product: ${moved.productId}\n`));
+          expect(changedFiles).toHaveLength(2);
+          for (const { body } of changedFiles) {
+            const guide = body.split(/## Complete change|## Changes since/)[0]!;
+            expect(guide).toContain("NEW-BASE-GUIDE"); expect(guide).not.toContain("OLD-BASE-GUIDE");
+            expect(body).toContain(`Reviewed commit: ${head}`);
+          }
+          const full = changedFiles.find(({ file }) => file.endsWith(".full.md"))!.body;
+          expect(full).toContain(`git diff ${moved.base}...${head}`);
+          expect(full).toContain("+Task changes the first line");
+          const delta = changedFiles.find(({ file }) => file.endsWith(".incremental.md"))!.body;
+          expect(delta).not.toContain("+Task changes the first line");
+          expect(delta).not.toContain("+Main changes the last line");
+          expect(delta).toContain("welcome.txt");
         }
-        const full = changedFiles.find(({ file }) => file.endsWith(".full.md"))!.body;
-        expect(full).toContain(`git diff ${moved.base}...${head}`);
-        expect(full).toContain("+Task changes the first line");
-        const delta = changedFiles.find(({ file }) => file.endsWith(".incremental.md"))!.body;
-        expect(delta).not.toContain("+Task changes the first line");
-        expect(delta).not.toContain("+Main changes the last line");
-        expect(delta).toContain("welcome.txt");
-      }
-      const sessions = Object.values(saved).flatMap((seats) => Object.values(seats));
-      expect(new Set(sessions.map((seat) => seat.sessionId)).size).toBe(mode === "single" ? 1 : 2);
-      for (const seat of sessions) {
-        expect(f.fakes.opens().filter((entry) => entry.session === seat.sessionId).map((entry) => entry.how)).toEqual(["new", reopen]);
-        const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === seat.sessionId);
-        expect(prompts).toHaveLength(2);
-        expect(prompts[1]!.text).not.toContain("ORIGINAL-REVIEW-REQUEST");
-        expect(prompts[1]!.text).not.toContain("ORIGINAL-DESIGN-BRIEF");
-      }
-      const voters = new Set(f.fakes.received("verifier").map((entry) => entry.session));
-      expect(voters.size).toBeGreaterThan(0);
-      expect(f.fakes.opens().filter((entry) => voters.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
-    } finally { await f.shutdown(); }
+        const sessions = Object.values(saved).flatMap((seats) => Object.values(seats));
+        expect(new Set(sessions.map((seat) => seat.sessionId)).size).toBe(mode === "single" ? 1 : 2);
+        for (const seat of sessions) {
+          expect(f.fakes.opens().filter((entry) => entry.session === seat.sessionId).map((entry) => entry.how)).toEqual(["new", reopen]);
+          const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === seat.sessionId);
+          expect(prompts).toHaveLength(2);
+          expect(prompts[1]!.text).not.toContain("ORIGINAL-REVIEW-REQUEST");
+          expect(prompts[1]!.text).not.toContain("ORIGINAL-DESIGN-BRIEF");
+        }
+        const voters = new Set(f.fakes.received("verifier").map((entry) => entry.session));
+        expect(voters.size).toBeGreaterThan(0);
+        expect(f.fakes.opens().filter((entry) => voters.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
+      } finally { await f.shutdown(); }
+    };
+    const options = { advance: true, single: mode === "single", shared: mode === "shared" };
+    if (mode === "shared") return exercise(await run(reopen, options));
+    const f = await prepared.reviewRun(reopen, options);
+    return f.use(() => exercise(f));
   });
 });
 
@@ -173,36 +182,38 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 for (const reopen of ["resume", "load"] as const) for (const single of [false, true]) it(`continues ${single ? "one reviewer" : "each parallel reviewer"} with ${reopen}, while voters stay fresh`, async () => {
-    const f = await run(reopen, { single, browser: true });
-    try {
-      const task = await f.done();
-      const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer" && step.endedAt);
-      expect(rounds).toHaveLength(2);
-      expect(rounds[0]!.agentInputs!.every((input) => input.mode === "fresh")).toBe(true);
-      expect(rounds[1]!.agentInputs!.every((input) => input.mode === "continued")).toBe(true);
-      for (const input of rounds[1]!.agentInputs!) {
-        expect(input.taskDescription).toBeUndefined();
-        expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
-        expect(input.sections.some((section) => section.title === "Findings so far (confirm or dispute by id)")).toBe(true);
-        expect(input.sections.some((section) => section.title === "Current authoritative task context")).toBe(true);
-        expect(input.sections.some((section) => section.title === "Prepared review material")).toBe(true);
-      }
-      const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
-      expect(sessions.size).toBe(single ? 1 : 2);
-      for (const id of sessions) {
-        expect(f.fakes.opens().filter((entry) => entry.session === id).map((entry) => entry.how)).toEqual(["new", reopen]);
-        const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === id);
-        expect(prompts[0]!.text).toContain(`Browser output belongs only in ${join(f.browsers, "petrina-browser-")}`);
-        expect(prompts[1]!.text).toContain(`Browser capture folder for this turn: ${join(f.browsers, "petrina-browser-")}`);
-        expect(prompts[1]!.text).not.toContain("Browser output belongs only in");
-      }
-      const voterIds = new Set(f.fakes.received("verifier").map((entry) => entry.session));
-      expect(voterIds.size).toBeGreaterThan(0);
-      expect(f.fakes.opens().filter((entry) => voterIds.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
-      expect(Object.values(task.reviewSessions ?? {}).flatMap(seats => Object.values(seats).map(seat => seat.sessionId)).sort()).toEqual([...sessions].sort());
-      const copy = JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${[...sessions][0]}.json`), "utf8")).cwd as string;
-      if (!single) expect(existsSync(copy)).toBe(false);
-    } finally { await f.shutdown(); }
+    const f = await prepared.reviewRun(reopen, { single, browser: true });
+    return f.use(async () => {
+      try {
+        const task = await f.done();
+        const rounds = task.journey!.filter((step) => step.roleId === "code-reviewer" && step.endedAt);
+        expect(rounds).toHaveLength(2);
+        expect(rounds[0]!.agentInputs!.every((input) => input.mode === "fresh")).toBe(true);
+        expect(rounds[1]!.agentInputs!.every((input) => input.mode === "continued")).toBe(true);
+        for (const input of rounds[1]!.agentInputs!) {
+          expect(input.taskDescription).toBeUndefined();
+          expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
+          expect(input.sections.some((section) => section.title === "Findings so far (confirm or dispute by id)")).toBe(true);
+          expect(input.sections.some((section) => section.title === "Current authoritative task context")).toBe(true);
+          expect(input.sections.some((section) => section.title === "Prepared review material")).toBe(true);
+        }
+        const sessions = new Set(f.fakes.received("code reviewer").map((entry) => entry.session));
+        expect(sessions.size).toBe(single ? 1 : 2);
+        for (const id of sessions) {
+          expect(f.fakes.opens().filter((entry) => entry.session === id).map((entry) => entry.how)).toEqual(["new", reopen]);
+          const prompts = f.fakes.received("code reviewer").filter((entry) => entry.session === id);
+          expect(prompts[0]!.text).toContain(`Browser output belongs only in ${join(f.browsers, "petrina-browser-")}`);
+          expect(prompts[1]!.text).toContain(`Browser capture folder for this turn: ${join(f.browsers, "petrina-browser-")}`);
+          expect(prompts[1]!.text).not.toContain("Browser output belongs only in");
+        }
+        const voterIds = new Set(f.fakes.received("verifier").map((entry) => entry.session));
+        expect(voterIds.size).toBeGreaterThan(0);
+        expect(f.fakes.opens().filter((entry) => voterIds.has(entry.session)).every((entry) => entry.how === "new")).toBe(true);
+        expect(Object.values(task.reviewSessions ?? {}).flatMap(seats => Object.values(seats).map(seat => seat.sessionId)).sort()).toEqual([...sessions].sort());
+        const copy = JSON.parse(readFileSync(join(f.fakes.dir, "conversations", `${[...sessions][0]}.json`), "utf8")).cwd as string;
+        if (!single) expect(existsSync(copy)).toBe(false);
+      } finally { await f.shutdown(); }
+    });
   });
 });
 
@@ -226,28 +237,30 @@ it("keeps a queued reviewer blind to a faster peer, including after an engine re
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("starts fresh with complete inputs when the harness cannot reopen a reviewer", async () => {
-    const f = await run(undefined, { advance: true });
-    try {
-      await f.beforeFix(); await f.advanceMain();
-      const task = await f.done();
-      const second = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
-      expect(second.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription!.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
-      expect(task.timeline.some((entry) => entry.text.includes("Could not go back to its own review conversation"))).toBe(true);
-      expect(task.hunt).toBeUndefined();
-      expect(second.reviewInput?.digest).toBeString();
-      expect(second.agentInputs!.every(input => input.reviewInput?.digest === second.reviewInput!.digest)).toBe(true);
-      const c = new Coordination(f.engine());
-      expect(await c.call("journey.node", { taskId: task.id, nodeId: second.id, limit: 1 })).toMatchObject({ reviewInput: { digest: second.reviewInput!.digest } });
-      const heads = await c.call("journey.review-input", { taskId: task.id, nodeId: second.id, section: "versions" });
-      expect(JSON.parse(String(heads.text))).toEqual(second.reviewInput!.heads);
-      let page = await c.call("journey.review-input", { taskId: task.id, nodeId: second.id, section: "findings", limit: 200 });
-      let text = String(page.text);
-      while (page.next) { page = await c.call("journey.review-input", { taskId: task.id, nodeId: second.id, section: "findings", limit: 200, cursor: page.next }); text += page.text; }
-      expect(JSON.parse(text).length).toBeGreaterThan(0);
-      writeFileSync(second.reviewInput!.file, "Changed snapshot");
-      expect((await c.call("journey.review-input", { taskId: task.id, nodeId: second.id })).outcome).toBe("changed");
-      renameSync(second.reviewInput!.file, `${second.reviewInput!.file}.missing`);
-      expect((await c.call("journey.review-input", { taskId: task.id, nodeId: second.id })).outcome).toBe("unavailable");
-    } finally { await f.shutdown(); }
+    const f = await prepared.reviewRun(undefined, { advance: true });
+    return f.use(async () => {
+      try {
+        await f.beforeFix(); await f.advanceMain();
+        const task = await f.done();
+        const second = task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!;
+        expect(second.agentInputs!.every((input) => input.mode === "fresh" && input.taskDescription!.includes("ORIGINAL-REVIEW-REQUEST"))).toBe(true);
+        expect(task.timeline.some((entry) => entry.text.includes("Could not go back to its own review conversation"))).toBe(true);
+        expect(task.hunt).toBeUndefined();
+        expect(second.reviewInput?.digest).toBeString();
+        expect(second.agentInputs!.every(input => input.reviewInput?.digest === second.reviewInput!.digest)).toBe(true);
+        const c = new Coordination(f.engine());
+        expect(await c.call("journey.node", { taskId: task.id, nodeId: second.id, limit: 1 })).toMatchObject({ reviewInput: { digest: second.reviewInput!.digest } });
+        const heads = await c.call("journey.review-input", { taskId: task.id, nodeId: second.id, section: "versions" });
+        expect(JSON.parse(String(heads.text))).toEqual(second.reviewInput!.heads);
+        let page = await c.call("journey.review-input", { taskId: task.id, nodeId: second.id, section: "findings", limit: 200 });
+        let text = String(page.text);
+        while (page.next) { page = await c.call("journey.review-input", { taskId: task.id, nodeId: second.id, section: "findings", limit: 200, cursor: page.next }); text += page.text; }
+        expect(JSON.parse(text).length).toBeGreaterThan(0);
+        writeFileSync(second.reviewInput!.file, "Changed snapshot");
+        expect((await c.call("journey.review-input", { taskId: task.id, nodeId: second.id })).outcome).toBe("changed");
+        renameSync(second.reviewInput!.file, `${second.reviewInput!.file}.missing`);
+        expect((await c.call("journey.review-input", { taskId: task.id, nodeId: second.id })).outcome).toBe("unavailable");
+      } finally { await f.shutdown(); }
+    });
   });
 });

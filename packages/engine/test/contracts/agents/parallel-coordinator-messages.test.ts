@@ -1,24 +1,21 @@
 import { afterAll, expect, it } from "bun:test";
 import { completeAll } from "@petrina/core";
-import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+import { contextStageFixtures } from "../../fixtures/context-stage.js";
 import { standInBrowser } from "../../message-browser.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Fakes, waitFor } from "../../support.js";
+import { waitFor } from "../../support.js";
 
-const fixtures = nativeWorldFixtures();
+const fixtures = contextStageFixtures();
 const browser = standInBrowser();
 afterAll(() => completeAll([Promise.resolve().then(() => browser.mockRestore()), fixtures.close()]).then(() => undefined));
 
 for (const [mode, afterPeer] of [["now", false], ["now", true], ["queue", false], ["interrupt", false], ["queue", true]] as const) it(`delivers a coordinator ${mode} message to every unfinished reviewer${afterPeer ? " after a peer reports" : " working in parallel"}`, async () => {
-  await fixtures.world("review-messages", async ({ world, engine: ownedEngine }) => {
-  const root = world.dir;
-  const fakes = new Fakes(join(root, "fake"));
-  fakes.scenario({ planner: "parallel", builder: "plain", controlled: true, ...(mode === "now" ? { live: "injected" } : {}) });
-  await ownedEngine(async engine => {
+  const run = await fixtures.messages({ planner: "parallel", builder: "plain", controlled: true, ...(mode === "now" ? { live: "injected" } : {}) });
+  return run.use(async () => {
+  const fakes = run.fakes, engine = run.engine();
   const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
-  const productId = await engine.addProduct(world.clone);
-  const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+  const taskId = run.task().id;
   const task = () => engine.getState().tasks.find((entry) => entry.id === taskId)!;
   try {
     await waitFor(() => {
@@ -52,6 +49,5 @@ for (const [mode, afterPeer] of [["now", false], ["now", true], ["queue", false]
     expect(task().queued).toEqual([]);
     if (mode === "now") expect(fakes.received("code reviewer")).toHaveLength(2);
   } finally { await engine.shutdown(); }
-  }, { agentCommand: () => [process.execPath, join(import.meta.dir, "../../fake-agent.ts"), fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
   });
 });
