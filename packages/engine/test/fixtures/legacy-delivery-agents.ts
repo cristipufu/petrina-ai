@@ -6,7 +6,7 @@ import { scriptedToolProbe } from "../scripted-probes.js";
 import type { World } from "../support.js";
 
 /** Shipping/recovery runs real Git/SQLite/GitHub peers; provider transport is not the subject. */
-export function legacyDeliveryAgents(world: World) {
+export function legacyDeliveryAgents(world: Pick<World, "script" | "setScript">) {
   const replies = acceptanceAgents({ beforeReply(prompt) {
     const title = /^# The task: (.+)$/m.exec(prompt.text)?.[1];
     if (prompt.result === "build" && world.script().ownFiles && title)

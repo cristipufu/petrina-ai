@@ -5,17 +5,15 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { join } from "node:path";
 import { Connections } from "../../../src/connection.js";
 import { Sources } from "../../../src/sources.js";
-import { git, makeWorld, removeDir, type World } from "../../support.js";
+import type { Engine, EngineOptions } from "../../engine.js";
+import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
+import { git } from "../../support.js";
 
-const worlds: World[] = [];
+const fixtures = nativeWorldFixtures();
+afterAll(fixtures.close);
+const engineOptions = (): EngineOptions => ({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
 
-afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
-
-async function fixture(name: string) {
-  const world = await makeWorld(`source-addition-${name}`);
-  worlds.push(world);
-  const start = () => world.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
-  const engine = start();
+async function prepare(world: NativeWorld, engine: Engine) {
   engine.setPoolPaused(true);
   const id = engine.addTask({ productId: "", title: "An approved addition", backlog: true });
   const path = join(world.dir, "saved-addition");
@@ -24,12 +22,14 @@ async function fixture(name: string) {
   const product = { id: "addition", name: "Approved product", repo: "acme/demo", remote: "https://github.com/acme/demo.git", defaultBranch: "main", path };
   engine.task(id)!.workRows = [{ choice, source: { product, start: { kind: "default", branch: "main" }, destination: { kind: "new-pr", mode: "pull-request", repo: product.repo, branch: "main", remote: product.remote }, confirmed: true }, addition: { productId: product.id, name: product.name, path, created: true } }];
   const add = (current = engine) => new Sources(current, new Connections(current)).addApproved(current.task(id)!, product.id, new AbortController().signal);
-  return { world, start, engine, id, path, product, add };
+  return { world, engine, id, path, product, add };
 }
 
 describe.concurrent("approved clone recovery", () => {
 for (const saved of [false, true]) it(`prepares a local delivery on its own branch with only origin/main${saved ? " from a saved preparation" : ""}`, async () => {
-    const { world, engine, id, path, add } = await fixture(`local-preparation-${saved}`);
+    await fixtures.world(`source-addition-local-preparation-${saved}`, async ({ world, engine: ownedEngine }) => {
+    await ownedEngine(async engine => {
+    const { id, path, add } = await prepare(world, engine);
     try {
       const row = engine.task(id)!.workRows![0]!;
       row.choice.delivery = "local";
@@ -53,14 +53,16 @@ for (const saved of [false, true]) it(`prepares a local delivery on its own bran
       expect(await git(executionFor(task).work.worktree!, "branch", "--show-current")).toBe(executionFor(task).work.branch!);
       expect(await git(path, "branch", "--list", "main")).toBe("");
     } finally { await engine.shutdown(); }
+    }, engineOptions());
+    });
   });
 });
 
 describe.concurrent("approved clone recovery", () => {
 for (const committed of [true, false]) it(`preserves a saved folder replaced by another repository ${committed ? "with" : "without"} the expected branch`, async () => {
-    const { engine, start, id, path, product, add } = await fixture(`replaced-${committed}`);
-    let current = engine;
-    try {
+    await fixtures.world(`source-addition-replaced-${committed}`, async ({ world, engine: ownedEngine }) => {
+    const next = await ownedEngine(async engine => {
+      const { id, path, product, add } = await prepare(world, engine);
       // The exclusive folder was saved before clone interruption; a restart must not
       // mistake a different repository now occupying that path for the approved clone.
       engine.save();
@@ -75,7 +77,8 @@ for (const committed of [true, false]) it(`preserves a saved folder replaced by 
         await git(path, "commit", "-q", "-m", "Unrelated history");
       }
       const config = readFileSync(join(path, ".git", "config"), "utf8");
-      current = start();
+      return async (current: Engine) => {
+      try {
       await expectRejection(add(current), "Change folder");
       expect(current.task(id)!.workRows![0]!.addition?.ready).not.toBe(true);
       expect(current.s.products.some((entry) => entry.id === product.id)).toBe(false);
@@ -83,12 +86,18 @@ for (const committed of [true, false]) it(`preserves a saved folder replaced by 
       if (committed) expect(await git(path, "show", "main:README.md")).toBe("Unrelated work");
       else expect(existsSync(join(path, ".git", "HEAD"))).toBe(true);
     } finally { await current.shutdown(); }
+      };
+    }, engineOptions());
+    await ownedEngine(next, engineOptions());
+    });
   });
 });
 
 describe.concurrent("approved clone recovery", () => {
 for (const progress of ["empty", "interrupted", "complete"]) it(`resumes an approved ${progress} clone in its saved folder`, async () => {
-    const { world, engine, id, path, product, add } = await fixture(progress);
+    await fixtures.world(`source-addition-${progress}`, async ({ world, engine: ownedEngine }) => {
+    await ownedEngine(async engine => {
+    const { id, path, product, add } = await prepare(world, engine);
     try {
       if (progress === "interrupted") {
         await git(path, "init", "-q", "-b", "main");
@@ -103,14 +112,16 @@ for (const progress of ["empty", "interrupted", "complete"]) it(`resumes an appr
       expect(await git(path, "rev-parse", "main")).toBe(world.initial);
       if (progress === "complete") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Preserve existing work\n");
     } finally { await engine.shutdown(); }
+    }, engineOptions());
+    });
   });
 });
 
 describe.concurrent("approved clone recovery", () => {
 for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-approved-branch"]) it(`keeps the approved branch when the remote default changes before ${recovery}`, async () => {
-    const { world, engine, start, id, path, product, add } = await fixture(`changed-default-${recovery}`);
-    let current = engine;
-    try {
+    await fixtures.world(`source-addition-changed-default-${recovery}`, async ({ world, engine: ownedEngine }) => {
+    const next = await ownedEngine(async engine => {
+      const { id, path, product, add } = await prepare(world, engine);
       await git(world.clone, "checkout", "-q", "-b", "trunk");
       writeFileSync(join(world.clone, "TRUNK_ONLY.md"), "This is not the approved main branch.\n");
       await git(world.clone, "add", "TRUNK_ONLY.md");
@@ -128,8 +139,9 @@ for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-ap
         expect(await git(path, "branch", "--list", "main")).toBe("");
         writeFileSync(join(path, "keep.txt"), "Do not reclone over completed work\n");
         if (recovery === "foreign-origin") await git(path, "remote", "set-url", "origin", "https://github.com/else/unrelated.git");
-        if (recovery === "restart") { engine.save(); await engine.shutdown(); current = start(); }
       }
+      const complete = async (current: Engine) => {
+      try {
       if (recovery === "foreign-origin" || recovery === "missing-approved-branch") {
         const config = readFileSync(join(path, ".git", "config"), "utf8");
         await expectRejection(add(current), "Change folder");
@@ -152,12 +164,20 @@ for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-ap
       }
       if (recovery !== "new") expect(readFileSync(join(path, "keep.txt"), "utf8")).toBe("Do not reclone over completed work\n");
     } finally { await current.shutdown(); }
+      };
+      if (recovery === "restart") { engine.save(); await engine.shutdown(); return complete; }
+      await complete(engine);
+    }, engineOptions());
+    if (next) await ownedEngine(next, engineOptions());
+    });
   });
 });
 
 describe.concurrent("approved clone recovery", () => {
 it("leaves an initially occupied folder untouched before ownership is saved", async () => {
-    const { engine, id, path, add } = await fixture("initially-occupied");
+    await fixtures.world("source-addition-initially-occupied", async ({ world, engine: ownedEngine }) => {
+    await ownedEngine(async engine => {
+    const { id, path, add } = await prepare(world, engine);
     try {
       delete engine.task(id)!.workRows![0]!.addition!.created;
       writeFileSync(join(path, "keep.txt"), "Unrelated occupied folder\n");
@@ -166,5 +186,7 @@ it("leaves an initially occupied folder untouched before ownership is saved", as
       expect(existsSync(join(path, ".git"))).toBe(false);
       expect(engine.s.products).toEqual([]);
     } finally { await engine.shutdown(); }
+    }, engineOptions());
+    });
   });
 });

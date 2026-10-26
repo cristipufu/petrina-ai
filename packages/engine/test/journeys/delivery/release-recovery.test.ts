@@ -3,26 +3,19 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId } from "@petrina/core";
 import { commandInputText } from "../../../src/checks.js";
+import type { Engine, EngineOptions } from "../../engine.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
 import { executionFor } from "@petrina/orchestrator";
-import { FAKE_AGENT, Fakes, git, makeProduct, makeWorld, remoteRef, removeDir, waitFor, type World } from "../../support.js";
+import { FAKE_AGENT, Fakes, git, makeProduct, remoteRef, waitFor } from "../../support.js";
 
-const worlds: World[] = [];
-afterAll(() => worlds.forEach(world => removeDir(world.dir)));
+const fixtures = nativeWorldFixtures();
+afterAll(fixtures.close);
 
 /** Planning, build and review have settled; only the real delivery driver and its recovery run. */
-async function fixture() {
-  const world = await makeWorld("wait-release-notes-recovery", { version: "1.0.0" }); worlds.push(world);
-  await git(world.remote, "update-ref", "refs/tags/v1.0.0", world.initial);
-  world.setGitHub(state => state.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The previous release" }));
-  const notesHold = join(world.dir, "notes-hold"), log = join(world.dir, "checks.jsonl"), check = join(world.dir, "check.ts");
-  writeFileSync(notesHold, "Hold the first release notes");
-  world.setScript(script => { script.hold = { role: "release manager", title: "Deliver the approved improvement", file: notesHold }; });
-  writeFileSync(check, `import { appendFileSync, existsSync } from "node:fs";
-import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
-const sha = await git(process.cwd(), "rev-parse", "HEAD");
-appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-fix.txt") }) + "\\n");`);
-  const open = () => {
-    const engine = world.start({ terminals: () => [], agentCommand: profile => [process.execPath, FAKE_AGENT, world.dir, `--script=${join(world.dir, "agents.json")}`, `--record-tool=${profile.toolId}`] });
+type ReleaseFixture = Awaited<ReturnType<typeof prepareRelease>>;
+type ReleasePhase = (fixture: ReleaseFixture) => Promise<void | ReleasePhase>;
+function configureEngine(engine: Engine) {
     engine.schedule = () => {};
     // The real driver is intentionally tested. A broken synchronous retry must fail this bounded
     // regression instead of starving Bun's own timeout and the rest of the test worker forever.
@@ -32,9 +25,28 @@ appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-
       if (++attempts > 8) throw new Error("Delivery repeatedly refused its own unfinished preparation");
       return deliver(...args);
     };
-    return engine;
-  };
-  let engine = open();
+}
+async function fixture(body: ReleasePhase) {
+  let current: ReleaseFixture | undefined, releaseNotes = () => {};
+  return fixtures.world("wait-release-notes-recovery", async ({ world, engine: ownedEngine }) => {
+  await git(world.remote, "update-ref", "refs/tags/v1.0.0", world.initial);
+  world.setGitHub(state => state.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The previous release" }));
+  const notesHold = join(world.dir, "notes-hold"), log = join(world.dir, "checks.jsonl"), check = join(world.dir, "check.ts");
+  writeFileSync(notesHold, "Hold the first release notes");
+  world.setScript(script => { script.hold = { role: "release manager", title: "Deliver the approved improvement", file: notesHold }; });
+  writeFileSync(check, `import { appendFileSync, existsSync } from "node:fs";
+import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
+const sha = await git(process.cwd(), "rev-parse", "HEAD");
+appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-fix.txt") }) + "\\n");`);
+
+    releaseNotes = () => rmSync(notesHold, { force: true });
+    const options = (): EngineOptions => ({ terminals: () => [], agentCommand: profile => [process.execPath, FAKE_AGENT, world.dir, `--script=${join(world.dir, "agents.json")}`, `--record-tool=${profile.toolId}`] });
+    const next = await ownedEngine(async engine => { configureEngine(engine); current = await prepareRelease(world, engine, notesHold, log, check); return body(current); }, options());
+    if (next) await ownedEngine(async engine => { await current!.reopened(engine); return next(current!); }, options());
+  }, { version: "1.0.0" }, { stopPeers: () => releaseNotes() });
+}
+async function prepareRelease(world: NativeWorld, first: Engine, notesHold: string, log: string, check: string) {
+  let engine = first;
   await engine.waitUntilReady();
   const productId = await engine.addProduct(world.clone);
   const id = engine.addTask({ productId, title: "Deliver the approved improvement", delivery: "release", backlog: true });
@@ -82,8 +94,9 @@ appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-
         engine["driver"].syncRuntimeWaits();
       }
     },
-    async restart() {
-      await engine.shutdown(); engine = open(); await engine.waitUntilReady();
+    async stopForRestart() { await engine.shutdown(); },
+    async reopened(current: Engine) {
+      engine = current; configureEngine(engine); await engine.waitUntilReady();
       task = engine.task(id)!; scope = executionFor(task);
     },
     evidence: (): { sha: string; fix: boolean }[] => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)),
@@ -93,9 +106,12 @@ appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-
 
 describe.concurrent("prerequisite waits during release notes recovery", () => {
   it("strictly refreshes every owner before restarting shared release-note previews at the delivery checkpoint", async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     let first: Promise<void> | undefined;
-    try {
+
+return setupWithCleanup(async () => {
+
       const task = f.task(), release = f.scope().work;
       const companion = { id: "companion", name: "Companion", path: await makeProduct(join(f.world.dir, "companion")), repo: "local/companion", tone: "blue" as const, defaultBranch: "main", delivery: "local" as const, remoteRefused: "Local delivery only", checks: [] };
       f.engine().s.products.push(companion);
@@ -115,7 +131,10 @@ describe.concurrent("prerequisite waits during release notes recovery", () => {
       expect(f.task().plan!.stages[f.task().stageIndex]!.roleId).toBe("coordinator");
       expect(f.task().journey!.at(-1)!.roleId).toBe("release-manager");
       const originalId = f.task().journey!.at(-1)!.id;
-      f.hold(); await f.restart(); await first;
+      f.hold(); await f.stopForRestart(); await first;
+return async (f: ReleaseFixture) => {
+try {
+
       const latest = await f.land(); f.release("clear", latest);
       const observed: { productId: string; fresh: boolean; required: boolean }[] = [];
       const update = f.engine()["updates"].upToDate.bind(f.engine()["updates"]);
@@ -138,15 +157,28 @@ describe.concurrent("prerequisite waits during release notes recovery", () => {
       expect(f.task().journey!.filter(step => step.id === originalId)).toHaveLength(1);
       expect(f.fakes.openings("release manager")).toHaveLength(2);
       expect(f.world.github().releases).toHaveLength(1);
-    } finally {
+
+} finally {
+
       f.unblock(); await f.engine().shutdown(); await first;
-    }
+
+}
+};
+}, async () => {
+
+      f.unblock(); await f.engine().shutdown(); await first;
+
+});
+    });
   });
 
   for (const [recovery, how] of [["pause", "clear"], ["restart", "landed"], ["live", "clear"], ["no-wait", "clear"]] as const) it(`finishes notes and publishes the right source after ${recovery}`, async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     let first: Promise<void> | undefined;
-    try {
+
+return setupWithCleanup(async () => {
+
       first = f.drive(); await f.notesStarted();
       const original = f.task().journey!.at(-1)!;
       const originalId = original.id, originalInput = structuredClone(original.agentInputs);
@@ -154,11 +186,9 @@ describe.concurrent("prerequisite waits during release notes recovery", () => {
         f.hold();
         expect(runtimeWaitView(f.task(), id => f.engine().taskDetails(id))?.phase).toBe("after-current-work");
       }
-      if (recovery === "pause" || recovery === "no-wait") {
-        f.engine().pause(f.id); await first;
-      } else if (recovery === "restart") {
-        await f.restart(); await first;
-      }
+
+const continueWithCurrent: ReleasePhase = async (f: ReleaseFixture) => {
+try {
       if (recovery === "pause" || recovery === "restart") {
         expect(f.task().agent).toBeUndefined();
         expect(runtimeWaitView(f.task(), id => f.engine().taskDetails(id))?.phase).toBe("active");
@@ -202,8 +232,26 @@ describe.concurrent("prerequisite waits during release notes recovery", () => {
       expect(openings).toHaveLength(2);
       const sessions = f.fakes.received("release manager").map(prompt => prompt.session);
       expect(f.fakes.opens().filter(opening => sessions.includes(opening.session)).every(opening => opening.how === "new")).toBe(true);
-    } finally {
+
+} finally {
+
       f.unblock(); await f.engine().shutdown(); await first;
-    }
+
+}
+};
+      if (recovery === "pause" || recovery === "no-wait") {
+        f.engine().pause(f.id); await first;
+      } else if (recovery === "restart") {
+        await f.stopForRestart(); await first;
+return continueWithCurrent;
+      }
+
+return continueWithCurrent(f);
+}, async () => {
+
+      f.unblock(); await f.engine().shutdown(); await first;
+
+});
+    });
   });
 });

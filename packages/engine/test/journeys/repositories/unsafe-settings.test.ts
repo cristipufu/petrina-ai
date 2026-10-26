@@ -1,12 +1,16 @@
-import { expect, it } from "bun:test";
-import { finish, git, makeWorld, removeDir, remoteRef, taskOf } from "../../support.js";
+import { afterAll, expect, it } from "bun:test";
+import { finish, git, remoteRef, taskOf } from "../../support.js";
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
 import { plantedGitProgram } from "@petrina/test-support/git-program";
 import { unsafeGitSettings } from "@petrina/test-support/git-safety";
 
+const fixtures = nativeWorldFixtures();
+afterAll(fixtures.close);
+
 it("refuses to fetch or publish once unsafe settings are planted after setup, and runs none of them", async () => {
-  const w = await makeWorld("planted");
+  await fixtures.world("planted", async ({ world: w, engine: ownedEngine }) => {
   const program = plantedGitProgram(w.dir, "evil");
-  const engine = w.start();
+  await ownedEngine(async engine => {
   try {
     const productId = await engine.addProduct(w.clone);
     engine.setProductDelivery(productId, "pull-request", false);
@@ -27,6 +31,7 @@ it("refuses to fetch or publish once unsafe settings are planted after setup, an
     expect(w.github().calls).toEqual([]);
   } finally {
     await engine.shutdown();
-    removeDir(w.dir);
   }
+  });
+  });
 });

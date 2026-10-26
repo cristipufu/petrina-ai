@@ -5,19 +5,15 @@ import { legacyDeliveryAgents } from "../../fixtures/legacy-delivery-agents.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import type { DeliveryMode, State, Task } from "@petrina/core";
 import type { Engine } from "../../engine.js";
-import { coordinator, finish, git, itemOf, makeWorld, removeDir, remoteRef, taskOf, until, type World } from "../../support.js";
+import { coordinator, finish, git, itemOf, remoteRef, taskOf, until } from "../../support.js";
 
-const worlds: World[] = [];
-const world = async (name: string) => {
-  const made = await makeWorld(name);
-  const nativeStart = made.start;
+import { nativeWorldFixtures, type NativeWorld, type NativeWorldFixture } from "../../fixtures/native-worlds.js";
+const fixtures = nativeWorldFixtures();
+afterAll(fixtures.close);
+const world = <T>(name: string, body: (world: NativeWorld, start: NativeWorldFixture["engine"]) => Promise<T>) => fixtures.world(name, async ({ world: made, engine }) => {
   const providers = legacyDeliveryAgents(made);
-  made.start = extra => nativeStart({ ...providers, ...extra });
-  worlds.push(made);
-  return made;
-};
-afterAll(() => {
-  for (const made of worlds) removeDir(made.dir);
+  const start: NativeWorldFixture["engine"] = (run, extra) => engine(run, { ...providers, ...extra });
+  return body(made, start);
 });
 
 const NOTE = "This delivery was interrupted before Petrina was updated: check GitHub, then choose";
@@ -29,11 +25,11 @@ const asks = (state: State, taskId: string) => itemOf(state, taskId, "shipping")
  * Petrina kept its address. `oldAgent` does what that agent got done before Petrina stopped.
  */
 async function interruptedBeforeUpdate(
-  w: World,
+  w: NativeWorld,
+  first: Engine,
   mode: DeliveryMode,
   options: { oldAgent?: (task: Task, head: string) => unknown; state?: Task["state"]; oldItem?: boolean } = {},
-): Promise<{ engine: Engine; taskId: string; head: string; calls: number }> {
-  const first = w.start();
+): Promise<{ taskId: string; head: string; calls: number }> {
   const productId = await first.addProduct(w.clone);
   first.setProductDelivery(productId, mode, true);
   const taskId = first.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
@@ -56,11 +52,11 @@ async function interruptedBeforeUpdate(
     });
     delete (state.products[0] as unknown as Record<string, unknown>).remote;
   });
-  return { engine: w.start(), taskId, head, calls: w.github().calls.length };
+  return { taskId, head, calls: w.github().calls.length };
 }
 
 /** What the old delivery agent ran: plain git in the task's working copy, straight to GitHub. */
-const pushToGitHub = (w: World, cwd: string, ...refspecs: string[]) => git(cwd, "push", "-q", w.remote, ...refspecs);
+const pushToGitHub = (w: NativeWorld, cwd: string, ...refspecs: string[]) => git(cwd, "push", "-q", w.remote, ...refspecs);
 
 async function versionCommit(cwd: string): Promise<string> {
   await git(cwd, "commit", "-q", "--allow-empty", "-m", "Version 0.1.0");
@@ -68,7 +64,7 @@ async function versionCommit(cwd: string): Promise<string> {
 }
 
 /** Nothing happened on its own: nothing made ready, no agent, no GitHub, no question about the address. */
-function untouched(w: World, state: State, taskId: string, calls: number): void {
+function untouched(w: NativeWorld, state: State, taskId: string, calls: number): void {
   const task = taskOf(state, taskId);
   expect(task.state).toBe("needs-you");
   expect(task.statusLine).toBe(NOTE);
@@ -82,17 +78,18 @@ function untouched(w: World, state: State, taskId: string, calls: number): void 
 
 describe.concurrent("A delivery interrupted before Petrina was updated", () => {
   it("does nothing on its own until the coordinator chooses, across restarts", async () => {
-    const w = await world("upgrade-waits");
+    await world("upgrade-waits", async (w, start) => {
     let bumped = "";
-    const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "release", {
+    const { taskId, calls } = await start(first => interruptedBeforeUpdate(w, first, "release", {
       oldItem: true,
       oldAgent: async (task) => {
         bumped = await versionCommit(task.worktree!);
         await pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
         w.setGitHub((github) => github.releases.push({ tagName: "v0.1.0", url: "https://github.com/acme/demo/releases/tag/v0.1.0", publishedAt: new Date().toISOString(), isDraft: false, name: "v0.1.0", body: "A greeting." }));
       },
-    });
-    try {
+    }));
+    let state = await start(async engine => {
+
       // The old version's question is replaced by the coordinator's choice.
       let state = await until(engine, (current) => asks(current, taskId));
       untouched(w, state, taskId, calls);
@@ -105,7 +102,9 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
 
       // A restart changes nothing, and adds no question: one note per time Petrina asked.
       await engine.shutdown();
-      const again = w.start();
+      return state;
+    });
+    await start(async again => {
       try {
         await again.waitUntilReady(); await Promise.all([...again.backgroundWork]);
         state = await until(again, (current) => asks(current, taskId));
@@ -126,14 +125,15 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       } finally {
         await again.shutdown();
       }
-    } finally {
-      await engine.shutdown();
-    }
+
+    });
+    });
   });
 
   it("asks for the delivery approval again after “Ship it again”, then ships it with the usual checks", async () => {
-    const w = await world("upgrade-ship-again");
-    const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "pull-request");
+    await world("upgrade-ship-again", async (w, start) => {
+    const { taskId, calls } = await start(first => interruptedBeforeUpdate(w, first, "pull-request"));
+    await start(async engine => {
     try {
       let state = await until(engine, (current) => asks(current, taskId));
       untouched(w, state, taskId, calls);
@@ -156,17 +156,21 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     } finally {
       await engine.shutdown();
     }
+
+    });
+    });
   });
 
   it("never releases twice after “Ship it again” when the old delivery agent already pushed the version's tag", async () => {
-    const w = await world("upgrade-pushed");
+    await world("upgrade-pushed", async (w, start) => {
     let bumped = "";
-    const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "release", {
+    const { taskId, calls } = await start(first => interruptedBeforeUpdate(w, first, "release", {
       oldAgent: async (task) => {
         bumped = await versionCommit(task.worktree!);
         await pushToGitHub(w, task.worktree!, "HEAD:refs/heads/main", "HEAD:refs/tags/v0.1.0");
       },
-    });
+    }));
+    await start(async engine => {
     try {
       const state = await until(engine, (current) => asks(current, taskId));
       untouched(w, state, taskId, calls);
@@ -180,12 +184,17 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     } finally {
       await engine.shutdown();
     }
+
+    });
+    });
   });
 
   it("keeps the note on the task when the coordinator cancels it, and still looks nothing up", async () => {
-    const w = await world("upgrade-cancel");
-    const { engine, taskId, calls } = await interruptedBeforeUpdate(w, "local");
+    await world("upgrade-cancel", async (w, start) => {
+    const { taskId, calls } = await start(first => interruptedBeforeUpdate(w, first, "local"));
     const note = "Cancelled. This delivery was interrupted before Petrina was updated: check GitHub for what went out";
+    await start(async engine => {
+
     try {
       const state = await until(engine, (current) => asks(current, taskId));
       untouched(w, state, taskId, calls);
@@ -200,7 +209,9 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     } finally {
       await engine.shutdown();
     }
-    const again = w.start();
+
+    });
+    await start(async again => {
     try {
       await again.waitUntilReady(); await Promise.all([...again.backgroundWork]);
       const task = taskOf(again.getState(), taskId);
@@ -211,11 +222,16 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     } finally {
       await again.shutdown();
     }
+
+    });
+    });
   });
 
   it("keeps the note on a task that was already cancelled, and waits on a paused one until it is resumed", async () => {
-    const cancelled = await world("upgrade-was-cancelled");
-    const before = await interruptedBeforeUpdate(cancelled, "pull-request", { state: "cancelled" });
+    await world("upgrade-was-cancelled", async (cancelled, start) => {
+    const prepared = await start(first => interruptedBeforeUpdate(cancelled, first, "pull-request", { state: "cancelled" }));
+    await start(async engine => {
+    const before = { ...prepared, engine };
     try {
       await before.engine.waitUntilReady(); await Promise.all([...before.engine.backgroundWork]);
       const task = taskOf(before.engine.getState(), before.taskId);
@@ -227,8 +243,11 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
       await before.engine.shutdown();
     }
 
-    const paused = await world("upgrade-paused");
-    const { engine, taskId, calls } = await interruptedBeforeUpdate(paused, "pull-request", { state: "paused" });
+
+    });
+    await world("upgrade-paused", async (paused, start) => {
+    const { taskId, calls } = await start(first => interruptedBeforeUpdate(paused, first, "pull-request", { state: "paused" }));
+    await start(async engine => {
     try {
       await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
       expect(taskOf(engine.getState(), taskId).state).toBe("paused");
@@ -239,5 +258,9 @@ describe.concurrent("A delivery interrupted before Petrina was updated", () => {
     } finally {
       await engine.shutdown();
     }
+
+    });
+    });
+    });
   });
 });

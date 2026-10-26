@@ -2,24 +2,41 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeWaitHolds, runtimeWaitView, type CheckId, type DeliveryMode } from "@petrina/core";
+import type { Engine } from "../../engine.js";
+import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
 import { Coordination } from "../../../src/coordination.js";
 import { WaitingForUsage } from "../../../src/usage.js";
 import { commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
-import { git, makeWorld, remoteRef, removeDir, waitFor, type World } from "../../support.js";
+import { git, remoteRef, waitFor } from "../../support.js";
 
-const worlds: World[] = [];
-afterAll(() => worlds.forEach(world => removeDir(world.dir)));
+const fixtures = nativeWorldFixtures();
+afterAll(fixtures.close);
 
 /** Real approval, checks, source update and publication; planning, build and review have settled. */
-async function fixture(mode: DeliveryMode = "pull-request", prepare = true) {
-  const world = await makeWorld("wait-prepared-delivery", mode === "release" ? { version: "1.0.0" } : {});
-  worlds.push(world);
+type CandidateFixture = Awaited<ReturnType<typeof prepareCandidate>>;
+type CandidatePhase = (fixture: CandidateFixture) => Promise<void | CandidatePhase>;
+async function fixture(body: CandidatePhase, mode: DeliveryMode = "pull-request", prepare = true) {
+  let current: CandidateFixture | undefined;
+  return fixtures.world("wait-prepared-delivery", async ({ world, engine: ownedEngine }) => {
   if (mode === "release") {
     await git(world.remote, "update-ref", "refs/tags/v1.0.0", world.initial);
     world.setGitHub(state => state.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/demo/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "The earlier release" }));
   }
-  let engine = world.start({ terminals: () => [] });
+
+    let next = await ownedEngine(async engine => { current = await prepareCandidate(world, engine, mode, prepare); return body(current); }, { terminals: () => [] });
+    if (next) {
+      const resume = next;
+      next = await ownedEngine(async engine => { await current!.reopened(engine); return resume(current!); }, { terminals: () => [] });
+    }
+    if (next) {
+      const resume = next;
+      await ownedEngine(async engine => { await current!.reopened(engine); return resume(current!); }, { terminals: () => [] });
+    }
+  }, mode === "release" ? { version: "1.0.0" } : {}, { stopPeers: () => current?.releaseHeldChecks() });
+}
+async function prepareCandidate(world: NativeWorld, first: Engine, mode: DeliveryMode, prepare: boolean) {
+  let engine = first;
   engine.schedule = () => {};
   const productId = await engine.addProduct(world.clone);
   const id = engine.addTask({ productId, title: "Deliver the approved improvement", delivery: mode, backlog: true });
@@ -82,23 +99,25 @@ process.exit(ok ? 0 : 1);`);
     } else engine.setRuntimeWait(id, [], "The fix is available", "clear-before-publish");
     expect(runtimeWaitHolds(task)).toBe(false);
   };
-  const restart = async () => {
-    engine.commitNow(); await engine.shutdown();
-    engine = world.start({ terminals: () => [] }); engine.schedule = () => {};
+  const stopForRestart = async () => { engine.commitNow(); await engine.shutdown(); };
+  const reopened = async (current: Engine) => {
+    engine = current; engine.schedule = () => {};
     await engine.waitUntilReady();
     task = engine.task(id)!; scope = executionFor(task);
   };
   const refresh = () => engine["driver"]["refreshAfterWait"](task, signal);
   const publish = () => engine["shipping"].deliver(task, task.plan!.stages[2]!, signal);
+  let releaseFinalCheck = () => {};
   const blockFinalChecks = () => {
     const gate = join(world.dir, "final-check");
+    releaseFinalCheck = () => writeFileSync(`${gate}.release`, "Continue");
     engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, gate]) }]);
-    return { started: () => waitFor(() => existsSync(`${gate}.started`), "the final check to start"), release: () => writeFileSync(`${gate}.release`, "Continue") };
+    return { started: () => waitFor(() => existsSync(`${gate}.started`), "the final check to start"), release: releaseFinalCheck };
   };
-  return { world, productId, id, prerequisite, before, checkedBefore, hold, land, release, restart, refresh, publish, evidence, blockFinalChecks, engine: () => engine, task: () => task, scope: () => scope };
+  return { world, productId, id, prerequisite, before, checkedBefore, hold, land, release, stopForRestart, reopened, refresh, publish, evidence, blockFinalChecks, releaseHeldChecks: () => releaseFinalCheck(), engine: () => engine, task: () => task, scope: () => scope };
 }
 
-async function expectFreshPublication(f: Awaited<ReturnType<typeof fixture>>, mode: DeliveryMode, latest: string) {
+async function expectFreshPublication(f: CandidateFixture, mode: DeliveryMode, latest: string) {
   const { work } = f.scope();
   const target = mode === "pull-request" ? `refs/heads/${work.branch}` : "refs/heads/main";
   const published = (await remoteRef(f.world.remote, target))!;
@@ -115,7 +134,8 @@ async function expectFreshPublication(f: Awaited<ReturnType<typeof fixture>>, mo
 
 describe.concurrent("publishing prepared delivery after a prerequisite wait", () => {
   for (const [mode, how] of [["pull-request", "automatic"], ["pull-request", "clear"], ["local", "clear"], ["release", "clear"]] as const) it(`updates ${mode} before publishing when ${how} release happens inside the final check`, async () => {
-    const f = await fixture(mode, false);
+    await fixture(async f => {
+
     const gate = f.blockFinalChecks();
     const delivery = f.publish().catch(error => error);
     try {
@@ -129,10 +149,13 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(await f.publish()).toBe("stop");
       await expectFreshPublication(f, mode, latest);
     } finally { gate.release(); await delivery; await f.engine().shutdown(); }
+
+    }, mode, false);
   });
 
   it("holds an unreleased wait after the running final check settles", async () => {
-    const f = await fixture("pull-request", false);
+    await fixture(async f => {
+
     const gate = f.blockFinalChecks();
     const delivery = f.publish().catch(error => error);
     try {
@@ -142,10 +165,13 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(f.evidence()).toHaveLength(f.checkedBefore + 1);
       expect(runtimeWaitHolds(f.task())).toBe(true);
     } finally { gate.release(); await delivery; await f.engine().shutdown(); }
+
+    }, "pull-request", false);
   });
 
   it("ends a wait set during admitted publication when the task starts awaiting merge", async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     const shipping = f.engine()["shipping"];
     const publishStep = shipping["publishStep"].bind(shipping);
     let held = false;
@@ -156,7 +182,7 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       }
       return run();
     });
-    try {
+
       f.engine().startDriver(f.id);
       await f.engine().settling.get(f.id);
       expect(held).toBe(true); expect(f.task().state).toBe("pr-open");
@@ -174,14 +200,20 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       const coordination = new Coordination(f.engine());
       expect(await coordination.call("task.inspect", { taskId: f.id })).toMatchObject({ task: { waitKind: null } });
       const saved = structuredClone(f.task().runtimeWait);
-      await f.restart();
+      await f.stopForRestart();
+return async (f: CandidateFixture) => {
+
       expect(f.task().runtimeWait).toEqual(saved);
       expect(f.world.github().prs).toHaveLength(1);
-    } finally { await f.engine().shutdown(); }
+
+
+};
+    });
   });
 
   it("keeps the paused-pool status specific to publishing for a task without a wait", async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     try {
       f.engine().setPoolPaused(true);
       const result = await f.publish().catch(error => error);
@@ -189,19 +221,19 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect((result as WaitingForUsage).words).toBe("Waiting for the pool to resume before publishing");
       expect(f.world.github().prs).toHaveLength(0);
     } finally { await f.engine().shutdown(); }
+
+    });
   });
 
   for (const recovery of ["restart", "retry"] as const) it(`describes a held saved publication as waiting after ${recovery}, until actual recovery begins`, async () => {
-    const f = await fixture();
-    try {
+    await fixture(async f => {
+
+
       f.scope().work.shipping!.step = "push";
       f.hold();
-      if (recovery === "restart") await f.restart();
-      else {
-        f.engine().fail(f.id, new Error("The admitted publication stopped"));
-        const item = f.engine().s.inbox.find(item => item.taskId === f.id && item.kind === "stuck")!;
-        await f.engine().retry(item.id);
-      }
+
+const continueWithCurrent: CandidatePhase = async (f: CandidateFixture) => {
+
       expect(runtimeWaitView(f.task(), id => f.engine().taskDetails(id))).toMatchObject({ held: true, phase: "active" });
       f.engine().startDriver(f.id); await f.engine().settling.get(f.id);
       expect(f.task().state).toBe("waiting");
@@ -213,11 +245,22 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(await f.publish()).toBe("stop");
       expect(f.world.github().prs).toHaveLength(1);
       expect(f.task().state).toBe("pr-open");
-    } finally { await f.engine().shutdown(); }
+
+
+};
+if (recovery === "restart") { await f.stopForRestart(); return continueWithCurrent; }
+      else {
+        f.engine().fail(f.id, new Error("The admitted publication stopped"));
+        const item = f.engine().s.inbox.find(item => item.taskId === f.id && item.kind === "stuck")!;
+        await f.engine().retry(item.id);
+      }
+return continueWithCurrent(f);
+    });
   });
 
   it("keeps an ordinary no-wait prepared candidate and its current checks", async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     try {
       expect(await f.publish()).toBe("stop");
       expect(await remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBe(f.before);
@@ -225,10 +268,13 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(f.task().runtimeWait).toBeUndefined();
       expect(f.world.github().prs).toHaveLength(1);
     } finally { await f.engine().shutdown(); }
+
+    });
   });
 
   for (const how of ["automatic", "clear"] as const) it(`rechecks and publishes the current PR candidate after ${how} release`, async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     try {
       f.scope().work.shipping!.moves = 1;
       f.scope().work.shipping!.failures = 1;
@@ -238,35 +284,50 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(await f.publish()).toBe("stop");
       await expectFreshPublication(f, "pull-request", latest);
     } finally { await f.engine().shutdown(); }
+
+    });
   });
 
   it("preserves the required re-preparation over restart and pause", async () => {
-    const f = await fixture();
-    try {
-      f.hold(); f.engine().pause(f.id); await f.restart();
+    await fixture(async f => {
+
+
+      f.hold(); f.engine().pause(f.id); await f.stopForRestart();
+return async (f: CandidateFixture) => {
+
       expect(f.scope().work.shipping?.prepared?.tested).toBe(f.before);
       const latest = await f.land(); f.release("clear", latest);
       f.engine().resume(f.id);
       expect(await f.refresh()).toBe(false);
-      await f.restart();
+      await f.stopForRestart();
+return async (f: CandidateFixture) => {
+
       expect(f.scope().work.shipping?.prepared).toBeUndefined();
       expect(await f.publish()).toBe("stop");
       await expectFreshPublication(f, "pull-request", latest);
-    } finally { await f.engine().shutdown(); }
+
+
+};
+};
+    });
   });
 
   it("keeps the before-preparation PR path on the same current-code check boundary", async () => {
-    const f = await fixture("pull-request", false);
+    await fixture(async f => {
+
     try {
       f.hold(); const latest = await f.land(); f.release("clear", latest);
       expect(await f.refresh()).toBe(false);
       expect(await f.publish()).toBe("stop");
       await expectFreshPublication(f, "pull-request", latest);
     } finally { await f.engine().shutdown(); }
+
+    }, "pull-request", false);
   });
 
   for (const mode of ["local", "release"] as const) it(`preserves ${mode} preparation rules when source moves during the wait`, async () => {
-    const f = await fixture(mode);
+    await fixture(async f => {
+
     try {
       f.hold(); const latest = await f.land(); f.release("clear", latest);
       expect(await f.refresh()).toBe(false);
@@ -283,10 +344,13 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
         expect(f.world.github().releases.at(-1)!.body).toContain("Land the required fix");
       }
     } finally { await f.engine().shutdown(); }
+
+    }, mode);
   });
 
   it("asks for approval again if the candidate changes after the wait update", async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     try {
       f.hold(); const latest = await f.land(); f.release("clear", latest);
       expect(await f.refresh()).toBe(false);
@@ -298,10 +362,13 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(f.world.github().prs).toHaveLength(0);
       expect(await remoteRef(f.world.remote, `refs/heads/${f.scope().work.branch}`)).toBeUndefined();
     } finally { await f.engine().shutdown(); }
+
+    });
   });
 
   it("does not publish a prepared PR when the newly integrated source fails its required checks", async () => {
-    const f = await fixture();
+    await fixture(async f => {
+
     try {
       f.hold(); const latest = await f.land(true); f.release("clear", latest);
       expect(await f.refresh()).toBe(false);
@@ -312,5 +379,7 @@ describe.concurrent("publishing prepared delivery after a prerequisite wait", ()
       expect(f.scope().work.approvedSha).toBeUndefined();
       expect(f.task().stageIndex).toBeLessThan(2);
     } finally { await f.engine().shutdown(); }
+
+    });
   });
 });

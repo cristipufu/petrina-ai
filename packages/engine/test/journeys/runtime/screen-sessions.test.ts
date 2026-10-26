@@ -7,7 +7,11 @@ import { localFixtureSource, screenFixturePlan } from "../../fixtures/prepared-r
 import { Engine, type EngineOptions } from "../../engine.js";
 import { screenRules, WHERE_YOU_WERE_SCREEN } from "../../../src/prompts.js";
 import type { Scenario } from "../../fake-agent.js";
-import { finish, Fakes, git, makeProduct, makeWorld, removeDir, taskOf, tempDir, waitFor } from "../../support.js";
+import { finish, Fakes, git, makeProduct, removeDir, taskOf, tempDir, waitFor } from "../../support.js";
+
+import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
+const nativeWorlds = nativeWorldFixtures();
+afterAll(nativeWorlds.close);
 
 const fake = join(ENGINE_TEST_ROOT, "fake-agent.ts");
 /** What the fake builder needs the screen for. */
@@ -722,10 +726,9 @@ describe("screen requests when a tool runs out of usage", () => {
 
 describe("a Release Manager that asks for the screen", () => {
   it("gets its result handed back as unusable, and the release goes out without the screen", async () => {
-    const w = await makeWorld("screen-release-manager");
-    roots.push(w.dir);
+    await nativeWorlds.world("screen-release-manager", async ({ world: w, engine: ownedEngine }) => {
     w.setScript((script) => (script.releaseManagerScreen = true));
-    const engine = w.start();
+    await ownedEngine(async engine => {
     let asked = false;
     const unsubscribe = engine.subscribe(() => {
       asked ||= engine.getState().tasks.some((task) => task.screen !== undefined);
@@ -746,5 +749,7 @@ describe("a Release Manager that asks for the screen", () => {
       unsubscribe();
       await engine.shutdown();
     }
+    });
+    });
   });
 });

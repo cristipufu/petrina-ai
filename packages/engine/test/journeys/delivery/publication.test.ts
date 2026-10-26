@@ -7,31 +7,14 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_WORDS, slotUses, type DeliveryMode, type Task } from "@petrina/core";
-import { coordinator, finish, git, gitWith, itemOf, makeWorld, removeDir, REPO, remoteRef, runGit, taskOf, until, type World } from "../../support.js";
-import { createSetupSteps } from "@petrina/test-support/setup-steps";
-import { completeAll } from "@petrina/core";
-
-const worlds: World[] = [];
-const setup = createSetupSteps(), setupLifetime = new AbortController();
-const engines = new Set<ReturnType<World["start"]>>();
-const start = (world: World) => setup.run(() => {
-  const engine = world.start();
-  engines.add(engine);
-  return engine;
-}, setupLifetime.signal);
-const world = async (...args: Parameters<typeof makeWorld>) => {
-  const made = await makeWorld(...args);
-  worlds.push(made);
-  return made;
-};
-afterAll(async () => {
-  setupLifetime.abort();
-  await completeAll([...engines].map((engine) => engine.shutdown()));
-  for (const made of worlds) removeDir(made.dir);
-});
+import { coordinator, finish, git, gitWith, itemOf, REPO, remoteRef, runGit, taskOf, until } from "../../support.js";
+import type { Engine } from "../../engine.js";
+import { nativeWorldFixtures, type NativeWorld } from "../../fixtures/native-worlds.js";
+const fixtures = nativeWorldFixtures();
+afterAll(fixtures.close);
 
 /** Every gh call was pinned to the product's repository, and none could merge. */
-function pinned(w: World): void {
+function pinned(w: NativeWorld): void {
   for (const call of w.github().calls) {
     // `gh repo view` names the repository itself.
     if (call[0] === "repo") expect(call.slice(0, 3)).toEqual(["repo", "view", REPO]);
@@ -44,13 +27,13 @@ function pinned(w: World): void {
 const noReleaseManager = (task: Task) => expect(task.timeline.some((entry) => entry.roleId === "release-manager" || entry.text === "Release Manager started")).toBe(false);
 
 /** A release on GitHub at `at`, as a teammate published it. */
-async function released(w: World, tag: string, at: string): Promise<void> {
+async function released(w: NativeWorld, tag: string, at: string): Promise<void> {
   await gitWith({}, "--git-dir", w.remote, "update-ref", `refs/tags/${tag}`, at);
   w.setGitHub((github) => github.releases.push({ tagName: tag, url: `https://github.com/${REPO}/releases/tag/${tag}`, publishedAt: "2026-01-01T00:00:00Z", isDraft: false, name: tag, body: "" }));
 }
 
 /** Another task's commit landing on main on GitHub, with Petrina's kind of message. */
-async function landed(w: World, title: string, change: string): Promise<void> {
+async function landed(w: NativeWorld, title: string, change: string): Promise<void> {
   const file = `${title.toLowerCase().replace(/\W+/g, "-")}.txt`;
   writeFileSync(join(w.clone, file), `${title}\n`);
   await git(w.clone, "add", file);
@@ -62,8 +45,7 @@ async function landed(w: World, title: string, change: string): Promise<void> {
 const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
 /** One task at its delivery check, while another task's builder fills the only agent slot. */
-async function busyDelivery(w: World, delivery: DeliveryMode) {
-  const engine = await start(w);
+async function busyDelivery(w: NativeWorld, engine: Engine, delivery: DeliveryMode) {
   try {
     engine.setPoolLimit(1);
     const productId = await engine.addProduct(w.clone);
@@ -78,7 +60,7 @@ async function busyDelivery(w: World, delivery: DeliveryMode) {
     await until(engine, () => existsSync(`${hold}.reached`), coordinator(["plan", "design"]));
     expect(slotUses(engine.getState())).toHaveLength(1);
     expect(taskOf(engine.getState(), busyId).agent?.roleId).toBe("builder");
-    return { engine, taskId, busyId, approvalId };
+    return { taskId, busyId, approvalId };
   } catch (error) {
     await engine.shutdown();
     throw error;
@@ -88,8 +70,11 @@ async function busyDelivery(w: World, delivery: DeliveryMode) {
 describe.concurrent("Petrina publishes deliveries itself", () => {
   for (const mode of ["local", "pull-request"] as const) {
     it(`publishes an approved ${mode} delivery while every agent slot is full`, async () => {
-      const w = await world(`full-pool-${mode}`);
-      const { engine, taskId, busyId, approvalId } = await busyDelivery(w, mode);
+    let releasePeers = () => {};
+    await fixtures.world(`full-pool-${mode}`, async ({ world: w, engine: ownedEngine }) => {
+      releasePeers = () => { rmSync(join(w.dir, "busy-builder"), { force: true }); rmSync(join(w.dir, "busy-notes"), { force: true }); };
+      await ownedEngine(async engine => {
+      const { taskId, busyId, approvalId } = await busyDelivery(w, engine, mode);
       try {
         // Filling the pool neither approves the delivery nor publishes anything.
         expect(itemOf(engine.getState(), taskId, "delivery")?.id).toBe(approvalId);
@@ -109,11 +94,17 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       } finally {
         await engine.shutdown();
       }
-    });
+
+      });
+    }, {}, { stopPeers: () => releasePeers() });
+  });
 
     it(`holds an approved ${mode} delivery while the pool is paused, then publishes with its agent slot still full`, async () => {
-      const w = await world(`paused-pool-${mode}`);
-      const { engine, taskId, busyId, approvalId } = await busyDelivery(w, mode);
+    let releasePeers = () => {};
+    await fixtures.world(`paused-pool-${mode}`, async ({ world: w, engine: ownedEngine }) => {
+      releasePeers = () => { rmSync(join(w.dir, "busy-builder"), { force: true }); rmSync(join(w.dir, "busy-notes"), { force: true }); };
+      await ownedEngine(async engine => {
+      const { taskId, busyId, approvalId } = await busyDelivery(w, engine, mode);
       try {
         engine.setPoolPaused(true);
         engine.approve(approvalId);
@@ -137,12 +128,18 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       } finally {
         await engine.shutdown();
       }
-    });
+
+      });
+    }, {}, { stopPeers: () => releasePeers() });
+  });
   }
 
   it("waits for agent capacity and an unpaused pool before writing release notes", async () => {
-    const w = await world("notes-pool");
-    const { engine, taskId, busyId, approvalId } = await busyDelivery(w, "release");
+    let releasePeers = () => {};
+    await fixtures.world("notes-pool", async ({ world: w, engine: ownedEngine }) => {
+      releasePeers = () => { rmSync(join(w.dir, "busy-builder"), { force: true }); rmSync(join(w.dir, "busy-notes"), { force: true }); };
+      await ownedEngine(async engine => {
+      const { taskId, busyId, approvalId } = await busyDelivery(w, engine, "release");
     const notesHold = join(w.dir, "busy-notes");
     try {
       engine.approve(approvalId);
@@ -170,11 +167,17 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {}, { stopPeers: () => releasePeers() });
   });
 
   it("retries publishing a release with its notes already written while every agent slot is full", async () => {
-    const w = await world("prepared-release-pool");
-    const { engine, taskId, busyId, approvalId } = await busyDelivery(w, "release");
+    let releasePeers = () => {};
+    await fixtures.world("prepared-release-pool", async ({ world: w, engine: ownedEngine }) => {
+      releasePeers = () => { rmSync(join(w.dir, "busy-builder"), { force: true }); rmSync(join(w.dir, "busy-notes"), { force: true }); };
+      await ownedEngine(async engine => {
+      const { taskId, busyId, approvalId } = await busyDelivery(w, engine, "release");
     try {
       w.setGitHub((github) => (github.fail = { "release create": 1 }));
       engine.approve(approvalId);
@@ -197,10 +200,13 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {}, { stopPeers: () => releasePeers() });
   });
 
   it("opens a pull request with no agent: the builder's title and description, as text, then Petrina's own part", async () => {
-    const w = await world("pr");
+    await fixtures.world("pr", async ({ world: w, engine: ownedEngine }) => {
     const marker = join(w.dir, "pwned");
     // Keep the title valid even when the temporary folder has a long name. The
     // description below still checks that shell-like text cannot write the marker.
@@ -211,7 +217,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
       script.description = description;
       script.envOut = join(w.dir, "builder-env.json");
     });
-    const engine = await start(w);
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       const product = engine.getState().products.find((entry) => entry.id === productId)!;
@@ -264,12 +270,15 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("writes a pull request's description from the builder's report when the builder gave none, with the design's acceptance checklist", async () => {
-    const w = await world("pr-template");
+    await fixtures.world("pr-template", async ({ world: w, engine: ownedEngine }) => {
     w.setScript((script) => (script.description = ""));
-    const engine = await start(w);
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "pull-request", false);
@@ -284,15 +293,18 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("releases everything since the previous release: Petrina sets the version, the Release Manager's notes cover every change", async () => {
-    const w = await world("release", { version: "1.4.0" });
+    await fixtures.world("release", async ({ world: w, engine: ownedEngine }) => {
     // The latest release is v1.4.0 on the first commit; this product bumps the minor number. Two other tasks landed since.
     await released(w, "v1.4.0", w.initial);
     await landed(w, "Faster search", "Search answers in a blink");
     await landed(w, "Fix the login loop", "Signing in on Safari works again");
-    const engine = await start(w);
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
@@ -337,12 +349,15 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, { version: "1.4.0" });
   });
 
   it("undoes whatever the Release Manager commits: it writes the notes and nothing else", async () => {
-    const w = await world("release-manager-commits");
+    await fixtures.world("release-manager-commits", async ({ world: w, engine: ownedEngine }) => {
     w.setScript((script) => (script.releaseManagerCommits = true));
-    const engine = await start(w);
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
@@ -357,11 +372,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("commits to main locally with no agent: moves main forward to the checked commit, the main copy's files with it, then pushes main to GitHub", async () => {
-    const w = await world("local");
-    const engine = await start(w);
+    await fixtures.world("local", async ({ world: w, engine: ownedEngine }) => {
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", true);
@@ -385,11 +403,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("brings in a teammate's newer GitHub commit before advancing and pushing main", async () => {
-    const w = await world("local-push");
-    let engine = await start(w);
+    await fixtures.world("local-push", async ({ world: w, engine: ownedEngine }) => {
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", true);
@@ -429,11 +450,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("moves main locally while the main copy has another branch checked out, leaving that branch's files alone", async () => {
-    const w = await world("local-elsewhere");
-    const engine = await start(w);
+    await fixtures.world("local-elsewhere", async ({ world: w, engine: ownedEngine }) => {
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       await git(w.clone, "switch", "-q", "-c", "notes");
@@ -450,11 +474,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("stops before moving main when the main copy has uncommitted changes or main is checked out elsewhere", async () => {
-    const w = await world("local-unsafe");
-    const engine = await start(w);
+    await fixtures.world("local-unsafe", async ({ world: w, engine: ownedEngine }) => {
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "local", false);
@@ -485,14 +512,17 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 
   it("publishes nothing when the checks fail with the version set, goes back to the builder, and stops after the second time", async () => {
-    const w = await world("version-fails", { version: "1.4.0" });
+    await fixtures.world("version-fails", async ({ world: w, engine: ownedEngine }) => {
     await released(w, "v1.4.0", w.initial);
     // A check that pins the version: it passes on the work, and fails once Petrina sets the new version.
     w.setScript((script) => (script.checks = [{ name: "Pinned", argv: ["git", "grep", "-q", "--fixed-strings", '"version": "1.4.0"', "--", "package.json"], why: "A check that pins the version, for tests" }]));
-    const engine = await start(w);
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "release", false);
@@ -521,11 +551,14 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, { version: "1.4.0" });
   });
 
   it("keeps the approved destination when the product default branch changes", async () => {
-    const w = await world("destination");
-    const engine = await start(w);
+    await fixtures.world("destination", async ({ world: w, engine: ownedEngine }) => {
+      await ownedEngine(async engine => {
     try {
       const productId = await engine.addProduct(w.clone);
       engine.setProductDelivery(productId, "pull-request", true);
@@ -547,5 +580,8 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     } finally {
       await engine.shutdown();
     }
+
+      });
+    }, {});
   });
 });
