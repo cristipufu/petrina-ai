@@ -1,18 +1,15 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { versionsOf } from "../../../src/repositories.js";
 import { beginRepair, executionFor } from "@petrina/orchestrator";
-import { git, removeDir, type World } from "../../support.js";
-import { repositoryRecords, type RepositoryRecordOptions } from "../../fixtures/shared-records.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const fixture = (name: string, options: RepositoryRecordOptions = {}) => repositoryRecords(name, recordRoots, options);
+import { git } from "../../support.js";
+import { withRepositoryRecords } from "../../fixtures/shared-records.js";
 
 describe("explicit repository execution contexts", () => {
   it("uses frozen repair roles, complete findings and real acceptance trees without automated checks", async () => {
-    const { engine, task } = await fixture("repair-context", { git: ["first","second"] });
-    try {
+    await withRepositoryRecords("repair-context", { git: ["first","second"] }, async ({ engine, task }) => {
+
       const role = { ...engine.role("builder")!, id: "saved-maintenance" };
       task.maintenance = { routineId: "routine", routineName: "Routine", scheduledAt: 0, queuedAt: 0, zone: "UTC", focus: "Inspect", input: "Inspect", role, profile: engine.s.profiles[0]!, product: engine.s.products[0]! };
       task.plan = { rationale: "Repair", plannerProfileId: "sol-high", stages: [{ id: "build", title: "Maintain", kind: "do", roleId: role.id, profileIds: ["sol-high"] }] };
@@ -33,6 +30,7 @@ describe("explicit repository execution contexts", () => {
       await git(task.repositories![1]!.worktree!, "add", "changed.txt");
       await git(task.repositories![1]!.worktree!, "commit", "-m", "Changed tree");
       expect(await read()).toContain("Products with changed trees: second");
-    } finally { await engine.shutdown(); }
+
+    });
   });
 });

@@ -1,18 +1,14 @@
 import { executionFor } from "@petrina/orchestrator";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "@petrina/repositories/git";
-import { removeDir, type World } from "../../support.js";
-import { repositoryRecords, withRepositoryRecords, type RepositoryRecordOptions } from "../../fixtures/shared-records.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const fixture = (name: string, options: RepositoryRecordOptions = {}) => repositoryRecords(name, recordRoots, options);
+import { withRepositoryRecords, type RepositoryRecords } from "../../fixtures/shared-records.js";
 
 describe.concurrent("one task across products", () => {
   it("previews companion repositories and their readers in the shared delivery check", async () => {
-    const saved = await fixture("companion-wording");
-    const { engine, task } = saved;
-    try {
+    await withRepositoryRecords("companion-wording", {}, async (saved) => {
+      const { engine, task } = saved;
+
       const state = engine.s;
       state.products.push({ id: "third", name: "Third", repo: "acme/third", tone: "blue" });
       task.repositories = state.products.slice(0, 2).map((product, index) => ({ productId: product.id, delivery: "pull-request", completedStages: [], source: { product: { ...product, repo: index ? "private/api" : "acme/shop" }, start: { kind: "default", branch: "main" }, destination: { kind: "new-pr", mode: "pull-request", repo: index ? "private/api" : "acme/shop", branch: "main" }, confirmed: true } }));
@@ -24,13 +20,14 @@ describe.concurrent("one task across products", () => {
       expect(requests[0]!.body).toContain("private/api; link pending");
       expect(requests[0]!.body).toContain("every companion pull request, visible to anyone who can read it.");
       expect(requests[0]!.body).toContain("Pending links will become the resulting pull request or release addresses in these approved repositories.");
-    } finally { await engine.shutdown(); }
+
+    });
   });
 
   for (const mode of ["local", "release", "mixed", "unchanged-pr"] as const) it(`omits pull-request publication wording when ${mode} deliveries publish no pull requests`, async () => {
-    const saved = await fixture("companion-wording");
-    const { engine, task } = saved;
-    try {
+    await withRepositoryRecords("companion-wording", {}, async (saved) => {
+      const { engine, task } = saved;
+
       const state = engine.s;
       state.products.push({ id: "third", name: "Third", repo: "acme/third", tone: "blue" });
       task.repositories = state.products.slice(0, mode === "unchanged-pr" ? 3 : 2).map((product, index) => {
@@ -46,13 +43,14 @@ describe.concurrent("one task across products", () => {
       expect(requests[0]!.body).toContain("Part of a change across:");
       expect(requests[0]!.body).not.toContain("every companion pull request");
       expect(requests[0]!.body).not.toContain("Pending links");
-    } finally { await engine.shutdown(); }
+
+    });
   });
 
   for (const mode of ["local", "release"] as const) it(`previews companion wording on an existing pull request beside a ${mode} delivery`, async () => {
-    const saved = await fixture("companion-wording");
-    const { engine, task } = saved;
-    try {
+    await withRepositoryRecords("companion-wording", {}, async (saved) => {
+      const { engine, task } = saved;
+
       const state = engine.s;
       state.products.push({ id: "third", name: "Third", repo: "acme/third", tone: "blue" });
       task.repositories = state.products.slice(0, 2).map((product, index) => ({ productId: product.id, delivery: index ? mode : "local", completedStages: [], source: { product, start: index ? { kind: "default", branch: "main" } : { kind: "pull-request", number: 7, url: `https://github.com/${product.repo}/pull/7`, headRepo: product.repo, branch: "feature" }, destination: { kind: index ? mode === "release" ? "release" : "branch" : "update-pr", mode: index ? mode : "local", repo: product.repo, branch: index ? "main" : "feature" }, confirmed: true } }));
@@ -63,55 +61,74 @@ describe.concurrent("one task across products", () => {
       expect(requests[0]!.body).toContain("Part of a change across:");
       expect(requests[0]!.body).toContain("visible to anyone who can read it");
       expect(requests[0]!.body).toContain("Pending links will become");
-    } finally { await engine.shutdown(); }
+
+    });
   });
 });
 
 describe("explicit repository execution contexts", () => {
   for (const variant of ["unchanged", "changed commit", "moved source", "failed checks"] as const) it(`keeps delivery approval and checks authoritative: ${variant}`, async () => {
-    const { engine, task } = await fixture(`approval-${variant.replaceAll(" ", "-")}`);
-    const scope = executionFor(task, "first"), sha = "b".repeat(40);
-    scope.work.approvedSha = sha; scope.work.approvedPatch = "approved-patch";
-    task.plan = { rationale: "Approval test", plannerProfileId: "sol-high", stages: [
-      { id: "delivery-check", title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] },
-      { id: "delivery", title: "Deliver", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
-    ] };
-    task.stageIndex = 1;
-    const shipping = engine["shipping"], back = shipping["backToWork"];
-    shipping["backToWork"] = async () => {};
-    const update = spyOn(engine["updates"], "upToDate").mockResolvedValue(variant === "moved source" ? "moved" : "current");
-    const head = spyOn(gitOps, "head").mockResolvedValue(variant === "changed commit" ? "a".repeat(40) : sha);
-    const patch = spyOn(engine["updates"], "patch").mockResolvedValue("different-patch");
-    const checks = spyOn(engine["checks"], "checksBeforeShipping").mockResolvedValue(variant === "failed checks" ? "returned" : "passed");
-    try {
-      const changed = variant === "changed commit" || variant === "moved source";
-      expect(await engine["shipping"]["readyToShip"](scope, new AbortController().signal)).toBe(variant === "unchanged" ? "ready" : "back");
-      expect(patch).toHaveBeenCalledTimes(changed ? 1 : 0);
-      expect(checks).toHaveBeenCalledTimes(changed ? 0 : 1);
-      if (changed) { expect(task.stageIndex).toBe(0); expect(scope.work.approvedSha).toBeUndefined(); }
-    } finally { checks.mockRestore(); patch.mockRestore(); head.mockRestore(); update.mockRestore(); shipping["backToWork"] = back; await engine.shutdown(); }
+    await withRepositoryRecords(`approval-${variant.replaceAll(" ", "-")}`, {}, async ({ engine, task, run: ownRun }) => {
+      const scope = executionFor(task, "first"), sha = "b".repeat(40);
+      scope.work.approvedSha = sha; scope.work.approvedPatch = "approved-patch";
+      task.plan = { rationale: "Approval test", plannerProfileId: "sol-high", stages: [
+          { id: "delivery-check", title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] },
+          { id: "delivery", title: "Deliver", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
+      ] };
+      task.stageIndex = 1;
+      const shipping = engine["shipping"], back = shipping["backToWork"];
+      try {
+        shipping["backToWork"] = async () => {};
+        const update = spyOn(engine["updates"], "upToDate");
+        try {
+          update.mockResolvedValue(variant === "moved source" ? "moved" : "current");
+
+          const head = spyOn(gitOps, "head");
+          try {
+            head.mockResolvedValue(variant === "changed commit" ? "a".repeat(40) : sha);
+
+            const patch = spyOn(engine["updates"], "patch");
+            try {
+              patch.mockResolvedValue("different-patch");
+
+              const checks = spyOn(engine["checks"], "checksBeforeShipping");
+              try {
+                checks.mockResolvedValue(variant === "failed checks" ? "returned" : "passed");
+
+                const changed = variant === "changed commit" || variant === "moved source";
+                expect(await ownRun(() => engine["shipping"]["readyToShip"](scope, engine.stopRequested.signal))).toBe(variant === "unchanged" ? "ready" : "back");
+                expect(patch).toHaveBeenCalledTimes(changed ? 1 : 0);
+                expect(checks).toHaveBeenCalledTimes(changed ? 0 : 1);
+                if (changed) { expect(task.stageIndex).toBe(0); expect(scope.work.approvedSha).toBeUndefined(); }
+
+              } finally { checks.mockRestore(); }
+            } finally { patch.mockRestore(); }
+          } finally { head.mockRestore(); }
+        } finally { update.mockRestore(); }
+      } finally { shipping["backToWork"] = back; }
+    });
   });
 });
 
 describe("shared check repair episodes", () => {
   const plan = () => ({ rationale: "Shared checks", plannerProfileId: "sol-high", stages: [
-    { id: "build", title: "Build", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] },
-    { id: "test", title: "Try it", kind: "do" as const, roleId: "tester", profileIds: ["sol-high"] },
-    { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
-    { id: "delivery", title: "Your delivery check", kind: "gate" as const, gate: "delivery" as const, roleId: "release-manager", profileIds: [] },
-    { id: "ship", title: "Commit to main", kind: "do" as const, roleId: "release-manager", profileIds: ["sol-high"] },
+      { id: "build", title: "Build", kind: "do" as const, roleId: "builder", profileIds: ["sol-high"] },
+      { id: "test", title: "Try it", kind: "do" as const, roleId: "tester", profileIds: ["sol-high"] },
+      { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["opus-high"], maxRounds: 2 },
+      { id: "delivery", title: "Your delivery check", kind: "gate" as const, gate: "delivery" as const, roleId: "release-manager", profileIds: [] },
+      { id: "ship", title: "Commit to main", kind: "do" as const, roleId: "release-manager", profileIds: ["sol-high"] },
   ] });
   const command = (name: string, script: string) => ({ name, argv: [process.execPath, "-e", script] });
   const failing = command("Welcome page", "console.error('The welcome page is missing'); process.exit(1)");
-  const setChecks = (engine: Awaited<ReturnType<typeof fixture>>["engine"], productId: string, commands: readonly { name: string; argv: string[] }[]) => {
+  const setChecks = (engine: RepositoryRecords["engine"], productId: string, commands: readonly { name: string; argv: string[] }[]) => {
     const product = engine.s.products.find((entry) => entry.id === productId)!;
     product.checks = [...commands];
     product.checksBy = "coordinator";
   };
 
   it("requests fresh checks only for unfinished products without approving or replenishing repairs", async () => {
-    const { engine, task } = await fixture("check-explicit-partial");
-    try {
+    await withRepositoryRecords("check-explicit-partial", {}, async ({ engine, task }) => {
+
       task.plan = plan(); task.stageIndex = 2;
       const first = executionFor(task, "first").work, second = executionFor(task, "second").work;
       first.landed = { branch: "main", sha: "delivered" };
@@ -126,12 +143,13 @@ describe("shared check repair episodes", () => {
       expect(second.checkReturns).toBe(2); expect(second.approvedFor).toBeUndefined();
       expect(task.stageIndex).toBe(2); expect(task.state).toBe("waiting");
       expect(task.journey!.at(-1)!.outcome).toBe("Run checks again");
-    } finally { await engine.shutdown(); }
+
+    });
   });
 
   it("returns a shared check repair from the delivery check or shipping through review, withdrawing approval", async () => {
-    const { engine, task } = await fixture("check-routes");
-    try {
+    await withRepositoryRecords("check-routes", {}, async ({ engine, task }) => {
+
       task.plan = plan();
       const second = executionFor(task, "second");
       task.findings = [{ id: "check", text: "Check failed: Tests (bun test)", productIds: ["second"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" }];
@@ -154,7 +172,8 @@ describe("shared check repair episodes", () => {
       // Once a product has published, the rest returns to shipping as before, keeping the approval it is compared with.
       task.repositories![0]!.landed = { branch: "main", sha: "a".repeat(40) };
       expect(attempt(4)).toEqual([4, "patch,patch"]);
-    } finally { await engine.shutdown(); }
+
+    });
   });
 
   it("lists every product's failing checks, turns and answers at a shared check problem, and returns a change request there", async () => {
