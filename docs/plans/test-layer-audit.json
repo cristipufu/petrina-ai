@@ -7927,26 +7927,112 @@
       "conventionsExit": 0,
       "sourcePatch": "6c165769f366656c2ebdf77473b80fcc49eede78cfc79d6388be97ec8e853ad1",
       "artifacts": "workstreams/finding-reopening-next/{handoff.json,oracle-map.json,qualification.json,root-review.json}",
-      "limits": "Focused source-specific proof, not complete qualification or global speed saving."
+      "limits": "Included in completefc50Mac+same-source passing resource qualification; no nativeLinux/Windows or controlledglobal performance claim."
+    },
+    "complete-fc50a3f5": {
+      "source": {
+        "head": "fc50a3f54543c829c48dbca92a2f845db6c81931",
+        "tree": "2dad596ae6babf7c7e1d6c7d4cd760faf3de8d7d",
+        "fingerprint": "df8f0081c7f1939ed8383e4609969508276d0bc44dce430580ffc925e182a8e5",
+        "clean": true
+      },
+      "environment": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "bun": "1.4.2"
+      },
+      "normalNativeWorkers": 14,
+      "requiredFiles": 896,
+      "actualFiles": 896,
+      "executions": 4,
+      "workspaces": 9,
+      "ms": 255988,
+      "counts": {
+        "tests": 5854,
+        "passed": 5843,
+        "failed": 0,
+        "skipped": 11
+      },
+      "rawCaseCount": 5854,
+      "perWorkspace": {
+        "packages/core": {
+          "tests": 1499,
+          "passed": 1499,
+          "failed": 0,
+          "skipped": 0
+        },
+        "apps/desktop": {
+          "tests": 606,
+          "passed": 606,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/orchestrator": {
+          "tests": 530,
+          "passed": 530,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/agent-runtime": {
+          "tests": 250,
+          "passed": 247,
+          "failed": 0,
+          "skipped": 3
+        },
+        "packages/engine": {
+          "tests": 2333,
+          "passed": 2326,
+          "failed": 0,
+          "skipped": 7
+        },
+        "packages/repositories": {
+          "tests": 126,
+          "passed": 126,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/test-support": {
+          "tests": 325,
+          "passed": 325,
+          "failed": 0,
+          "skipped": 0
+        },
+        "packages/platform": {
+          "tests": 140,
+          "passed": 139,
+          "failed": 0,
+          "skipped": 1
+        },
+        "packages/storage": {
+          "tests": 45,
+          "passed": 45,
+          "failed": 0,
+          "skipped": 0
+        }
+      },
+      "report": ".test-results/2026-10-26T10-49-29-165Z-d8cc82ce/results.json",
+      "identityPreservation": "5845 unchanged raw identities,2 explicitly reviewed actual-controller transfers,7 new cases; workstreams/finding-reopening-next/oracle-map.json",
+      "artifacts": "full-fc50a3f5/{manifest-verification.json,case-reconciliation.json,resource-manifest-verification.json,resource-observer-verification.json}",
+      "limits": "Mac source qualified; subsequent ownership/own-prerequisite work, native platforms, cost target and protected delivery unfinished."
     }
   },
   "latestIntegratedAttempt": {
-    "revision": "3bacd233c63f972e552e1dd5e33d15c575d87735",
-    "tree": "575494e08387975f7e03fd032a596ceac200db66",
-    "fingerprint": "51d15cdee53ec463d757a97c0bcc949d3d8677871662ec335b0f6d7e8082d6b9",
-    "status": "Complete Mac pass on named clean source; main remains unchanged",
-    "passed": 5836,
+    "revision": "fc50a3f54543c829c48dbca92a2f845db6c81931",
+    "tree": "2dad596ae6babf7c7e1d6c7d4cd760faf3de8d7d",
+    "fingerprint": "df8f0081c7f1939ed8383e4609969508276d0bc44dce430580ffc925e182a8e5",
+    "status": "Complete Mac required+resource pass on named clean source; main unchanged",
+    "passed": 5843,
     "failed": 0,
     "existingSkipped": 11,
-    "ms": 234807,
-    "exactFiles": 893,
+    "ms": 255988,
+    "exactFiles": 896,
     "workspaces": 9,
     "actualExecutions": 4,
     "normalNativeWorkers": 14,
     "stableInputs": true,
-    "report": ".test-results/2026-10-26T09-07-00-611Z-115838c5/results.json",
-    "verifiedRaw": "full-3bacd233/manifest-verification.json",
-    "caseReconciliation": "full-3bacd233/case-reconciliation.json"
+    "report": ".test-results/2026-10-26T10-49-29-165Z-d8cc82ce/results.json",
+    "verifiedRaw": "full-fc50a3f5/manifest-verification.json",
+    "caseReconciliation": "full-fc50a3f5/case-reconciliation.json"
   },
   "sharedRepositoryFixtureOwnership": {
     "paths": 17,
@@ -7990,9 +8076,9 @@
   },
   "resourceAudit": {
     "status": "in progress",
-    "source": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",
-    "report": ".test-results/resources/2026-10-26T02-23-04-514Z-a30934be/summary.json",
-    "remainingMeasuredProblem": "Latest complete normal14 Mac source3bac:5836passes/11existing skips/0fail234807ms. Last passing resource sourcecfdb still92561Git/103707observed launch calls. Newer3bac resource diagnostic has90119Git/101271calls but two fixture-bound failures: retain as failed evidence, not complete performance qualification. Trace and reduce remaining major native cost without weaker coverage.",
+    "source": "fc50a3f54543c829c48dbca92a2f845db6c81931",
+    "report": ".test-results/resources/2026-10-26T10-54-59-475Z-e9484f82/summary.json",
+    "remainingMeasuredProblem": "Latest complete normal14 Mac required run5843passes/11existing skips/0fail255988ms. Same-source passing resource diagnostic exactly5854raw outcomes/896files,100807observed launch calls/89778Git, no missing/unfinished/unmatched/truncated/observer errors. Git decreased2783(3.01%) from passingcfdb while298cases added, but host contention/source/cases differ; no controlled global speed/CPU/RSS claim. Cost exit remains open.",
     "exitCriteria": [
       "Trace every top20 expensive case to actual fixture/production callers",
       "Rule/controller cases execute their actual owner through typed effects without native Git/process/storage work",
@@ -8019,7 +8105,9 @@
       "reason": "Repeated fixture-local paths exceed500-character command bound only under nested private runner roots; original failing reports retained. Corrected producer passes29/29nested focused cases, unchanged assertions/limits/deadlines.",
       "correction": "workstreams/check-setup-argv-isolation/qualification.json",
       "limits": "Not a passing resource baseline; no controlled global CPU/RSS/time saving claim."
-    }
+    },
+    "previousPassingSource": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",
+    "previousPassingReport": ".test-results/resources/2026-10-26T02-23-04-514Z-a30934be/summary.json"
   },
   "priorIntegratedFailure": {
     "revision": "8775564d788d956c700500a29e0359750c20bf92",
