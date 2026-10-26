@@ -11,6 +11,7 @@ describe.concurrent("reviews after a usage handoff", () => {
 it("retains a reported review after a restart of a saved legacy pair", async () => {
     const f = await fixture({ controlled: true }, 1, undefined, undefined, false);
     try {
+      await f.run(async () => {
       // Save the legacy Sol + Opus plan with Claude already out before the review starts.
       await f.advance(() => f.fakes.received("builder").length === 1, (role) => role !== "builder");
       const stage = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!.plan!.stages.find((stage) => stage.kind === "review-chain")!;
@@ -25,12 +26,14 @@ it("retains a reported review after a restart of a saved legacy pair", async () 
       expect(reviewers.filter((entry) => f.model(entry.session) === "grok-4.7").length).toBeGreaterThanOrEqual(1);
       expect(f.task().hunt).toBeUndefined();
       expect(f.task().brief?.summary).toBe("A greeting file.");
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("keeps an actual replacement's verdict in older saved rounds without recorded reviewer positions", async () => {
     const f = await fixture({ controlled: true, limited: [{ model: "opus", role: "code reviewer", spendCap: true }] }, 1);
     try {
+      await f.run(async () => {
       // Initially only Codex can finish the review. Both other tools recover before the restart.
       f.engine.s.pool.limited = [{ toolId: "grok", until: Date.now() + 3_600_000, reason: "Grok's usage limit" }];
       await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 1);
@@ -47,12 +50,14 @@ it("keeps an actual replacement's verdict in older saved rounds without recorded
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(verdicts.map((entry) => entry.profileId)).toEqual(["sol-high", "opus-high"]);
       expect(f.fakes.openings("builder")).toHaveLength(1);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("restores the full planned review when an older saved port has no proof of completed feature review", async () => {
     const f = await fixture({ controlled: true }, 3);
     try {
+      await f.run(async () => {
       await f.advance(f.delivery);
       writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
       await git(f.repo, "add", "greeting.txt");
@@ -78,7 +83,8 @@ it("restores the full planned review when an older saved port has no proof of co
       }
       expect(f.task().portReview).toBeUndefined();
       expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 });

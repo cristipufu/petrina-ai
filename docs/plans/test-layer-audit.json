@@ -4016,10 +4016,25 @@
         "packages/engine/test/contracts/agents/verifier-panel-admission.test.ts",
         "packages/orchestrator/test/orchestration/reviews/panel-workflow-permutations.test.ts",
         "packages/engine/test/contracts/storage/verifier-vote-recovery.test.ts",
-        "packages/engine/test/contracts/agents/voter-cancellation.test.ts"
+        "packages/engine/test/contracts/agents/voter-cancellation.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/verifier-admission.test.ts"
       ],
       "layer": "contracts",
-      "area": "reviews"
+      "area": "reviews",
+      "verifierAdmissionTransfer": {
+        "portableScenarios": 11,
+        "fixtureFailureControls": 3,
+        "nativePolicyVariantsTransferred": 5,
+        "nativeBoundaryVariantsRetained": 6,
+        "actualOwners": [
+          "ProfileSelection",
+          "VerifierBallots",
+          "ParallelAdmissionGroup",
+          "ReviewRoundCompletion"
+        ],
+        "qualification": "Root544 Orchestrator cases plus37native/7owners before five source-reviewed policy deletions; full combined/platform qualification pending",
+        "artifact": "workstreams/verifier-admission-integrated/"
+      }
     },
     {
       "file": "packages/engine/test/contracts/desktop/instance.test.ts",

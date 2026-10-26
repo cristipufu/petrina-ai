@@ -9,6 +9,7 @@ describe.concurrent("bounded verifier panels", () => {
 it("retains a finished tool's vote across restart while its partner is unfinished", async () => {
     const f = await voting({ verifier: "not-a-bug" });
     try {
+      await f.run(async () => {
       await f.advance(() => checkedFinding(f)?.votes?.length === 1, (role, session) => role !== "verifier" || f.model(session) === "gpt-6.1-sol");
       const saved = structuredClone(checkedFinding(f).votes![0]!);
       await f.restart();
@@ -17,12 +18,14 @@ it("retains a finished tool's vote across restart while its partner is unfinishe
       expect(checkedFinding(f).votes?.find((vote) => vote.toolId === "codex")).toEqual(saved);
       expect(checkedFinding(f).votes).toHaveLength(2);
       expect(checkedFinding(f).status).toBe("dismissed");
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("keeps the first pair's answers and its third place through a pause and a restart", async () => {
     const f = await voting({ verifier: "not-a-bug" }, 3, []);
     try {
+      await f.run(async () => {
       await f.advance(() => f.fakes.received("verifier").length === 2, (role) => role !== "verifier");
       // Pausing admits no new conversation: the pair finishes, and the third answer waits for resume.
       f.engine.setPoolPaused(true);
@@ -44,12 +47,14 @@ it("keeps the first pair's answers and its third place through a pause and a res
       expect(new Set(received.filter((entry) => f.model(entry.session) === "opus").map((entry) => entry.session)).size).toBe(2);
       expect(checkedFinding(f).verification?.verdict).toBe("not-a-bug");
       expect(independentVotes(checkedFinding(f).votes)).toHaveLength(3);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("saves partial reports before repair and restarts only the missing verdicts", async () => {
     const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 1, ["claude-code", "grok"]);
     try {
+      await f.run(async () => {
       inject(f, "second", "opus-high");
       await f.advance(() => f.fakes.marked("partial-verification"));
       const partial = structuredClone(f.task().findings.find((finding) => finding.votes?.length)!);
@@ -62,12 +67,14 @@ it("saves partial reports before repair and restarts only the missing verdicts",
       expect(opening.slice(opening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
       expect(f.task().findings.find((finding) => finding.id === partial.id)?.votes).toEqual(partial.votes);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.votes?.length === 1 && finding.status === "dismissed")).toBe(true);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("keeps a voter's starting role and partial work when its model changes before restart", async () => {
     const f = await voting({ partialVerification: true, verifier: "not-a-bug" }, 3, ["codex", "grok"]);
     try {
+      await f.run(async () => {
       inject(f, "second", "opus-high");
       await f.advance(() => f.fakes.marked("partial-verification"));
       const partial = structuredClone(f.task().findings.find((finding) => finding.votes?.length)!);
@@ -87,7 +94,8 @@ it("keeps a voter's starting role and partial work when its model changes before
       const remaining = f.task().findings.find((finding) => finding.id !== partial.id && finding.votes?.length)!;
       expect(plain(remaining.votes)).toEqual([{ by: "sonnet-high", toolId: "claude-code", plannedProfileId: "opus-high", verdict: "not-a-bug", reason: "The welcome page shows the greeting already." }]);
       expect(f.engine.role("verifier")?.purpose).toBe("Use the new voting instructions next round.");
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 for (const [initial, corrected, restart] of [
@@ -97,6 +105,7 @@ for (const [initial, corrected, restart] of [
   ] as const) it(`counts a corrected ${corrected} verdict after an incomplete ${initial} answer${restart ? ", retaining it through restart" : ""}`, async () => {
     const f = await voting({ partialVerification: true, verifier: initial, correctPartialVerification: corrected }, 3, restart ? ["claude-code"] : ["claude-code", "grok"]);
     try {
+      await f.run(async () => {
       // First on the ballot: its initial verdict must be revised by the completed answer.
       inject(f, "second", "opus-high");
       let saved;
@@ -131,12 +140,14 @@ for (const [initial, corrected, restart] of [
         expect(f.fakes.openings("builder")).toHaveLength(1);
       }
       await f.advance(f.delivery);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("keeps partial votes through a usage limit and waits until every finding has a verdict", async () => {
     const f = await voting({ partialVerification: true, limitAfterPartial: true, verifier: "not-a-bug" }, 3, ["claude-code", "grok"]);
     try {
+      await f.run(async () => {
       inject(f, "second", "opus-high");
       await f.advance(() => f.task().state === "waiting" && f.task().statusLine.startsWith("Waiting for usage") && f.fakes.received("verifier").length === 2);
       const partial = structuredClone(f.task().findings.find((finding) => finding.votes?.length)!);
@@ -156,12 +167,14 @@ it("keeps partial votes through a usage limit and waits until every finding has 
       const replacementOpening = f.fakes.openings("verifier").at(-1)!;
       expect(replacementOpening.slice(replacementOpening.indexOf("## Important findings to check"))).not.toContain(`- [${partial.id}]`);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed" && finding.votes!.every((vote) => vote.ballot?.seat === "sol-high"))).toBe(true);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("keeps an older round's admitted one-per-tool panel and its majority rule until it finishes", async () => {
     const f = await voting({ verifierByModel: { "grok-4.7": "nit", "gemini-4-argon": "nit" } }, 4, [], true);
     try {
+      await f.run(async () => {
       // Pausing lets the admitted reviewers finish and admits no voter, so no bounded panel is saved yet.
       f.engine.setPoolPaused(true);
       await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 2 && !f.engine.drivers.has(f.task().id) && !f.engine.settling.has(f.task().id));
@@ -181,12 +194,14 @@ it("keeps an older round's admitted one-per-tool panel and its majority rule unt
       // One real answer of four does not reach that panel's half; a bounded panel would have kept it Important.
       expect(checkedFinding(f).verification?.verdict).toBe("nit");
       expect(independentVotes(checkedFinding(f).votes)).toHaveLength(4);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 for (const proven of [true, false]) it(`${proven ? "counts this ballot's saved answers before choosing more work" : "keeps answers of unproven provenance as history"} when no panel was saved`, async () => {
     const f = await voting({ verifier: "not-a-bug" }, 3, ["claude-code", "codex", "grok"]);
     try {
+      await f.run(async () => {
       inject(f, "second", "opus-high");
       const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
       await f.advance(() => Object.keys(f.task().hunt?.reported ?? {}).length === 2 && f.task().state === "waiting");
@@ -221,7 +236,8 @@ for (const proven of [true, false]) it(`${proven ? "counts this ballot's saved a
       expect(f.task().findings.find((finding) => finding.id === findings[0]!.id)?.votes).toContainEqual(first);
       expect(f.task().findings.find((finding) => finding.id === findings[1]!.id)?.votes).toContainEqual(second);
       expect(f.task().findings.filter((finding) => finding.votes?.length).every((finding) => finding.status === "dismissed")).toBe(true);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 });

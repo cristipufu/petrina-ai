@@ -12,6 +12,7 @@ for (const reopen of ["resume", "load"] as const) for (const legacy of [true, fa
     it(`${legacy ? "replaces a legacy port conversation with full instructions" : "keeps a genuine port conversation"} for a single reviewer after ${reopen}`, async () => {
       const f = await fixture({ planner: "short", controlled: true, reopen }, 1);
       try {
+        await f.run(async () => {
         await f.advance(f.delivery);
         expect(f.fakes.openings("code reviewer")).toHaveLength(1);
         writeFileSync(join(f.repo, "greeting.txt"), "Hi from main\n");
@@ -47,7 +48,8 @@ for (const reopen of ["resume", "load"] as const) for (const legacy of [true, fa
           expect(after[0]!.text).toContain("Petrina restarted");
         }
         expect(f.task().reviewedTree).toBe(await git(f.task().worktree!, "rev-parse", "HEAD^{tree}"));
-      } finally { await f.engine.shutdown(); }
+        });
+      } finally { await f.close(); }
     });
   }
 

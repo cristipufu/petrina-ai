@@ -19,6 +19,7 @@ for (const limit of [1, 2]) it(`keeps a real reviewer handoff independent with $
       if (uses.length > limit || ["claude-code", "codex", "grok"].some((tool) => uses.filter((use) => use.toolId === tool).length > 1)) violations.push(uses);
     });
     try {
+      await f.run(async () => {
       await f.advance(f.delivery);
       const reviewers = f.fakes.received("code reviewer");
       const replacement = reviewers.find((entry) => f.model(entry.session) === "grok-4.7");
@@ -30,31 +31,37 @@ for (const limit of [1, 2]) it(`keeps a real reviewer handoff independent with $
       expect(f.fakes.openings("verifier").length).toBeGreaterThan(0);
       expect(violations).toEqual([]);
       expect(peak).toBe(limit === 1 ? 1 : 2);
-    } finally { unsub(); await f.engine.shutdown(); }
+      });
+    } finally { unsub(); await f.close(); }
   });
 
 it("keeps a design review away from the replacement that actually wrote the brief", async () => {
     const f = await fixture({ limited: [{ model: "opus", role: "architect", spendCap: true }] }, 1, undefined, undefined, false);
     try {
+      await f.run(async () => {
       await f.advance(f.delivery);
       expect(f.models("architect")).toEqual(["opus", "gpt-6.1-sol"]);
       expect(f.models("design reviewer")).toEqual(["grok-4.7"]);
       expect(f.task().brief?.summary).toBe("A greeting file.");
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("hands a design reviewer to another tool when its own usage runs out", async () => {
     const f = await fixture({ limited: [{ model: "gpt-6.1-sol", role: "design reviewer" }] }, 1, undefined, undefined, false);
     try {
+      await f.run(async () => {
       await f.advance(f.delivery);
       expect(f.models("architect")).toEqual(["opus"]);
       expect(f.models("design reviewer")).toEqual(["gpt-6.1-sol", "grok-4.7"]);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("reviews a real conflict port away from its latest builder, even when neither planned reviewer can do that", async () => {
     const f = await fixture({ controlled: true }, 3, ["sol-high", "opus-high"], "opus-high");
     try {
+      await f.run(async () => {
       // The usage stand-in writes notes.txt. Include it in the reviewed feature so its handoff later
       // remains a genuine port, rather than adding an unreviewed file alongside the conflict.
       await f.advance(() => f.fakes.received("builder").length === 1, (role) => role !== "builder");
@@ -83,18 +90,21 @@ it("reviews a real conflict port away from its latest builder, even when neither
       const completed = f.task().journey!.filter((entry) => entry.roleId === "code-reviewer" && entry.port);
       expect(completed).toHaveLength(1);
       expect(completed[0]).toEqual(expect.objectContaining({ id: step.id, team: ["grok-high"], end: "done", reason: "review passed" }));
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 it("finishes both reviews on the remaining tool when independence is unavailable", async () => {
     const f = await fixture({ limited: [{ model: "opus", role: "code reviewer", spendCap: true }] }, 1);
     try {
+      await f.run(async () => {
       f.engine.s.pool.limited = [{ toolId: "grok", until: Date.now() + 3_600_000, reason: "Grok's usage limit" }];
       await f.advance(f.delivery);
       const verdicts = f.engine.tracking.log.moments({ taskId: f.task().id, kinds: ["verdict"] });
       expect(verdicts).toHaveLength(2);
       expect(verdicts.every((entry) => f.engine.s.profiles.find((profile) => profile.id === entry.profileId)?.toolId === "codex")).toBe(true);
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 });

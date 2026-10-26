@@ -1,18 +1,20 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { directDrivers, closeDirectDrivers } from "./direct-drivers.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Vote } from "@petrina/core";
-import { Engine } from "../engine.js";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import type { Scenario } from "../fake-agent.js";
-import { Fakes, makeProduct, removeDir, tempDir, waitFor } from "../fixtures.js";
+import { Fakes, makeProduct, tempDir, waitFor } from "../fixtures.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 
 export function independentReviewFixtures() {
-const roots: string[] = [];
+const owners = new Set<ReturnType<typeof directDrivers>>();
 async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], builderProfile?: string, reviewOnly = true, antigravity = false) {
   const root = tempDir("petrina-independence-");
-  roots.push(root);
+  const lifetime = directDrivers(root); owners.add(lifetime);
+  const close = async () => { try { await lifetime.close(); } finally { owners.delete(lifetime); } };
+  return setupWithCleanup(() => lifetime.prepare(async () => {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", ...scenario });
   const options = { agentCommand: (profile: { toolId: string }) => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir, ...(!antigravity && profile.toolId === "antigravity" ? ["--logged-out"] : [])], toolPath: () => process.execPath, usageCommands: { codex: null },
@@ -20,8 +22,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
     toolProbe: scriptedToolProbe({ "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" },
       antigravity: { status: antigravity ? "ready" : "logged-out" }, gh: { status: "unknown" }, git: { status: "ready" }, node: { status: "ready" } }),
   };
-  let engine = new Engine(join(root, "data"), options);
-  return setupWithCleanup(async () => {
+  let engine = lifetime.open(join(root, "data"), options);
     engine.setPoolPaused(true);
     await engine.checkTools();
     engine.setPoolLimit(limit);
@@ -39,7 +40,7 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
     const model = (session: string) => fakes.settings(session).find((setting) => setting.startsWith("model="))?.slice(6);
     const models = (role: string) => [...new Set(fakes.received(role).map((entry) => entry.session))].map(model);
     const release = (session: string) => writeFileSync(join(fakes.dir, `release-${session}`), "go");
-    const advance = (done: () => boolean, allow: (role: string, session: string) => boolean = () => true) => waitFor(() => {
+    const advance = (done: () => boolean, allow: (role: string, session: string) => boolean = () => true) => lifetime.prepare(() => waitFor(() => {
       for (const prompt of fakes.received()) if (allow(prompt.role, prompt.session)) release(prompt.session);
       for (const item of engine.getState().inbox) {
         if (item.kind === "plan") {
@@ -59,26 +60,27 @@ async function fixture(scenario: Scenario, limit = 3, reviewers?: string[], buil
       }
       if (task().state === "failed") throw new Error(task().error);
       return done();
-    }, "the independent reviews", 60_000);
+    }, "the independent reviews", 60_000));
     const delivery = () => engine.getState().inbox.some((item) => item.kind === "delivery");
-    const restart = async () => { await engine.shutdown(); engine = new Engine(join(root, "data"), options); };
+    const restart = () => lifetime.prepare(async () => { await lifetime.stop(engine); engine = lifetime.open(join(root, "data"), options); });
     engine.setPoolPaused(false);
-    return { get engine() { return engine; }, fakes, task, model, models, release, advance, delivery, restart, repo };
-  }, () => engine.shutdown());
+    return { get engine() { return engine; }, fakes, task, model, models, release, advance, delivery, restart, repo, close,
+      run: <T>(body: () => Promise<T>) => lifetime.prepare(body) };
+  }), close);
 }
 async function voting(scenario: Scenario = {}, limit = 3, limited = ["claude-code"], antigravity = false) {
   const f = await fixture({ controlled: true, reviewer: "important", ...scenario }, limit, undefined, undefined, true, antigravity);
-  try {
+  return setupWithCleanup(() => f.run(async () => {
     await f.advance(() => f.fakes.received("code reviewer").length >= (limit > 1 ? 2 : 1), (role) => role !== "code reviewer");
     f.engine.s.pool.limited = limited.map((toolId) => ({ toolId, until: Date.now() + 3_600_000, reason: `${toolId}'s usage limit` }));
     return f;
-  } catch (error) { await f.engine.shutdown(); throw error; }
+  }), f.close);
 }
 const checkedFinding = (f: Awaited<ReturnType<typeof voting>>) => f.task().findings.find((finding) => finding.text === "The greeting is missing on the welcome page.")!;
 const plain = (votes?: readonly Vote[]) => votes?.map(({ ballot: _ballot, ...vote }) => vote);
 const verifierSteps = (f: Awaited<ReturnType<typeof voting>>) => f.task().journey!.filter((step) => step.roleId === "verifier");
 const inject = (f: Awaited<ReturnType<typeof voting>>, id: string, raisedBy: string, text = "The second greeting is missing.") =>
   f.engine.s.tasks.find((entry) => entry.id === f.task().id)!.findings.push({ id, text, severity: "blocking", raisedBy, confirmedBy: [], status: "open", evidence: "Opened the second page" });
-async function close() { return roots.forEach(removeDir); }
+async function close() { return closeDirectDrivers(owners); }
 return { fixture, voting, checkedFinding, plain, verifierSteps, inject, close };
 }

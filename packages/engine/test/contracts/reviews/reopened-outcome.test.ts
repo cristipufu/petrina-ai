@@ -7,6 +7,7 @@ describe.concurrent("reviews after a usage handoff", () => {
 it("includes a reopened finding in the saved reviewer outcome before handing it to verifiers", async () => {
     const f = await fixture({ controlled: true, reviewer: "confirm-dismissed", reopenedEvidence: "The current greeting is still missing its name: expected Hello Ada, observed Hello. The named greeting control passes." }, 3, ["sol-high", "opus-high"], undefined, true);
     try {
+      await f.run(async () => {
       await f.advance(() => f.fakes.received("builder").length > 0, (role) => role !== "builder");
       const task = f.engine.s.tasks.find((entry) => entry.id === f.task().id)!;
       const id = task.id + "-earlier";
@@ -16,7 +17,8 @@ it("includes a reopened finding in the saved reviewer outcome before handing it 
       expect(review.result?.findings?.map((finding) => finding.id)).toEqual([id]);
       expect(review.outcome).toBe("1 important");
       expect(review.reason).toBe("1 important finding to check");
-    } finally { await f.engine.shutdown(); }
+      });
+    } finally { await f.close(); }
   });
 
 });
