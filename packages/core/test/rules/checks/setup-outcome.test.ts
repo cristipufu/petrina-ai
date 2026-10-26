@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { checkInputApplicability, checkSetupOutcome, recordedCheckBatch } from "../../../src/check-environment.js";
+import { checkInputApplicability, checkSourceApplicability, checkSetupOutcome, recordedCheckBatch } from "../../../src/check-environment.js";
 import type { CheckExecution, CheckSetupAttempt } from "../../../src/model.js";
 import { setupAttempt, setupRequirement, setupRun, setupWork } from "../../fixtures/check-setup.js";
 
@@ -137,4 +137,17 @@ it.each([null, false, 0, "", {}, { trackedChanged: false }].map(value => [value]
 
 it.each([null, false, 0, "", "unknown"].map(value => [value]))("a present malformed restoration cannot verify an empty baseline (%#)", value => {
   expect(checkSetupOutcome({ ...setupAttempt(), restoration: value } as unknown as CheckSetupAttempt).kind).toBe("incomplete");
+});
+
+it("compares historical failure sources without filling a missing definition or relaxing full applicability", () => {
+  const work = setupWork([setupRun(7)]), source = work.checkSetup!.input;
+  const missing = { ...work.checks!, definition: undefined };
+  expect(checkInputApplicability(missing, source)).toEqual({ kind: "unknown", reason: "definition" });
+  expect(checkSourceApplicability(missing, source)).toEqual({ kind: "matches", basis: "same-tree" });
+  expect(checkSourceApplicability({ ...missing, tree: "d".repeat(40) }, source).kind).toBe("changed");
+  expect(checkSourceApplicability({ ...missing, tree: "invalid" }, source).kind).toBe("unknown");
+  expect(checkSourceApplicability({ ...missing, tree: undefined }, { ...source, tree: undefined })).toEqual({ kind: "matches", basis: "same-commit" });
+  expect(checkSourceApplicability({ ...missing, sha: undefined, tree: undefined }, source).kind).toBe("unknown");
+  expect(missing.definition).toBeUndefined();
+  expect(recordedCheckBatch({ ...work, checks: missing }).kind).toBe("blocked");
 });

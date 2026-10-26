@@ -3,7 +3,7 @@ import { completeCheckExecution } from "@petrina/test-support/check-execution-fa
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckRun, DeepMutable, Finding, InboxKind, JourneyStep, TaskSource } from "@petrina/core";
+import { normalizeCheckPrerequisites, type CheckRun, type DeepMutable, type Finding, type InboxKind, type JourneyStep, type TaskSource } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import { Coordination, type Result } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
@@ -393,6 +393,40 @@ it("fits a representative four-check delivery on one page regardless of successf
   expect(longer.pages[0]!.revision).not.toBe(after.pages[0]!.revision);
   expect(longer.value).toEqual(after.value);
   console.info("Four-check delivery measurement", JSON.stringify({ before: { pages: beforePages.length, responseCharacters: beforePages.reduce((size, page) => size + JSON.stringify(page).length, 0), contentCharacters: beforePages[0]!.total }, after: { pages: after.pages.length, responseCharacters: after.size, contentCharacters: after.text.length } }));
+});
+
+it("keeps large recorded setup declarations behind an exact focused read without losing revision sensitivity", async () => {
+  const f = fixture();
+  const requirements = Array.from({ length: 12 }, (_, index) => ({
+    id: `requirement-${index}`, name: `Recorded prerequisite ${index}`,
+    argv: ["compiler", `argument-${index}`, "literal argument ".repeat(25)],
+  }));
+  expect(normalizeCheckPrerequisites(requirements)).toEqual(requirements);
+  // A recorded in-progress declaration is not modeled successful native execution.
+  f.work.checkSetup = { id: "recorded-setup", productId: f.work.productId, queuedAt: 10, startedAt: 11,
+    lifecycle: "running", position: "before-checks", requirements, results: [],
+    input: { sha: "a".repeat(40), tree: "b".repeat(40), definition: "d".repeat(64), contract: "c".repeat(64) } };
+  const itemId = f.offer("delivery");
+  const first = await complete(f.c, "inbox.inspect", { itemId });
+  expect(first.pages).toHaveLength(1);
+  expect(first.value.products[0].localSetup).toMatchObject({ outcome: { kind: "running" }, attempt: {
+    id: "recorded-setup", position: "before-checks", lifecycle: "running", queuedAt: 10, startedAt: 11,
+    requirementCount: 12, resultCount: 0,
+  }, authority: "Recorded only; not live verification" });
+  expect(first.value.products[0].localSetup.attempt).not.toHaveProperty("input");
+  expect(first.text).not.toContain(requirements[0]!.name);
+  const { operation, ...args } = first.value.products[0].localSetup.read;
+  const details = await complete(f.c, operation, args);
+  expect(details.value.products[0].attempt.requirements).toEqual(requirements);
+  expect(details.value.products[0].attempt.input).toEqual(f.work.checkSetup.input);
+  expect(details.value.authority).toContain("never verifies local setup");
+  const short = await f.c.call("inbox.inspect", { itemId, limit: 500 });
+  requirements[0]!.argv[2] += "changed retained argument";
+  const later = await complete(f.c, "inbox.inspect", { itemId });
+  expect(later.value).toEqual(first.value);
+  expect(later.pages[0]!.revision).not.toBe(first.pages[0]!.revision);
+  expect((await f.c.call("inbox.inspect", { itemId, cursor: short.next })).outcome).toBe("changed");
+  expect((await f.c.call("inbox.approve", { itemId, revision: first.pages[0]!.revision, requestId: "setup-declaration-changed" })).outcome).toBe("changed");
 });
 
 it("preserves scope validation, product starting points, destinations and plan assignments", async () => {

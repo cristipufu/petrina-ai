@@ -984,7 +984,7 @@ export class Engine extends Kernel implements Commands {
     const task = item && this.task(item.taskId);
     if (!item || !task) return;
     if (item.kind !== "delivery") throw new Error("Run checks again is only available for a delivery check problem.");
-    if (!library.deliveryCheckProblem({ repositories: task.repositories, ...executionFor(task).work })) throw new Error("This delivery has no failed or unverified product checks to rerun.");
+    if (!library.deliveryDecisionProblem({ repositories: task.repositories, journey: task.journey, ...executionFor(task).work })) throw new Error("This delivery has no failed or unverified product checks to rerun.");
     this.takeover.notDrivingItem(itemId);
     this.takeItem(itemId);
     for (const { work } of scopesFor(task)) {

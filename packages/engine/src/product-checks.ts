@@ -1,6 +1,6 @@
 import { CheckSetup } from "@petrina/orchestrator";
 import { checkSetupContract, deriveCheckEnvironmentIdentity, observeCheckExecutor } from "@petrina/repositories/check-environment";
-import { checkSetupOutcome, checkSetupWords, sameCheckEnvironmentIdentity, sameCheckExecutorFacts, isCheckEnvironmentBinding, checkInputApplicability, recordedCheckBatch, type CheckInputApplicability, type RecordedCheckBatchOutcome, type CheckEnvironmentBinding, type CheckSetupAttempt, type CheckSetupInput, type CheckSetupOutcome, type ProductCheckSetup } from "@petrina/core";
+import { checkSetupOutcome, checkSetupWords, sameCheckEnvironmentIdentity, sameCheckExecutorFacts, isCheckEnvironmentBinding, checkInputApplicability, checkSourceApplicability, recordedCheckBatch, type CheckInputApplicability, type RecordedCheckBatchOutcome, type CheckEnvironmentBinding, type CheckSetupAttempt, type CheckSetupInput, type CheckSetupOutcome, type ProductCheckSetup } from "@petrina/core";
 import { acquireCheckPlace } from "@petrina/orchestrator";
 import { executionFor, scopesFor, taskView, type RepositoryContext } from "@petrina/orchestrator";
 import { acceptanceVersion } from "./repositories.js";
@@ -614,6 +614,13 @@ export class ProductChecks {
         else if (matching && checkOutcome(matching).kind !== "failed") finding.status = "unverified";
       }
     }
+    this.recordFailedFindings(scope, failed);
+    return failed;
+  }
+
+  /** A historical missing-definition failure cannot settle passed or removed-declaration peers. */
+  private recordFailedFindings(scope: RepositoryContext, failed: readonly CheckRun[]): void {
+    const { task, work: repository } = scope;
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
       const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text && (!task.repositories || finding.productIds?.includes(repository.productId)));
@@ -623,7 +630,6 @@ export class ProductChecks {
         finding.evidence = run.output.slice(-1500);
       } else task.findings.push({ ...(task.repositories ? { productIds: [repository.productId] } : {}), id: this.k.id(task.id), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
     }
-    return failed;
   }
 
   /** The commands and hook inputs: a new definition needs a fresh run, even on the same tree. */
@@ -816,14 +822,15 @@ export class ProductChecks {
       ...(!staticFailed && hooks.includes("commit-msg") ? ["git hook run commit-msg"] : []),
     ];
     if (JSON.stringify(expected) !== JSON.stringify(repository.checks.results.map((run) => run.command))) return false;
-    if (repository.checks.definition) {
+    if (repository.checks.definition !== undefined) {
       if (repository.checks.definition !== definition) return false;
     } else {
       // Missing inputs may keep a failure blocking, but cannot establish a current pass.
       // Never attach today's definition to an execution that did not record it.
-      if (hooks.length || repository.checks.results.every(run => checkOutcome(run).kind === "passed")) return false;
+      if (hooks.length || !repository.checks.results.some(run => checkOutcome(run).kind === "failed")) return false;
     }
-    const matched = checkInputApplicability(repository.checks, this.setupInput(scope, state)).kind === "matches";
+    const matched = (repository.checks.definition === undefined ? checkSourceApplicability(repository.checks, state)
+      : checkInputApplicability(repository.checks, this.setupInput(scope, state))).kind === "matches";
     // A hook may launch checks outside the committed tree: unchanged launcher bytes cannot prove
     // their inputs stayed unchanged. Revalidate passes; a captured failure still blocks without retrying.
     if (matched && repository.checks.results.every((run) => checkOutcome(run).kind === "passed") && hooks.length) return false;
@@ -844,14 +851,15 @@ export class ProductChecks {
     const { work: repository } = scope;
     if (!repository.checks || !Array.isArray(repository.checks.results) || repository.checks.results.some(run => !run) || !repository.worktree) return undefined;
     if (state.trackedChanged) return undefined;
-    if (repository.checks.definition && (repository.checks.definition !== state.definition || !state.hooks.length)) return undefined;
-    if (checkInputApplicability(repository.checks, this.setupInput(scope, state)).kind !== "matches") return undefined;
+    if (repository.checks.definition !== undefined && (repository.checks.definition !== state.definition || !state.hooks.length)) return undefined;
+    if ((repository.checks.definition === undefined ? checkSourceApplicability(repository.checks, state)
+      : checkInputApplicability(repository.checks, this.setupInput(scope, state))).kind !== "matches") return undefined;
     const commands = orderedChecks(checks).map((check) => commandText(check.argv));
     const results = repository.checks.results.slice(0, commands.length);
     if (!this.matchesEnvironment(scope, live, results)) return undefined;
     if (JSON.stringify(commands) !== JSON.stringify(results.map((run) => run.command))) return undefined;
     // Rechecking only the hooks cannot bind an earlier product pass to unknown command inputs.
-    if (!repository.checks.definition && results.some(run => checkOutcome(run).kind === "passed")) return undefined;
+    if (repository.checks.definition === undefined && results.some(run => checkOutcome(run).kind !== "failed")) return undefined;
     const hooks = repository.checks.results.slice(commands.length);
     if (!hooks.every((run) => run.command === "git hook run commit-msg" || run.command === "git hook run --ignore-missing pre-commit")) return undefined;
     return results;
@@ -894,8 +902,8 @@ export class ProductChecks {
     for (let attempt = 0; attempt < 3; attempt++) {
       const result = await this.verifyOnce(scope, signal, checks, purpose, prepare);
       if (signal.aborted || this.k.stopped) throw new Aborted();
-      if (this.k.taskSourceRefreshDue(scope.task)) throw new SourceRefreshRequired();
-      if (this.k.taskAdmissionsClosed(scope.task)) throw new WaitingForUsage(this.k.taskAdmissionWait(scope.task));
+      // An admitted run settles its check phase even when scheduling closes meanwhile.
+      // The next stage and publishing retain their own fresh admission/source guards.
       if (result.kind !== "blocked" || result.reason !== "inputs-changed" || !scope.work.worktree) return result;
       if (signal.aborted || this.k.stopped) throw new Aborted();
       this.k.log(scope, "warn", "Check inputs changed while verification ran; checking the current code and requirements before continuing");
@@ -943,7 +951,7 @@ export class ProductChecks {
     const { task, work: repository } = scope;
     if (!this.matchesEnvironment(scope, live)) return this.setupBlocked(scope, live, "inputs-changed");
       const saved = repository.checks!;
-      saved.current = true;
+      if (saved.definition !== undefined) saved.current = true;
       let records: string | undefined;
       for (const run of saved.results) if (!run.ok && !run.interruption && !run.interrupted) {
         const original = originalCheck(scope.task, run)?.check;
@@ -957,8 +965,9 @@ export class ProductChecks {
       }
       if (!live.valid() || !this.matchesEnvironment(scope, live)) return this.setupBlocked(scope, live, "inputs-changed");
       // Rereading a saved failure is no new attempt; a saved pass on this code and these definitions is a genuine pass.
-      this.settleFindings(scope, saved.results);
-      const passed = saved.results.every((run) => checkOutcome(run).kind === "passed");
+      if (saved.definition === undefined) this.recordFailedFindings(scope, saved.results.filter(run => checkOutcome(run).kind === "failed"));
+      else this.settleFindings(scope, saved.results);
+      const passed = saved.definition !== undefined && saved.results.every((run) => checkOutcome(run).kind === "passed");
       if (passed) await this.closeEpisode(scope, state, live.valid);
       if (!live.valid()) return this.setupBlocked(scope, live, "inputs-changed");
       // The reuse and its basis are saved on the step that ran the original, so the evidence survives restarts and later runs.

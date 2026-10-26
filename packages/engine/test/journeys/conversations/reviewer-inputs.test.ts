@@ -114,7 +114,7 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
         expect(input.freshReason).toBeUndefined();
         expect(input.taskDescription).toBeUndefined();
         expect(input.sections.some((section) => section.title === "Design brief")).toBe(false);
-        expect(input.sections.some((section) => section.title === "Current product checks, run by Petrina itself")).toBe(true);
+        expect(input.sections.some((section) => section.title === "Recorded product checks, run by Petrina itself")).toBe(true);
         expect(input.sections.some((section) => section.title === "Related check evidence")).toBe(false);
         expect(input.at).toBeNumber();
         expect(current.checks!.at).toBeLessThanOrEqual(input.at!);

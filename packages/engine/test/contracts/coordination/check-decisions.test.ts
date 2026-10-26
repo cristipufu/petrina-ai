@@ -5,6 +5,7 @@ import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import { mcpTools } from "../../../src/mcp-catalog.js";
 import { removeDir, tempDir } from "../../fixtures.js";
+import { checkSetupFixture } from "../../fixtures/check-setup.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -66,11 +67,35 @@ for (const interrupted of [false, true]) for (const shared of [false, true]) it(
   } finally { await engine.shutdown(); }
 });
 
-it("keeps ordinary delivery approval available and refuses reruns on other decisions", async () => {
-  const { engine, task, work, item, coordination: c } = await fixture();
+it("keeps a historical raw pass unverified when no setup observation was recorded", async () => {
+  const { engine, work, item, coordination } = await fixture();
   try {
     work.checks!.results[0]!.ok = true;
     work.checks!.results[0]!.execution = completeCheckExecution(0);
+    const inspected = await coordination.call("inbox.inspect", { itemId: item.id });
+    expect(inspected.decisions).toEqual(["inbox.rerun-checks", "inbox.changes"]);
+    const saved = JSON.parse(String(inspected.text)).products[0];
+    expect(saved.checks.results[0].commandOutcome).toBe("passed");
+    expect(saved.localSetup.outcome).toEqual({ kind: "unobserved" });
+    expect((await coordination.call("inbox.approve", { itemId: item.id, revision: inspected.revision, requestId: "legacy-pass" })).outcome).toBe("invalid");
+    expect(work.approvedSha).toBeUndefined();
+  } finally { await engine.shutdown(); }
+});
+
+it("keeps ordinary delivery approval available and refuses reruns on other decisions", async () => {
+  const native = await checkSetupFixture();
+  try {
+    const { engine, task } = native, work = executionFor(task).work;
+    native.setChecks(["Tests"]);
+    expect((await native.check()).kind).toBe("passed");
+    const checked = work.checks!.sha;
+    expect(checked).toBeString();
+    // The gate's checked version is the actual producer's saved source, not a placeholder identity.
+    work.checkedSha = checked;
+    task.plan = { rationale: "Fixture", plannerProfileId: "opus-high", stages: [{ id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] }] };
+    task.stageIndex = 0;
+    engine.gate(task, "delivery");
+    const item = engine.s.inbox.find(item => item.taskId === task.id)!, c = new Coordination(engine);
     const inspected = await c.call("inbox.inspect", { itemId: item.id });
     expect(inspected.decisions).toEqual(["inbox.approve", "inbox.changes"]);
     expect(() => engine.rerunChecks(item.id)).toThrow("no failed or unverified");
@@ -81,7 +106,7 @@ it("keeps ordinary delivery approval available and refuses reruns on other decis
     item.kind = "delivery";
     const current = await c.call("inbox.inspect", { itemId: item.id });
     expect((await c.call("inbox.approve", { itemId: item.id, revision: current.revision, requestId: "valid-approval" })).outcome).toBe("completed");
-    expect(work.approvedSha).toBe("checked"); expect(task.stageIndex).toBe(1);
+    expect(work.approvedSha).toBe(checked); expect(task.stageIndex).toBe(1);
     expect(mcpTools().find(tool => tool.name === "petrina_inbox_rerun_checks")?.annotations.readOnlyHint).toBe(false);
-  } finally { await engine.shutdown(); }
+  } finally { await native.close(); }
 });

@@ -163,7 +163,7 @@ it("changed actual prerequisite output invalidates whole reuse without decoratin
   } finally { await f.close(); }
 });
 
-it("lets an admitted check finish during a graceful pause and reuses it after resume without a setup fault or full rerun", async () => {
+for (const verification of [false, true]) it(`lets an admitted check finish during a graceful pause and reuses it after resume without a setup fault or full rerun${verification ? " through the verification entry" : ""}`, async () => {
   const f = await checkSetupFixture();
   const mark = join(f.root, "started"), release = join(f.root, "release");
   let running: ReturnType<typeof f.run> | undefined;
@@ -171,7 +171,7 @@ it("lets an admitted check finish during a graceful pause and reuses it after re
     f.setChecks(["product"]); f.setSetup(["compiler"]);
     f.command("compiler", { stdout: "compiler 1\n" });
     f.command("product", { mark, release, stdout: "passed after pause\n" });
-    running = f.run();
+    running = verification ? f.check() : f.run();
     await waitForFile(mark, { during: running });
     f.engine.setPoolPaused(true);
     f.release(release);
@@ -621,5 +621,31 @@ it("approves the remaining shared delivery after published checks change, while 
     expect(() => f.engine.approve(final.id)).not.toThrow();
     expect(f.invocations()).toEqual(invocations);
     expect(published.checks!.results).toEqual(oldRows);
+  } finally { await f.close(); }
+});
+
+it("retains missing-definition failures without refreshing history or settling a passed peer", async () => {
+  const f = await checkSetupFixture();
+  try {
+    f.setChecks(["passing-peer", "failed-product"]);
+    f.command("failed-product", { code: 7, stdout: "actual product failure\n" });
+    expect((await f.check()).kind).toBe("product-failed");
+    const saved = f.scope.work.checks!;
+    delete saved.definition;
+    saved.current = false;
+    f.scope.work.checkReturns = 2;
+    // A prior finding is history; a row without its definition cannot newly close it.
+    const passing = saved.results.find(run => run.name === "passing-peer")!;
+    const finding = { id: "historical-peer-finding", text: `Check failed: ${passing.name} (${passing.command})`, evidence: "Previously reported failure", severity: "blocking" as const,
+      raisedBy: "petrina" as const, confirmedBy: [], status: "open" as const };
+    f.task.findings.push(finding);
+    const before = structuredClone(saved), attempts = f.invocations();
+    expect((await f.check()).kind).toBe("product-failed");
+    expect(f.invocations()).toEqual(attempts);
+    expect(f.scope.work.checks).toEqual(before);
+    expect(f.scope.work.checkReturns).toBe(2);
+    expect(f.task.findings.find(entry => entry.id === finding.id)).toEqual(finding);
+    expect(f.task.journey!.flatMap(step => step.reuses ?? []).at(-1)!.passed).toBe(false);
+    expect(recordedCheckBatch(f.scope.work).kind).toBe("blocked");
   } finally { await f.close(); }
 });

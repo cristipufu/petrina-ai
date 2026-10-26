@@ -183,8 +183,13 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
           await f.restart((state) => { delete state.tasks.find((task) => task.id === f.taskId)!.checks!.definition; });
           expect(taskOf(f.engine.getState(), f.taskId).checks!.definition).toBeUndefined();
           const item = itemOf(f.engine.getState(), f.taskId, "delivery")!;
-          if (originallyPassed) f.engine.approve(item.id);
-          else f.engine.requestChanges(item.id, "The hook has been corrected");
+          if (originallyPassed) {
+            const missing = structuredClone(taskOf(f.engine.getState(), f.taskId).checks);
+            expect(() => f.engine.approve(item.id)).toThrow("delivery has not been approved");
+            expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.id).toBe(item.id);
+            expect(taskOf(f.engine.getState(), f.taskId).checks).toEqual(missing);
+            f.engine.rerunChecks(item.id);
+          } else f.engine.requestChanges(item.id, "The hook has been corrected");
           const refreshed = (await f.delivery()).checks!;
           expect(refreshed.tree).toBe(original.tree);
           expect(refreshed.results.at(-1)!.ok).toBe(!originallyPassed);

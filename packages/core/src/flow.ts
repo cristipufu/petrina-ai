@@ -3,7 +3,7 @@
 // sends the task, and how design and review rounds end.
 
 import { roleForTask } from "./roles.js";
-import { checkProblem, deliveryCheckProblem, deliveryCheckWorks } from "./check-evidence.js";
+import { checkProblem, deliveryDecisionProblem, deliveryCheckWorks } from "./check-evidence.js";
 import { checkOutcome } from "./check-outcome.js";
 import { proofGap } from "./proof-requests.js";
 import { exhaustedAcceptanceFailure, restoredAcceptance } from "./acceptance.js";
@@ -56,7 +56,7 @@ export const reviewDecisionPending = (task: Pick<Task, "reviewDecision">): boole
 
 export function gateTitle(task: Task, gate: GateKind): string {
   if (gate === "delivery" && reviewDecisionPending(task)) return `Your call on “${task.title}”: review needs a decision before final checks`;
-  if (gate === "delivery" && deliveryCheckProblem(task) === "unverified") return `Your call on “${task.title}”: checks unverified`;
+  if (gate === "delivery" && deliveryDecisionProblem(task) === "unverified") return `Your call on “${task.title}”: checks unverified`;
   const failing = gate === "delivery" ? deliveryCheckWorks(task).flatMap((work) => work.checks?.results.filter((run) => checkOutcome(run).kind === "failed").map((run) => run.name) ?? []) : [];
   const unverifiedChecks = gate === "delivery" ? deliveryCheckWorks(task).flatMap((work) => work.checks?.results.filter((run) => { const kind = checkOutcome(run).kind; return kind === "incomplete" || kind === "unavailable"; }).map((run) => run.name) ?? []) : [];
   if (failing.length) return checkProblemTitle(task.title, failing, unverifiedChecks);
@@ -78,7 +78,7 @@ export function gateStatus(task: Task, gate: GateKind): string {
   if (gate === "design") return callOn(task, task.stageIndex) ? CALL_WORDS.waiting : "Design settled. Waiting for your check";
   if (reviewDecisionPending(task)) return "Review needs your call before final checks";
   const open = stillBlocking(task);
-  const problem = gate === "delivery" ? deliveryCheckProblem(task) : checkProblem(task);
+  const problem = gate === "delivery" ? deliveryDecisionProblem(task) : checkProblem(task);
   if (problem === "failing") return CHECKS_STILL_FAIL;
   if (problem) return "Checks unverified. Your call";
   // Never "done" while Important findings are open: the rounds ran out, or acceptance repairs did, and the coordinator decides.

@@ -93,7 +93,10 @@ it("adds final preparation to a plan that omitted delivery approval, while curre
     recordReviewProofs(f.engine, f.task, f.review, [{ text: "Required Linux proof", reason: "Exact final version required", productIds: [f.task.productId] }], "sol-high", "code-reviewer", "0");
     expect(f.task.plan!.stages.map(stage => stage.kind)).toEqual(["do", "do", "review-chain", "gate", "do"]);
     expect(f.task.proofDeliveryGate).toBeDefined(); expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);
-    await f.recordPass(); f.task.risk = { level: "medium", why: "Existing task opted out of approval" };
+    await f.recordPass();
+    // Tester answers do not invent product-check authority; execute this fixture's declared command.
+    expect((await f.run(f.engine, () => f.engine["checks"].failing(f.scope, signal()))).kind).toBe("passed");
+    f.task.risk = { level: "medium", why: "Existing task opted out of approval" };
     expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(true);
     f.scope.work.delivery = "release";
     expect(f.engine["driver"]["shipsUnasked"](f.task)).toBe(false);

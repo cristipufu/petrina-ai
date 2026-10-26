@@ -146,6 +146,12 @@ export type CheckInputApplicability =
 export function checkInputApplicability(recorded: unknown, observed: CheckSetupInput): CheckInputApplicability {
   if (!record(recorded) || !digest(recorded.definition) || !digest(observed.definition)) return { kind: "unknown", reason: "definition" };
   if (recorded.definition !== observed.definition) return { kind: "changed", reason: "definition" };
+  return checkSourceApplicability(recorded, observed);
+}
+
+/** Source-only historical applicability; this says nothing about definitions or a current pass. */
+export function checkSourceApplicability(recorded: unknown, observed: unknown): CheckInputApplicability {
+  if (!record(recorded) || !record(observed)) return { kind: "unknown", reason: "source" };
   if ((recorded.sha !== undefined && !sourceIdentity(recorded.sha)) || (recorded.tree !== undefined && !sourceIdentity(recorded.tree))
     || (observed.sha !== undefined && !sourceIdentity(observed.sha)) || (observed.tree !== undefined && !sourceIdentity(observed.tree))) return { kind: "unknown", reason: "source" };
   if (sourceIdentity(recorded.tree) && sourceIdentity(observed.tree))
@@ -211,14 +217,14 @@ export type RecordedCheckBatchOutcome =
   | { kind: "blocked"; setup: CheckSetupOutcome; reason: string; productFailures: readonly CheckRun[] };
 
 /** Recorded applicability for guards/readers. Actual verification additionally needs an operation-local observation. */
-export function recordedCheckBatch(work: Pick<RepositoryState, "checks" | "checkSetup" | "checkSetupInvalidated">): RecordedCheckBatchOutcome {
+function recordedBatch(work: Pick<RepositoryState, "checks" | "checkSetup" | "checkSetupInvalidated">, currency: "current" | "historical"): RecordedCheckBatchOutcome {
   const setup = checkSetupOutcome(work.checkSetup, undefined, work.checkSetupInvalidated), saved: unknown = work.checks;
   const rows = record(saved) && Array.isArray(saved.results) ? saved.results : [];
   const productFailures = rows.filter(checkRunRecord).filter(run => checkOutcome(run).kind === "failed");
   const blocked = (reason: string): RecordedCheckBatchOutcome => ({ kind: "blocked", setup, reason, productFailures });
   if (!checkBatchRecord(saved)) return blocked("The recorded product batch is missing or malformed");
   const checks = saved;
-  if (checks.current === false) return blocked("The recorded batch is known to need fresh verification");
+  if (currency === "current" && checks.current === false) return blocked("The recorded batch is known to need fresh verification");
   if (setup.kind !== "verified") return blocked("Local setup has not been verified");
   if (!setup.identity || !isCheckEnvironmentBinding(checks.environment)) return blocked("The recorded batch has no complete environment binding");
   if (!sameCheckEnvironmentIdentity(checks.environment, setup.identity)) return blocked("The recorded setup and batch environments differ");
@@ -227,6 +233,16 @@ export function recordedCheckBatch(work: Pick<RepositoryState, "checks" | "check
   if (checks.results.some(run => !sameCheckExecutorFacts(run.executor, setup.executor))) return blocked("A product command has missing or different executor facts");
   if (checks.results.some(run => { const kind = checkOutcome(run).kind; return kind !== "passed" && kind !== "failed"; })) return blocked("Product command execution is incomplete or unavailable");
   return productFailures.length ? { kind: "product-failed", setup, failed: productFailures } : { kind: "passed", setup };
+}
+
+/** Strict recorded applicability; an outdated pass is not current check evidence. */
+export function recordedCheckBatch(work: Pick<RepositoryState, "checks" | "checkSetup" | "checkSetupInvalidated">): RecordedCheckBatchOutcome {
+  return recordedBatch(work, "current");
+}
+
+/** Historical proof only. This cannot authorize automatic delivery or live reuse. */
+export function priorCheckBatchPass(work: Pick<RepositoryState, "checks" | "checkSetup" | "checkSetupInvalidated">): { kind: "prior-pass" } | { kind: "unverified" } {
+  return { kind: recordedBatch(work, "historical").kind === "passed" ? "prior-pass" : "unverified" };
 }
 
 /** Plain recorded evidence; this label never samples the host or authorizes reuse. */

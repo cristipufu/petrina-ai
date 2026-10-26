@@ -7813,6 +7813,24 @@
       "firstFailures": "Original V8 native17pass/1fail retained; R7 affected2correction separate. Core fixture/classifier and first browser failures remain in author packets. No retries/skips/worker/deadline weakening."
     }
   },
+  "latestIntegratedAttempt": {
+    "revision": "99394d510879eaf1dc563deacc2cb6dc12c41550",
+    "tree": "9d99df5f4fc482fb4128e597a7a84e90f8601e6e",
+    "fingerprint": "e6a5f9a30086f91b15cd958262ee07fda6c1f6cd3f21c646480b4c53fe9c37ff",
+    "status": "Failed complete Mac run; not delivery eligible",
+    "passed": 5748,
+    "failed": 37,
+    "existingSkipped": 11,
+    "ms": 229661,
+    "exactFiles": 889,
+    "workspaces": 9,
+    "actualExecutions": 4,
+    "normalNativeWorkers": 14,
+    "stableInputs": true,
+    "report": ".test-results/2026-10-26T05-40-34-155Z-30a013c8/results.json",
+    "verifiedRaw": "full-99394d51/failed-run-verification.json",
+    "correction": "Reviewed admitted-run settlement, real missing-definition failure retention, prior displayed approval intent versus strict publishing, compact evidence readers and actual configured/owned fixture producers. Focused native proofs, first failures and source receipts remain separate in full-99394d51 and referenced workstreams. Corrected complete qualification is pending."
+  },
   "resourceAudit": {
     "status": "in progress",
     "source": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",

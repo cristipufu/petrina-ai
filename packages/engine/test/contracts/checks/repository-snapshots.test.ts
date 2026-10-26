@@ -2,15 +2,29 @@ import type { CheckVerification } from "../../../src/product-checks.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as gitOps from "@petrina/repositories/git";
 import { executionFor } from "@petrina/orchestrator";
+import { commandText } from "@petrina/core";
+import { gitCommand, writeGitProgram } from "@petrina/test-support/git-program";
 import { git, removeDir, waitFor, type World } from "../../support.js";
-import { repositoryRecords, type RepositoryRecordOptions } from "../../fixtures/shared-records.js";
+import { repositoryRecords, withRepositoryRecords, type RepositoryRecordOptions } from "../../fixtures/shared-records.js";
 const worlds: World[] = [], recordRoots: string[] = [];
 afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
 const fixture = (name: string, options: RepositoryRecordOptions = {}) => repositoryRecords(name, recordRoots, options);
+
+/** A real commit-msg hook changes the branch; pre-commit's detached copy restores itself. */
+function committingHook(path: string, dataDir: string): void {
+  const script = join(dataDir, "committing-hook.ts"), emptyHooks = join(dataDir, "nested-hooks-off");
+  mkdirSync(emptyHooks, { recursive: true });
+  writeFileSync(script, `import { writeFileSync } from "node:fs";
+import { git } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/commands"))};
+writeFileSync("README.md", "A hook changed the product\\n");
+await git(process.cwd(), "add", "README.md");
+await git(process.cwd(), "-c", ${JSON.stringify(`core.hooksPath=${emptyHooks}`)}, "commit", "-qm", "An unapproved hook commit");`);
+  writeGitProgram(join(path, ".git", "hooks", "commit-msg"), `exec ${gitCommand([{ path: process.execPath }, { path: script }])}`);
+}
 
 describe("explicit repository execution contexts", () => {
   for (const changed of [false, true]) it(`reuses captured tree and commit message for hooks${changed ? " when the hook changes during its run" : ", keeping message files inside the task diagnostics folder"}`, async () => {
@@ -130,52 +144,59 @@ describe("explicit repository execution contexts", () => {
   });
 
   for (const hooks of [false, true]) it(`restores checks with one combined inspection${hooks ? " and verifies a hook's reverted commit" : ", retaining untracked build output"}`, async () => {
-    const { engine, task } = await fixture(`post-check-${hooks}`, { git: ["first"] });
-    const scope = executionFor(task, "first"), path = scope.work.worktree!;
-    const sha = await git(path, "rev-parse", "HEAD"), tree = await git(path, "rev-parse", "HEAD^{tree}");
-    const original = await git(path, "show", "HEAD:README.md");
-    const checksToRun = hooks ? [] : [{ name: "Build", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('check-artifact.txt', 'Build output\\n')"] }];
-    engine.setPoolPaused(false);
-    const prepared = await engine["checks"]["captureState"](scope, checksToRun);
-    const inspections = spyOn(gitOps, "worktreeStatus"), heads = spyOn(gitOps, "head");
-    const checks = engine["checks"], hook = checks["runHooks"];
-    checks["runHooks"] = async () => {
+    await withRepositoryRecords(`post-check-${hooks}`, { git: ["first"] }, async ({ engine, task, run }) => {
+      const scope = executionFor(task, "first"), path = scope.work.worktree!;
       if (hooks) {
-        writeFileSync(join(path, "README.md"), "A hook changed the product\n");
-        await git(path, "add", "."); await git(path, "commit", "-qm", "An unapproved hook commit");
+        scope.work.baseSha = await git(path, "rev-parse", "HEAD"); scope.work.branch = "main";
+        writeFileSync(join(path, "task-change.txt"), "The task's committed change\n");
+        await git(path, "add", "."); await git(path, "commit", "-qm", "The checked task change");
+        committingHook(path, engine.dataDir);
       }
-      return [];
-    };
-    // A run with nothing to run touches no file at all; a real check gets exactly one combined inspection afterwards.
-    try {
-      expect(nonpassingChecks(await engine["checks"]["runAll"](scope, checksToRun, { ...prepared, sha, tree, trackedChanged: false, hooks: hooks ? ["pre-commit"] : [], definition: "test" }, new AbortController().signal, new Map()))).toBe(0);
-      expect(heads).not.toHaveBeenCalled();
-      expect(inspections).toHaveBeenCalledTimes(hooks ? 3 : 1);
-      expect(scope.work.checks).toMatchObject({ current: false, sha, tree, results: hooks ? [] : [expect.objectContaining({ name: "Build", ok: true })] });
-      expect(await git(path, "rev-parse", "HEAD")).toBe(sha);
-      expect(await git(path, "show", "HEAD:README.md")).toBe(original);
-      if (!hooks) expect(await git(path, "status", "--porcelain")).toContain("check-artifact.txt");
-    } finally { checks["runHooks"] = hook; heads.mockRestore(); inspections.mockRestore(); await engine.shutdown(); }
+      const sha = await git(path, "rev-parse", "HEAD"), tree = await git(path, "rev-parse", "HEAD^{tree}");
+      const original = await git(path, "show", "HEAD:README.md");
+      const checksToRun = hooks ? [] : [{ name: "Build", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('check-artifact.txt', 'Build output\\n')"] }];
+      if (checksToRun.length) {
+        const product = engine.s.products.find(product => product.id === "first")!;
+        product.checks = checksToRun; product.checksBy = "coordinator";
+      }
+      engine.setPoolPaused(false);
+      const prepared = await engine["checks"]["captureState"](scope, checksToRun);
+      const inspections = spyOn(gitOps, "worktreeStatus");
+      try {
+        const heads = spyOn(gitOps, "head");
+        // A run with nothing to run touches no file at all; a real check gets exactly one combined inspection afterwards.
+        try {
+          expect(nonpassingChecks(await run(() => engine["checks"].runProductChecks(scope, checksToRun, engine.stopRequested.signal, undefined, prepared)))).toBe(0);
+          expect(heads).not.toHaveBeenCalled();
+          expect(inspections).toHaveBeenCalledTimes(hooks ? 3 : 1);
+          expect(scope.work.checks).toMatchObject({ current: true, sha, tree, results: [expect.objectContaining({ name: hooks ? "Commit message hook" : "Build", ok: true })] });
+          expect(await git(path, "rev-parse", "HEAD")).toBe(sha);
+          expect(await git(path, "show", "HEAD:README.md")).toBe(original);
+          if (!hooks) expect(await git(path, "status", "--porcelain")).toContain("check-artifact.txt");
+        } finally { heads.mockRestore(); }
+      } finally { inspections.mockRestore(); }
+    });
   });
 
   it("does not attach current check evidence to the old commit when restoring a hook's commit fails", async () => {
-    const { engine, task } = await fixture("failed-post-check-restore", { git: ["first"] });
-    const scope = executionFor(task, "first"), path = scope.work.worktree!, sha = await git(path, "rev-parse", "HEAD");
-    engine.setPoolPaused(false);
-    const prepared = await engine["checks"]["captureState"](scope, []);
-    scope.work.checks = { at: 1, current: true, sha, results: [] };
-    const checks = engine["checks"], hook = checks["runHooks"];
-    checks["runHooks"] = async () => {
-      writeFileSync(join(path, "README.md"), "A hook commit that cannot be reverted\n");
-      await git(path, "add", "."); await git(path, "commit", "-qm", "Unexpected commit");
-      return [];
-    };
-    const reset = spyOn(gitOps, "resetTo").mockResolvedValue(undefined);
-    try {
-      await expectRejection(engine["checks"]["runAll"](scope, [], { ...prepared, sha, trackedChanged: false, hooks: ["pre-commit"], definition: "test" }, new AbortController().signal, new Map()), "could not restore the original work");
-      expect(scope.work.checks).toMatchObject({ sha, current: false });
-      expect(await git(path, "rev-parse", "HEAD")).not.toBe(sha);
-    } finally { reset.mockRestore(); checks["runHooks"] = hook; await engine.shutdown(); }
+    await withRepositoryRecords("failed-post-check-restore", { git: ["first"] }, async ({ engine, task, run }) => {
+      const scope = executionFor(task, "first"), path = scope.work.worktree!;
+      scope.work.baseSha = await git(path, "rev-parse", "HEAD"); scope.work.branch = "main";
+      writeFileSync(join(path, "task-change.txt"), "The task's committed change\n");
+      await git(path, "add", "."); await git(path, "commit", "-qm", "The checked task change");
+      committingHook(path, engine.dataDir);
+      const sha = await git(path, "rev-parse", "HEAD");
+      engine.setPoolPaused(false);
+      const prepared = await engine["checks"]["captureState"](scope, []);
+      scope.work.checks = { at: 1, current: true, sha, results: [] };
+      const reset = spyOn(gitOps, "resetTo");
+      try {
+        reset.mockResolvedValue(undefined);
+        await run(() => expectRejection(engine["checks"].runProductChecks(scope, [], engine.stopRequested.signal, undefined, prepared), "could not restore the original work"));
+        expect(scope.work.checks).toMatchObject({ sha, current: false });
+        expect(await git(path, "rev-parse", "HEAD")).not.toBe(sha);
+      } finally { reset.mockRestore(); }
+    });
   });
 
   it("observes check inputs once per gate and rechecks freshness instead of trusting a saved current flag", async () => {
@@ -203,37 +224,41 @@ describe("explicit repository execution contexts", () => {
   });
 
   it("finishes a queued check against its bound owner after the task's current product changes", async () => {
-    const { engine, task } = await fixture("queued-check", { git: ["first","second"] });
-    let release: (() => void) | undefined;
-    let pending: Promise<CheckVerification> | undefined;
-    try {
-      engine.setPoolPaused(false);
-      const first = executionFor(task, "first"), second = executionFor(task, "second");
-      const checks = engine["checks"];
-      const signal = new AbortController().signal;
-      release = await checks["turnToRun"](second, signal);
-      pending = checks.runProductChecks(first, [{ name: "First product only", argv: [process.execPath, "-e", "console.error('Failure from the first product'); process.exit(1)"] }], signal);
-      await waitFor(() => engine.checkQueue.waiting === 1, "the first product's check to queue");
-      writeFileSync(join(first.work.worktree!, "queued-change.txt"), "Committed while checks waited\n");
-      await git(first.work.worktree!, "add", "."); await git(first.work.worktree!, "commit", "-qm", "Keep the change made while checks waited");
-      const queuedHead = await gitOps.head(first.work.worktree!);
-      const hook = join(first.work.worktree!, ".git", "hooks", "commit-msg");
-      writeFileSync(hook, "#!/bin/sh\nexit 0\n"); chmodSync(hook, 0o755);
-      task.activeProductId = "second";
-      engine.getState(); engine.windowState(); engine.taskDetails(task.id); engine.commitNow();
-      release(); release = undefined;
-      expect(nonpassingChecks(await pending!)).toBe(1);
-      expect(await gitOps.head(first.work.worktree!)).toBe(queuedHead);
-      expect(engine.s.products.find((product) => product.id === "first")!.hooks).toEqual(["commit-msg"]);
-      expect(first.work.checks!.results[0]!.output).toContain("Failure from the first product");
-      expect(second.work.checks).toBeUndefined();
-      expect(Object.hasOwn(task, "checks")).toBe(false);
-      expect(task.findings.filter((finding) => finding.raisedBy === "petrina").map((finding) => finding.productIds)).toEqual([["first"]]);
-      expect(task.timeline.filter((line) => line.text.includes("First product only")).length).toBeGreaterThan(0);
-      expect(task.timeline.filter((line) => line.text.includes("First product only")).every((line) => line.productId === "first")).toBe(true);
-      expect(engine.taskDetails(task.id)!.checks).toBeUndefined();
-      engine.save();
-      expect(engine.store.load()!.tasks.find((entry) => entry.id === task.id)!.repositories![0]!.checks!.results[0]!.ok).toBe(false);
-    } finally { release?.(); await pending?.catch(() => {}); await engine.shutdown(); }
+    await withRepositoryRecords("queued-check", { git: ["first","second"] }, async ({ engine, task, run }) => {
+      let release: (() => void) | undefined;
+      let pending: Promise<CheckVerification> | undefined;
+      try {
+        engine.setPoolPaused(false);
+        const first = executionFor(task, "first"), second = executionFor(task, "second");
+        first.work.baseSha = await git(first.work.worktree!, "rev-parse", "HEAD"); first.work.branch = "main";
+        const checks = engine["checks"];
+        const signal = engine.stopRequested.signal;
+        const commands = [{ name: "First product only", argv: [process.execPath, "-e", "console.error('Failure from the first product'); process.exit(1)"] }];
+        engine.setProductChecks("first", commands.map(check => ({ name: check.name, command: commandText(check.argv) })));
+        release = await checks["turnToRun"](second, signal);
+        pending = run(() => checks.runProductChecks(first, commands, signal));
+        await waitFor(() => engine.checkQueue.waiting === 1, "the first product's check to queue", 30_000, { during: pending });
+        writeFileSync(join(first.work.worktree!, "queued-change.txt"), "Committed while checks waited\n");
+        await git(first.work.worktree!, "add", "."); await git(first.work.worktree!, "commit", "-qm", "Keep the change made while checks waited");
+        const queuedHead = await gitOps.head(first.work.worktree!);
+        const hook = join(first.work.worktree!, ".git", "hooks", "commit-msg");
+        writeFileSync(hook, "#!/bin/sh\nexit 0\n"); chmodSync(hook, 0o755);
+        task.activeProductId = "second";
+        engine.getState(); engine.windowState(); engine.taskDetails(task.id); engine.commitNow();
+        release(); release = undefined;
+        expect(nonpassingChecks(await pending!)).toBe(1);
+        expect(await gitOps.head(first.work.worktree!)).toBe(queuedHead);
+        expect(engine.s.products.find((product) => product.id === "first")!.hooks).toEqual(["commit-msg"]);
+        expect(first.work.checks!.results[0]!.output).toContain("Failure from the first product");
+        expect(second.work.checks).toBeUndefined();
+        expect(Object.hasOwn(task, "checks")).toBe(false);
+        expect(task.findings.filter((finding) => finding.raisedBy === "petrina").map((finding) => finding.productIds)).toEqual([["first"]]);
+        expect(task.timeline.filter((line) => line.text.includes("First product only")).length).toBeGreaterThan(0);
+        expect(task.timeline.filter((line) => line.text.includes("First product only")).every((line) => line.productId === "first")).toBe(true);
+        expect(engine.taskDetails(task.id)!.checks).toBeUndefined();
+        engine.save();
+        expect(engine.store.load()!.tasks.find((entry) => entry.id === task.id)!.repositories![0]!.checks!.results[0]!.ok).toBe(false);
+      } finally { release?.(); }
+    });
   });
 });

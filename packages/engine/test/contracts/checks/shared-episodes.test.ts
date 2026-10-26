@@ -64,7 +64,7 @@ describe("shared check repair episodes", () => {
       first.work.checkReturns = 2; second.work.checkReturns = 1;
       const original = first.work.checks!.results[0]!;
       original.interruption = { source: "macOS power log", at: original.startedAt!, event: "Entering Sleep state due to Clamshell Sleep" };
-      expect((await checks.failing(first, signal)).kind).toBe("product-failed");
+      expect((await checks.failing(first, signal)).kind).toBe("blocked");
       expect(checks.backToBuilder(first, "before review", new Set((first.task.repositories ?? [first.work]).map(work => work.productId)))).toBe(false);
       expect(task.repositories!.map((work) => work.checkReturns)).toEqual([2, 1]);
       expect(task.findings.filter((finding) => finding.status === "open")).toHaveLength(0);

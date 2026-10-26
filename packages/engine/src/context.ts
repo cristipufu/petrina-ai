@@ -249,7 +249,9 @@ export class Context {
     const matched = applicability?.inputs.kind === "matches";
     const guidance = matched ? "These recorded results match the observed code and definitions. The saved environment describes its last setup observation; this read did not revalidate the local environment. Petrina's verification gate owns live reuse. Use focused tests for acceptance rather than repeating full suites."
       : "Historical results: these have not been established to cover the current code, required commands and hooks. Do not use an older pass as proof that this version passes.";
+    const incomplete = (work.checks?.results ?? []).some(run => checkOutcome(run).kind !== "passed");
     return [{ title: matched ? "Recorded product checks, run by Petrina itself" : "Historical product checks, run by Petrina itself", body: [guidance,
+      ...(incomplete ? ["Some recorded checks failed or did not finish. They are not passing acceptance evidence."] : []),
       `${checkSetupWords(setup)}${work.checkSetup?.endedAt ? ` at ${new Date(work.checkSetup.endedAt).toISOString()}` : ""}. Setup prerequisites are separate from product checks and never prove product acceptance.`,
       ...(applicability?.batch.kind === "blocked" ? [applicability.batch.reason] : []), ...lines].join("\n") }];
   }

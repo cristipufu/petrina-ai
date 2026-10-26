@@ -1,6 +1,6 @@
 import { repositoryPublished } from "./repositories.js";
-import { recordedCheckBatch } from "./check-environment.js";
-import type { CheckRun, JourneyProductCheck, RepositoryState, Task } from "./model.js";
+import { isCheckEnvironmentBinding, priorCheckBatchPass, recordedCheckBatch, sameCheckEnvironmentIdentity, sameCheckExecutorFacts } from "./check-environment.js";
+import type { CheckAttemptEvidence, CheckRun, JourneyProductCheck, RepositoryState, Task } from "./model.js";
 import { checkOutcome, checkCommandOutcome } from "./check-outcome.js";
 
 export function checkResult(run: CheckRun): JourneyProductCheck["result"] {
@@ -97,8 +97,52 @@ export function deliveryCheckProblem(task: DeliveryCheckTask): "failing" | "unve
   return problemForWorks(deliveryCheckWorks(task));
 }
 
-export function checkDecisionLabel(task: DeliveryCheckTask): string | undefined {
-  const problem = deliveryCheckProblem(task);
+type DeliveryDecisionState = DeliveryCheckState & Pick<RepositoryState, "productId" | "checkedSha" | "checkedPatch">;
+export type DeliveryDecisionTask = DeliveryDecisionState & Pick<Task, "journey"> & { readonly repositories?: readonly DeliveryDecisionState[] };
+
+/** A coordinator can approve the candidate they saw; this grants no fresh check or publication authority. */
+function priorDisplayedPass(task: DeliveryDecisionTask, work: DeliveryDecisionState): boolean {
+  if (work.checks?.current !== false || priorCheckBatchPass(work).kind !== "prior-pass"
+    || typeof work.checkedSha !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(work.checkedSha)
+    || typeof work.checkedPatch !== "string" || !work.checkedPatch.length) return false;
+  const saved = work.checks, provenance = saved.provenance;
+  // The displayed commit must be one of the actual observed versions, including an
+  // equivalent-tree squash observed by the latest verified setup.
+  if (work.checkedSha !== saved.sha && work.checkedSha !== work.checkSetup!.input.sha) return false;
+  if (!provenance || typeof provenance.nodeId !== "string" || !provenance.nodeId.length || typeof provenance.attemptId !== "string" || !provenance.attemptId.length
+    || !Array.isArray(task.journey)) return false;
+  const origins = task.journey.filter(node => node?.id === provenance.nodeId);
+  if (origins?.length !== 1) return false;
+  if (!Array.isArray(origins[0]!.checkAttempts)) return false;
+  const attempts = origins[0]!.checkAttempts.filter((attempt: CheckAttemptEvidence) => attempt?.id === provenance.attemptId && attempt.productId === work.productId);
+  if (attempts?.length !== 1) return false;
+  const attempt = attempts[0]!;
+  if (attempt.passed !== true || attempt.sha !== saved.sha || attempt.tree !== saved.tree || attempt.definition !== saved.definition
+    || !isCheckEnvironmentBinding(attempt.environment) || !sameCheckEnvironmentIdentity(attempt.environment, saved.environment)
+    || attempt.environment.setupAttempts.before !== saved.environment!.setupAttempts.before || attempt.environment.setupAttempts.after !== saved.environment!.setupAttempts.after) return false;
+  const decision = task.journey?.at(-1);
+  if (decision?.kind !== "you" || decision.waitsFor !== "delivery" || decision.endedAt !== undefined || !Array.isArray(decision.productChecks)) return false;
+  const remaining = decision.productChecks.filter((entry: JourneyProductCheck) => entry?.productId === work.productId);
+  if (remaining.length !== saved.results.length) return false;
+  for (const run of saved.results) {
+    if (!run.source || ![run.source.stepId, run.source.attemptId, run.source.checkId].every(value => typeof value === "string" && value.length)) return false;
+    const at = remaining.findIndex((entry: JourneyProductCheck) => entry.result === "pass" && checkOutcome(entry.run).kind === "passed"
+      && entry.run?.name === run.name && entry.run.command === run.command && sameCheckExecutorFacts(entry.run.executor, run.executor)
+      && !!entry.run.source && entry.run.source.stepId === run.source!.stepId && entry.run.source.attemptId === run.source!.attemptId && entry.run.source.checkId === run.source!.checkId);
+    if (at < 0) return false;
+    remaining.splice(at, 1);
+  }
+  return true;
+}
+
+/** Decision intent only; strict current/raw readers and automatic publishing use their existing owners. */
+export function deliveryDecisionProblem(task: DeliveryDecisionTask): "failing" | "unverified" | undefined {
+  const unfinished = (task.repositories ?? [task]).filter(work => !repositoryPublished(work));
+  return problemForWorks(unfinished.filter(work => !priorDisplayedPass(task, work)));
+}
+
+export function checkDecisionLabel(task: DeliveryDecisionTask): string | undefined {
+  const problem = deliveryDecisionProblem(task);
   return problem === "failing" ? "Your call: checks still failing" : problem ? "Your call: checks unverified" : undefined;
 }
 

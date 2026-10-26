@@ -2,7 +2,7 @@ import { executionFor } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decisionEvidence, journeyProblems, type Task, type WorkflowEvent } from "@petrina/core";
+import { checkSetupOutcome, sameCheckEnvironmentIdentity, decisionEvidence, journeyProblems, type Task, type WorkflowEvent } from "@petrina/core";
 
 import type { CheckScript } from "../../fixtures/check-agents.js";
 import { checkWorkflow } from "../../fixtures/check-workflow.js";
@@ -78,10 +78,10 @@ it("reuses one passing run through read-only reviewers, acceptance and delivery 
       const task = await f.delivery();
       expect(f.runs()).toEqual(["passed"]);
       expect(f.agents.openings("tester")).toHaveLength(1);
-      expect(f.agents.openings("tester")[0]).toContain("Current product checks, run by Petrina itself");
-      expect(f.agents.openings("tester")[0]).toContain("do not rerun the full checks");
+      expect(f.agents.openings("tester")[0]).toContain("Recorded product checks, run by Petrina itself");
+      expect(f.agents.openings("tester")[0]).toContain("Use focused tests for acceptance rather than repeating full suites");
       expect(f.agents.openings("code reviewer").length).toBeGreaterThan(0);
-      expect(f.agents.openings("code reviewer").every((prompt) => prompt.includes("Current product checks, run by Petrina itself"))).toBe(true);
+      expect(f.agents.openings("code reviewer").every((prompt) => prompt.includes("Recorded product checks, run by Petrina itself"))).toBe(true);
       expect(checkSteps(task)).toHaveLength(1);
       f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
       await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
@@ -215,7 +215,19 @@ it("returns unchanged work twice without using a review round, keeps the failure
       expect(task.checkReturns).toBe(2);
       expect(task.findings.filter((finding) => finding.text.startsWith("Check failed"))).toHaveLength(1);
       // The guarded review reuses the failure: no review or acceptance starts, and the allowance stays spent.
-      expect(checkSteps(task).map(({ reuses: _reuses, ...step }) => step)).toEqual(recordedChecks.map(({ reuses: _reuses, ...step }) => step));
+      expect(checkSteps(task).map(({ reuses: _reuses, checkSetups: _setups, ...step }) => step)).toEqual(recordedChecks.map(({ reuses: _reuses, checkSetups: _setups, ...step }) => step));
+      const originalSetups = recordedChecks[0]!.checkSetups!, reusedSetups = checkSteps(task)[0]!.checkSetups!;
+      expect(reusedSetups.slice(0, originalSetups.length)).toEqual([...originalSetups]);
+      const additionalSetups = reusedSetups.slice(originalSetups.length);
+      expect(additionalSetups).toHaveLength(1);
+      const observation = additionalSetups[0]!;
+      expect(observation.id).not.toBe(originalSetups.at(-1)!.id);
+      expect(observation.queuedAt).toBeGreaterThanOrEqual(originalSetups.at(-1)!.endedAt!);
+      expect(observation.position).toBe("before-checks");
+      expect(checkSetupOutcome(observation).kind).toBe("verified");
+      expect(sameCheckEnvironmentIdentity(observation.identity, captured!.environment)).toBe(true);
+      expect(checkSteps(task)[0]!.reuses!.at(-1)!.environment!.setupAttemptId).toBe(observation.id);
+      const retainedSetups = structuredClone(reusedSetups);
       expect(checkSteps(task)[0]!.reuses!.map((entry) => entry.purpose)).toEqual(["review", "review", "review"]);
       expect(checkSteps(task)[0]!.reuses!.every((entry) => !entry.passed && entry.tree === captured!.tree)).toBe(true);
       expect(checkSteps(task)[0]!.checkAttempts![0]).toMatchObject({ sha: captured!.sha, tree: captured!.tree, definition: captured!.definition });
@@ -242,7 +254,8 @@ it("returns unchanged work twice without using a review round, keeps the failure
       expect(task.blockingAfter?.[review.id]).toEqual([0]);
       expect(f.agents.openings("code reviewer")).toHaveLength(1);
       expect(checkSteps(task)).toHaveLength(2);
-      expect((({ reuses: _reuses, ...step }) => step)(checkSteps(task)[0]!)).toEqual((({ reuses: _reuses, ...step }) => step)(recordedChecks[0]!));
+      expect((({ reuses: _reuses, checkSetups: _setups, ...step }) => step)(checkSteps(task)[0]!)).toEqual((({ reuses: _reuses, checkSetups: _setups, ...step }) => step)(recordedChecks[0]!));
+      expect(checkSteps(task)[0]!.checkSetups).toEqual(retainedSetups);
       expect(checkSteps(task)[1]).toEqual(expect.objectContaining({ outcome: "The check passes", reason: "checks passed", end: "done" }));
       const recoveredEvents = (await f.engine.events.wait({ taskIds: [f.taskId], from: "oldest", timeoutMs: 0, limit: 100 })).events as WorkflowEvent[];
       expect(recoveredEvents.find((event) => event.kind === "node.started" && event.roleId === "code-reviewer")).toMatchObject({ checks: { basis: "ran", passed: true, nodeId: checkSteps(task)[1]!.id } });

@@ -9,6 +9,7 @@ import { executionFor, scopesFor } from "@petrina/orchestrator";
 import { destination } from "../../../src/shipping.js";
 import { Aborted } from "../../../src/kernel.js";
 import { WaitingForUsage } from "../../../src/usage.js";
+import type { CheckVerification } from "../../../src/product-checks.js";
 import { CONFIRM_ADDRESS } from "../../../src/connection.js";
 import { git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
 
@@ -269,7 +270,7 @@ for (const confirmation of ["own", "peer"] as const) it(`returns admitted check 
     scope.work.source!.product.repo = product.repo; delete scope.work.source!.product.remote;
     await git(product.path!, "remote", "add", "origin", address);
     const owner = confirmation === "peer" ? f.engine().task(f.engine().addTask({ productId: product.id, title: "Address owner", backlog: true }))! : task;
-    let attempt: Promise<unknown> | undefined, follower: Promise<() => void> | undefined, confirming: Promise<unknown> | undefined;
+    let attempt: Promise<CheckVerification> | undefined, follower: Promise<() => void> | undefined, confirming: Promise<unknown> | undefined;
     try {
       if (confirmation === "peer") {
         confirming = f.engine()["connections"].connection(executionFor(owner), controller.signal);
@@ -296,7 +297,7 @@ for (const confirmation of ["own", "peer"] as const) it(`returns admitted check 
       f.engine().answer(f.engine().s.inbox.find(item => item.taskId === owner.id && item.kind === "question")!.id, CONFIRM_ADDRESS);
       await confirming;
       (await follower)();
-      expect(await attempt).toBe(false);
+      expect((await attempt).kind).toBe("passed");
       expect(f.evidence()).toHaveLength(1);
       expect(f.engine().checkQueue.running).toBe(0);
     } finally {

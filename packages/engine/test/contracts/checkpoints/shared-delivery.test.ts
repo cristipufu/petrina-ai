@@ -3,7 +3,7 @@ import { completeCheckExecution } from "@petrina/test-support/check-execution-fa
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as gitOps from "@petrina/repositories/git";
 import { removeDir, type World } from "../../support.js";
-import { repositoryRecords, type RepositoryRecordOptions } from "../../fixtures/shared-records.js";
+import { repositoryRecords, withRepositoryRecords, type RepositoryRecordOptions } from "../../fixtures/shared-records.js";
 const worlds: World[] = [], recordRoots: string[] = [];
 afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
 const fixture = (name: string, options: RepositoryRecordOptions = {}) => repositoryRecords(name, recordRoots, options);
@@ -158,21 +158,22 @@ describe("shared check repair episodes", () => {
   });
 
   it("lists every product's failing checks, turns and answers at a shared check problem, and returns a change request there", async () => {
-    const { engine, task, id } = await fixture("check-problem", { git: ["first","second"] });
-    try {
+    await withRepositoryRecords("check-problem", { git: ["first","second"] }, async ({ engine, task, id, run }) => {
       engine.setPoolPaused(false);
       task.plan = plan();
       task.stageIndex = 1;
       const first = executionFor(task, "first"), second = executionFor(task, "second");
-      const checks = engine["checks"], signal = new AbortController().signal;
-      await checks.runProductChecks(first, [failing], signal);
-      await checks.runProductChecks(second, [command("Tests", "console.log('(fail) greeting > says hello'); console.error('error: expected Hello'); process.exit(1)")], signal);
+      const checks = engine["checks"], signal = engine.stopRequested.signal;
+      const secondChecks = [command("Tests", "console.log('(fail) greeting > says hello'); console.error('error: expected Hello'); process.exit(1)")];
+      setChecks(engine, "first", [failing]); setChecks(engine, "second", secondChecks);
+      await run(() => checks.runProductChecks(first, [failing], signal));
+      await run(() => checks.runProductChecks(second, secondChecks, signal));
       first.work.checkReturns = 2;
       second.work.checkReturns = 1;
       // Incomplete execution stays unverified in the same spent episode; a Builder explanation alone establishes no interruption.
       setChecks(engine, "first", [failing]);
       first.work.checks!.results = [{ ...first.work.checks!.results[0]!, timedOut: true }];
-      expect((await checks.failing(first, signal)).kind).toBe("blocked");
+      expect((await run(() => checks.failing(first, signal))).kind).toBe("blocked");
       expect(first.work.checkReturns).toBe(2);
       const answered = task.findings.find((finding) => finding.productIds?.includes("second"))!;
       answered.answer = { fixed: false, text: "The suite timed out while the Mac slept.", at: Date.now() };
@@ -195,6 +196,6 @@ describe("shared check repair episodes", () => {
       expect(task.stageIndex).toBe(0);
       expect(first.work.checkReturns).toBe(2);
       expect(second.work.checkReturns).toBe(1);
-    } finally { await engine.shutdown(); }
+    });
   });
 });

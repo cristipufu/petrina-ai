@@ -17,15 +17,16 @@ it("tells acceptance testing whether saved checks really cover the code and requ
     const task = f.engine.task(f.taskId)!;
     const saved = structuredClone(executionFor(task).work.checks!);
     const evidence = async () => (await f.engine["context"].sectionsFor(executionFor(task), "tester")).find((section) => section.title.includes("product checks"));
-    expect(await evidence()).toEqual(expect.objectContaining({ title: "Current product checks, run by Petrina itself", body: expect.stringContaining("do not rerun the full checks") }));
+    expect(await evidence()).toEqual(expect.objectContaining({ title: "Recorded product checks, run by Petrina itself", body: expect.stringContaining("Use focused tests for acceptance rather than repeating full suites") }));
 
+    expect((await evidence())?.body).toContain("this read did not revalidate the local environment");
     writeFileSync(join(executionFor(task).work.worktree!, "greeting.txt"), "Uncommitted change\n");
     expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
     await git(executionFor(task).work.worktree!, "add", "greeting.txt");
     await git(executionFor(task).work.worktree!, "commit", "-q", "-m", "A real change");
     expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
     await git(executionFor(task).work.worktree!, "reset", "--hard", saved.sha!);
-    expect((await evidence())?.title).toBe("Current product checks, run by Petrina itself");
+    expect((await evidence())?.title).toBe("Recorded product checks, run by Petrina itself");
 
     f.setCheck("--pass", "--changed");
     expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
@@ -34,7 +35,10 @@ it("tells acceptance testing whether saved checks really cover the code and requ
     expect((await evidence())?.body).toContain("not passing acceptance evidence");
     expect((await evidence())?.body).not.toContain("Use them for automated acceptance");
     executionFor(task).work.checks!.results = [];
-    expect(await evidence()).toBeUndefined();
+    const setupOnly = await evidence();
+    expect(setupOnly?.body).toContain("Setup prerequisites are separate from product checks and never prove product acceptance");
+    expect(setupOnly?.body).not.toContain("- Welcome:");
+    expect(setupOnly?.body).not.toContain("Use them for automated acceptance");
     executionFor(task).work.checks = structuredClone(saved);
     f.engine.setProductChecks(f.productId, [
       { name: "Welcome", command: f.command("--pass") },

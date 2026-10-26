@@ -218,14 +218,19 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
   task.journey = [];
   engine.s.products[0]!.checks = [];
   engine.s.products[0]!.checksBy = "coordinator";
+  scope.work.checkReturns = 2;
   const readme = join(scope.work.worktree!, "README.md");
   writeFileSync(readme, "# Demo\n\nAn edit nobody committed yet\n");
   const inspections = spyOn(gitOps, "worktreeStatus"), restores = spyOn(gitOps, "restoreTracked"), resets = spyOn(gitOps, "resetTo");
   try {
     // A check with no command counts as nothing to run, the same as an empty list.
-    expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [{ name: "Nothing", argv: [] }], new AbortController().signal))).toBe(0);
+    const empty = await engine["checks"].runProductChecks(scope, [{ name: "Nothing", argv: [] }], engine.stopRequested.signal);
+    expect(empty.kind).toBe("blocked");
+    expect(nonpassingChecks(empty)).toBe(0);
     expect(readFileSync(readme, "utf8")).toContain("An edit nobody committed yet");
-    expect(task.journey![0]).toMatchObject({ kind: "petrina", work: "checks", end: "done", reason: W.noChecks, productChecks: [] });
+    expect(task.journey![0]).toMatchObject({ kind: "petrina", work: "checks", end: "done", outcome: "Checks unverified", reason: "Local setup needs verification after changed inputs", productChecks: [] });
+    expect(scope.work.checks?.current).not.toBe(true);
+    expect(scope.work.checkReturns).toBe(2);
     expect(task.journey![0]!.checkAttempts).toEqual([expect.objectContaining({ id: "run-0", commands: [] })]);
     // Nothing ran, so nothing is put back: the only inspection captured the versions before the run.
     expect(inspections).toHaveBeenCalledTimes(1);
@@ -235,7 +240,7 @@ it("keeps uncommitted edits when there is nothing to run, and still records the 
     await git(scope.work.worktree!, "add", "."); await git(scope.work.worktree!, "commit", "-qm", "Keep the edit");
     const changing = { name: "Changing", argv: [process.execPath, "-e", "require('node:fs').appendFileSync('README.md', 'Added by a check\\n')"] };
     engine.s.products[0]!.checks = [changing];
-    expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [changing], new AbortController().signal))).toBe(0);
+    expect(nonpassingChecks(await engine["checks"].runProductChecks(scope, [changing], engine.stopRequested.signal))).toBe(0);
     expect(readFileSync(readme, "utf8")).not.toContain("Added by a check");
     expect(restores).toHaveBeenCalledTimes(1);
   } finally { inspections.mockRestore(); restores.mockRestore(); resets.mockRestore(); }

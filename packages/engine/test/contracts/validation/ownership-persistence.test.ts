@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ExtraValidation } from "@petrina/core";
+import { commandText, checkOutcome, checkSetupOutcome, recordedCheckBatch, type ExtraValidation } from "@petrina/core";
 
 import { git, waitFor } from "../../fixtures.js";
 
@@ -140,6 +140,8 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
     const second = (await f.coordination.call("validation.run", { ...f.request("second-held", undefined, (await f.add()).id), name: "Second required suite" })).validation as ExtraValidation;
     f.engine.setPoolPaused(false);
     const productTask = await f.add(); productTask.state = "running";
+    const ordinary = { name: "Ordinary check", argv: [process.execPath, "-e", "process.exit(0)"] };
+    f.engine.setProductChecks(f.productId, [{ name: ordinary.name, command: commandText(ordinary.argv) }]);
     const controller = new AbortController();
     let productRun: Promise<unknown> | undefined;
     let confirmSecond = false;
@@ -151,7 +153,7 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
       writeFileSync(join(f.service, "cleanup-off"), "unavailable");
       for (const record of f.engine.s.extraValidations!) process.kill(record.clientPid!, "SIGKILL");
       await waitFor(() => f.engine.s.extraValidations!.every(record => record.state === "held") && f.engine.extraValidations.active === 0, "both runs to hold cleanup");
-      productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "process.exit(0)"] }], controller.signal).then(failures => ({ failures }), error => ({ error }));
+      productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [ordinary], controller.signal).then(verification => ({ verification }), error => ({ error }));
       await waitFor(() => f.engine.checkQueue.waiting === 1, "the product check to wait on cleanup");
       expect(productTask.statusLine).toBe(f.engine.extraValidations.blocker!);
       rmSync(join(f.service, "cleanup-off"));
@@ -168,7 +170,13 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
       expect(productTask.statusLine).toBe("Waiting for the pool to resume");
       expect(f.engine.checkQueue.running).toBe(0);
       f.engine.setPoolPaused(false);
-      expect(await productRun).toEqual({ failures: 0 });
+      expect(await productRun).toMatchObject({ verification: { kind: "passed" } });
+      const checked = executionFor(productTask).work;
+      expect(checked.checks!.results).toHaveLength(1);
+      expect(checked.checks!.results[0]).toMatchObject({ name: ordinary.name, command: commandText(ordinary.argv), execution: { started: true, exit: { status: "reported", code: 0 }, stdout: "eof", stderr: "eof" } });
+      expect(checked.checks!.results.filter(run => checkOutcome(run).kind === "failed")).toHaveLength(0);
+      expect(checkSetupOutcome(checked.checkSetup).kind).toBe("verified");
+      expect(recordedCheckBatch(checked).kind).toBe("passed");
       expect(readdirSync(join(f.service, "containers"))).toEqual([]);
     } finally {
       confirmSecond = true; controller.abort();
