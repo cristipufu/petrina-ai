@@ -396,7 +396,7 @@ export function engineProcessCases() {
       const result = owner.close();
       if (!observing) {
         observing = true;
-        void result.then(() => { active.delete(entry); }, () => { retained.add(root); });
+        void result.then(() => { active.delete(entry); }, () => { active.delete(entry); retained.add(root); });
       }
       return result;
     } };

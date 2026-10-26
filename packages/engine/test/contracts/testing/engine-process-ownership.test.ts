@@ -5,12 +5,48 @@ import { childState } from "@petrina/platform/process-tree";
 import { rejectionOf } from "@petrina/test-support/rejections";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { engineProcessCases, tempDir, type EngineProcess } from "../../support.js";
+import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 
 const cases = engineProcessCases();
 afterEach(() => cases.close());
 
 const hello = { type: "ready", owned: true, url: "http://localhost/fixture", token: "private-fixture" } as const;
 const interactive = ["-e", `console.log(${JSON.stringify(JSON.stringify(hello))}); await Bun.stdin.text();`];
+
+for (const failure of [new Error("finished process case failed"), undefined]) it("retains a failed finished process root without replaying its error into the next case: " + String(failure), async () => {
+  const root = tempDir("petrina-process-retained-case-");
+  let failed: ReturnType<typeof cases.open> | undefined;
+  const running = cases.use(root, async owners => { failed = owners; throw failure; });
+  const finish = async () => {
+    const settled = await Promise.allSettled([cases.close(), running]);
+    if (settled[0]!.status === "rejected") throw settled[0]!.reason;
+    // No app or command starts in this control; the failed body and close are terminal.
+    if (failed) removeFixtureRoot(root);
+  };
+  await setupWithCleanup(async () => {
+    const error = await rejectionOf(running);
+    expect(error).toBeInstanceOf(AggregateError);
+    if (!(error instanceof AggregateError)) throw new Error("The failed case lost its strict cleanup rejection");
+    expect(error.errors[0]).toBe(failure);
+    const originalClose = failed!.close();
+    expect(failed!.close()).toBe(originalClose);
+    expect(await rejectionOf(originalClose)).toBe(error.errors[1]);
+    expect(existsSync(root)).toBe(true);
+    expect(cases.retained.has(root)).toBe(true);
+    await cases.close();
+    let admitted = 0;
+    expect(await rejectionOf(failed!.prepare(async () => { admitted++; }))).toBeInstanceOf(Error);
+    expect(admitted).toBe(0);
+    const next = tempDir("petrina-process-independent-next-");
+    expect(await cases.use(next, async () => next)).toBe(next);
+    await cases.close();
+    expect(existsSync(next)).toBe(false);
+    expect(cases.retained.has(next)).toBe(false);
+    expect(existsSync(root)).toBe(true);
+    expect(cases.retained.has(root)).toBe(true);
+  }, finish);
+  await finish();
+});
 
 it("closes admission synchronously and never starts another app or operation after case cleanup", async () => {
   const root = tempDir("petrina-process-closed-"), owners = cases.open(root);

@@ -82,11 +82,20 @@ export async function makeWorld(name: string, options: { version?: string; addre
     },
     editSaved: (change) => {
       const store = new Store(join(data, "petrina.db"));
-      const loaded = store.load()!;
-      const state = { ...loaded, tasks: loaded.tasks.map(displayTask) };
-      change(state);
-      store.save(state);
-      store.close();
+      let failure: { error: unknown } | undefined;
+      try {
+        const loaded = store.load()!;
+        const state = { ...loaded, tasks: loaded.tasks.map(displayTask) };
+        change(state);
+        store.save(state);
+      } catch (error) { failure = { error }; throw error; }
+      finally {
+        try { store.close(); }
+        catch (error) {
+          if (failure) throw new AggregateError([failure.error, error], "Saved fixture edit failed and its Store could not be closed");
+          throw error;
+        }
+      }
     },
   };
 }
