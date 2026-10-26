@@ -1,3 +1,4 @@
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { executionFor } from "@petrina/orchestrator";
 import * as gitOps from "@petrina/repositories/git";
@@ -27,7 +28,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
     };
     try {
       await engine.waitUntilReady(); engine.setPoolPaused(false);
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "pull-request", false);
       const a = await queuePreparedDelivery(engine, { productId, title: "Task A", description: "A greeting file. [quick]" });
       b = await queuePreparedDelivery(engine, { productId, title: "Task B", description: "A greeting file. [quick]" });

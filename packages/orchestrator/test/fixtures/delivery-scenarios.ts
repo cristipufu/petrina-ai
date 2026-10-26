@@ -6,6 +6,7 @@ import { fixture as checkSetupFixture, reply as checkReply } from "./check-setup
 import { deliveryWorkflowFixture } from "./delivery-workflow.js";
 import { needsReleaseManager } from "../../src/delivery-workflow.js";
 import { admissionFixture } from "./agent-workflow.js";
+import { WaitSourceRefresh, type WaitSourceRefreshEffects, type WaitSourceRefreshHost } from "../../src/wait-source-refresh.js";
 
 /** Explicit external observations. All delivery decisions run in their production owners. */
 export function deliveryScenario(products = ["shop"], mode: "local" | "pull-request" | "release" = "local") {
@@ -48,10 +49,20 @@ export function deliveryScenario(products = ["shop"], mode: "local" | "pull-requ
     committedCode: async () => ({ versions: versions(), changes: versions() }), invalidateAcceptance: async () => undefined, versions: async () => versions(), acceptanceVersion: async () => "scripted:accepted",
   });
   const versions = () => Object.fromEntries(scopesFor(task).map(({ work }) => [work.productId, `scripted:contents:${work.productId}`]));
+  for (const bound of scopesFor(task)) bound.work.worktree = `scripted:workspace:${bound.work.productId}`;
+  const refreshHost: WaitSourceRefreshHost = {
+    due: () => true, stepStarted: () => false, checkpoint: f.host.checkpoint,
+    note: (_task, _tone, text) => { notes.push(text); }, aborted: f.failures.aborted,
+  };
+  const refreshEffects: WaitSourceRefreshEffects = {
+    clean: async () => true, clearUnpublishedVersion: (bound, preserve) => f.workflow.clearUnpublishedVersion(bound, preserve),
+    update: (bound, signal) => f.effects.upToDate(bound, signal),
+  };
+  const refresh = new WaitSourceRefresh(refreshHost, refreshEffects);
   const approve = () => {
     for (const bound of scopesFor(task)) {
       const observation = f.observations.get(bound.work)!;
-      bound.work.approvedSha = observation.head; bound.work.approvedPatch = observation.candidate;
+      bound.work.approvedSha = observation.head; bound.work.approvedPatch = observation.patch;
       bound.work.approvedFor = { by: "coordinator", mode: bound.work.delivery, destination: f.host.destination(bound) };
     }
   };
@@ -69,7 +80,7 @@ export function deliveryScenario(products = ["shop"], mode: "local" | "pull-requ
       report: { summary: "Observed the scripted greeting", checks: [{ text, result: "pass", evidence: "The scripted greeting appeared in both products", productIds: products }], proofAnswers: [], learnings: [] } });
   };
   return { ...f, task, scope, declarations, gates, notes, restores, checkpoint, versions, approve, hold,
-    recordAcceptance,
+    recordAcceptance, refresh, refreshHost, refreshEffects,
     release: () => changeRuntimeWait(task, { after: [], reason: "The prerequisite is available" }, f.now()),
     signal: new AbortController().signal,
   };

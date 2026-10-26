@@ -283,20 +283,8 @@ export class Shipping {
     }
     // The notes cover everything the release ships: every commit since the previous release, this task's included.
     const preview = repository.releasePreview;
-    if (task.repositories && preview && (preview.start !== start || preview.version !== shipping.version || preview.tag !== shipping.tag || preview.after !== shipping.after)) {
-      await this.backToWork(scope);
-      delete repository.releasePreview;
-      this.clearApproval(scope);
-      delete repository.shipping;
-      // The delivery gate can pause before it runs again. Restore every unpublished product
-      // now, while the previous approval still describes the original work.
-      await this.clearUnpublishedPreparations(task);
-      const gate = task.plan!.stages.findIndex((entry) => entry.gate === "delivery");
-      task.stageIndex = gate;
-      this.k.log(scope, "warn", "The release preview changed, so shared delivery approval is needed again.");
-      this.k.commitNow();
-      return "continue";
-    }
+    const changedPreview = this.workflow.rejectChangedReleasePreview(scope, start, shipping, preview);
+    if (changedPreview) return changedPreview;
     const log = await this.releases.sincePreviousRelease(scope, signal);
     this.beforePublishing(scope);
     const profileId = stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE;

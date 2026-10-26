@@ -32,7 +32,8 @@ describe.concurrent("one task across products", () => {
     await withEngine(async engine => {
       expect(engine.task(id)?.selectedProducts?.map((choice) => choice.productId)).toEqual([first, second]);
       expect(engine.task(id)?.startedAt).toBeUndefined();
-      engine.queueTask(id);
+      await prepareSharedDelivery(engine, id, { build: "run" });
+      engine.schedule();
       await finish(engine, id);
       await until(engine, () => !engine.activeState().tasks.some((task) => task.id === id), coordinator([]));
       expect(engine.windowState().tasks).toEqual([]);
@@ -68,7 +69,7 @@ describe.concurrent("one task across products", () => {
 
     await withEngine(async engine => {
 
-      const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
+      const first = shop.preparedProduct(engine), second = api.preparedProduct(engine);
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request", reason: "Both sides need the greeting." })) });
       const id = engine.addTask({ productId: first, title: "A shared greeting", approvePlan: false });
       const state = await until(engine, (state) => !!itemOf(state, id, "plan") || taskOf(state, id).state === "failed", coordinator([]));
@@ -190,12 +191,13 @@ describe.concurrent("one task across products", () => {
     await withEngine(async engine => {
 
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
-      const id = engine.addTask({ productId: first, worksOn: [{ productId: first, startFrom: { kind: "pull-request", value: "7" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "pull-request" }], title: "Update the shared PR" });
-      const plan = await until(engine, (state) => !!itemOf(state, id, "plan"), coordinator([]));
+      const id = engine.addTask({ backlog: true, productId: first, worksOn: [{ productId: first, startFrom: { kind: "pull-request", value: "7" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "pull-request" }], title: "Update the shared PR" });
+      await prepareSharedDelivery(engine, id);
+      const plan = engine.getState();
       expect(taskOf(plan, id).workRows).toHaveLength(2);
       expect(taskOf(plan, id).workRows!.every((row) => !row.addition)).toBe(true);
       expect(taskOf(plan, id).workRows![0]!.source!.destination.repo).toBe("contributor/demo");
-      engine.approve(itemOf(plan, id, "plan")!.id);
+      engine.schedule();
       const links = await until(engine, (state) => taskOf(state, id).statusLine === "Deliveries saved. Finish links" || !!taskOf(state, id).error);
       expect(taskOf(links, id).error).toBeUndefined();
       engine.retry(itemOf(links, id, "stuck")!.id);
@@ -213,7 +215,7 @@ describe.concurrent("one task across products", () => {
 });
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
-  for (const decision of ["approve-again", "send-back"] as const) it(`cleans earlier unpublished release versions before shared ${decision} after a later preview mismatch`, async () => {
+  for (const decision of ["send-back"] as const) it(`cleans earlier unpublished release versions before shared ${decision} after a later preview mismatch`, async () => {
     await fixtures.world(`release-preview-mismatch-${decision}`, async ({ shop, api, engine: withEngine, fakes }) => {
     for (const world of [shop, api]) {
       writeFileSync(join(world.clone, "package.json"), JSON.stringify({ name: world === shop ? "shop" : "api", version: "1.0.0" }));

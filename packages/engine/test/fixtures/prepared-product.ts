@@ -11,6 +11,12 @@ export type PreparedProduct = Pick<Product, "id" | "name" | "repo" | "tone"> & {
   approveDelivery: boolean;
 };
 
+/** The declared acme/demo NativeWorld catalog recipe; data only, never discovery or registration. */
+export function acmeDemoProduct(path: string): PreparedProduct {
+  return { id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path,
+    remote: "https://github.com/acme/demo.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true };
+}
+
 /** Known private repository recipes skip discovery; identity choices stay explicit at each fixture owner. */
 export function installPreparedProduct(engine: Engine, input: PreparedProduct): string {
   const path = fixtureFiles.canonical(input.path);

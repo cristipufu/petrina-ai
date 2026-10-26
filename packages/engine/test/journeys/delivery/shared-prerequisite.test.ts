@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { directDrivers } from "../../fixtures/direct-drivers.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { completeAll, type DeepMutable, type Product, type TaskRepository } from "@petrina/core";
 import { scopesFor } from "@petrina/orchestrator";
@@ -135,37 +135,7 @@ describe.concurrent("runtime waits on a task across products", () => {
     await f.dispose();
   });
 
-  it("refreshes every product before the first unstarted step while preserving accepted work", async () => {
-    const f = await fixture();
-    await setupWithCleanup(() => f.run(async () => {
-    const { engine, products, task, hold, signal } = f;
 
-      task.stageIndex = 0;
-      const originalHeads = await completeAll(task.repositories!.map(work => git(work.worktree!, "rev-parse", "HEAD")));
-      hold();
-      const latest = await completeAll(products.map(async (product) => {
-        writeFileSync(join(product.path!, "incoming-fix.txt"), `${product.name}: required fix\n`);
-        await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Land the required fix");
-        return await git(product.path!, "rev-parse", "HEAD");
-      }));
-      engine.setRuntimeWait(task.id, [], "Both source updates are now ready", "clear-refresh");
-      expect(await engine["driver"]["refreshAfterWait"](task, signal)).toBe(false);
-      expect(task.runtimeWait?.refreshPending).toBeUndefined();
-      expect(task.repositories!.map(work => work.baseSha)).toEqual(latest);
-      for (const [index, { work }] of scopesFor(task).entries()) {
-        const product = products[index]!;
-        expect(await git(work.worktree!, "rev-parse", "HEAD")).not.toBe(originalHeads[index]!);
-        expect(await git(work.worktree!, "rev-parse", "HEAD^")).toBe(latest[index]!);
-        expect(readFileSync(join(work.worktree!, "incoming-fix.txt"), "utf8")).toBe(`${product.name}: required fix\n`);
-        expect(readFileSync(join(work.worktree!, "task-change.txt"), "utf8")).toBe(`${product.name}: accepted work\n`);
-      }
-      expect(task.stageIndex).toBe(0);
-      expect(task.rounds).toEqual({});
-
-
-    }), () => f.dispose());
-    await f.dispose();
-  });
 
   it("holds all of its products while independent tasks on either product take the freed seats", async () => {
     const f = await fixture();

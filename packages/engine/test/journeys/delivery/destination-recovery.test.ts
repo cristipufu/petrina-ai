@@ -1,3 +1,4 @@
+import { installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expect, it } from "bun:test";
 import { directDrivers } from "../../fixtures/direct-drivers.js";
@@ -48,8 +49,8 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
     await engine.waitUntilReady(); engine.setPoolPaused(false);
     const owners: { id: string; path: string; name: string }[] = [];
     for (const name of products) {
-      const path = await makeProduct(join(root, name)); await git(path, "remote", "remove", "origin");
-      const id = await engine.addProduct(path, name.toUpperCase());
+      const path = await makeProduct(join(root, name), { origin: "none" });
+      const id = installPreparedProduct(engine, { id: ["clone", "clone-2", "clone-3"][owners.length]!, name: name.toUpperCase(), repo: "local/clone", tone: (["blue", "green", "orange"] as const)[owners.length]!, path, defaultBranch: "main", delivery: "local", approveDelivery: true });
       engine.setProductChecks(id, [{ name: "Tests", command: commandInputText([process.execPath, check, log, root, name]) }]);
       owners.push({ id, path, name });
     }

@@ -7,7 +7,7 @@ import { Fakes, makeWorld, tempDir, type World } from "../support.js";
 import { closeDirectDrivers, directDrivers } from "./direct-drivers.js";
 import { sharedAgents } from "./shared-agents.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
-import { installPreparedProduct } from "./prepared-product.js";
+import { acmeDemoProduct, installPreparedProduct } from "./prepared-product.js";
 
 type SharedWorld = Omit<World, "start"> & {
   /** Explicit known fixture metadata; the workflow still performs every native source/check/delivery operation. */
@@ -83,10 +83,7 @@ export function sharedWorldFixtures() {
   const visible = ({ shop: rawShop, api: rawApi, remotes, sourceRemotes }: Prepared): SharedProducts => {
     const { start: _shopStart, ...shop } = rawShop, { start: _apiStart, ...api } = rawApi;
     return {
-      shop: { ...shop, preparedProduct: (engine: Engine) => installPreparedProduct(engine, {
-        id: "demo", name: "Clone", repo: "acme/demo", tone: "blue", path: shop.clone,
-        remote: "https://github.com/acme/demo.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true,
-      }) },
+      shop: { ...shop, preparedProduct: (engine: Engine) => installPreparedProduct(engine, acmeDemoProduct(shop.clone)) },
       api: { ...api, preparedProduct: (engine: Engine) => installPreparedProduct(engine, {
         id: "api", name: "API", repo: "acme/api", tone: "green", path: api.clone,
         remote: "https://github.com/acme/api.git", defaultBranch: "main", delivery: "pull-request", approveDelivery: true,

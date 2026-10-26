@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { assignedProducts, companionPreview, companionText, involvesProduct, landingState, repairOrder, taskProductIds, withoutProduct } from "../../../src/repositories.js";
 
 import type { Task, TaskRepository } from "../../../src/model.js";
+import { workSummary } from "../../../src/source.js";
 import { productHistory } from "../../../src/products.js";
 
 const original = { ...workflowFixture().task, selectedProducts: undefined };
@@ -103,4 +104,33 @@ describe("shared task ownership and landing", () => {
     expect(productHistory([open], "first")).toEqual({ unfinished: 1, finished: 0 });
     expect(taskProductIds({ ...task, repositories: task.repositories!.map((entry) => ({ ...entry, removed: entry.productId === "first" })) })).toEqual(["lead", "last"]);
   });
+});
+
+for (const mode of ["local", "release", "mixed", "unchanged-pr"] as const)
+it(`omits pull-request publication wording when ${mode} deliveries publish no pull requests`, () => {
+  const products = ["shop", "api", "third"].map(id => ({ id, name: id, repo: `acme/${id}` }));
+  const works: TaskRepository[] = products.slice(0, mode === "unchanged-pr" ? 3 : 2).map((product, index) => {
+    const delivery = mode === "unchanged-pr" && index === 2 ? "pull-request" : mode === "release" || mode === "mixed" && index === 1 ? "release" : "local";
+    return { productId: product.id, delivery, completedStages: [], ...(delivery === "pull-request" ? { nothingToPublish: true } : {}),
+      source: { product, start: { kind: "default", branch: "main" }, destination: { kind: delivery === "pull-request" ? "new-pr" : delivery === "release" ? "release" : "branch", mode: delivery, repo: product.repo, branch: "main" }, confirmed: true } };
+  });
+  const body = companionPreview(works);
+  for (const work of works) expect(workSummary(work.source!)).toContain(work.source!.product.repo);
+  // The Engine gate's retained composition case checks its single Inbox item/kind and
+  // complete product summary; this rule owns only the companion text appended there.
+  expect(body).toContain("Part of a change across:");
+  for (const work of works.filter(work => !work.nothingToPublish && work.delivery !== "local")) expect(body).toContain(work.source!.product.repo);
+  expect(body).not.toContain("every companion pull request"); expect(body).not.toContain("Pending links");
+});
+
+for (const mode of ["local", "release"] as const)
+it(`previews companion wording on an existing pull request beside a ${mode} delivery`, () => {
+  const works: TaskRepository[] = ["shop", "api"].map((id, index) => {
+    const product = { id, name: id, repo: `acme/${id}` };
+    return { productId: id, delivery: index ? mode : "local", completedStages: [], source: { product,
+      start: index ? { kind: "default", branch: "main" } : { kind: "pull-request", number: 7, url: `https://github.com/${product.repo}/pull/7`, headRepo: product.repo, branch: "feature" },
+      destination: { kind: index ? mode === "release" ? "release" : "branch" : "update-pr", mode: index ? mode : "local", repo: product.repo, branch: index ? "main" : "feature" }, confirmed: true } };
+  });
+  const body = companionPreview(works);
+  expect(body).toContain("Part of a change across:"); expect(body).toContain("visible to anyone who can read it"); expect(body).toContain("Pending links will become");
 });

@@ -1,3 +1,4 @@
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,7 +49,7 @@ appendFileSync(process.argv[2], JSON.stringify({ sha, fix: existsSync("required-
 async function prepareRelease(world: NativeWorld, first: Engine, notesHold: string, log: string, check: string) {
   let engine = first;
   await engine.waitUntilReady();
-  const productId = await engine.addProduct(world.clone);
+  const productId = installPreparedProduct(engine, acmeDemoProduct(world.clone));
   const id = engine.addTask({ productId, title: "Deliver the approved improvement", delivery: "release", backlog: true });
   const prerequisite = engine.addTask({ productId, title: "Land the required fix", backlog: true });
   let task = engine.task(id)!;

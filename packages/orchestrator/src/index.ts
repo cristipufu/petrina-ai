@@ -80,3 +80,6 @@ export * from "./ports/delivery-checkpoint.js";
 
 export { CheckRepairs } from "./check-repairs.js";
 export type { CheckRepairHost } from "./ports/check-repairs.js";
+
+export { WaitSourceRefresh } from "./wait-source-refresh.js";
+export type { WaitSourceRefreshHost, WaitSourceRefreshEffects } from "./wait-source-refresh.js";

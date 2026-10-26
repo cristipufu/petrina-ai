@@ -1,4 +1,4 @@
-import { DeliveryCheckpoint, AgentWorkflow, type AgentAdmissionCatalog, type AgentAdmissionReadiness, type AgentAdmissionErrors, type WorkspacePreparation, type AcceptancePreparation, type DeliveryCheckpointPreparation } from "@petrina/orchestrator";
+import { WaitSourceRefresh, DeliveryCheckpoint, AgentWorkflow, type AgentAdmissionCatalog, type AgentAdmissionReadiness, type AgentAdmissionErrors, type WorkspacePreparation, type AcceptancePreparation, type DeliveryCheckpointPreparation } from "@petrina/orchestrator";
 import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
@@ -6,9 +6,9 @@ import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orches
 import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
 import { shipsUnasked } from "@petrina/core";
 import { join } from "node:path";
-import { runtimeWaitHolds, withdrawAsks, type Id, type InboxItem } from "@petrina/core";
+import { withdrawAsks, type Id, type InboxItem } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
-import { Kernel, Aborted, type MTask, type MStage, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired, stepKey } from "./kernel.js";
+import { Kernel, Aborted, type MTask, type MStage, PLANNER_PROFILE, ScreenWait, SourceRefreshRequired } from "./kernel.js";
 import { WaitingForUsage, WaitingForCapacity, waitingFor } from "./usage.js";
 import type { Sources } from "./sources.js";
 import type { Planning } from "./planning.js";
@@ -25,6 +25,7 @@ import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 export class Driver {
   readonly workflow: AgentWorkflow;
   private readonly checkpoint: DeliveryCheckpoint;
+  private readonly waitRefresh: WaitSourceRefresh;
   constructor(
     private readonly k: Kernel,
     planning: Planning,
@@ -39,6 +40,14 @@ export class Driver {
     private readonly connections: Connections,
     private readonly sources: Sources,
   ) {
+    this.waitRefresh = new WaitSourceRefresh({
+      due: task => k.taskSourceRefreshDue(task), stepStarted: task => k.taskStepStarted(task),
+      checkpoint: () => k.commitNow(), note: (task, tone, text) => k.log(task, tone, text), aborted: () => new Aborted(),
+    }, {
+      clean: scope => git.isClean(scope.work.worktree!),
+      clearUnpublishedVersion: (scope, preserve) => shipping.clearUnpublishedVersion(scope, preserve),
+      update: (scope, signal) => updates.upToDate(scope, signal, true, true),
+    });
     const ownership = { drivers: k.drivers, settling: k.settling, pendingAdmissions: k.pendingAgentAdmissions, groups: k.screenGroups };
     const catalog: AgentAdmissionCatalog = {
       profile: id => k.profile(id), role: (id, task) => k.role(id, task), onUsable: id => k.onUsable(id),
@@ -196,54 +205,8 @@ export class Driver {
   }
 
   /** Reuse ordinary source updates and evidence gates; waiting itself changes no conversations or rounds. */
-  private async refreshAfterWait(task: MTask, signal: AbortSignal): Promise<boolean> {
-    const wait = task.runtimeWait;
-    if (!wait?.refreshPending || runtimeWaitHolds(task)) return false;
-    const scopes = scopesFor(task);
-    const own = executionFor(task).work;
-    const recovery = own.editAttempt;
-    if (recovery?.failed) {
-      if (recovery.step !== stepKey(task) || !own.worktree || await git.isClean(own.worktree)) {
-        delete own.editAttempt;
-        this.k.commitNow();
-      }
-      if (signal.aborted) throw new Aborted();
-    }
-    if (!this.k.taskSourceRefreshDue(task)) return false;
-    if (!scopes.length || scopes.some(({ work }) => !work.worktree && !(task.repositories && (work.pr || work.release || work.landed)))) return false;
-    // Persist each owner's unfinished work before I/O. A port keeps its own version until its
-    // Builder finishes, while every companion still owes the strict source check now.
-    wait.refreshProducts ??= scopes.map(({ work }) => work.productId);
-    this.k.commitNow();
-    // Preparation with no admitted reviewer is disposable; its round number and conversations are kept.
-    if (task.hunt && !this.k.taskStepStarted(task)) delete task.hunt;
-    let conflict = false;
-    for (const scope of scopes) {
-      if (signal.aborted) throw new Aborted();
-      const { work } = scope;
-      if (!wait.refreshProducts.includes(work.productId)) continue;
-      const delivered = task.repositories && (work.pr || work.release || work.landed);
-      // Existing ports and admitted publishing retain their exact saved version and recovery rules.
-      if (!delivered && (work.updating || work.shipping?.step || work.shipping?.pushed)) continue;
-      if (!delivered) {
-        // A prepared delivery is bound to its old checked commit. Restore any release version
-        // before folding, then let ordinary delivery preparation recheck and approve the candidate.
-        await this.shipping.clearUnpublishedVersion(scope, true);
-        const result = await this.updates.upToDate(scope, signal, true, true);
-        if (signal.aborted) throw new Aborted();
-        if (result === "conflict") { conflict = true; continue; }
-      }
-      wait.refreshProducts = wait.refreshProducts.filter(id => id !== work.productId);
-      this.k.commitNow();
-    }
-    if (!wait.refreshProducts.length) {
-      delete wait.refreshPending;
-      delete wait.refreshProducts;
-      delete wait.refreshAfterStep;
-      this.k.log(task, "milestone", "The prerequisite wait ended; source checks are complete for the remaining work");
-      this.k.commitNow();
-    }
-    return conflict;
+  private refreshAfterWait(task: MTask, signal: AbortSignal): Promise<boolean> {
+    return this.waitRefresh.run(task, signal);
   }
 
   /** An interrupted commit hook left the working copy detached. The task's commit is still on its branch. */

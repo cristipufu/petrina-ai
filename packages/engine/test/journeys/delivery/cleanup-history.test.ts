@@ -1,3 +1,4 @@
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 
 
 
@@ -19,7 +20,7 @@ describe.concurrent("Finished tasks free their working copies", () => {
 it("saves local delivery and all history before removing packages and build output; reading after restart creates nothing", async () => {
     await world("local", async w => {
       const { id, task, turns, moments, usage } = await w.engine(async engine => {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "local", true);
         const other = join(w.data, "worktrees", productId, "other");
         await ensureWorktree(w.clone, other, "petrina/other", "main");

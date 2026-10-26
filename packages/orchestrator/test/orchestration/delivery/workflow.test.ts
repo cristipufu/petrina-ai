@@ -93,7 +93,7 @@ it("refreshes every unpublished shared preparation after yielding its turn for a
   expect(f.published).toEqual([]);
   expect(f.admission.entries()).toEqual([]);
   task.held = false; task.state = "running";
-  for (const { work } of scopesFor(task)) f.observations.set(work, { head: `new-head-${work.productId}`, candidate: `new-candidate-${work.productId}` });
+  for (const { work } of scopesFor(task)) f.observations.set(work, { head: `new-head-${work.productId}`, candidate: `new-candidate-${work.productId}`, patch: `new-candidate-${work.productId}` });
   expect(await f.run(task)).toBe("stop");
   expect(f.published.map(row => row.candidate)).toEqual(["new-candidate-a", "new-candidate-b"]);
   expect(f.events.filter(value => value.startsWith("prepare:"))).toEqual(["prepare:shared:a", "prepare:shared:b", "prepare:shared:a", "prepare:shared:b"]);

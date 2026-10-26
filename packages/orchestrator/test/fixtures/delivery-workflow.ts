@@ -15,7 +15,7 @@ export function deliveryWorkflowFixture() {
   const events: string[] = [], checkpoints: RuntimeTask[][] = [];
   const decisions: { taskId: string; kind: "stuck" | "shipping"; title: string; productId?: string }[] = [];
   const published: { task: string; product: string; candidate: string }[] = [];
-  const observations = new WeakMap<RepositoryWork, { head: string; candidate: string }>();
+  const observations = new WeakMap<RepositoryWork, { head: string; candidate: string; patch: string }>();
   const hooks: Partial<DeliveryPhaseEffects> = {};
   const counts = { delivered: 0, done: 0, scheduled: 0, companions: 0 };
   let clock = 200, sequence = 0;
@@ -36,7 +36,7 @@ export function deliveryWorkflowFixture() {
     needGitHub(task) { events.push(`login:${task.id}`); return hooks.needGitHub?.(task) ?? Promise.resolve(); },
     readyToShip(scope, signal) { phase("ready", scope); return hooks.readyToShip?.(scope, signal) ?? Promise.resolve("ready"); },
     head(scope) { phase("head", scope); return hooks.head?.(scope) ?? Promise.resolve(observed(scope.work).head); },
-    patch(scope, ref) { phase("patch", scope); return hooks.patch?.(scope, ref) ?? Promise.resolve(observed(scope.work).candidate); },
+    patch(scope, ref) { phase("patch", scope); return hooks.patch?.(scope, ref) ?? Promise.resolve(observed(scope.work).patch); },
     upToDate(scope, signal) { phase("update", scope); return hooks.upToDate?.(scope, signal) ?? Promise.resolve("current"); },
     checkOrder(taskId) { return hooks.checkOrder ? hooks.checkOrder(taskId) : live.orders.get(taskId); },
     checksBeforeShipping(scope, signal, preparation) { phase("checks", scope); return hooks.checksBeforeShipping?.(scope, signal, preparation) ?? Promise.resolve("passed"); },
@@ -108,7 +108,7 @@ export function deliveryWorkflowFixture() {
       work.delivery = mode; work.source!.destination.mode = mode;
       work.source!.destination.kind = mode === "local" ? "branch" : mode === "release" ? "release" : "new-pr";
       work.baseSha = `supplied-base-${++sequence}`;
-      observations.set(work, { head: `supplied-head-${sequence}`, candidate: `supplied-candidate-${sequence}` });
+      observations.set(work, { head: `supplied-head-${sequence}`, candidate: `supplied-candidate-${sequence}`, patch: `supplied-candidate-${sequence}` });
     }
     return task;
   };
@@ -116,7 +116,7 @@ export function deliveryWorkflowFixture() {
     live.tasks.set(task.id, task);
     live.host.destination = scope => `${scope.work.productId}#main`;
     live.host.branch = () => "main";
-    for (const { work } of scopesFor(task)) observations.set(work, { head: "scripted:head", candidate: "scripted:candidate" });
+    for (const { work } of scopesFor(task)) observations.set(work, { head: "scripted:head", candidate: "scripted:candidate", patch: "scripted:candidate" });
   };
   return { ...live, admissionHost: live.host, register, workflow, effects, host, failures, hooks, events, checkpoints, decisions, published, observations, counts, add, prepareObservation,
     now: () => clock, advance: (ms: number) => { clock += ms; },

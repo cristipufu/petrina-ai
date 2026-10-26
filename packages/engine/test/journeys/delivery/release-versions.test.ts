@@ -1,3 +1,4 @@
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 // Full release/publication races retain real planning, review and delivery.
 import { afterAll, describe, expect, it } from "bun:test";
 import { releaseVersionFixtures } from "../../fixtures/release-versions.js";
@@ -65,7 +66,7 @@ describe.concurrent("Release versions on real deliveries", () => {
 
   it("brings local delivery up to date when main moved after the delivery check, and moves main forward on top of it", () => world("moved-local", {}, async ({ world: w, engine }) => {
     await engine(async engine => {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));

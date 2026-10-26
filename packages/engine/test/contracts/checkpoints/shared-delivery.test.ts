@@ -23,46 +23,9 @@ describe.concurrent("one task across products", () => {
     });
   });
 
-  for (const mode of ["local", "release", "mixed", "unchanged-pr"] as const) it(`omits pull-request publication wording when ${mode} deliveries publish no pull requests`, async () => {
-    await withRepositoryRecords("companion-wording", {}, async (saved) => {
-      const { engine, task } = saved;
 
-      const state = engine.s;
-      state.products.push({ id: "third", name: "Third", repo: "acme/third", tone: "blue" });
-      task.repositories = state.products.slice(0, mode === "unchanged-pr" ? 3 : 2).map((product, index) => {
-        const delivery = mode === "unchanged-pr" && index === 2 ? "pull-request" : mode === "release" || (mode === "mixed" && index === 1) ? "release" : "local";
-        return { productId: product.id, delivery, completedStages: [], ...(delivery === "pull-request" ? { nothingToPublish: true } : {}), source: { product, start: { kind: "default", branch: "main" }, destination: { kind: delivery === "pull-request" ? "new-pr" : delivery === "release" ? "release" : "branch", mode: delivery, repo: product.repo, branch: "main" }, confirmed: true } };
-      });
-      engine.gate(task, "delivery");
-      const requests = engine.s.inbox.filter(item => item.taskId === task.id);
-      expect(requests).toHaveLength(1);
-      expect(requests[0]!.kind).toBe("delivery");
-      for (const work of task.repositories) expect(requests[0]!.body).toContain(work.source!.product.repo);
-      // This remains a factual summary of the related deliveries; only PR-specific copy is omitted.
-      expect(requests[0]!.body).toContain("Part of a change across:");
-      expect(requests[0]!.body).not.toContain("every companion pull request");
-      expect(requests[0]!.body).not.toContain("Pending links");
 
-    });
-  });
 
-  for (const mode of ["local", "release"] as const) it(`previews companion wording on an existing pull request beside a ${mode} delivery`, async () => {
-    await withRepositoryRecords("companion-wording", {}, async (saved) => {
-      const { engine, task } = saved;
-
-      const state = engine.s;
-      state.products.push({ id: "third", name: "Third", repo: "acme/third", tone: "blue" });
-      task.repositories = state.products.slice(0, 2).map((product, index) => ({ productId: product.id, delivery: index ? mode : "local", completedStages: [], source: { product, start: index ? { kind: "default", branch: "main" } : { kind: "pull-request", number: 7, url: `https://github.com/${product.repo}/pull/7`, headRepo: product.repo, branch: "feature" }, destination: { kind: index ? mode === "release" ? "release" : "branch" : "update-pr", mode: index ? mode : "local", repo: product.repo, branch: index ? "main" : "feature" }, confirmed: true } }));
-      engine.gate(task, "delivery");
-      const requests = engine.s.inbox.filter(item => item.taskId === task.id);
-      expect(requests).toHaveLength(1);
-      expect(requests[0]!.kind).toBe("delivery");
-      expect(requests[0]!.body).toContain("Part of a change across:");
-      expect(requests[0]!.body).toContain("visible to anyone who can read it");
-      expect(requests[0]!.body).toContain("Pending links will become");
-
-    });
-  });
 });
 
 

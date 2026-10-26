@@ -1,3 +1,5 @@
+import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { legacyDeliveryAgents } from "../../fixtures/legacy-delivery-agents.js";
 // A delivery that the Petrina before this version was in the middle of, when its delivery agent still
 // published with a GitHub login: after the update Petrina never acts on it by itself. It asks the
@@ -30,9 +32,9 @@ async function interruptedBeforeUpdate(
   mode: DeliveryMode,
   options: { oldAgent?: (task: Task, head: string) => unknown; state?: Task["state"]; oldItem?: boolean } = {},
 ): Promise<{ taskId: string; head: string; calls: number }> {
-  const productId = await first.addProduct(w.clone);
+  const productId = installPreparedProduct(first, acmeDemoProduct(w.clone));
   first.setProductDelivery(productId, mode, true);
-  const taskId = first.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
+  const taskId = await queuePreparedDelivery(first, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
   const task = taskOf(await until(first, (state) => itemOf(state, taskId, "delivery") !== undefined, coordinator(["plan", "design"])), taskId);
   await first.shutdown();
   const head = await git(task.worktree!, "rev-parse", "HEAD");

@@ -60,7 +60,7 @@ it("refreshes every unpublished shared preparation after yielding its turn for a
   expect(scopesFor(task).every(({ work }) => !work.shipping?.prepared)).toBe(true);
   expect(f.published).toEqual([]);
   expect(await f.run(second)).toBe("stop"); f.admission.finishDeliveryTurn(second.id);
-  for (const bound of scopesFor(task)) f.observations.set(bound.work, { head: `scripted:new-head:${bound.work.productId}`, candidate: `scripted:after-question:${bound.work.productId}` });
+  for (const bound of scopesFor(task)) f.observations.set(bound.work, { head: `scripted:new-head:${bound.work.productId}`, candidate: `scripted:after-question:${bound.work.productId}`, patch: `scripted:patch:${bound.work.productId}` });
   expect(await f.run(task)).toBe("stop");
   expect(f.published.map(row => [row.task, row.candidate])).toEqual([["second", "supplied-candidate-3"], ["shared", "scripted:after-question:a"], ["shared", "scripted:after-question:b"]]);
 });

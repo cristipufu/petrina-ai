@@ -100,6 +100,26 @@ export class DeliveryWorkflow {
     return "ready";
   }
 
+  /** An unchanged preview stays synchronous; changed preparation restores every owner before returning. */
+  rejectChangedReleasePreview(scope: RepositoryContext, start: string, shipping: NonNullable<RepositoryWork["shipping"]>, preview: RepositoryWork["releasePreview"]): Promise<"continue"> | undefined {
+    const { task, work: repository } = scope;
+    if (!(task.repositories && preview && (preview.start !== start || preview.version !== shipping.version || preview.tag !== shipping.tag || preview.after !== shipping.after))) return undefined;
+    return (async (): Promise<"continue"> => {
+      await this.effects.backToWork(scope);
+      delete repository.releasePreview;
+      this.clearApproval(scope);
+      delete repository.shipping;
+      // The delivery gate can pause before it runs again. Restore every unpublished product
+      // now, while the previous approval still describes the original work.
+      await this.clearUnpublishedPreparations(task);
+      const gate = task.plan!.stages.findIndex((entry) => entry.gate === "delivery");
+      task.stageIndex = gate;
+      this.host.noteScope(scope, "warn", "The release preview changed, so shared delivery approval is needed again.");
+      this.host.checkpoint();
+      return "continue";
+    })();
+  }
+
   async preparationFailed(scope: RepositoryContext, summary: string, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
     const shipping = repository.shipping!;

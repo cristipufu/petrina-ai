@@ -1,3 +1,4 @@
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
 // Petrina publishes deliveries itself: it pushes, opens the pull request with the builder's description, sets a
 // release's version and creates the release, or moves main forward, checked on GitHub or in the main copy before
@@ -48,7 +49,7 @@ const checkedOut = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g,
 async function busyDelivery(w: NativeWorld, engine: Engine, delivery: DeliveryMode) {
   try {
     engine.setPoolLimit(1);
-    const productId = await engine.addProduct(w.clone);
+    const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
     engine.setProductDelivery(productId, delivery, true);
     const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
     const state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));
@@ -124,7 +125,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     });
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       const product = engine.getState().products.find((entry) => entry.id === productId)!;
       expect(product.repo).toBe(REPO);
       expect(product.remote).toBe("https://github.com/acme/demo.git");
@@ -185,7 +186,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     w.setScript((script) => (script.description = ""));
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "pull-request", false);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file." });
       const task = taskOf(await finish(engine, taskId), taskId);
@@ -211,7 +212,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await landed(w, "Fix the login loop", "Signing in on Safari works again");
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "release", false);
       (engine.getState().products.find((entry) => entry.id === productId) as { releaseBump?: string }).releaseBump = "minor";
       const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
@@ -264,7 +265,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     w.setScript((script) => (script.releaseManagerCommits = true));
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "release", false);
       const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
@@ -286,7 +287,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await fixtures.world("local", async ({ world: w, engine: ownedEngine }) => {
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", true);
       const taskId = engine.addTask({ productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       const task = taskOf(await finish(engine, taskId), taskId);
@@ -317,7 +318,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await fixtures.world("local-push", async ({ world: w, engine: ownedEngine }) => {
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", true);
       const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       // Right before the coordinator approves, a teammate's commit reaches GitHub's main, unknown to the main copy.
@@ -364,7 +365,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await fixtures.world("local-elsewhere", async ({ world: w, engine: ownedEngine }) => {
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       await git(w.clone, "switch", "-q", "-c", "notes");
       writeFileSync(join(w.clone, "notes.txt"), "mine\n");
       engine.setProductDelivery(productId, "local", false);
@@ -388,7 +389,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await fixtures.world("local-unsafe", async ({ world: w, engine: ownedEngine }) => {
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", false);
       writeFileSync(join(w.clone, "README.md"), "# Mine, not committed\n");
       const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
@@ -428,7 +429,7 @@ describe.concurrent("Petrina publishes deliveries itself", () => {
     await fixtures.world("destination", async ({ world: w, engine: ownedEngine }) => {
       await ownedEngine(async engine => {
     try {
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "pull-request", true);
       const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       let state = await until(engine, (current) => !!itemOf(current, taskId, "delivery"), coordinator(["plan", "design"]));

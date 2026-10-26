@@ -1,3 +1,4 @@
+import { acmeDemoProduct, installPreparedProduct } from "../../fixtures/prepared-product.js";
 import { legacyDeliveryAgents } from "../../fixtures/legacy-delivery-agents.js";
 import { queuePreparedDelivery } from "../../fixtures/queued-delivery.js";
 // A delivery interrupted at any step never goes out twice: each publishing step is saved before it starts,
@@ -29,7 +30,7 @@ async function startHeld<T>(fixture: NativeWorldFixture, mode: "pull-request" | 
   writeFileSync(hold, "");
   w.setGitHub((github) => (github.hold = { command, file: hold }));
   return fixture.engine(async engine => {
-    const productId = await engine.addProduct(w.clone);
+    const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
     engine.setProductDelivery(productId, mode, false);
     const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
     const respond = (current: Engine, state: State) => {
@@ -51,7 +52,7 @@ async function stuckThenEdit<T>(fixture: NativeWorldFixture, mode: "pull-request
   const w = fixture.world;
   w.setGitHub((github) => (github.fail = failing));
   const taskId = await fixture.engine(async engine => {
-    const productId = await engine.addProduct(w.clone);
+    const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
     engine.setProductDelivery(productId, mode, false);
     const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
     const task = taskOf(await finish(engine, taskId), taskId);
@@ -222,7 +223,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
           writeFileSync(hold, "");
           w.setScript((script) => (script.hold = { title: "Add a greeting", file: hold, role: "release manager" }));
           await fixture.engine(async first => {
-            const productId = await first.addProduct(w.clone);
+            const productId = installPreparedProduct(first, acmeDemoProduct(w.clone));
             first.setProductDelivery(productId, "release", false);
             const taskId = await queuePreparedDelivery(first, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
             await until(first, () => existsSync(`${hold}.reached`));
@@ -263,7 +264,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
 
       let { taskId, tested, task } = await fixture.engine(async engine => {
 
-      const productId = await engine.addProduct(w.clone);
+      const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
       engine.setProductDelivery(productId, "local", false);
       const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
       let task = taskOf(await finish(engine, taskId), taskId);
@@ -418,7 +419,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         await fixture.engine(async engine => {
 
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           engine.setProductDelivery(productId, "release", false);
           const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
           if (how === "released") await until(engine, () => existsSync(`${hold}.reached`));
@@ -455,7 +456,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       await fixture.engine(async engine => {
 
       try {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "pull-request", false);
         const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
         let task = taskOf(await finish(engine, taskId), taskId);
@@ -485,7 +486,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
         await fixture.engine(async engine => {
 
         try {
-          const productId = await engine.addProduct(w.clone);
+          const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
           engine.setProductDelivery(productId, mode, false);
           const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
           let task = taskOf(await finish(engine, taskId), taskId);
@@ -561,7 +562,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       await fixture.engine(async engine => {
 
       try {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "pull-request", false);
         const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
         w.setGitHub((github) =>
@@ -617,7 +618,7 @@ describe.concurrent("A delivery interrupted at any step never goes out twice", (
       await fixture.engine(async engine => {
 
       try {
-        const productId = await engine.addProduct(w.clone);
+        const productId = installPreparedProduct(engine, acmeDemoProduct(w.clone));
         engine.setProductDelivery(productId, "pull-request", false);
         const taskId = await queuePreparedDelivery(engine, { productId, title: "Add a greeting", description: "A greeting file. [quick]" });
         // Someone else's work is already on GitHub under this task's branch name.
