@@ -1,4 +1,4 @@
-import { columnOf, roleForTask, slotWait, type AgentProfile, type Id, type Role } from "@petrina/core";
+import { columnOf, roleForTask, slotWait, stepKey, type AgentProfile, type ConversationNote, type Id, type Role, type Task } from "@petrina/core";
 import { TurnRecovery } from "../../src/turn-recovery.js";
 import { ModelCapacity, capacityWaitingWords, expireModelCapacity, recordModelCapacity } from "../../src/model-capacity.js";
 import type { CapacityRefusal, TurnRecoveryErrors, TurnRecoveryHost, UsageRefusal } from "../../src/turn-recovery-ports.js";
@@ -21,6 +21,16 @@ class Aborted extends Error {}
 class SourceRefresh extends Error {}
 class ScreenWait extends Error {}
 
+/** Observations of the actual recovery state at a scripted provider attempt, not native reopen evidence. */
+export interface CapacityAttempt {
+  readonly profileId: Id;
+  readonly roleId: Id;
+  readonly member?: string;
+  readonly sessionId: string;
+  readonly resume?: NonNullable<Task["capacityResume"]>[number];
+  readonly conversation?: ConversationNote;
+}
+
 /** Actual recovery/selection/state owners; provider replies are the only scripted attempt effect. */
 export function capacityFixture(respond: (prompt: ScriptedPrompt, signal: AbortSignal) => string | Promise<string> = () => "Completed") {
   const f = profileSelectionFixture(), { state, task, profile } = f, scope = executionFor(task);
@@ -33,6 +43,7 @@ export function capacityFixture(respond: (prompt: ScriptedPrompt, signal: AbortS
   const events: { kind: string; profileId?: string; retry?: boolean; ms?: number; roleId?: string; member?: string }[] = [];
   const limits: UsageRefusal[] = [], failures: unknown[] = [];
   const agents = new ScriptedAgents(respond), sessions = new Map<string, string>();
+  const attempts: CapacityAttempt[] = [];
   const active = new Set<Awaited<ReturnType<typeof agents.start>>>();
   const errors: TurnRecoveryErrors = {
     capacity: (error): error is FullModel => error instanceof FullModel,
@@ -70,6 +81,15 @@ export function capacityFixture(respond: (prompt: ScriptedPrompt, signal: AbortS
       onActivity() {}, onPlanStep() {}, onPermission: () => { throw new Error("Unexpected native permission"); },
     } }, role);
     active.add(session); sessions.set(key, session.sessionId);
+    const resume = task.capacityResume?.find(entry => entry.roleId === roleId && entry.profileId === chosen.id && entry.member === member);
+    attempts.push({ profileId: chosen.id, roleId, ...(member ? { member } : {}), sessionId: session.sessionId,
+      ...(resume ? { resume: structuredClone(resume) } : {}),
+      ...(scope.work.conversation ? { conversation: structuredClone(scope.work.conversation) } : {}),
+    });
+    // A native main attempt publishes its actual session before it can report capacity. The controller
+    // alone decides whether that note is owed a short continue; this effect never sets that flag.
+    if (!member) scope.work.conversation = { step: stepKey(task), roleId, profileId: chosen.id, toolId: chosen.toolId,
+      model: chosen.modelId ?? chosen.model, sessionId: session.sessionId, startedAt: clock.now(), briefed: true };
     try { return (await session.prompt("Scripted attempt; native prompt wording has separate contracts")).text; }
     finally { await session.stop(); active.delete(session); }
   };
@@ -86,5 +106,5 @@ export function capacityFixture(respond: (prompt: ScriptedPrompt, signal: AbortS
   };
   const close = async () => { await Promise.all([...active].map(async session => { await session.stop(); active.delete(session); })); };
   prepare();
-  return { ...f, state, task, scope, clock, events, limits, failures, agents, host, selectionHost: f.host, errors, capacity, recovery, profile, prepare, perform, main, member, release, close };
+  return { ...f, state, task, scope, clock, events, attempts, limits, failures, agents, host, selectionHost: f.host, errors, capacity, recovery, profile, prepare, perform, main, member, release, close };
 }

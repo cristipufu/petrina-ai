@@ -42,6 +42,40 @@ describe("actual turn recovery policy", () => {
     } finally { await f.close(); }
   });
 
+  it("gives a main replacement one short retry before any third tool takes the step", async () => {
+    const f = capacityFixture(prompt => {
+      if (prompt.model === "gpt-6.1-sol" && prompt.turn <= 4) throw new FullModel(prompt.toolId, prompt.model, prompt.profileId, prompt.sessionId);
+      if (prompt.model === "gpt-6-astra" && prompt.turn === 1) throw new FullModel(prompt.toolId, prompt.model, prompt.profileId, prompt.sessionId);
+      return "Recovered";
+    });
+    try {
+      for (const [index, delay] of SHORT_WAITS.entries()) {
+        await expect(f.main()).rejects.toBeInstanceOf(UsageWait);
+        expect(f.events.filter(entry => entry.kind === "capacity").at(-1)?.ms).toBe(delay);
+        expect(f.task.capacityRetries?.find(entry => entry.profileId === "sol-xhigh")?.tried).toBe(index + 1);
+        expect(f.scope.work.conversation).toMatchObject({ profileId: "sol-xhigh", capacityContinue: true });
+        f.release("gpt-6.1-sol");
+      }
+      await expect(f.main()).rejects.toBeInstanceOf(UsageWait);
+      expect(f.task.capacityRetries?.some(entry => entry.modelId === "gpt-6-astra" && entry.tried === 1)).toBe(true);
+      expect(f.task.capacityPaused?.some(entry => entry.profileId === "astra-xhigh" && entry.plannedId === "sol-xhigh")).toBe(true);
+      expect(f.events.filter(entry => entry.kind === "capacity").at(-1)?.ms).toBe(5_000);
+      expect(f.attempts.map(attempt => attempt.profileId)).toEqual(["sol-xhigh", "sol-xhigh", "sol-xhigh", "sol-xhigh", "astra-xhigh"]);
+      const replacement = f.attempts.at(-1)!;
+      expect(f.task.capacityResume?.find(entry => entry.profileId === "astra-xhigh")).toMatchObject({ sessionId: replacement.sessionId, roleId: "builder" });
+      expect(f.scope.work.conversation).toMatchObject({ profileId: "astra-xhigh", sessionId: replacement.sessionId, capacityContinue: true });
+      f.release("gpt-6-astra"); expect(await f.main()).toBe("Recovered");
+      const sol = f.attempts.filter(attempt => attempt.profileId === "sol-xhigh"), astra = f.attempts.filter(attempt => attempt.profileId === "astra-xhigh");
+      expect(sol).toHaveLength(4); expect(astra).toHaveLength(2);
+      expect(f.attempts.every(attempt => attempt.profileId === "sol-xhigh" || attempt.profileId === "astra-xhigh")).toBe(true);
+      for (const attempt of sol.slice(1)) expect(attempt.resume).toMatchObject({ sessionId: sol[0]!.sessionId, profileId: "sol-xhigh" });
+      expect(astra[1]!.resume).toMatchObject({ sessionId: replacement.sessionId, profileId: "astra-xhigh", roleId: "builder" });
+      expect(astra[1]!.conversation).toMatchObject({ sessionId: replacement.sessionId, profileId: "astra-xhigh", capacityContinue: true });
+      expect(astra[1]!.sessionId).toBe(replacement.sessionId);
+      expect(f.state.pool.limited ?? []).toEqual([]); expect(f.limits).toEqual([]);
+    } finally { await f.close(); }
+  });
+
   for (const mode of ["main", "member"] as const) it(`gives an actual ${mode} replacement its own short retries even after the planned model is free`, async () => {
     const f = capacityFixture(prompt => {
       if (prompt.model === "gpt-6.1-sol") throw new FullModel(prompt.toolId, prompt.model, prompt.profileId, prompt.sessionId);

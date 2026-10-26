@@ -491,9 +491,17 @@ describe.concurrent("a Codex model that is at capacity", () => {
   });
 
   it("keeps a Codex vote on another Codex model after the short retries", async () => {
-    const run = await start({ planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "verifier", times: 4 }] }, { focus: "review" });
+    const run = await start({ planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "verifier", times: 4 }, { model: "gpt-6-astra", role: "verifier", times: 1 }] }, { focus: "review" });
     try {
       await sameModelWaits(run, SHORT_WAITS);
+      await capacityWait(run, 5_000, "gpt-6-astra", 1);
+      const hunt = live(run).hunt!, place = hunt.panel!.seats.find(seat => seat.toolId === "codex")!;
+      const replacement = run.fakes.received("verifier").find(entry => run.modelOf(entry.session) === "gpt-6-astra")!;
+      const versions = structuredClone(hunt.input!.heads);
+      expect(live(run).capacityResume?.find(entry => entry.profileId === "astra-xhigh")).toMatchObject({ sessionId: replacement.session, member: `vote-${place.key}` });
+      expect(run.modelOf(replacement.session)).toBe("gpt-6-astra");
+      expect(run.effortOf(replacement.session)).toBe(run.engine.profile("astra-xhigh")!.effort);
+      await releaseCapacity(run.engine, run.taskId, "gpt-6-astra");
       const task = await run.done();
       assertNotAccountLimit(run, task);
       expect(roundOf(task, "code-reviewer")).toBe(1);
@@ -505,81 +513,19 @@ describe.concurrent("a Codex model that is at capacity", () => {
       expect(verifiers.filter((entry) => entry.session === first.session)).toHaveLength(4);
       expectShortContinues(verifiers.filter((entry) => entry.session === first.session).slice(1));
       expect(run.fakes.opens().filter((entry) => entry.session === first.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume"]);
-    } finally { await run.close(); }
-  });
-
-  it("keeps a replacement voter's conversation and moves on to the longer wait", async () => {
-    const run = await start({
-      planner: "short",
-      builder: "plain",
-      reviewer: "important",
-      verifier: "not-a-bug",
-      reopen: "resume",
-      capacity: [
-        { model: "gpt-6.1-sol", role: "verifier", times: 4 },
-        { model: "gpt-6-astra", role: "verifier", times: 2 },
-      ],
-    }, { focus: "review" });
-    try {
-      await sameModelWaits(run, SHORT_WAITS);
-      await capacityWait(run, 5_000, "gpt-6-astra", 1);
-      const first = live(run).capacityRetries?.find((entry) => entry.profileId === "astra-xhigh");
-      expect(first).toMatchObject({ tried: 1, member: "vote-sol-high" });
-      expect(live(run).capacityResume?.some((entry) => entry.profileId === "astra-xhigh" && entry.member === "vote-sol-high")).toBe(true);
-      await releaseCapacity(run.engine, run.taskId, "gpt-6-astra");
-      await capacityWait(run, 10_000, "gpt-6-astra", 2);
-      expect(live(run).capacityRetries?.filter((entry) => entry.profileId === "astra-xhigh")).toEqual([
-        expect.objectContaining({ tried: 2, member: "vote-sol-high" }),
-      ]);
-      const midway = run.fakes.received("verifier").filter((entry) => run.modelOf(entry.session) === "gpt-6-astra");
-      expect(midway).toHaveLength(2);
-      expect(new Set(midway.map((entry) => entry.session)).size).toBe(1);
-      expectShortContinues(midway.slice(1));
-      await releaseCapacity(run.engine, run.taskId, "gpt-6-astra");
-      const task = await run.done();
-      assertNotAccountLimit(run, task);
-      expect(roundOf(task, "code-reviewer")).toBe(1);
-      const votes = task.findings.flatMap((finding) => finding.votes ?? []);
-      expect(votes.some((vote) => vote.by === "astra-xhigh")).toBe(true);
-      const verifiers = run.fakes.received("verifier");
-      const sol = verifiers.filter((entry) => run.modelOf(entry.session) === "gpt-6.1-sol");
-      const astra = verifiers.filter((entry) => run.modelOf(entry.session) === "gpt-6-astra");
-      expect(sol).toHaveLength(4);
-      expect(new Set(sol.map((entry) => entry.session)).size).toBe(1);
-      expectShortContinues(sol.slice(1));
-      expect(astra).toHaveLength(3);
-      expect(new Set(astra.map((entry) => entry.session)).size).toBe(1);
+      const astra = verifiers.filter(entry => run.modelOf(entry.session) === "gpt-6-astra");
+      expect(astra).toHaveLength(2);
+      expect(astra.map(entry => entry.session)).toEqual([replacement.session, replacement.session]);
+      expect(astra[0]!.text).toContain("could not continue (the selected model is at capacity)");
       expectShortContinues(astra.slice(1));
-      expect(run.fakes.opens().filter((entry) => entry.session === astra[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume"]);
-    } finally { await run.close(); }
-  });
-
-  it("waits to vote when every Codex model is full, then continues that vote", async () => {
-    const run = await start({ planner: "short", builder: "plain", reviewer: "important", verifier: "not-a-bug", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "verifier", times: 4 }] }, {
-      before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.modelId !== "gpt-6-astra"); },
-      focus: "review" });
-    try {
-      await sameModelWaits(run, SHORT_WAITS);
-      const waiting = await capacityWait(run, 5 * 60_000);
-      expect(roundOf(waiting, "code-reviewer")).toBe(1);
-      const early = waiting.findings.flatMap((finding) => finding.votes ?? []);
-      expect(early.some((vote) => vote.toolId !== "codex")).toBe(true);
-      expect(early.some((vote) => vote.toolId === "codex")).toBe(false);
-      expect(waiting.findings.every((finding) => finding.verification === undefined)).toBe(true);
-      expect(run.engine.getState().pool.limited ?? []).toEqual([]);
-      expect(live(run).capacityRetries?.some((entry) => entry.tried === 3)).toBe(true);
-      await releaseCapacity(run.engine, run.taskId);
-      const task = await run.done();
-      expect(roundOf(task, "code-reviewer")).toBe(1);
-      const votes = task.findings.flatMap((finding) => finding.votes ?? []);
-      expect(votes.some((vote) => vote.by === "sol-high")).toBe(true);
-      expect(votes.filter((vote) => vote.toolId === "codex").every((vote) => vote.by === "sol-high")).toBe(true);
-      expect(task.findings.some((finding) => finding.verification !== undefined)).toBe(true);
-      const sol = run.fakes.received("verifier").filter((entry) => run.modelOf(entry.session) === "gpt-6.1-sol");
-      expect(sol).toHaveLength(5);
-      expectShortContinues(sol.slice(1));
-      expect(run.fakes.opens().filter((entry) => entry.session === sol[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume", "resume", "resume", "resume"]);
-      assertNotAccountLimit(run, task);
+      expect(run.fakes.opens().filter(entry => entry.session === replacement.session).map(entry => entry.how)).toEqual(["new", "resume"]);
+      const inputs = task.journey!.flatMap(step => step.agentInputs ?? []).filter(input => input.sessionId === replacement.session);
+      expect(inputs.map(input => input.mode)).toEqual(["fresh", "continued"]);
+      expect(inputs.map(input => input.confirmedSettings)).toEqual([
+        expect.objectContaining({ model: "gpt-6-astra", effort: run.engine.profile("astra-xhigh")!.effort }),
+        expect.objectContaining({ model: "gpt-6-astra", effort: run.engine.profile("astra-xhigh")!.effort }),
+      ]);
+      expect(votes.find(vote => vote.by === "astra-xhigh")).toMatchObject({ plannedProfileId: "sol-high", ballot: { seat: place.key, round: hunt.round, versions } });
     } finally { await run.close(); }
   });
 
@@ -647,39 +593,6 @@ describe.concurrent("a Codex model that is at capacity", () => {
         expect(run.fakes.opens().filter((entry) => entry.session === session).map((entry) => entry.how)).toEqual(["new", "resume"]);
       }
       expect(sessions.map((session) => run.modelOf(session)).sort()).toEqual(["gpt-6-astra", "gpt-6.1-sol"]);
-    } finally { await run.close(); }
-  });
-
-  it("gives a replacement model its own short retries before another tool takes the step", async () => {
-    const run = await start({
-      planner: "short",
-      builder: "plain",
-      reopen: "resume",
-      capacity: [
-        { model: "gpt-6.1-sol", role: "builder", times: 4 },
-        { model: "gpt-6-astra", role: "builder", times: 1 },
-      ],
-    }, { focus: "builder" });
-    try {
-      await sameModelWaits(run, SHORT_WAITS);
-      await capacityWait(run, 5_000, "gpt-6-astra");
-      expect(live(run).capacityRetries?.some((entry) => entry.modelId === "gpt-6-astra" && entry.tried === 1)).toBe(true);
-      expect(live(run).capacityPaused?.some((entry) => entry.profileId === "astra-xhigh" && entry.plannedId === "sol-xhigh")).toBe(true);
-      expect(run.fakes.received("builder").every((entry) => run.modelOf(entry.session) === "gpt-6.1-sol" || run.modelOf(entry.session) === "gpt-6-astra")).toBe(true);
-      await releaseCapacity(run.engine, run.taskId, "gpt-6-astra");
-      const task = await run.done();
-      assertNotAccountLimit(run, task);
-      const builders = run.fakes.received("builder");
-      expect(builders.every((entry) => run.modelOf(entry.session) === "gpt-6.1-sol" || run.modelOf(entry.session) === "gpt-6-astra")).toBe(true);
-      const sol = builders.filter((entry) => run.modelOf(entry.session) === "gpt-6.1-sol");
-      const astra = builders.filter((entry) => run.modelOf(entry.session) === "gpt-6-astra");
-      expect(sol).toHaveLength(4);
-      expectShortContinues(sol.slice(1));
-      expect(astra).toHaveLength(2);
-      expect(new Set(astra.map((entry) => entry.session)).size).toBe(1);
-      expect(astra[0]!.text).toContain("could not continue (the selected model is at capacity)");
-      expectShortContinues(astra.slice(1));
-      expect(run.fakes.opens().filter((entry) => entry.session === astra[0]!.session).map((entry) => entry.how)).toEqual(["new", "resume"]);
     } finally { await run.close(); }
   });
 

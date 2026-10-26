@@ -1,4 +1,6 @@
 import { nativeAgentProcess } from "../../native-agent.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { directDrivers, closeDirectDrivers } from "../../fixtures/direct-drivers.js";
 // A review or vote member whose model is full rejoins its running group when its own wait ends, while a peer is
 // still held mid-turn. Every wait is recorded as the engine sets it, then held until the test ends it.
 import { afterAll, describe, expect, it } from "bun:test";
@@ -8,10 +10,10 @@ import type { ChildProcess } from "node:child_process";
 import { slotUses, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import type { NativeStep, Scenario } from "../../fake-agent.js";
-import { Fakes, FAKE_AGENT, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, FAKE_AGENT, git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const fixtures = new Set<ReturnType<typeof directDrivers>>();
+afterAll(async () => { await closeDirectDrivers(fixtures); fixtures.clear(); });
 
 const SOL = "gpt-6.1-sol";
 const ASTRA = "gpt-6-astra";
@@ -31,7 +33,9 @@ type Recorded = { profileId: string; modelId: string; waitMs: number; stored: bo
 
 async function start(scenario: Scenario, options: { tools?: readonly string[]; before?: (engine: Engine) => void } = {}) {
   const root = tempDir("petrina-rejoin-");
-  roots.push(root);
+  const lifetime = directDrivers(root); fixtures.add(lifetime);
+  const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
+  return setupWithCleanup(() => lifetime.prepare(async () => {
   const fakes = new Fakes(join(root, "fake"));
   fakes.scenario({ builder: "plain", reopen: "resume", ...scenario });
   const data = join(root, "data");
@@ -42,7 +46,7 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
   let taskId = "";
   /** A controlled clock for the retry decisions: each model wait is checked as it is set, then held until ended. */
   const open = () => {
-    engine = new Engine(data, settings);
+    engine = lifetime.open(data, settings);
     const tools = options.tools ?? ["claude-code", "codex"];
     engine.s.setup!.checks = TOOLS.map((id) => ({ id, status: tools.includes(id) ? "ready" as const : "logged-out" as const }));
     options.before?.(engine);
@@ -76,7 +80,7 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
     }
   };
   const run = {
-    data, fakes, productId, recorded, waits,
+    data, fakes, productId, recorded, waits, close,
     get engine() { return engine; },
     get taskId() { return taskId; },
     task,
@@ -111,12 +115,13 @@ async function start(scenario: Scenario, options: { tools?: readonly string[]; b
       if (current.state === "failed") throw new Error(`The task failed: ${current.error}`);
       return current.state === "done" && current;
     }, "the task to finish", 60_000),
-    restart: async () => {
-      await engine.shutdown();
+    restart: () => lifetime.prepare(async () => {
+      await lifetime.stop(engine);
       open();
-    },
+    }),
   };
   return run;
+  }), close);
 }
 
 type Run = Awaited<ReturnType<typeof start>>;
@@ -189,7 +194,7 @@ describe.concurrent("a full model beside a working peer", () => {
       // Nobody ever left the task waiting for the full model.
       expect(run.waits).toEqual([]);
       expect(task.capacityResume).toBeUndefined();
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("brings two reviewers back at their own times beside a held third, after a provider's longer delay, with a message for the one away", async () => {
@@ -239,7 +244,7 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(run.prompts("code reviewer", grok)).toHaveLength(2);
       for (const profileId of ["opus-high", "sol-high", "grok-xhigh"]) expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
       expect(run.waits).toEqual([]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps a reviewer out while a peer waits for or uses the screen, and brings it back in its own conversation once the screen is settled", async () => {
@@ -276,7 +281,7 @@ describe.concurrent("a full model beside a working peer", () => {
       const task = await run.done();
       expect(roundOf(task)).toBe(1);
       for (const profileId of ["opus-high", "sol-high", "grok-xhigh"]) expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   for (const busy of [true, false]) it(`hands the seat to another tool after the short retries ${busy ? "once that tool's seat frees up" : "at once when it has a seat"}, beside a held peer`, async () => {
@@ -325,7 +330,7 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(reviewers.filter((entry) => run.modelOf(entry.session) === GROK)).toHaveLength(1);
       for (const toolId of ["claude-code", "grok"]) expect(task.findings.filter((finding) => run.engine.profile(finding.raisedBy)?.toolId === toolId)).toHaveLength(1);
       expect(run.waits).toEqual([]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("gives a replacement model its own short retries inside the running group, and never starts the first model's over", async () => {
@@ -359,11 +364,11 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(run.waitsOf("sol-high")).toHaveLength(4);
       expect(task.findings.filter((finding) => finding.raisedBy === "opus-high")).toHaveLength(1);
       expect(run.waits).toEqual([]);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("keeps a verifier's own place on its tool through the five-minute wait beside a held partner", async () => {
-    const run = await start({ planner: "short", reviewer: "important", verifier: "not-a-bug", nativeRetry: [hold("verifier", "opus")], capacity: [{ model: SOL, role: "verifier", times: 4 }] }, {
+    const run = await start({ planner: "short", reviewer: "important", verifier: "not-a-bug", nativeRetry: [hold("verifier", "opus")], capacity: [{ model: SOL, role: "verifier", times: 4 }, { model: "opus", role: "verifier", shape: "claude", times: 1 }] }, {
       before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.modelId !== ASTRA); },
     });
     try {
@@ -381,7 +386,33 @@ describe.concurrent("a full model beside a working peer", () => {
       await waitFor(() => run.task().hunt?.voted?.["sol-high"], "the verifier to continue and vote");
       expect(run.fakes.marked(`release-${opus}`)).toBe(false);
       expect(run.task().hunt?.panel).toEqual(panel);
+      const codexVotes = structuredClone(run.task().findings.flatMap(finding => finding.votes ?? []).filter(vote => vote.toolId === "codex"));
+      expect(codexVotes).toHaveLength(1);
+      expect(run.fakes.received("verifier").filter(entry => run.modelOf(entry.session) !== SOL).map(entry => entry.session)).toEqual([opus]);
+      expect(run.waits).toEqual([]);
+      // Only a saved participant may reopen. Let the real held peer receive Claude's native overload,
+      // then restart on its actual capacityResume instead of inventing ordinary interrupted-voter state.
       run.release(opus);
+      const unfinished = await waitFor(() => {
+        const current = run.task();
+        if (current.state === "failed") throw new Error(current.error);
+        const saved = current.capacityResume?.find(entry => entry.profileId === "opus-high" && entry.roleId === "verifier");
+        return saved && current.state === "waiting" && !run.engine.drivers.has(run.taskId) && !run.engine.settling.has(run.taskId) && saved;
+      }, "the actual unfinished voter's saved capacity wait", 60_000);
+      const saved = structuredClone(unfinished);
+      expect(saved).toMatchObject({ sessionId: opus, roleId: "verifier", profileId: "opus-high", toolId: "claude-code", model: "opus", member: `vote-${panel.seats.find(seat => seat.toolId === "claude-code")!.key}` });
+      expect(run.waitsOf("opus-high").map(entry => entry.waitMs)).toEqual([5_000]);
+      expect(run.task().hunt?.panel).toEqual(panel);
+      expect(run.task().findings.flatMap(finding => finding.votes ?? []).filter(vote => vote.toolId === "codex")).toEqual(codexVotes);
+      await run.restart();
+      expect(run.task().hunt?.panel).toEqual(panel);
+      expect(run.task().findings.flatMap(finding => finding.votes ?? []).filter(vote => vote.toolId === "codex")).toEqual(codexVotes);
+      expect(run.task().capacityResume?.find(entry => entry.profileId === "opus-high" && entry.roleId === "verifier")).toEqual(saved);
+      const remaining = run.task().modelCapacity?.find(entry => entry.toolId === "claude-code" && entry.modelId === "opus");
+      expect(remaining).toMatchObject({ toolId: "claude-code", modelId: "opus", profileId: "opus-high" });
+      expect(remaining!.until).toBeGreaterThan(Date.now());
+      expect(run.prompts("verifier", opus)).toHaveLength(1);
+      run.endWait("opus");
       const task = await run.done();
       expect(roundOf(task)).toBe(1);
       expect(panel.seats).toHaveLength(2);
@@ -395,9 +426,13 @@ describe.concurrent("a full model beside a working peer", () => {
       expect(sol).toHaveLength(5);
       expectShortContinues(sol.slice(1));
       expect(run.opens(sol[0]!.session)).toEqual(["new", "resume", "resume", "resume", "resume"]);
-      expect(verifiers.filter((entry) => run.modelOf(entry.session) !== SOL).map((entry) => entry.session)).toEqual([opus]);
-      expect(run.waits).toEqual([]);
-    } finally { await run.engine.shutdown(); }
+      expect(verifiers.filter((entry) => run.modelOf(entry.session) !== SOL).map((entry) => entry.session)).toEqual([opus, opus]);
+      expect(run.opens(opus)).toEqual(["new", "resume"]);
+      expect(votes.filter(vote => vote.toolId === "codex")).toEqual(codexVotes);
+      expect(run.waitsOf("opus-high").map(entry => entry.waitMs)).toEqual([5_000]);
+      expect(run.waits.length).toBeGreaterThan(0);
+      expect(run.waits.every(words => words.startsWith("The selected model is at capacity"))).toBe(true);
+    } finally { await run.close(); }
   });
 
   for (const busy of ["pool", "tool"] as const) {
@@ -461,7 +496,7 @@ describe.concurrent("a full model beside a working peer", () => {
       } finally {
         unsubscribe();
         for (const id of others) run.engine.cancel(id);
-        await run.engine.shutdown();
+        await run.close();
       }
     });
   }
@@ -524,8 +559,10 @@ describe.concurrent("a full model when the group stops or ends", () => {
         expect(task.findings.filter((finding) => finding.raisedBy === profileId)).toHaveLength(1);
       }
     } finally {
-      await run.engine.shutdown();
-      expect(owned.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+      try {
+        await run.engine.shutdown();
+        expect(owned.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+      } finally { await run.close(); }
     }
   });
 
@@ -559,7 +596,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
       expect(run.waits.length).toBeGreaterThan(0);
       expect(run.waits.every((words) => words.startsWith("The selected model is at capacity"))).toBe(true);
       expect(run.prompts("code reviewer", opus)).toHaveLength(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("brings nobody back after the task is cancelled, and removes the working copies", async () => {
@@ -577,7 +614,7 @@ describe.concurrent("a full model when the group stops or ends", () => {
       expect(run.prompts("code reviewer", sol)).toHaveLength(1);
       expect(run.engine.getState().tasks.find((task) => task.id === run.taskId)?.state ?? "cancelled").toBe("cancelled");
       await waitFor(() => !existsSync(join(copies, "review-1")) && !existsSync(join(copies, "review-0")), "the reviewers' copies to be removed");
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 
   it("brings nobody back while draining, then reopens the same conversation after a restart on the remaining schedule", async () => {
@@ -605,6 +642,6 @@ describe.concurrent("a full model when the group stops or ends", () => {
       expectShortContinues(prompts.slice(1));
       expect(run.opens(sol)).toEqual(["new", "resume", "resume"]);
       expect(run.prompts("code reviewer", opus)).toHaveLength(1);
-    } finally { await run.engine.shutdown(); }
+    } finally { await run.close(); }
   });
 });

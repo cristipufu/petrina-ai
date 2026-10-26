@@ -1950,6 +1950,11 @@
       "validation": {
         "artifact": "parallel-agent-runtime/provider-usage-next/{case-audit.json,preservation-inventory.json,self-review.md}; workstreams/provider-usage-review/{review.md,independent-reconciliation.json,source-parity.json}",
         "qualification": "Engine150pass/37.99s; core3pass; controller14pass; runtime initial67pass+4fixture-observer failures retained, corrected4pass/20assertions/1.162168s. Sandbox per-start correction4pass. All root package typechecks pass. Integrated full/resource/native-platform qualification remains due."
+      },
+      "capacitySemanticConsolidation": {
+        "qualification": "capacity-semantic-focused",
+        "source": "workstreams/capacity-semantic-next/handoff.json,90aba37b4c3763ece1b24ea9691fdf4b30bbaf5cd061ac7b6ee58d07d7dbe748",
+        "scope": "C14/C15/C18 policy at actual portable owners; C13 native replacement-voter reopening and C365 genuine partial-ballot/saved-voter restart remain native; all other body/oracle variants retained."
       }
     },
     {
@@ -4258,6 +4263,11 @@
         },
         "limits": "Focused counts only; callback-time sums overlap and full-load vs focused timing is not comparable. Original native23+newportable21 is not final consolidation.",
         "nextPhase": "workstreams/capacity-cost-next/next-phase-owners.md"
+      },
+      "capacitySemanticConsolidation": {
+        "qualification": "capacity-semantic-focused",
+        "source": "workstreams/capacity-semantic-next/handoff.json,90aba37b4c3763ece1b24ea9691fdf4b30bbaf5cd061ac7b6ee58d07d7dbe748",
+        "scope": "C14/C15/C18 policy at actual portable owners; C13 native replacement-voter reopening and C365 genuine partial-ballot/saved-voter restart remain native; all other body/oracle variants retained."
       }
     },
     {
@@ -7439,6 +7449,24 @@
       "resourceGit": 93344,
       "resourceLaunches": 104560,
       "limits": "Mac qualification only. Cost target, additional local implementation, supported-platform qualification and main-protecting delivery remain unfinished."
+    },
+    "capacity-semantic-focused": {
+      "source": "90aba37b4c3763ece1b24ea9691fdf4b30bbaf5cd061ac7b6ee58d07d7dbe748",
+      "root": {
+        "native": 35,
+        "allOrchestrator": 447,
+        "all9TypesExit": 0,
+        "conventionsExit": 0
+      },
+      "preservation": "33target direct matcher/helper semantics mapped; exact three native removals, two added portable variants; remaining native case/loop/deadline bodies retained except documented lifecycle wrapping; original native shutdown check precedes owner cleanup.",
+      "review": "workstreams/capacity-semantic-independent-review/v7-handoff.json; root capacity-semantic-integrated-review.json",
+      "cost": {
+        "equivalentGroupLaunchesBefore": 549,
+        "equivalentGroupLaunchesAfter": 247,
+        "equivalentGroupGitBefore": 449,
+        "equivalentGroupGitAfter": 203
+      },
+      "limits": "Focused after versus fully loaded before; no whole-suite/time claim. First failed oracle/premise runs preserved; final integrated full/resource/platform qualification still pending."
     }
   },
   "resourceAudit": {
