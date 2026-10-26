@@ -1,6 +1,7 @@
-import { beginPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap } from "@petrina/core";
+import { beginPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap, petrinaMoment } from "@petrina/core";
+import { addDeliveryCheck } from "./delivery-gate.js";
 import type { RuntimeTask } from "./model.js";
-import { executionFor, type RepositoryContext } from "./repository-context.js";
+import { executionFor, scopesFor, type RepositoryContext } from "./repository-context.js";
 import type { DeliveryFailures, DeliveryPhaseEffects, DeliveryRecording, DeliveryStage, DeliveryWorkflowAdmission } from "./ports/delivery-workflow.js";
 
 /** Actual delivery sequencing; the host retains native checks, source preparation and publication. */
@@ -11,6 +12,41 @@ export class DeliveryWorkflow {
     private readonly host: DeliveryRecording,
     private readonly failures: DeliveryFailures,
   ) {}
+
+  /** Return every still-unpublished product to the same coordinator decision. */
+  async returnForDecision(task: RuntimeTask, why: "proof" | "acceptance"): Promise<void> {
+    // An approval with no record covering this run's unavailable items, such as one saved before Petrina kept that record.
+    const approved = !!task.approvedAcceptanceGap || scopesFor(task).some(({ work }) => work.approvedFor?.by === "coordinator");
+    for (const scope of scopesFor(task)) {
+      if (scope.work.pr || scope.work.release || scope.work.landed || scope.work.shipping?.pushed) continue;
+      await this.effects.backToWork(scope);
+      this.clearApproval(scope);
+      delete scope.work.shipping;
+    }
+    delete task.approvedProofDecision;
+    delete task.checkedProofDecision;
+    delete task.approvedAcceptanceGap;
+    if (why === "acceptance") addDeliveryCheck(this.host, task);
+    task.stageIndex = task.plan!.stages.findIndex(entry => entry.kind === "gate" && entry.gate === "delivery");
+    if (task.stageIndex < 0) throw new Error(why === "proof" ? "Requested proof needs a coordinator delivery check before publishing." : "Unverified acceptance needs a coordinator delivery check before publishing.");
+    task.sub = 0;
+    if (why === "proof") {
+      petrinaMoment(task, "delivery", { outcome: "Nothing published; a new delivery decision is needed", reason: "The versions or requested proof differ from your delivery decision", tone: "back" }, this.host.now());
+      this.host.log(task, "warn", "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again.");
+    } else {
+      petrinaMoment(task, "delivery", { outcome: "Nothing published; your delivery decision is needed", reason: "Required acceptance could not be verified", tone: "back" }, this.host.now());
+      this.host.log(task, "warn", approved
+        ? "Nothing was published: Petrina has no record that your approval covered the acceptance checks that could not be verified, so it asks you about them first."
+        : "Nothing was published: required acceptance could not be verified and has no decision from you yet. Petrina asks you first.");
+    }
+    this.host.checkpoint();
+  }
+
+  clearApproval(scope: RepositoryContext): void {
+    delete scope.work.approvedSha;
+    delete scope.work.approvedPatch;
+    delete scope.work.approvedFor;
+  }
 
   /** Scheduler, native preparation and publication share the same admission decision. */
   beforePublishing(this: DeliveryWorkflow, scope: RepositoryContext, queuedCheck = false): void {

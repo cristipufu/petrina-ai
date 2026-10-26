@@ -1,4 +1,4 @@
-import type { Id, InboxKind, RuntimeWaitTask } from "@petrina/core";
+import type { Id, InboxKind, RuntimeWaitTask, Role } from "@petrina/core";
 import type { RuntimeTask } from "../model.js";
 import type { PublishingAdmission } from "../delivery-admission.js";
 import type { RepositoryContext, RepositoryWork } from "../repository-context.js";
@@ -24,6 +24,7 @@ export interface DeliveryPhaseEffects {
   checkDelivery(scope: RepositoryContext, signal: AbortSignal): Promise<DeliveryRunResult>;
   proofApprovalCurrent(task: RuntimeTask, signal: AbortSignal, prepared: boolean): Promise<boolean>;
   returnForDecision(task: RuntimeTask, why: "proof" | "acceptance"): Promise<void>;
+  backToWork(scope: RepositoryContext): Promise<void>;
   publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again">;
   prepareAgain(scope: RepositoryContext, why: string): Promise<"again">;
   clearUnpublishedVersion(scope: RepositoryContext): Promise<void>;
@@ -33,10 +34,11 @@ export interface DeliveryPhaseEffects {
 export interface DeliveryRecording {
   stopped(): boolean;
   now(): number;
+  role(id: Id, task?: RuntimeTask): Role | undefined;
   taskDetails(id: Id): RuntimeWaitTask | undefined;
   hasDecision(taskId: Id, kinds: readonly InboxKind[]): boolean;
   raise(target: RuntimeTask | RepositoryContext, kind: "stuck" | "shipping", title: string, details?: { body: string }): void;
-  log(task: RuntimeTask, tone: "done", text: string): void;
+  log(task: RuntimeTask, tone: "done" | "warn", text: string): void;
   delivered(task: RuntimeTask): void;
   done(task: RuntimeTask): void;
   checkpoint(): void;

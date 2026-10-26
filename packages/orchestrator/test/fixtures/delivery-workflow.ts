@@ -1,4 +1,4 @@
-import type { RuntimeWaitTask } from "@petrina/core";
+import { BUILT_IN_ROLES, roleForTask, type RuntimeWaitTask } from "@petrina/core";
 import { DeliveryWorkflow } from "../../src/delivery-workflow.js";
 import type { DeliveryFailures, DeliveryPhaseEffects, DeliveryRecording } from "../../src/ports/delivery-workflow.js";
 import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "../../src/repository-context.js";
@@ -44,6 +44,7 @@ export function deliveryWorkflowFixture() {
     checkDelivery(scope, signal) { phase("lookup", scope); return hooks.checkDelivery?.(scope, signal) ?? Promise.resolve("continue"); },
     proofApprovalCurrent(task, signal, prepared) { events.push(`proof:${task.id}`); return hooks.proofApprovalCurrent?.(task, signal, prepared) ?? Promise.resolve(true); },
     returnForDecision(task, why) { events.push(`decision:${task.id}:${why}`); return hooks.returnForDecision?.(task, why) ?? Promise.resolve(); },
+    backToWork(scope) { phase("back-to-work", scope); return hooks.backToWork?.(scope) ?? Promise.resolve(); },
     async publish(scope, signal) {
       phase("publish", scope);
       if (hooks.publish) return hooks.publish(scope, signal);
@@ -65,7 +66,7 @@ export function deliveryWorkflowFixture() {
     },
   };
   const host: DeliveryRecording = {
-    stopped: () => live.state.stopped, now: () => clock,
+    stopped: () => live.state.stopped, now: () => clock, role: (id, task) => roleForTask(BUILT_IN_ROLES, id, task),
     taskDetails: id => live.tasks.get(id) as RuntimeWaitTask | undefined,
     hasDecision: (id, kinds) => decisions.some(item => item.taskId === id && kinds.includes(item.kind)),
     raise: (target, kind, title) => { const scope = "task" in target ? target : undefined;
@@ -95,7 +96,13 @@ export function deliveryWorkflowFixture() {
     }
     return task;
   };
-  return { ...live, workflow, effects, host, failures, hooks, events, checkpoints, decisions, published, observations, counts, add, prepareObservation,
+  const register = (task: RuntimeTask) => {
+    live.tasks.set(task.id, task);
+    live.host.destination = scope => `${scope.work.productId}#main`;
+    live.host.branch = () => "main";
+    for (const { work } of scopesFor(task)) observations.set(work, { head: "scripted:head", candidate: "scripted:candidate" });
+  };
+  return { ...live, register, workflow, effects, host, failures, hooks, events, checkpoints, decisions, published, observations, counts, add, prepareObservation,
     now: () => clock, advance: (ms: number) => { clock += ms; },
     run: (task: RuntimeTask, signal = new AbortController().signal) => workflow.deliver(task, task.plan!.stages[task.stageIndex]!, signal),
     stage: (task: RuntimeTask) => task.plan!.stages[task.stageIndex]!, scope: executionFor,

@@ -59,23 +59,6 @@ for (const role of ["built-in", "custom", "task-owned"] as const) it(`publishes 
   } finally { await f.close(); }
 });
 
-for (const checklist of [true, false]) it(`keeps the saved automatic delivery when ${checklist ? "every required item passes" : "there is no checklist"} and only an extra probe could not be verified`, async () => {
-  const f = await fixture({ checklist: checklist ? [REQUIRED] : [] });
-  try {
-    const extra = blocked("The greeting also shows offline");
-    f.fakes.scenario({ testerChecks: [...(checklist ? [passed()] : []), extra] });
-    const before = await f.mains();
-    await f.drive();
-    // An extra probe is an observation: it adds no delivery hold and never becomes a requirement.
-    expect(f.decisions()).toEqual([]);
-    expect(f.task.plan!.stages.some(stage => stage.kind === "gate")).toBe(false);
-    expect(f.scope.work.landed).toBeDefined(); expect(await f.mains()).not.toEqual(before);
-    expect(f.task.acceptancePassed).toBe(true); expect(f.task.acceptanceUnverified).toBe(true);
-    expect(f.runs().at(-1)!.acceptanceChecks!.find(check => check.text === extra.text)).toMatchObject({ result: "blocked", reason: UNAVAILABLE });
-    expect(f.fakes.openings("tester")).toHaveLength(1);
-  } finally { await f.close(); }
-});
-
 it("still asks before a low-risk automatic delivery when only an extra probe could not be verified", async () => {
   const f = await fixture();
   try {
@@ -89,64 +72,6 @@ it("still asks before a low-risk automatic delivery when only an extra probe cou
     expect(f.task.proofDeliveryGate).toBeUndefined(); expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
     // Only required items are a gap the decision is about.
     expect(f.task.journey!.findLast(step => step.kind === "you")!.acceptanceGap).toBeUndefined();
-  } finally { await f.close(); }
-});
-
-it("tries the final code again after you send it back from the added check, then ships on its own once every required item passes", async () => {
-  const f = await fixture();
-  try {
-    f.fakes.scenario({ testerChecks: [blocked()] });
-    const before = await f.mains();
-    await f.drive();
-    const [decision] = f.decisions();
-    f.engine.requestChanges(decision!.id, "The hosted preview account works again; please try the welcome page once more");
-    expect(f.task.approvedAcceptanceGap).toBeUndefined();
-    // The extra probe stays unavailable; the required item now passes on the returned work.
-    f.fakes.scenario({ builder: "plain", fixes: "change", testerChecks: [passed(), blocked("The greeting also shows offline")] });
-    await f.drive();
-    expect(f.fakes.openings("tester")).toHaveLength(2);
-    expect(f.runs().at(-1)!.trigger?.reason).toContain("Final acceptance testing");
-    expect(f.task.timeline.some(entry => entry.text === "Trying the acceptance list once more on the final code")).toBe(true);
-    expect(f.task.timeline.some(entry => entry.text === "Required acceptance is verified and checks passed: shipping without asking you, as this task's settings allow")).toBe(true);
-    expect(f.decisions()).toEqual([]); expect(f.scope.work.landed).toBeDefined(); expect(await f.mains()).not.toEqual(before);
-    expect(f.task.brief!.acceptance).toEqual([{ text: REQUIRED, met: true, verification: "passed" }]);
-    expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
-  } finally { await f.close(); }
-});
-
-for (const [repaired, planned] of [[true, false], [false, false], [true, true]] as const) it(`keeps a reproduced failure on its bounded repair route while another required item could not be verified, then asks one decision${repaired ? "" : " with both once the returns are used"}${planned ? ", at a delivery check planned from the start" : ""}`, async () => {
-  const f = await fixture({ checklist: [REQUIRED, SECOND] });
-  try {
-    // Delivery approval on: the same rule applies at the check the plan already had, which is reused rather than added.
-    if (planned) { f.task.approveDelivery = true; f.task.plan!.stages.splice(3, 0, { id: "gate", title: "Delivery", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] }); }
-    f.fakes.scenario({ builder: "plain", fixes: "change", testerChecks: [failing(), blocked(SECOND)], ...(repaired ? { testerChecksFixed: [passed(), blocked(SECOND)] } : {}) });
-    const before = await f.mains();
-    await f.drive();
-    expect(f.scope.work.landed).toBeUndefined(); expect(await f.mains()).toEqual(before);
-    expect(f.decisions()).toHaveLength(1);
-    // The failure goes through review's repair, and the returned work gets its final acceptance test even though the
-    // other item stays unavailable. A failure there keeps its two returns; the unavailable item alone sends nothing back.
-    expect(f.scope.work.acceptanceReturns).toBe(repaired ? undefined : 2);
-    expect(f.fakes.openings("tester")).toHaveLength(repaired ? 2 : 4);
-    expect(f.task.timeline.filter(entry => entry.text === "Sent back to the builder: 1 acceptance check failed on the final code")).toHaveLength(repaired ? 0 : 2);
-    expect(f.task.timeline.at(-1)!.text).toBe(repaired ? "Acceptance could not be fully verified, so the decision goes to you" : "Acceptance still fails: the builder returns are used up, so the decision goes to you");
-    expect(f.runs().every(run => run.acceptanceChecks!.find(check => check.text === SECOND)!.result === "blocked")).toBe(true);
-    const failure = f.task.findings.filter(finding => finding.text === `Failed acceptance check: ${REQUIRED}`);
-    expect(failure).toHaveLength(1); expect(failure[0]!.status).toBe(repaired ? "fixed" : "open");
-    expect(f.task.findings.some(finding => finding.text.includes(SECOND))).toBe(false);
-    expect(f.task.acceptanceBlocked).toBe(true);
-    const [decision] = f.decisions();
-    // An open failure leads the decision; the unavailable item stays listed beside it.
-    expect(decision!.title).toBe(repaired ? "Your call on “Show the greeting”: 1 acceptance check could not be verified" : "Your call on “Show the greeting”: 1 blocking finding still open");
-    expect(decision!.body).toContain(`• ${SECOND} — ${UNAVAILABLE}`);
-    expect(decision!.body).not.toContain(`• ${REQUIRED}`);
-    expect(f.task.brief!.acceptance.map(item => item.verification)).toEqual([repaired ? "passed" : "failed", "blocked"]);
-    expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
-    expect(f.task.proofDeliveryGate === undefined).toBe(planned);
-    expect(f.task.timeline.some(entry => entry.text.startsWith("Added your delivery check"))).toBe(!planned);
-    // A restart keeps the used returns and the one pending decision.
-    await f.restart();
-    expect(f.scope.work.acceptanceReturns).toBe(repaired ? undefined : 2); expect(f.decisions().map(item => item.id)).toEqual([decision!.id]);
   } finally { await f.close(); }
 });
 
@@ -180,7 +105,7 @@ it("repairs a shared failure on its owner, runs the planned review, then asks on
   } finally { await f.close(); }
 });
 
-for (const entry of ["already at delivery", "prepared with automatic approval", "retried after a failure", "carried over", "decided for an earlier run", "approved by you before this update"] as const) it(`asks before publishing starts with an undecided required gap: ${entry}`, async () => {
+for (const entry of ["retried after a failure", "carried over"] as readonly string[]) it(`asks before publishing starts with an undecided required gap: ${entry}`, async () => {
   const f = await fixture();
   try {
     // A task saved before this check existed: its run left the required item unverified and it moved on to delivery unasked.
@@ -329,32 +254,7 @@ it("keeps one settled run, the added check and one pending decision when you pau
   } finally { await f.close(); }
 });
 
-it("reuses the requested-proof delivery check without adding another, and one explicit approval covers both decisions", async () => {
-  const f = await fixture();
-  try {
-    // A reviewer's proof request already added the delivery check to this plan.
-    const reviewedVersions = { [f.task.productId]: await git(f.scope.work.worktree!, "rev-parse", "HEAD^{tree}") };
-    f.task.proofRequests = [{ id: "proof-1", text: "Run the greeting on Linux", reason: "Required on the final code", productIds: [f.task.productId], source: "review:0:0", requestedBy: { stageId: f.review.id, round: 1, seat: "0", roleId: "code-reviewer", profileId: "sol-high" }, ownerStageId: f.tester.id, reviewedVersions, status: "pending" }];
-    expect(addDeliveryCheck(f.engine, f.task)).toBe(true);
-    f.fakes.scenario({ testerChecks: [blocked()], testerProofAnswers: [{ id: "proof-1", result: "pass", evidence: "Ran it on Ubuntu 24.04: the greeting printed once" }] });
-    const before = await f.mains();
-    await f.drive();
-    expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
-    expect(f.task.timeline.some(entry => entry.text.startsWith("Added your delivery check"))).toBe(false);
-    expect(f.task.proofRequests[0]!.status).toBe("proved");
-    expect(f.decisions()).toHaveLength(1); expect(f.scope.work.landed).toBeUndefined();
-    const decision = f.decisions()[0]!;
-    expect(decision.title).toBe("Your call on “Show the greeting”: 1 acceptance check could not be verified");
-    expect(decision.body).toContain(`• ${REQUIRED} — ${UNAVAILABLE}`);
-    f.engine.approve(decision.id);
-    expect(f.task.approvedProofDecision!.statuses).toEqual({ "proof-1": "proved" }); expect(f.task.approvedAcceptanceGap!.items.map(item => item.text)).toEqual([REQUIRED]);
-    await f.drive();
-    expect(f.scope.work.landed).toBeDefined(); expect(await f.mains()).not.toEqual(before);
-    expect(f.fakes.openings("tester")).toHaveLength(1);
-  } finally { await f.close(); }
-});
-
-for (const changed of [false, true]) it(`${changed ? "tries the final code again when it changed after" : "ships on its own straight after"} a required pass with an extra probe unverified, through an added delivery check`, async () => {
+for (const changed of [true]) it(`${changed ? "tries the final code again when it changed after" : "ships on its own straight after"} a required pass with an extra probe unverified, through an added delivery check`, async () => {
   const f = await fixture();
   try {
     f.fakes.scenario({ testerChecks: [passed(), blocked("The greeting also shows offline")] });

@@ -14,6 +14,11 @@ import type { AgentSession } from "../../src/ports/agents.js";
 import { profileSelectionFixture } from "./profile-selection.js";
 import { deferred } from "./tool-checks.js";
 import { ControlledClock } from "./clock.js";
+import type { ScriptedAgents } from "./scripted-agents.js";
+import type { VerifierVerdict } from "../../src/ports/verifiers.js";
+import type { ReviewMemberCatalog } from "../../src/review-members.js";
+import type { ReviewRoundCompletionHost } from "../../src/ports/review-round.js";
+import type { AcceptanceReply } from "../../src/ports/acceptance-results.js";
 import { slotAgents } from "./slot-agents.js";
 
 class UsageWait extends Error { constructor(readonly words: string, readonly capacity = false) { super(words); } }
@@ -30,10 +35,14 @@ interface Reply {
   areas?: string[];
   acceptance?: string[];
   risks?: string[];
-  answers?: { id: Id; status: "accepted" | "rejected"; answer: string }[];
+  answers?: ({ id: Id; status: "accepted" | "rejected"; answer: string } | { id: Id; fixed: boolean; text: string })[];
   objections?: { text: string; blocking: boolean }[];
   verdict?: "pass" | "fail";
   findings?: [];
+  verdicts?: VerifierVerdict[];
+  checks?: AcceptanceReply["checks"];
+  proofAnswers?: AcceptanceReply["proofAnswers"];
+  learnings?: AcceptanceReply["learnings"];
 }
 
 /** Decode this fixture's own canonical scriptedResult records; this makes no provider/schema validation claim. */
@@ -43,7 +52,7 @@ function fixtureReply(text: string): Reply {
 }
 
 /** The real admission/group/selection owners; every remaining effect is explicit, private and process-free. */
-export function admissionFixture(limit: number, toolCap: number, taskCount = 9) {
+export function admissionFixture(limit: number, toolCap: number, taskCount = 9, scripted?: ScriptedAgents) {
   const selection = profileSelectionFixture(), { state, profile } = selection;
   state.tasks.length = 0;
   state.pool.limit = limit;
@@ -53,7 +62,8 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
   selection.host.awayFromBuilder = () => undefined;
   const observations: { kind: string; taskId?: Id; stageId?: Id }[] = [];
   const writes: string[] = [];
-  const { agents, release } = slotAgents(cwd => { writes.push(cwd); });
+  const recipe = slotAgents(cwd => { writes.push(cwd); });
+  const agents = scripted ?? recipe.agents, release = recipe.release;
   const ownership: AgentOwnership = { drivers: new Map(), settling: new Map(), pendingAdmissions: new Map(), groups: new Map() };
   const listeners = new Set<() => void>();
   const background = new Set<Promise<void>>(), trackedWork: Promise<void>[] = [];
@@ -116,16 +126,17 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
     finishStep: task => finishTaskStep(task, executionFor(task).work, clock.now()),
     waitForUsage: host.waitForUsage, rememberReviewer: (task, key, id) => { rememberReviewProfile(task, key, id); changed(); }, changed, checkpoint: changed, schedule: host.schedule,
   };
-  const reviewCatalog = { roles: () => state.roles, profile, pendingVoter: (task: RuntimeTask) => task.findings.length ? unexpected("unplanned ballot") : undefined };
+  const reviewCatalog: ReviewMemberCatalog = { roles: () => state.roles, profile, pendingVoter: (task: RuntimeTask) => task.findings.length ? unexpected("unplanned ballot") : undefined };
   const reports = new ReviewReports({ roles: () => state.roles, hasPendingReviewers: (task, stage) => pendingReviewPlaces(task, stage, reviewCatalog).length > 0,
     id: () => unexpected("new finding"), now: clock.now, verdict: () => {}, note: () => {},
   });
-  const rounds = new ReviewRoundCompletion({ role: catalog.role, roles: () => state.roles, incrementalReview: () => true,
+  const roundHost: ReviewRoundCompletionHost = { role: catalog.role, roles: () => state.roles, incrementalReview: () => true,
     ownChanges: () => unexpected("review decision changes"),
     // Explicitly unavailable version observation: no Git SHA/tree or passing native evidence is invented.
     anchor: async () => ({}), reviewEnd: () => {}, releaseInput: () => {}, note: () => {},
     commitNow: changed, changed, openDeliveryDecision: task => gate(task, "delivery"), now: clock.now,
-  });
+  };
+  const rounds = new ReviewRoundCompletion(roundHost);
   const finishPhase = (scope: RepositoryContext, outcome: string) => { endAgentStep(scope.task, { outcome, reason: outcome }, clock.now()); finishTaskStep(scope.task, scope.work, clock.now()); };
   const perform = async (scope: RepositoryContext, role: Role, signal: AbortSignal, text: string, parallel?: { key: string; seat: Id; used(profileId: Id): void }): Promise<Reply> => {
     const { task } = scope;
@@ -199,7 +210,7 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
       if (task.sub === 0) {
         if (role.result !== "brief") unexpected("converge author result");
         task.brief = { summary: reply.summary!, forUsers: reply.forUsers!, areas: reply.areas!, acceptance: (reply.acceptance ?? []).map(text => ({ text })), risks: reply.risks! };
-        for (const answer of reply.answers ?? []) { const objection = task.objections.find(item => item.id === answer.id)!; objection.status = answer.status; objection.answer = answer.answer; }
+        for (const answer of reply.answers ?? []) { if ("status" in answer) { const objection = task.objections.find(item => item.id === answer.id)!; objection.status = answer.status; objection.answer = answer.answer; } else unexpected("invalid design answer"); }
         const actual = profile(task.agent!.profileId)!; authors.set(JSON.stringify([task.id, stage.id, round, role.id]), { toolId: actual.toolId, modelRan: actual.modelId ?? actual.model });
         task.sub = 1;
       } else {
@@ -251,7 +262,7 @@ export function admissionFixture(limit: number, toolCap: number, taskCount = 9) 
     restoreRepositoryState(task); state.tasks.push(task); return task.id;
   });
   const progress: ProgressClock = { now: clock.now, slow: () => 1, arm: (expired, ms) => clock.after(ms, () => { expired(); return undefined; }), sleep: async ms => { clock.advance(ms); await Promise.resolve(); } };
-  return { workflow, ownership, agents, release, ids, snapshot, subscribe, phases, observations, writes, failures, background, trackedWork, driverErrors, clock, errors, catalog, state, task, host, groupHost, readiness,
+  return { workflow, ownership, agents, release, perform, selection, reviewCatalog, roundHost, ids, snapshot, subscribe, phases, observations, writes, failures, background, trackedWork, driverErrors, clock, errors, catalog, state, task, host, groupHost, readiness,
     waitFor: <T>(check: () => T | undefined | false | Promise<T | undefined | false>, what: string, ms = 30_000, during?: PromiseLike<unknown>) => waitForProgress(check, what, ms, { during }, progress),
     answer(id: Id, answer: string) { const waiting = questions.get(id) ?? unexpected("answer to an unregistered question"); state.inbox = state.inbox.filter(item => item.id !== id); resumeAgentAfterReply(waiting.task, state.inbox.some(item => item.taskId === waiting.task.id && item.blocking), clock.now()); changed(); waiting.resolve(answer); questions.delete(id); },
     allow(_id: Id, _how: "once") { unexpected("permission approval"); },

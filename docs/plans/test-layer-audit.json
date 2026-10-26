@@ -1462,7 +1462,8 @@
       "from": "packages/engine/test/acceptance-gap.test.ts",
       "splitFiles": [
         "packages/engine/test/journeys/acceptance/required-gaps.test.ts",
-        "packages/engine/test/contracts/delivery/acceptance-description.test.ts"
+        "packages/engine/test/contracts/delivery/acceptance-description.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/required-gaps.test.ts"
       ],
       "layer": "journeys",
       "area": "acceptance",
@@ -1488,7 +1489,16 @@
         "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
         "fullQualification": "8f7e2893"
       },
-      "returnedFixtureOwnership": "See qualifications.returned-fixture-ownership; shared factory moved mechanically, all24variant bodies and170matchers retained."
+      "returnedFixtureOwnership": "See qualifications.returned-fixture-ownership; shared factory moved mechanically, all24variant bodies and170matchers retained.",
+      "requiredAcceptanceTransfer": {
+        "originalVariants": 24,
+        "portableTransfers": 12,
+        "retainedNative": 12,
+        "newPortableFailureControls": 5,
+        "actualOwner": "DeliveryCheckpoint and DeliveryWorkflow plus existing acceptance/review controllers",
+        "qualification": "Root561 Orchestrator cases;39 native counterparts/helper controls;all9types/conventions and independent source review; full/platform pending",
+        "artifact": "workstreams/acceptance-final-integrated/"
+      }
     },
     {
       "file": "packages/engine/test/journeys/acceptance/repair-reviews.test.ts",

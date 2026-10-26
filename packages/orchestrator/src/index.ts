@@ -74,3 +74,6 @@ export type { DeliveryStage, DeliveryRunResult, DeliveryWorkflowAdmission, Deliv
 
 export { CheckSetup } from "./check-setup.js";
 export type { CheckSetupExecution, CheckSetupHost, CheckSetupRequest } from "./ports/check-setup.js";
+
+export * from "./delivery-checkpoint.js";
+export * from "./ports/delivery-checkpoint.js";

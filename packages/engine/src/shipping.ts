@@ -4,7 +4,7 @@ import { ShippingVerifier, type DeliveryEvidence } from "./shipping-verifier.js"
 import { realPath } from "@petrina/repositories/paths";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
-import { addDeliveryCheck, clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
+import { clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
 import { checkOutcome, checkOutcomeLabel, proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
 import { landingState, syncRuntimeWait } from "@petrina/core";
@@ -121,12 +121,13 @@ export class Shipping {
       checkDelivery: (scope, signal) => this.checkDelivery(scope, signal),
       proofApprovalCurrent: (task, signal, prepared) => this.proofApprovalCurrent(task, signal, prepared),
       returnForDecision: (task, why) => this.returnForDecision(task, why),
+      backToWork: scope => this.backToWork(scope),
       publish: (scope, signal) => this.publish(scope, signal),
       prepareAgain: (scope, why) => this.prepareAgain(scope, why),
       clearUnpublishedVersion: scope => this.clearUnpublishedVersion(scope),
       finishCompanions: task => this.companions.finish(task),
     }, {
-      stopped: () => k.stopped, now: () => Date.now(), taskDetails: id => k.taskDetails(id),
+      stopped: () => k.stopped, now: () => Date.now(), taskDetails: id => k.taskDetails(id), role: (id, task) => k.role(id, task),
       hasDecision: (taskId, kinds) => k.s.inbox.some(item => item.taskId === taskId && kinds.includes(item.kind)),
       raise: (target, kind, title, details) => { k.raise(target, kind, title, false, details); },
       log: (task, tone, text) => k.log(task, tone, text), delivered: task => k.tracking.delivered(task),
@@ -291,32 +292,8 @@ export class Shipping {
    * Back to the delivery check for the coordinator's decision, with nothing more published: the versions or requested
    * proof differ from it, or required acceptance that could not be verified has none. A plan without the check gains it.
    */
-  private async returnForDecision(task: MTask, why: "proof" | "acceptance"): Promise<void> {
-    // An approval with no record covering this run's unavailable items, such as one saved before Petrina kept that record.
-    const approved = !!task.approvedAcceptanceGap || scopesFor(task).some(({ work }) => work.approvedFor?.by === "coordinator");
-    for (const scope of scopesFor(task)) {
-      if (scope.work.pr || scope.work.release || scope.work.landed || scope.work.shipping?.pushed) continue;
-      await this.backToWork(scope);
-      this.clearApproval(scope);
-      delete scope.work.shipping;
-    }
-    delete task.approvedProofDecision;
-    delete task.checkedProofDecision;
-    delete task.approvedAcceptanceGap;
-    if (why === "acceptance") addDeliveryCheck(this.k, task);
-    task.stageIndex = task.plan!.stages.findIndex(entry => entry.kind === "gate" && entry.gate === "delivery");
-    if (task.stageIndex < 0) throw new Error(why === "proof" ? "Requested proof needs a coordinator delivery check before publishing." : "Unverified acceptance needs a coordinator delivery check before publishing.");
-    task.sub = 0;
-    if (why === "proof") {
-      petrinaMoment(task, "delivery", { outcome: "Nothing published; a new delivery decision is needed", reason: "The versions or requested proof differ from your delivery decision", tone: "back" }, Date.now());
-      this.k.log(task, "warn", "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again.");
-    } else {
-      petrinaMoment(task, "delivery", { outcome: "Nothing published; your delivery decision is needed", reason: "Required acceptance could not be verified", tone: "back" }, Date.now());
-      this.k.log(task, "warn", approved
-        ? "Nothing was published: Petrina has no record that your approval covered the acceptance checks that could not be verified, so it asks you about them first."
-        : "Nothing was published: required acceptance could not be verified and has no decision from you yet. Petrina asks you first.");
-    }
-    this.k.commitNow();
+  private returnForDecision(task: MTask, why: "proof" | "acceptance"): Promise<void> {
+    return this.workflow.returnForDecision(task, why);
   }
 
   /**
@@ -535,10 +512,7 @@ export class Shipping {
   }
 
   private clearApproval(scope: RepositoryContext): void {
-    const { work: repository } = scope;
-    delete repository.approvedSha;
-    delete repository.approvedPatch;
-    delete repository.approvedFor;
+    this.workflow.clearApproval(scope);
   }
 
   // ── Publishing ─────────────────────────────────────────────────────────

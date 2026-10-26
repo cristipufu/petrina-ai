@@ -1,10 +1,10 @@
-import { AgentWorkflow, type AgentAdmissionCatalog, type AgentAdmissionReadiness, type AgentAdmissionErrors, type WorkspacePreparation, type AcceptancePreparation, type DeliveryCheckpointPreparation } from "@petrina/orchestrator";
+import { DeliveryCheckpoint, AgentWorkflow, type AgentAdmissionCatalog, type AgentAdmissionReadiness, type AgentAdmissionErrors, type WorkspacePreparation, type AcceptancePreparation, type DeliveryCheckpointPreparation } from "@petrina/orchestrator";
 import { executionFor, scopesFor, type RepositoryContext } from "@petrina/orchestrator";
 // Scheduling and the task driver: who gets a slot next, the loop that runs a task's stages and stops at
 // checkpoints, and putting interrupted work back in line after a restart.
 
 import { committedCodeOf, versionsOf, designWorkKey, invalidateAcceptance } from "./repositories.js";
-import { openProofs, proofDecision, proofTestNeeded, refreshProofs, requiredUnverified, sameVersions, shipsUnasked } from "@petrina/core";
+import { shipsUnasked } from "@petrina/core";
 import { join } from "node:path";
 import { runtimeWaitHolds, withdrawAsks, type Id, type InboxItem } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
@@ -24,6 +24,7 @@ import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 
 export class Driver {
   readonly workflow: AgentWorkflow;
+  private readonly checkpoint: DeliveryCheckpoint;
   constructor(
     private readonly k: Kernel,
     planning: Planning,
@@ -31,9 +32,9 @@ export class Driver {
     design: Design,
     reviews: Reviews,
     private readonly checks: ProductChecks,
-    private readonly guide: GuideKeeper,
+    guide: GuideKeeper,
     private readonly updates: Updates,
-    private readonly learnings: Learnings,
+    learnings: Learnings,
     private readonly shipping: Shipping,
     private readonly connections: Connections,
     private readonly sources: Sources,
@@ -55,6 +56,19 @@ export class Driver {
       waitingFor: words => { const error = waitingFor(words); return { error, words: error.words, capacity: error instanceof WaitingForCapacity }; },
     };
     const shared = { ownership, catalog, readiness, errors };
+    this.checkpoint = new DeliveryCheckpoint({
+      admissionsClosed: task => k.taskAdmissionsClosed(task), admissionWait: task => k.taskAdmissionWait(task), column: task => k.columnFor(task),
+      role: (id, task) => k.role(id, task), blocked: task => checks.blocked(task),
+      note: (task, tone, text) => k.log(task, tone, text), checkpoint: () => k.commit(), gate: task => k.gate(task, "delivery"),
+      shipsUnasked: task => this.shipsUnasked(task), destination: scope => destination(scope.work, k.s.products.find(product => product.id === scope.work.productId)),
+    }, {
+      writeGuide: scope => guide.writeGuide(scope), writeLearnings: scope => learnings.write(scope), upToDate: (scope, signal) => updates.upToDate(scope, signal),
+      checksBeforeDelivery: (scope, signal, prepare) => checks.checksBeforeDelivery(scope, signal, prepare), offerLearnings: scope => learnings.offer(scope),
+      previewRelease: async (scope, stage, signal) => { await shipping.releases.previewRelease(scope, stage, signal); }, head: scope => git.head(scope.work.worktree!),
+      patch: (scope, head) => updates.patch(scope, head), committedCode: task => committedCodeOf(task),
+      invalidateAcceptance: (task, versions) => invalidateAcceptance(task, versions), versions: task => versionsOf(task),
+      acceptanceVersion: (scope, versions) => checks.acceptanceVersion(scope, versions),
+    });
     this.workflow = new AgentWorkflow({
       state: () => k.s, activeState: () => k.activeState(), task: id => k.task(id), taskDetails: id => k.taskDetails(id), now: () => Date.now(),
       stopped: () => k.stopped, draining: () => k.draining, drainLine: () => k.drainLine,
@@ -121,94 +135,8 @@ export class Driver {
     return { kind: "ready", scope };
   }
 
-  private async deliveryCheckpoint(scope: RepositoryContext, signal: AbortSignal): Promise<DeliveryCheckpointPreparation> {
-    const current = scope.task;
-    if (this.k.taskAdmissionsClosed(current)) {
-      current.state = "waiting";
-      current.holdsSlot = false;
-      delete current.agent;
-      current.column = this.k.columnFor(current);
-      current.statusLine = this.k.taskAdmissionWait(current);
-      this.k.commit();
-      return { kind: "stop" };
-    }
-    const checking = scopesFor(current);
-    let sentBack = false;
-    for (const scope of checking) {
-      const work = scope.work;
-      if (current.repositories) { current.activeProductId = work.productId; if (work.pr || work.release || work.landed) continue; }
-      await this.guide.writeGuide(scope);
-      await this.learnings.write(scope);
-      // What the coordinator checks is the work as it would land: one commit on top of the latest main.
-      if ((await this.updates.upToDate(scope, signal)) === "conflict") { sentBack = true; break; }
-      // Right before the coordinator is asked to ship, the checks run again on what would ship.
-      const checkResult = await this.checks.checksBeforeDelivery(scope, signal, async () => await this.updates.upToDate(scope, signal) !== "conflict");
-      if (checkResult === "returned") { sentBack = true; break; }
-      if (checkResult === "exhausted" || checkResult === "blocked") {
-        this.checks.blocked(current);
-        return { kind: "stop" };
-      }
-      await this.learnings.offer(scope);
-      if (scope.work.delivery === "release" && current.repositories) {
-        const releaseStage = current.plan!.stages.find((entry) => entry.kind === "do" && this.k.role(entry.roleId, current)?.result === "delivery")!;
-        await this.shipping.releases.previewRelease(scope, releaseStage, signal);
-      }
-      const checkedHead = await git.head(scope.work.worktree!).catch(() => undefined);
-      if (checkedHead) scope.work.checkedSha = checkedHead;
-      else delete scope.work.checkedSha;
-      if (current.repositories) work.nothingToPublish = scope.work.delivery !== "release" && checkedHead === scope.work.baseSha;
-      const checkedPatch = checkedHead && checkedHead === scope.work.baseSha ? "empty" : await this.updates.patch(scope, checkedHead);
-      if (checkedPatch) scope.work.checkedPatch = checkedPatch;
-      else delete scope.work.checkedPatch;
-
-    }
-    if (sentBack) return { kind: "repeat" };
-    const hasProofs = !!current.proofRequests?.length;
-    const observed = hasProofs ? await committedCodeOf(current) : undefined;
-    const versions = await invalidateAcceptance(current, observed?.versions) ?? observed?.versions ?? await versionsOf(current);
-    refreshProofs(current, versions);
-    // The tester tried an earlier version of the change: the final code gets one more pass first.
-    const tester = current.plan!.stages.findIndex((entry) => entry.kind === "do" && this.k.role(entry.roleId, current)?.result === "checks");
-    const acceptanceFailed = current.acceptancePassed === false;
-    const changes = observed?.changes;
-    const mainOnly = hasProofs && sameVersions(current.testedChanges, changes) && !sameVersions(current.testedVersions, versions);
-    const ordinaryRetest = current.testedPatch !== undefined && (acceptanceFailed || (await this.checks.acceptanceVersion(scope, versions)) !== current.testedPatch);
-    const requestedRetest = hasProofs && proofTestNeeded(current, mainOnly);
-    // One rule with or without requested proof: a reproduced failure keeps its final retest after repair, while
-    // required acceptance that could not be verified is never tried again unchanged. Extra probes decide neither.
-    const reproducedFailure = current.journey?.findLast(step => step.kind === "agent" && step.endedAt !== undefined && this.k.role(step.roleId!, current)?.result === "checks")?.acceptanceChecks?.some(check => check.result === "fail");
-    const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || (requiredUnverified(current) && !reproducedFailure && !requestedRetest);
-    const bounded = hasProofs && mainOnly && (current.proofRefreshes ?? 0) >= 2;
-    if (hasProofs) current.proofRefreshBlocked = bounded && (ordinaryRetest || openProofs(current).some(request => request.status === "stale"));
-    if (tester >= 0 && !acceptanceExhausted && !bounded && (ordinaryRetest || requestedRetest)) {
-      if (hasProofs) {
-        delete current.proofRefreshBlocked;
-        if (mainOnly) current.proofRefreshes = (current.proofRefreshes ?? 0) + 1;
-        current.proofRetestReason = openProofs(current).some(request => request.status === "pending") ? "requested" : mainOnly ? "main-moved" : current.testedChanges && !sameVersions(current.testedChanges, changes) ? "code-changed" : "requested";
-      }
-      current.retest = true;
-      current.stageIndex = tester;
-      current.sub = 0;
-      this.k.log(current, "milestone", hasProofs ? current.proofRetestReason === "main-moved" ? "Final acceptance testing: main moved since the proof was recorded" : current.proofRetestReason === "code-changed" ? "Final acceptance testing: the task's code changed since acceptance testing" : "Final acceptance testing: a reviewer asked for proof on the final code" : "Trying the acceptance list once more on the final code");
-      this.k.commit();
-      return { kind: "repeat" };
-    }
-    if (hasProofs) current.checkedProofDecision = proofDecision(current, versions);
-    if (this.shipsUnasked(current)) {
-      if (hasProofs) current.approvedProofDecision = structuredClone(current.checkedProofDecision);
-      for (const { work } of scopesFor(current)) {
-        work.approvedSha = work.checkedSha;
-        work.approvedPatch = work.checkedPatch;
-        work.approvedFor = { by: "task", mode: work.delivery, destination: destination(work, this.k.s.products.find((product) => product.id === work.productId)) };
-      }
-      this.k.log(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? `${current.proofRequests?.length ? "Requested proof is current" : "Required acceptance is verified"} and checks passed: shipping without asking you, as this task's settings allow` : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
-      current.stageIndex += 1;
-      current.sub = 0;
-      this.k.commit();
-      return { kind: "repeat" };
-    }
-    this.k.gate(current, "delivery");
-    return { kind: "stop" };
+  private deliveryCheckpoint(scope: RepositoryContext, signal: AbortSignal): Promise<DeliveryCheckpointPreparation> {
+    return this.checkpoint.run(scope, signal);
   }
 
   private async prepareAcceptance(scope: RepositoryContext, signal: AbortSignal): Promise<AcceptancePreparation> {
