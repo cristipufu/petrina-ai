@@ -328,27 +328,41 @@ export class Engine extends Kernel implements Commands {
   shutdown(): Promise<void> {
     if (this.shutdownDone) return this.shutdownDone;
     if (this.stopped) return Promise.resolve();
+    let done!: () => void, failed!: (error: unknown) => void;
+    this.shutdownDone = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
+    const synchronousFailures: unknown[] = [], stateFailures: unknown[] = [];
+    const request = (stop: () => void) => { try { stop(); } catch (error) { synchronousFailures.push(error); } };
     // Stopped first: stopping agents still changes state, and nothing may save after the store closes.
     this.stopped = true;
-    this.stopRequested.abort();
-    this.events.stop();
-    this.stopIdleSleep();
+    request(() => this.stopRequested.abort());
+    request(() => this.events.stop());
+    request(() => this.stopIdleSleep());
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
-    this.usageCoordinator.stop();
-    this.readiness.stop();
-    this.screens.stop();
+    request(() => this.usageCoordinator.stop());
+    request(() => this.readiness.stop());
+    request(() => this.screens.stop());
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
-    for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.startupReady, this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(async () => {
+    for (const controller of this.drivers.values()) request(() => controller.abort());
+    const observe = <T>(start: () => Promise<T>): Promise<T> => {
+      try { return start(); }
+      catch (error) { return Promise.reject(error); }
+    };
+    // Keep request order and method receivers, even when one entered stop throws synchronously.
+    const owners = [this.startupReady, observe(() => this.extraValidations.shutdown()),
+      observe(() => this.tools.shutdown()), observe(() => this.profileReader.stop()),
+      observe(() => this.followUps.stop())];
+    const agentStops = runs.map(run => observe(() => run.stop()));
+    const draining = Promise.allSettled([...owners, ...agentStops, ...this.settling.values()]).then(async outcomes => {
       // A driver can hand file handling to the background while it settles. Re-read ownership after
       // each group, including work registered by that cleanup, before callers may remove its folders.
       for (;;) {
         const pending = [...this.backgroundWork, ...this.copyCleanups.values()];
-        if (!pending.length) return;
+        if (!pending.length) break;
         await Promise.allSettled(pending);
       }
+      return { owners: outcomes.slice(1, owners.length), agents: outcomes.slice(owners.length, owners.length + agentStops.length) };
     });
     const saveAndCloseLog = () => {
       // An ordinary quit keeps each step's working time up to now, and not the time Petrina is closed.
@@ -364,11 +378,24 @@ export class Engine extends Kernel implements Commands {
       }
     };
     // Ordinary state and interrupted-turn semantics never wait behind container cleanup.
-    saveAndCloseLog();
+    try { saveAndCloseLog(); } catch (error) { stateFailures.push(error); }
     // Startup recovery and outstanding extra work may still own private resources. State is
     // already saved above; keep the database available until those operations settle.
-    if (!this.startupComplete || this.s.extraValidations?.length) this.shutdownDone = this.shutdownDone.finally(() => this.store.close());
-    else this.store.close();
+    const closeAfterDrain = !this.startupComplete || this.s.extraValidations?.length;
+    const closeStore = () => { try { this.store.close(); } catch (error) { stateFailures.push(error); } };
+    if (!closeAfterDrain) closeStore();
+    void draining.then(outcomes => {
+      if (closeAfterDrain) closeStore();
+      const errors = [...synchronousFailures];
+      for (const outcome of outcomes.owners) if (outcome.status === "rejected") errors.push(outcome.reason);
+      for (const outcome of outcomes.agents) {
+        if (outcome.status === "rejected") errors.push(outcome.reason);
+        else if (outcome.value !== true) errors.push(new Error("Agent cleanup was not confirmed"));
+      }
+      errors.push(...stateFailures);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, "Engine shutdown could not confirm all cleanup");
+    }).then(done, failed);
     return this.shutdownDone;
   }
 
