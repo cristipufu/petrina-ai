@@ -477,8 +477,12 @@ export class AgentWorkflow {
         return;
       }
       const current = task();
-      await this.phases.clearUnpublishedOnFailure(current);
-      this.host.failed(taskId, error);
+      let failure = error;
+      try { await this.phases.clearUnpublishedOnFailure(current); }
+      catch (cleanup) {
+        if (!Object.is(error, cleanup)) failure = new AggregateError([error, cleanup], "The task failed and its working copy could not be restored");
+      }
+      this.host.failed(taskId, failure);
     } finally {
       this.checks.release(taskId);
       if (this.host.task(taskId)?.state !== "waiting") this.preparedTesters.delete(taskId);

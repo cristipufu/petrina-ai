@@ -256,6 +256,7 @@ export class ParallelAdmissionGroup {
       rejoin: () => rejoin(1),
     });
     routeMessages(task, members.map((member) => member.key));
+    let groupFailure: { error: unknown } | undefined;
     try {
       if (task.screen?.member) continueScreen();
       else start();
@@ -290,17 +291,28 @@ export class ParallelAdmissionGroup {
         throw waiting.error;
       }
       if (!signal.aborted && !this.host.draining() && !pending.length) finishMessageGroup(task, members.map((member) => member.key));
+    } catch (error) {
+      groupFailure = { error };
+      throw error;
     } finally {
       closing = true;
       this.ownership.groups.delete(task.id);
-      workspaces.stopHelpers();
-      if (failed || signal.aborted) workspaces.closeTaskRun();
+      const errors: unknown[] = [];
+      try { workspaces.stopHelpers(); } catch (error) { errors.push(error); }
+      if (failed || signal.aborted) try { workspaces.closeTaskRun(); } catch (error) { errors.push(error); }
       await Promise.allSettled([...running.values()].map((entry) => entry.done));
       delete task.helpers;
       // A member who yielded the screen released its seat before its process exited.
-      await workspaces.releasedStops();
-      const readOnly = members.every((member) => !this.catalog.role(member.roleId)?.canEdit);
-      await workspaces.finish(readOnly);
+      try { await workspaces.releasedStops(); } catch (error) { errors.push(error); }
+      if (!errors.length) {
+        const readOnly = members.every((member) => !this.catalog.role(member.roleId)?.canEdit);
+        try { await workspaces.finish(readOnly); } catch (error) { errors.push(error); }
+      }
+      if (errors.length) {
+        if (groupFailure) throw new AggregateError([groupFailure.error, ...errors], "The review group failed and its cleanup was not confirmed");
+        if (errors.length === 1) throw errors[0];
+        throw new AggregateError(errors, "The review group could not confirm all cleanup");
+      }
     }
   }
 }

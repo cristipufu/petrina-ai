@@ -83,3 +83,4 @@ export type { CheckRepairHost } from "./ports/check-repairs.js";
 
 export { WaitSourceRefresh } from "./wait-source-refresh.js";
 export type { WaitSourceRefreshHost, WaitSourceRefreshEffects } from "./wait-source-refresh.js";
+export { CleanupReceipts } from "./cleanup-receipts.js";

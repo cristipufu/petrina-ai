@@ -105,6 +105,8 @@ export interface AgentSessionOptions {
   startTimeoutMs?: number;
   /** Whether this role can use a browser. The adapter owns its setup and cleanup. */
   browser?: boolean;
+  /** Adapter-owned native cleanup, published even if opening never returns a session. */
+  onGone?: (gone: Promise<void>) => void;
 }
 
 /** Runtime dependency supplied by the host, never a product setting or serialized option. */
