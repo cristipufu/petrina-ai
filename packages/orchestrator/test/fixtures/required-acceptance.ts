@@ -1,4 +1,4 @@
-import { acceptanceGap, afterChangesAsked, applyAcceptanceVersions, beginAgentStep, beginYouStep, beginPetrinaStep, endAgentStep, endPetrinaStep, endYouStep, finishTaskStep, gateTitle, openProofs, openStep, recordBuilderFindingAnswers, shipsUnasked, type DeepMutable, type AcceptanceGap } from "@petrina/core";
+import { acceptanceGap, afterChangesAsked, applyAcceptanceVersions, beginAgentStep, beginYouStep, beginPetrinaStep, endAgentStep, endPetrinaStep, endYouStep, findingCount, finishTaskStep, gateTitle, JOURNEY_WORDS as W, openProofs, openStep, recordBuilderFindingAnswers, shipsUnasked, type DeepMutable, type AcceptanceGap } from "@petrina/core";
 import { AcceptanceResults } from "../../src/acceptance-results.js";
 import { routeAcceptance } from "../../src/acceptance-routing.js";
 import { WorkCompletion } from "../../src/work-completion.js";
@@ -27,7 +27,7 @@ export const failing = (text = REQUIRED) => ({ text, result: "fail" as const, ev
 /** Actual stage/selection/review/ballot/acceptance/delivery owners, with explicitly modeled external effects. */
 export function requiredAcceptanceFixture(checklist: readonly string[] = [REQUIRED]) {
   let checks: AcceptanceReply["checks"] = [blocked()], fixedChecks: AcceptanceReply["checks"] | undefined;
-  let proofAnswers: AcceptanceReply["proofAnswers"] = [], sequence = 0, repairs = 0;
+  let proofAnswers: AcceptanceReply["proofAnswers"] = [], sequence = 0, repairs = 0, changeOnRepair = true;
   const agents = new ScriptedAgents(prompt => {
     switch (prompt.result) {
       case "checks": return scriptedResult({ summary: "Tried every acceptance item.", checks: repairs && fixedChecks ? fixedChecks : checks, proofAnswers, learnings: [] });
@@ -51,7 +51,7 @@ export function requiredAcceptanceFixture(checklist: readonly string[] = [REQUIR
   task.plan = { rationale: "Focused acceptance workflow", plannerProfileId: "sol-high", stages: [build, tester, review, ship] };
   product.approveDelivery = false;
   scope.work.delivery = "local"; scope.work.worktree = "scripted:required-acceptance";
-  const versions = () => ({ [product.id]: `controller:contents-${repairs}` });
+  const versions = () => ({ [product.id]: `controller:contents-${changeOnRepair ? repairs : 0}` });
   const patch = () => JSON.stringify(versions());
   scope.work.baseSha = "scripted:base";
   scope.work.source = { product, start: { kind: "default", branch: "main" }, destination: { mode: "local", kind: "branch", repo: product.repo, branch: "main" }, confirmed: true };
@@ -142,6 +142,10 @@ export function requiredAcceptanceFixture(checklist: readonly string[] = [REQUIR
     const pending = current.hunt && !Object.values(current.hunt.reported).some(done => !done) && Object.keys(current.hunt.reported).length ? ballots.next(current, stage) : undefined;
     if (!pending) return reviewPhase(current, stage, signal);
     if (pending.voters.length) {
+      const prior = openStep(task), roleId = prior?.roleId;
+      // The native interpreter ends the review's recorded box before admitting its ballot.
+      if (roleId === stage.roleId || (roleId && stage.roleIds?.includes(roleId))) endAgentStep(task,
+        { outcome: findingCount(prior?.result?.findings ?? []), reason: W.toCheck(pending.findings.length) }, clock.now());
       beginAgentStep(task, "verifier", pending.voters[0]!, clock.now(), state.roles, pending.voters, scope.work);
       const group = new ParallelAdmissionGroup(f.groupHost, { ownership: f.ownership, catalog, readiness: f.readiness, errors: f.errors });
       await group.run({ scope, signal, status: () => "Verifiers working", members: pending.seats.map(place => ({ key: `vote-${place.key}`, reviewKey: `verifier:${place.key}`, roleId: "verifier", profileId: place.profileId,
@@ -160,7 +164,9 @@ export function requiredAcceptanceFixture(checklist: readonly string[] = [REQUIR
   };
   async function drive() { task.state = "running"; await f.workflow["drive"](task.id); if (f.failures.length) throw f.failures[0]; }
   return { ...f, task, scope, product, build, tester, review, ship, delivery, checkpoint, routing, results, completion, ballots, versions, modeledChecks, checkpointEffects,
-    configure(next: { checks: AcceptanceReply["checks"]; fixedChecks?: AcceptanceReply["checks"]; proofAnswers?: AcceptanceReply["proofAnswers"] }) { checks = next.checks; fixedChecks = next.fixedChecks; proofAnswers = next.proofAnswers ?? []; },
+    configure(next: { checks: AcceptanceReply["checks"]; fixedChecks?: AcceptanceReply["checks"]; proofAnswers?: AcceptanceReply["proofAnswers"]; changeOnRepair?: boolean }) {
+      checks = next.checks; fixedChecks = next.fixedChecks; proofAnswers = next.proofAnswers ?? []; changeOnRepair = next.changeOnRepair ?? true;
+    },
     acceptanceStarts,
     async report() {
       const phase = phases.doStage;

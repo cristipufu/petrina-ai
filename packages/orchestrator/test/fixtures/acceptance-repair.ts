@@ -1,4 +1,4 @@
-import { applyAcceptanceVersions, beginAgentStep, BUILT_IN_ROLES, endAgentStep, finishTaskStep, roleForTask } from "@petrina/core";
+import { applyAcceptanceVersions, beginAgentStep, builderFindings, BUILT_IN_ROLES, endAgentStep, finishTaskStep, recordBuilderFindingAnswers, roleForTask, type DeepMutable, type Role } from "@petrina/core";
 import { AcceptanceResults } from "../../src/acceptance-results.js";
 import { routeAcceptance } from "../../src/acceptance-routing.js";
 import { WorkCompletion } from "../../src/work-completion.js";
@@ -18,6 +18,7 @@ export const acceptanceObservation = (result: "pass" | "fail" | "blocked", produ
 /** Accepted normalized reports and explicit observed identities. Every transition is the actual owning controller. */
 export function acceptanceRepairFixture(checklist: readonly string[] = [GREETING], gate = true) {
   const task = acceptanceTask(true, gate), scope = executionFor(task);
+  const roles = structuredClone(BUILT_IN_ROLES) as DeepMutable<Role>[];
   task.title = "Show the greeting"; task.state = "running"; task.stageIndex = 1;
   task.brief = { summary: task.title, areas: [], forUsers: [], risks: [], acceptance: checklist.map(text => ({ text })) };
   const notes: string[] = [], effects: string[] = [];
@@ -28,7 +29,7 @@ export function acceptanceRepairFixture(checklist: readonly string[] = [GREETING
     if (bound.task !== task || !task.repositories!.some(work => work === bound.work)) throw new Error("Unexpected repository observation owner");
   };
   const host: AcceptanceRoutingHost = {
-    role: (id, current) => roleForTask(BUILT_IN_ROLES, id, current),
+    role: (id, current) => roleForTask(roles, id, current),
     finishStep(bound) { finishTaskStep(bound.task, bound.work, now++); effects.push("finish"); },
     note(_bound, _tone, text) { notes.push(text); },
     commitNow(current) { if (current !== task) throw new Error("Unexpected checkpoint owner"); effects.push("checkpoint"); },
@@ -54,9 +55,9 @@ export function acceptanceRepairFixture(checklist: readonly string[] = [GREETING
   async function report(checks: AcceptanceReply["checks"]) {
     const scope = executionFor(task);
     const stage = task.plan!.stages[task.stageIndex]!;
-    if (stage.roleId !== "tester") throw new Error("Acceptance was not the next selected stage");
+    if (roleForTask(roles, stage.roleId, task)?.result !== "checks") throw new Error("Acceptance was not the next selected stage");
     const reply: AcceptanceReply = { summary: "Tried every acceptance item.", checks, proofAnswers: [], learnings: [] };
-    const step = beginAgentStep(task, stage.roleId, "opus-high", now++, BUILT_IN_ROLES, undefined, scope.work);
+    const step = beginAgentStep(task, stage.roleId, "opus-high", now++, roles, undefined, scope.work);
     step.agentResults = [{ roleId: stage.roleId, profileId: "opus-high", at: now++, value: reply }];
     const run = { versions, changes: { a: "a-task-change", b: "b-task-change" }, requestIds: [] }; task.acceptanceRun = run;
     const recorded = await results.record(scope, { roleId: stage.roleId, profileId: "opus-high", report: reply, run, testedVersions: versions, currentVersions: versions });
@@ -64,20 +65,26 @@ export function acceptanceRepairFixture(checklist: readonly string[] = [GREETING
     if (next === undefined) await completion.complete(scope, { stageId: stage.id, canEdit: false });
     return { recorded, next, step };
   }
-  async function returned() {
+  async function returned(options: { answerFindings?: boolean } = {}) {
     if (task.plan!.stages[task.stageIndex]!.roleId !== "builder" || !task.repair) throw new Error("No Builder repair was assigned");
     const scope = executionFor(task);
     // A consumed Builder report is input here. Native writing/answer application is retained in the journeys.
-    beginAgentStep(task, "builder", "sol-high", now++, BUILT_IN_ROLES, undefined, scope.work);
+    const step = beginAgentStep(task, "builder", "sol-high", now++, roles, undefined, scope.work);
     returnedProducts.push(scope.work.productId);
     versions = { ...versions, [scope.work.productId]: `${scope.work.productId}-repaired-controller-observation-${returnedProducts.length}` };
+    if (options.answerFindings) {
+      const given = builderFindings(task, scope.work.productId);
+      const answers = given.map(finding => ({ id: finding.id, fixed: true, text: "Fixed it." }));
+      step.agentResults = [{ roleId: "builder", profileId: "sol-high", at: now++, value: { summary: "Repaired the greeting", answers } }];
+      recordBuilderFindingAnswers(task, given, answers, { productId: scope.work.productId, shared: true, at: now++ });
+    }
     endAgentStep(task, { outcome: "Accepted Builder report", reason: "The consumed do-stage is ready for completion" }, now++);
     // Work.runDo has consumed the accepted Builder output before it calls this completion owner.
-    // No answer is applied to a finding here; the native continued-Builder journey proves that boundary.
+    // Default callers model only completion; the explicit normalized-answer scenario above uses the real answer owner.
     task.fixing = false;
     await completion.complete(scope, { stageId: "build", canEdit: true, testedVersions: versions });
   }
-  return { task, scope, get versions() { return versions; }, notes, effects, report, returned, returnedProducts, completion,
+  return { task, scope, roles, get versions() { return versions; }, notes, effects, report, returned, returnedProducts, completion,
     now: () => now++, id: () => `review-finding-${++sequence}`,
   };
 }

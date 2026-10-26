@@ -89,6 +89,7 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
       request: (...args: Parameters<typeof request>) => lifetime.run(f.engine, () => request(...args)),
       recordPass: (...args: Parameters<typeof recordPass>) => lifetime.run(f.engine, () => recordPass(...args)),
       drive, close, open: lifetime.open, stop: lifetime.stop, run: lifetime.run,
+      body: <T>(start: () => Promise<T>) => lifetime.prepare(start),
     };
     return f;
   }), close);

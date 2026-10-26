@@ -1,4 +1,4 @@
-import { beginAgentStep, builderFindings, checkReviewEvidence, endAgentStep, findingCount, recordBuilderFindingAnswers, roleForTask, startClock, stepKey, type Finding, type Stage } from "@petrina/core";
+import { applyAcceptanceVersions, beginAgentStep, builderFindings, checkReviewEvidence, endAgentStep, findingCount, recordBuilderFindingAnswers, roleForTask, startClock, stepKey, type Finding, type Stage } from "@petrina/core";
 import { ReviewReports } from "../../src/review-reports.js";
 import { ReviewRoundCompletion } from "../../src/review-round-completion.js";
 import { VerifierBallots } from "../../src/verifier-ballots.js";
@@ -10,17 +10,25 @@ import { admissionFixture } from "./agent-workflow.js";
 import { report } from "./review-reports.js";
 
 /** Accepted normalized replies; production dispatch, answer application, ballots and round completion own the transitions. */
-export function findingRepairFixture(kind: "new-reports" | "confirmation") {
-  const f = admissionFixture(2, 2, 1), task = f.task(f.ids[0]!)!, scope = executionFor(task);
+export function findingRepairFixture(kind: "new-reports" | "confirmation" | "shared-ownership", assigned = false) {
+  const f = admissionFixture(2, 2, 1), task = f.task(f.ids[0]!)!;
+  let scope = executionFor(task);
   task.title = "Repair the greeting"; task.stageIndex = 0; task.approveDelivery = false;
   task.plan = { rationale: "Findings across actual repair dispatches", plannerProfileId: "sol-high", stages: [
     { id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] },
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["opus-high", "sol-high"], maxRounds: kind === "new-reports" ? 3 : 2 },
     { id: "delivery", title: "Delivery", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] },
   ] };
+  if (kind === "shared-ownership") {
+    const second = { ...f.state.products[0]!, id: "second", name: "API", repo: "local/api", tone: "green" as const };
+    f.state.products.push(second);
+    task.repositories = [f.state.products[0]!, second].map(product => ({ productId: product.id, delivery: "local", completedStages: ["build"] }));
+    delete task.repository; task.activeProductId = task.productId; task.stageIndex = 1;
+    scope = executionFor(task);
+  }
   scope.work.delivery = "local";
   const now = () => ++f.clock.at;
-  const notes: string[] = [], builderDispatches: { round: number; findings: Finding[] }[] = [];
+  const notes: string[] = [], builderDispatches: { round: number; productId: string; findings: Finding[] }[] = [];
   const reviewInputs: { findings: Finding[]; report: ReviewReport; error: string | undefined }[] = [];
   let sequence = 0;
   const catalog = { roles: () => f.state.roles, profile: (id: string) => f.catalog.profile(id) };
@@ -40,14 +48,18 @@ export function findingRepairFixture(kind: "new-reports" | "confirmation") {
   const rounds = new ReviewRoundCompletion({
     roles: catalog.roles, role: (id, current) => f.catalog.role(id, current), incrementalReview: () => true,
     // This state-only composition has no native source observation or worktree.
-    ownChanges: async () => ({}), anchor: async () => { throw new Error("Unexpected native review anchor"); },
+    ownChanges: async () => kind === "shared-ownership" ? Object.fromEntries(task.repositories!.map(work => [work.productId, `scripted:change:${work.productId}`])) : {},
+    anchor: async () => { throw new Error("Unexpected native review anchor"); },
     reviewEnd() {}, releaseInput() {}, note(_task, _tone, text) { notes.push(text); },
     changed: () => f.host.changed(), commitNow: current => f.host.checkpoint(current), now,
     openDeliveryDecision: current => f.host.gate(current, "delivery"),
   });
   const completion = new WorkCompletion({
     finishStep: bound => f.groupHost.finishStep(bound.task), endStage() {}, rerun: () => false,
-    invalidateAcceptance: async () => { throw new Error("Unexpected shared acceptance mutation"); },
+    invalidateAcceptance: async bound => {
+      if (kind !== "shared-ownership") throw new Error("Unexpected shared acceptance mutation");
+      applyAcceptanceVersions(bound.task, Object.fromEntries(task.repositories!.map(work => [work.productId, `scripted:tree:${work.productId}`])));
+    },
     checkpoint: () => f.host.checkpoint(task), changed: () => f.host.changed(),
   });
   function start(roleId: string, stage: Stage, signal: AbortSignal) {
@@ -59,6 +71,11 @@ export function findingRepairFixture(kind: "new-reports" | "confirmation") {
     return beginAgentStep(task, roleId, profile.id, now(), f.state.roles, stage.kind === "review-chain" ? stage.profileIds : undefined, scope.work);
   }
   function suppliedReview(round: number, key: string, input: readonly Finding[]): ReviewReport {
+    if (kind === "shared-ownership") return round === 1 ? report({ verdict: "fail", findings: [
+      { text: key === "0" ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!",
+        severity: "important", productIds: assigned ? ["second"] : [], evidence: "Opened the welcome page" },
+      ...(assigned ? [{ text: "The shared ownership needs a coordinator decision.", severity: "important" as const, productIds: [] }] : []),
+    ] }) : report();
     if (round === 1 || kind === "new-reports") return report({ verdict: "fail", findings: [{
       text: key === "0" && round === 1 ? "The greeting is missing on the welcome page." : "The GREETING is missing on the welcome page!",
       severity: "important", ...(round === 1 ? { evidence: "Opened the welcome page" } : {}),
@@ -73,7 +90,7 @@ export function findingRepairFixture(kind: "new-reports" | "confirmation") {
   f.phases.doStage = async (bound, stage, signal) => {
     if (f.catalog.role(stage.roleId, task)?.result !== "build") throw new Error("Unexpected do-stage in the finding fixture");
     const given = task.fixing ? builderFindings(task, bound.work.productId) : [];
-    builderDispatches.push({ round: task.rounds.review ?? 1, findings: structuredClone(given) });
+    builderDispatches.push({ round: task.rounds.review ?? 1, productId: bound.work.productId, findings: structuredClone(given) });
     start(stage.roleId, stage, signal);
     if (task.fixing) recordBuilderFindingAnswers(task, given, given.map(finding => ({ id: finding.id, fixed: true, text: "The supplied Builder report claims the greeting is fixed." })),
       { productId: bound.work.productId, shared: !!task.repositories, at: now() });

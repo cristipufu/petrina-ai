@@ -13,13 +13,14 @@ import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
 
 const { roots, signal, fixture, passes, greetingPass, testerSteps, restoredLine, close } = proofRequestFixtures();
 afterAll(close);
-for (const proof of [false, true]) for (const committed of [false, true]) it(`keeps final acceptance unverified once when Petrina undoes an editing role's ${committed ? "commit" : "tracked edit"}, with requested proof ${proof}`, async () => {
+for (const [proof, committed] of [[false, false], [true, true]] as const) it(`keeps final acceptance unverified once when Petrina undoes an editing role's ${committed ? "commit" : "tracked edit"}, with requested proof ${proof}`, async () => {
   const fakes = acceptanceAgents({ beforeChecks: async ({ cwd }) => {
     writeFileSync(join(cwd, "tester-edit.txt"), committed ? "After the review\n" : "Before the review\n");
     if (committed) { await git(cwd, "add", "tester-edit.txt"); await git(cwd, "commit", "--quiet", "-m", "Tester commits after the review"); }
   } });
   const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
   try {
+    await f.body(async () => {
     const role = { ...f.engine.role("tester")!, id: "acceptance-specialist", canEdit: true };
     f.engine.s.roles.push(role); f.tester.roleId = role.id;
     const request = proof ? await f.request() : undefined;
@@ -85,15 +86,17 @@ for (const proof of [false, true]) for (const committed of [false, true]) it(`ke
       f.engine.approve(f.engine.s.inbox.find(item => item.kind === "delivery")!.id);
       expect(f.task.approvedProofDecision).toEqual({ versions, statuses: { [request.id]: "unverified" } });
     }
+      });
   } finally { await f.close(); }
 });
 
-for (const output of ["checks", "tester"] as const) it(`settles requested proof when only ${output === "checks" ? "the automated checks" : "the final Tester"} left new output files`, async () => {
+for (const output of ["checks"] as readonly ("checks" | "tester")[]) it(`settles requested proof when only ${output === "checks" ? "the automated checks" : "the final Tester"} left new output files`, async () => {
   const fakes = acceptanceAgents({ beforeChecks: ({ cwd }) => {
     if (output === "tester") writeFileSync(join(cwd, "tester-edit.txt"), "Before the review\n");
   } });
   const f = await fixture(false, false, undefined, { startAgentSession: fakes.start });
   try {
+    await f.body(async () => {
     const request = await f.request(); const worktree = f.scope.work.worktree!;
     if (output === "checks") f.engine.setProductChecks(f.task.productId, [{ name: "Test", command: commandInputText([process.execPath, "-e", "require('node:fs').writeFileSync('check-output.log', 'ran\\n')"]) }]);
     const versions = await versionsOf(f.task);
@@ -107,14 +110,16 @@ for (const output of ["checks", "tester"] as const) it(`settles requested proof 
     expect(f.task.timeline.some(entry => entry.text.startsWith("This acceptance run cannot verify"))).toBe(false);
     expect(await git(worktree, "status", "--porcelain")).toBe("");
     expect(f.engine.s.inbox.find(item => item.kind === "delivery")!.title).toBe("Ready to ship “Keep required Linux proof current”");
+      });
   } finally { await f.close(); }
 });
 
-for (const committed of [false, true]) it(`keeps the first read-only acceptance run unverified after Petrina undoes its ${committed ? "commit" : "tracked edit"}, without a repair or an unchanged retry`, async () => {
+for (const committed of [true]) it(`keeps the first read-only acceptance run unverified after Petrina undoes its ${committed ? "commit" : "tracked edit"}, without a repair or an unchanged retry`, async () => {
   const fakeRoot = tempDir("petrina-first-acceptance-"); roots.push(fakeRoot);
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(false, false, fakes);
   try {
+    await f.body(async () => {
     const worktree = f.scope.work.worktree!;
     f.task.brief = { summary: "Try it", areas: [], forUsers: [], risks: [], acceptance: [{ text: "A greeting file exists" }] };
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
@@ -147,6 +152,7 @@ for (const committed of [false, true]) it(`keeps the first read-only acceptance 
     expect(fakes.openings("tester")).toHaveLength(1); expect(f.task.stageIndex).toBe(3);
     const delivery = f.engine.s.inbox.find(item => item.kind === "delivery")!;
     expect(delivery.title).toContain("1 acceptance check could not be verified"); expect(delivery.body).toContain(ACCEPTANCE_RESTORED);
+      });
   } finally { await f.close(); }
 });
 
@@ -155,6 +161,7 @@ for (const edited of [false, true]) it(`${edited ? "waits for your decision" : "
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(false, false, fakes);
   try {
+    await f.body(async () => {
     const worktree = f.scope.work.worktree!, product = f.products[0]!;
     writeFileSync(join(worktree, "tester-edit.txt"), "Saved before acceptance\n");
     await git(worktree, "add", "."); await git(worktree, "commit", "-q", "-m", "Save a project file");
@@ -185,14 +192,16 @@ for (const edited of [false, true]) it(`${edited ? "waits for your decision" : "
     // The coordinator's explicit decision still ships it.
     f.engine.approve(delivery!.id); await f.drive();
     expect(f.scope.work.landed).toBeDefined(); expect(await git(product.path!, "rev-parse", "main")).not.toBe(main);
+      });
   } finally { await f.close(); }
 });
 
-for (const [where, change] of [["active", "edit"], ["companion", "edit"], ["companion", "commit"], ["companion", "output"]] as const) it(`${change === "output" ? "keeps" : "invalidates"} the whole shared acceptance run when the Tester leaves ${change === "output" ? "new output" : change === "edit" ? "a tracked edit" : "a commit"} in the ${where} product`, async () => {
+for (const [where, change] of [["companion", "commit"], ["companion", "output"]] as readonly (readonly ["active" | "companion", "edit" | "commit" | "output"])[]) it(`${change === "output" ? "keeps" : "invalidates"} the whole shared acceptance run when the Tester leaves ${change === "output" ? "new output" : change === "edit" ? "a tracked edit" : "a commit"} in the ${where} product`, async () => {
   const fakeRoot = tempDir("petrina-shared-acceptance-"); roots.push(fakeRoot);
   const fakes = new Fakes(fakeRoot);
   const f = await fixture(true, false, fakes);
   try {
+    await f.body(async () => {
     const touched = f.owners[where === "active" ? 0 : 1]!, other = f.products[where === "active" ? 1 : 0]!;
     // The request and the checklist item name only the product Petrina did not restore.
     const request = await f.request("Prove the untouched product", [other.id]);
@@ -220,5 +229,6 @@ for (const [where, change] of [["active", "edit"], ["companion", "edit"], ["comp
     if (where === "companion") expect(f.task.timeline.some(entry => entry.text === `Undid ${change === "commit" ? "commits" : "changes"} in ${name} from Tester, which is read-only`)).toBe(true);
     // The invalid run keeps the item's ownership and versions rather than reassigning them, and any earlier unavailable reason.
     expect(f.task.brief.acceptance[0]).toEqual({ text: "A greeting file exists", productIds: [other.id], versions: { [other.id]: before[other.id]! }, verification: "blocked", reason: `${ACCEPTANCE_RESTORED} Together: no valid affected products were assigned. The coordinator must resolve ownership.` });
+      });
   } finally { await f.close(); }
 });

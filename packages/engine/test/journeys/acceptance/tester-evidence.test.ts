@@ -7,25 +7,24 @@ import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 
 import { journeyProblems, JOURNEY_WORDS as W, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
+import { testerEvidenceFixtures } from "../../fixtures/tester-evidence.js";
 
-import { Fakes, headNow, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { Fakes, headNow, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const fixtures = testerEvidenceFixtures();
+afterAll(fixtures.close);
 
 
 originalDescribe("the tester tries the change once, and the final code once more", () => {
 it("repairs an omitted acceptance report in the same conversation before accepting the pass", async () => {
     const root = tempDir("petrina-acceptance-coverage-");
-    roots.push(root);
+    const owner = fixtures.own(root);
     const fakes = testerAgents();
     fakes.scenario({ planner: "tester-with-design", builder: "plain", tester: "omit-once" });
-    const engine = new Engine(join(root, "data"), { startAgentSession: fakes.start, toolProbe: fakes.toolProbe });
+    const engine = owner.open(join(root, "data"), { startAgentSession: fakes.start, toolProbe: fakes.toolProbe });
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
-      engine.setProductDelivery(productId, "local", true);
-      const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
+      await owner.prepare(async () => {
+      const { id } = await fixtures.prepare(engine, root, "Try the greeting", false);
       const task = await waitFor(() => {
         const state = engine.getState();
         const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
@@ -42,60 +41,26 @@ it("repairs an omitted acceptance report in the same conversation before accepti
       expect(task.brief!.acceptance.every((item) => item.met)).toBe(true);
       expect(task.acceptancePassed).toBe(true);
       expect(task.journey!.find((step) => step.roleId === "tester")!.acceptanceChecks![0]!.evidence).toBe("The scripted greeting check returned the expected result.");
-    } finally { await engine.shutdown(); }
+
+      });
+    } finally { await owner.close(); }
   });
 });
 
-originalDescribe("the tester tries the change once, and the final code once more", () => {
-it.each(["blocked", "no-evidence"] as const)("keeps %s acceptance checks unverified and prevents an unchanged retry or low-risk auto-ship", async (tester) => {
-    const root = tempDir("petrina-acceptance-blocked-");
-    roots.push(root);
-    const fakes = testerAgents();
-    fakes.scenario({ planner: "tester-with-design", builder: "plain", tester, risk: "low" });
-    const engine = new Engine(join(root, "data"), { startAgentSession: fakes.start, toolProbe: fakes.toolProbe });
-    try {
-      const productId = await engine.addProduct(await makeProduct(root));
-      engine.updateProduct(productId, { name: "Shop", delivery: "local", approveDelivery: true, shipLowRisk: true });
-      const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
-      const task = await waitFor(() => {
-        const state = engine.getState();
-        const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
-        if (plan) engine.approve(plan.id);
-        const question = state.inbox.find((item) => item.taskId === id && item.kind === "question");
-        if (question) engine.answer(question.id, question.options?.[0] ?? "Yes");
-        const found = state.tasks.find((task) => task.id === id)!;
-        if (found.state === "failed") throw new Error(found.error);
-        return state.inbox.some((item) => item.taskId === id && item.kind === "delivery") && found;
-      }, "the coordinator to receive an unverified acceptance result", 120_000);
-      const delivery = engine.getState().inbox.find((item) => item.taskId === id && item.kind === "delivery")!;
-      expect(task.state).toBe("needs-you");
-      expect(task.acceptancePassed).toBe(false);
-      expect(task.acceptanceUnverified).toBe(true);
-      const reason = tester === "blocked" ? "The Claude Code weekly limit prevents opening a live session." : "The agent did not record how it verified this item.";
-      expect(task.brief!.acceptance[0]).toMatchObject({ verification: "blocked", reason });
-      expect(task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking")).toHaveLength(0);
-      expect(delivery.title).toContain("1 acceptance check could not be verified");
-      expect(delivery.body).toContain(reason);
-      expect(fakes.openings("tester")).toHaveLength(1);
-      expect(task.journey!.filter((step) => step.roleId === "tester")).toHaveLength(1);
-      expect(task.landed).toBeUndefined();
-    } finally { await engine.shutdown(); }
-  });
-});
+
 
 originalDescribe("the tester tries the change once, and the final code once more", () => {
-for (const changes of [false, true]) it(`bounds failing acceptance with changed code ${changes}, keeps one finding, and saves the decision across restart`, async () => {
+for (const changes of [true]) it(`bounds failing acceptance with changed code ${changes}, keeps one finding, and saves the decision across restart`, async () => {
     const root = tempDir("petrina-acceptance-bound-");
-    roots.push(root);
+    const owner = fixtures.own(root);
     const fakes = testerAgents();
     fakes.scenario({ planner: "tester-first", builder: "plain", tester: "always-fail", ...(changes ? { fixes: "change" as const } : {}) });
     const options = { startAgentSession: fakes.start, toolProbe: fakes.toolProbe };
     const data = join(root, "data");
-    let engine = new Engine(data, options);
+    let engine = owner.open(data, options);
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
-      engine.setProductDelivery(productId, "local", true);
-      const id = engine.addTask({ productId, title: "Try the greeting", description: "[no-check]" });
+      await owner.prepare(async () => {
+      const { id } = await fixtures.prepare(engine, root, "Try the greeting", true);
       const task = await waitFor(() => {
         const state = engine.getState();
         const plan = state.inbox.find((item) => item.taskId === id && item.kind === "plan");
@@ -120,34 +85,35 @@ for (const changes of [false, true]) it(`bounds failing acceptance with changed 
       expect(new Set(failedChecks.map((check) => check.text)).size).toBe(1);
       expect(journeyProblems(task)).toEqual([]);
       engine.setPoolPaused(true);
-      await engine.shutdown();
-      engine = new Engine(data, options);
+      await owner.stop(engine);
+      engine = owner.open(data, options);
       expect(engine.getState().tasks.find((task) => task.id === id)?.acceptanceReturns).toBe(2);
       const gate = engine.getState().inbox.find((item) => item.taskId === id && item.kind === "delivery")!;
       expect(gate).toBeDefined();
       engine.requestChanges(gate.id, "Try another approach to make the greeting visible");
       expect((engine.task(id) ? executionFor(engine.task(id)!).work.acceptanceReturns : undefined)).toBeUndefined();
-    } finally { await engine.shutdown(); }
+
+      });
+    } finally { await owner.close(); }
   });
 });
 
 originalDescribe("the tester tries the change once, and the final code once more", () => {
 for (const handoff of [false, true]) it(`skips the tester in fix rounds, tries the final code before the delivery check, and sends a failure there back to the builder${handoff ? ", crediting the stand-in" : ""}`, async () => {
     const root = tempDir("petrina-tester-");
-    roots.push(root);
+    const owner = fixtures.own(root);
     const fakes = new Fakes(join(root, "fake"));
     // Build, try it, two reviewers; the first review raises an Important finding; the fix changes the code; the
     // tester's pass on the final code fails once.
     fakes.scenario({ planner: "tester-first", reviewer: handoff ? "important-twice" : "important", fixes: "change", tester: "fail-once", ...(handoff ? { learnings: "tester", limited: [{ model: "opus", role: "tester" }] } : {}) });
-    const engine = new Engine(join(root, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir] });
+    const engine = owner.open(join(root, "data"), { agentCommand: () => [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), fakes.dir] });
     let roundTwoReviewHead: string | undefined;
     // A failed read is reported by the test, not thrown into the engine's announcement.
     let captureFailure: unknown;
     let unsubscribe = () => {};
     try {
-      const productId = await engine.addProduct(await makeProduct(root));
-      engine.setProductDelivery(productId, "local", true);
-      const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+      await owner.prepare(async () => {
+      const { id: taskId } = await fixtures.prepare(engine, root, "Add a greeting", true, handoff);
       // Announcements stay synchronous: read the reviewed code's HEAD from Git's files at that moment.
       unsubscribe = engine.subscribe(() => {
         const current = engine.task(taskId);
@@ -217,9 +183,10 @@ for (const handoff of [false, true]) it(`skips the tester in fix rounds, tries t
       expect(testers.map((step) => step.reason)).toEqual(["checks passed", "1 check failed", "checks passed"]);
       expect(task.timeline.filter((entry) => entry.text === "Tester started").map((entry) => entry.step)).toEqual([attempts[0]!.id, ...testers.slice(1).map((step) => step.id)]);
       expect(journeyProblems(task)).toEqual([]);
+
+      });
     } finally {
-      unsubscribe();
-      await engine.shutdown();
+      try { unsubscribe(); } finally { await owner.close(); }
     }
   });
 });

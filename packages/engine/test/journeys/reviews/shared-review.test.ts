@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { ReviewResult } from "../../../src/roles.js";
 import { coordinator, finish, git, headNow, itemOf, taskOf, until } from "../../support.js";
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+import { preparedSharedReview } from "../../fixtures/prepared-shared-review.js";
 const fixtures = sharedWorldFixtures();
 afterAll(() => fixtures.close());
 
@@ -16,7 +17,7 @@ describe.concurrent("one task across products", () => {
     const { second, id, findingId, report } = await withEngine(async engine => {
 
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
-      const id = engine.addTask({ productId: first, title: "Keep routing the reported API repair", worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })) });
+      const id = await preparedSharedReview(engine, [first, second], "Keep routing the reported API repair", false);
       await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
       engine.setPoolPaused(true);
       const task = engine.task(id)!;
@@ -69,7 +70,7 @@ describe.concurrent("one task across products", () => {
 
       const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
       fakes.scenario({ planner: "parallel", builder: "plain", controlled: true });
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Review the shared greeting" });
+      const id = await preparedSharedReview(engine, [first, second], "Review the shared greeting", true);
       await until(engine, () => fakes.received("code reviewer").length >= 2, (engine, state) => {
         coordinator(["plan", "design"])(engine, state);
         for (const entry of fakes.received()) if (entry.role !== "code reviewer") writeFileSync(join(fakes.dir, `release-${entry.session}`), "go");
@@ -169,45 +170,6 @@ describe.concurrent("one task across products", () => {
       expect(task.error).toBeUndefined();
       expect(task.findings.some((finding) => finding.severity === "blocking" && finding.status === "open" && !finding.productIds?.length)).toBe(true);
       expect(fakes.received("builder").filter((entry) => entry.text.includes("You are fixing the review findings"))).toHaveLength(0);
-      expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
-      expect(task.plan!.stages[task.stageIndex]!.gate).toBe("delivery");
-      const reviews = fakes.received("code reviewer").length;
-      const decision = itemOf(engine.getState(), id, "delivery")!;
-      expect(engine.task(id)!.reviewDecision?.accepted).toBe(false);
-      engine.approve(decision.id);
-      const verified = await until(engine, state => !!itemOf(state, id, "delivery"), coordinator([]));
-      expect(itemOf(verified, id, "delivery")!.id).not.toBe(decision.id);
-      expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
-      engine.approve(itemOf(verified, id, "delivery")!.id);
-      const delivered = await until(engine, (state) => taskOf(state, id).state === "pr-open" || !!taskOf(state, id).error || !!itemOf(state, id, "delivery"), coordinator([]));
-      expect(taskOf(delivered, id).error).toBeUndefined();
-      expect(taskOf(delivered, id).state).toBe("pr-open");
-      expect(fakes.received("code reviewer")).toHaveLength(reviews);
-      expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
-
-    });
-    });
-  });
-});
-
-describe.concurrent("shared-task repair regressions", () => {
-  it("repairs assigned review problems while leaving unassigned problems for the coordinator", async () => {
-    await fixtures.world("mixed-ownership", async ({ shop, api, engine: withEngine, fakes }) => {
-    await withEngine(async engine => {
-
-      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
-      fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reviewer: "important-twice", affectedProducts: [second], unassignedFinding: true, fixes: "change", reopen: "resume" });
-      const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Repair only the assigned problem" });
-      const state = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
-      const task = taskOf(state, id);
-      expect(task.error).toBeUndefined();
-      const fixes = fakes.received("builder").filter((entry) => entry.text.includes("You are fixing the review findings"));
-      expect(fixes).toHaveLength(1);
-      expect(fixes[0]!.text).toContain(`You own only product ${second}`);
-      const assigned = task.findings.find((finding) => finding.severity === "blocking" && finding.productIds?.length)!;
-      expect(assigned.status).toBe("fixed");
-      expect(assigned.answers?.[second]?.fixed).toBe(true);
-      expect(task.findings.find((finding) => finding.text.includes("ownership needs"))?.status).toBe("open");
       expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
       expect(task.plan!.stages[task.stageIndex]!.gate).toBe("delivery");
       const reviews = fakes.received("code reviewer").length;

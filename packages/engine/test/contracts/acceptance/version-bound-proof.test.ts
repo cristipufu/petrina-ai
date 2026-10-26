@@ -8,10 +8,11 @@ import { proofRequestFixtures } from "../../fixtures/proof-requests.js";
 
 const { signal, fixture, testerReply, passes, close } = proofRequestFixtures();
 afterAll(close);
-for (const brief of [false, true]) it(`forces exact-version proof after unchanged-patch main advances, with brief ${brief}, then bounds main-only reruns across restart`, async () => {
+for (const brief of [true]) it(`forces exact-version proof after unchanged-patch main advances, with brief ${brief}, then bounds main-only reruns across restart`, async () => {
   const f = await fixture(false, brief);
   const reply = testerReply(f, passes);
   try {
+    await f.body(async () => {
     const request = await f.request(); await f.recordPass(); const oldPatch = f.task.testedPatch;
     await f.advance();
     await f.drive();
@@ -49,16 +50,18 @@ for (const brief of [false, true]) it(`forces exact-version proof after unchange
     const restored = f.open(f.engine.dataDir, { agentCommand: () => undefined, terminals: () => [] }); restored.schedule = () => {};
     try { expect(restored.task(id)!.proofRefreshes).toBe(2); expect(restored.task(id)!.proofRequests![0]!.status).toBe("stale"); }
     finally { await f.stop(restored); }
+      });
   } finally { reply.mockRestore(); await f.close(); }
 });
 
-for (const refreshes of [0, 1]) it(`refreshes proof after main moves during final testing, with ${2 - refreshes} main refreshes available`, async () => {
+for (const refreshes of [0]) it(`refreshes proof after main moves during final testing, with ${2 - refreshes} main refreshes available`, async () => {
   const f = await fixture(); const request = await f.request(); await f.recordPass(); f.task.proofRefreshes = refreshes;
   let runs = 0;
   const reply = testerReply(f, passes, async () => {
     if (++runs === 1) { await f.advance(); await f.engine["updates"].upToDate(f.scope, signal()); }
   });
   try {
+    await f.body(async () => {
     await f.advance(); await f.drive();
     expect(reply).toHaveBeenCalledTimes(2 - refreshes); expect(f.task.proofRefreshes).toBe(2);
     expect(request.proof!.result).toBe("pass"); expect(f.task.acceptanceUnverified).toBe(false);
@@ -67,12 +70,14 @@ for (const refreshes of [0, 1]) it(`refreshes proof after main moves during fina
     expect(f.task.proofRefreshBlocked).toBe(!!refreshes);
     expect(f.task.stageIndex).toBe(3);
     f.engine.s.inbox = []; await f.drive(); expect(reply).toHaveBeenCalledTimes(2 - refreshes);
+      });
   } finally { reply.mockRestore(); await f.close(); }
 });
 
 it("passes proof-only review without votes or Builder work, freezes peer context and tests once after both main advances", async () => {
   const f = await fixture(); const reply = testerReply(f, passes);
   try {
+    await f.body(async () => {
     await f.recordPass([]); await f.advance(); await f.engine["updates"].upToDate(f.scope, signal());
     const snapshot = await f.engine["context"].captureReview(f.scope);
     f.task.hunt = { stageId: "review", round: 1, reported: { "0": true }, findings: 0, input: { file: "unused", digest: "unused", heads: {}, trees: await versionsOf(f.task) } };
@@ -90,14 +95,6 @@ it("passes proof-only review without votes or Builder work, freezes peer context
     expect(reply).toHaveBeenCalledTimes(1); expect(f.task.proofRequests![0]!.status).toBe("proved");
     expect(f.task.journey!.filter(step => step.roleId === "builder")).toHaveLength(0);
     expect(f.task.rounds.review).toBeUndefined();
-  } finally { reply.mockRestore(); await f.close(); }
-});
-
-it("keeps ordinary unchanged-patch reuse and already-current proof without an additional Tester", async () => {
-  const f = await fixture(); const reply = testerReply(f, passes);
-  try {
-    await f.recordPass([]); await f.advance(); await f.drive(); expect(reply).not.toHaveBeenCalled();
-    f.engine.s.inbox = []; await f.request(); await f.recordPass(); await f.drive(); expect(reply).not.toHaveBeenCalled();
-    expect(f.task.proofRequests![0]!.status).toBe("proved");
+      });
   } finally { reply.mockRestore(); await f.close(); }
 });

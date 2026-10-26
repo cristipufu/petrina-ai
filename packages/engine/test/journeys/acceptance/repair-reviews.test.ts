@@ -9,7 +9,7 @@ import { acceptanceRepairFixtures, GREETING, PHONE, UNAVAILABLE, failing, passed
 const { fixture, close: closeFixtures } = acceptanceRepairFixtures();
 afterAll(closeFixtures);
 
-for (const [gate, custom] of [[false, false], [true, true]] as const) it(`runs every owed review after a successful early acceptance repair, then ${gate ? "asks at the planned delivery check" : "ships on its own as the task's settings allow"}${custom ? " (custom acceptance role)" : ""}`, async () => {
+for (const [gate, custom] of [[false, false]] as const) it(`runs every owed review after a successful early acceptance repair, then ${gate ? "asks at the planned delivery check" : "ships on its own as the task's settings allow"}${custom ? " (custom acceptance role)" : ""}`, async () => {
   const f = await fixture({ gate, custom });
   try {
     const [first] = f.ids;
@@ -43,36 +43,9 @@ for (const [gate, custom] of [[false, false], [true, true]] as const) it(`runs e
   } finally { await f.close(); }
 });
 
-for (const gate of [false]) it(`repairs a real failure while another required item stays unavailable, runs every owed review, then asks one decision at ${gate ? "the planned" : "an added"} delivery check`, async () => {
-  const f = await fixture({ gate, checklist: [GREETING, PHONE] });
-  try {
-    const [first, second] = f.ids;
-    f.responses.configure({ builder: "plain", fixes: "change", testerChecks: [failing([first]), blocked([second])], testerChecksFixed: [passed([first]), blocked([second])] });
-    const before = await f.mains();
-    await f.drive();
-    // The unavailable item alone sends nothing back: only the failure's product is repaired, and checked once more.
-    expect(f.order()).toEqual(["test", "build:1", "test", "review", "security", "decision"]);
-    expect(f.task.repositories!.map(work => work.acceptanceReturns)).toEqual([1, undefined]);
-    expect(f.seats()).toEqual(ALL_SEATS);
-    expect(f.task.findings.some(finding => finding.text.includes(PHONE))).toBe(false);
-    // One checkpoint, reused or added once, and one decision naming the unavailable item.
-    expect(f.task.plan!.stages.filter(stage => stage.kind === "gate")).toHaveLength(1);
-    expect(f.task.proofDeliveryGate === undefined).toBe(gate);
-    expect(f.task.timeline.filter(entry => entry.text.startsWith("Added your delivery check"))).toHaveLength(gate ? 0 : 1);
-    expect(f.decisions()).toHaveLength(1);
-    const [decision] = f.decisions();
-    expect(decision!.title).toBe("Your call on “Show the greeting”: 1 acceptance check could not be verified");
-    expect(decision!.body).toContain(`• ${PHONE} (Product 2) — ${UNAVAILABLE}`);
-    expect(await f.mains()).toEqual(before);
-    f.engine.approve(decision!.id);
-    await f.drive();
-    expect(f.task.repositories!.every(work => work.landed)).toBe(true);
-    expect(f.task.brief!.acceptance.map(item => item.verification)).toEqual(["passed", "blocked"]);
-    expect(f.runs("tester")).toHaveLength(2);
-  } finally { await f.close(); }
-});
 
-// The controller owns the failure-only added-gate variant. Keep full planned-gate and mixed-evidence journeys.
+
+// The actual controller owns role/gate and mixed-evidence permutations; retain native exhausted evidence and restart/repair pairs.
 for (const [gate, mixed] of [[true, false]] as const) it(`keeps used-up acceptance failures open for one decision after every owed review, at ${gate ? "the planned" : "an added"} delivery check${mixed ? ", beside an unavailable item" : ""}`, async () => {
   const f = await fixture({ gate, checklist: mixed ? [GREETING, PHONE] : [GREETING] });
   try {
