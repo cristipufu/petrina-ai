@@ -91,16 +91,20 @@ const caseFiles = new Map(cases.map(cost => [cost.id, cost.file]));
 const callers = [...perCaller].map(([caller, cost]) => ({ caller, launches: cost.launches,
   cases: [...cost.cases].sort(), files: [...new Set([...cost.cases].map(id => caseFiles.get(id)!).filter(Boolean))].sort(), operations: cost.operations }))
   .sort((a, b) => b.launches - a.launches || a.caller.localeCompare(b.caller));
-const groups = new Map<string, { files: string[]; cases: number; launches: number; programs: Record<string, number>; callbackMsSum: number; observedChildCpuUs: number }>();
+const groups = new Map<string, { files: string[]; cases: number; nativeCases: number; launches: number; programs: Record<string, number>;
+  callbackMsSum: number; callbackReadings: number; cpuReadings: number; observedChildCpuUs?: number }>();
 for (const cost of files) {
   const folder = cost.file.slice(0, cost.file.lastIndexOf("/"));
-  const group = groups.get(folder) ?? { files: [], cases: 0, launches: 0, programs: {}, callbackMsSum: 0, observedChildCpuUs: 0 };
+  const group = groups.get(folder) ?? { files: [], cases: 0, nativeCases: 0, launches: 0, programs: {}, callbackMsSum: 0, callbackReadings: 0, cpuReadings: 0 };
   if (!group.files.includes(cost.file)) group.files.push(cost.file);
-  group.cases += cost.cases; group.launches += cost.launches; group.callbackMsSum += cost.callbackMsSum; group.observedChildCpuUs += cost.observedChildCpuUs ?? 0;
+  group.cases += cost.cases; group.nativeCases += cost.nativeCases; group.launches += cost.launches;
+  group.callbackMsSum += cost.callbackMsSum; group.callbackReadings += cost.callbackReadings; group.cpuReadings += cost.cpuReadings;
+  if (cost.observedChildCpuUs !== undefined) group.observedChildCpuUs = (group.observedChildCpuUs ?? 0) + cost.observedChildCpuUs;
   for (const [program, count] of Object.entries(cost.programs)) group.programs[program] = (group.programs[program] ?? 0) + count;
   groups.set(folder, group);
 }
-const directories = [...groups].map(([directory, cost]) => ({ directory, ...cost })).sort((a, b) => b.launches - a.launches);
+const directories = [...groups].map(([directory, cost]) => ({ directory, ...cost, launchCoverage: !cost.cases ? "no executed cases"
+  : cost.nativeCases === cost.cases ? "instrumented" : !cost.nativeCases ? "not instrumented" : "mixed" })).sort((a, b) => b.launches - a.launches);
 const source = JSON.parse(readFileSync(join(capture, "source.json"), "utf8"));
 let run: Record<string, unknown> | undefined;
 try { run = JSON.parse(readFileSync(join(capture, "run.json"), "utf8")); } catch { /* Historical captures may lack collector evidence. */ }
