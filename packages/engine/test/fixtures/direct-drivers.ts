@@ -1,14 +1,14 @@
-import { lstatSync } from "node:fs";
+import { lstatSync, rmSync } from "node:fs";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { Engine, type EngineOptions } from "../engine.js";
-import { removeDir } from "../fixtures.js";
 
-/** removeDir is best effort; disposal is complete only when the private folder is absent. */
+/** Preserve filesystem errors; disposal is complete only when the private folder is absent. */
 export function removeFixtureRoot(root: string): void {
-  removeDir(root);
+  try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+  catch (cause) { throw new Error(`Direct-driver fixture could not remove ${root}`, { cause }); }
   try { lstatSync(root); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
   throw new Error(`Direct-driver fixture could not remove ${root}`);
