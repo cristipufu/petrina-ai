@@ -2403,6 +2403,20 @@
         "artifact": "workstreams/check-execution-family-next/preservation-v2.json",
         "review": "Actual runner launch/fast exit retained, independent leased timeout/cancel cleanup before fixture disposal. Controlled24 count/order/progress cannot pass with empty/truncated rows. RootR1 and first UNRUNV1 preserved.",
         "qualification": "Root23pass/0fail/0skip/268expectations, Repository types/conventions0. Full cost/platform qualification remains separate."
+      },
+      "processOwnership": {
+        "base": "56831889",
+        "originalCases": 12,
+        "originalLiteralEntriesPreserved": 114,
+        "additionalAssertions": 10,
+        "nativeMatrixCases": 35,
+        "normalWorkers": 14,
+        "observedStarts": 68,
+        "matchedExits": 68,
+        "expectedFailedStarts": 2,
+        "artifact": "workstreams/check-process-ownership-next/handoff.json; check-process-ownership-integrated-review.json",
+        "review": "Canonical operation owner and real captures cover pre-handoff acquisition, late native starts, body rejection, lease fallback and descriptor closure. Subject-end checks precede fixture close; no saved-PID signalling added.",
+        "limits": "Focused Mac qualification only; no full/platform/global-orphan claim."
       }
     },
     {
@@ -5977,7 +5991,7 @@
       "baselineDigest": "205fd6e32aa16d772aa4e29185edeca05365c4ee15e749d3d32f9d41fb2d4fe5",
       "status": "reviewed",
       "from": "packages/engine/test/shared-image-history.test.ts",
-      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live × first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live \u00d7 first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
       "validation": {
         "artifact": "state-api-next/runtime-reconciliation.json",
         "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
@@ -7011,7 +7025,7 @@
       "status": "reviewed",
       "layer": "orchestration",
       "area": "reviews",
-      "review": "Fifteen pure controller variants preserve both original mixed tests’ reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
+      "review": "Fifteen pure controller variants preserve both original mixed tests\u2019 reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
       "validation": "review-layers-16bce9e0/orchestrator-reviewed.json: all 228 cases / 14 files pass. All workspace types and conventions pass. reconciliation.json maps each original assertion category to its actual owner; original bodies retained. Full changed-batch qualification remains due."
     },
     {
@@ -7560,6 +7574,15 @@
       "artifacts": "workstreams/check-execution-family-next/handoff.json; check-execution-family-integrated-review.json",
       "resourceScope": "Sameauthor23case invocation observed30directstarts/30exits,18Bun3Git9ps; expected2failedstarts separate; actual fast1Bun/controlled24zero/addedindependentfailure1Bun. No paired baseline/full-speed claim.",
       "limits": "These two native test files follow the latest complete cfdb run. Broader native cleanup, platform and complete global qualification remain open."
+    },
+    "check-process-ownership-focused": {
+      "cases": 35,
+      "failed": 0,
+      "skipped": 0,
+      "assertions": 426,
+      "normalNativeWorkers": 14,
+      "artifacts": "workstreams/check-process-ownership-next/qualification-v4.json; runtime-reconciliation.json; resources-v4-summary.json",
+      "source": "Four exact frozen V4 paths, plus root whitespace-only removal in output.test.ts; root source review clear."
     }
   },
   "resourceAudit": {

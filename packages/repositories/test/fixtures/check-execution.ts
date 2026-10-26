@@ -37,23 +37,25 @@ export function checkOwner(dir: string, stop: () => void | Promise<void>) {
 }
 
 /** Observe the actual runner launch while forwarding every argument and every unrelated native call. */
-export function checkStartCapture(dir: string, command: readonly string[]) {
+export function checkStartCapture(dir: string, command: readonly string[], additionalCommands: readonly (readonly string[])[] = []) {
   let child: Child | undefined, restore = () => {};
+  const commands = [command, ...additionalCommands], children = new Set<Child>();
   const nativeSpawn = Bun.spawn.bind(Bun);
   return {
     child: () => child,
+    children: () => [...children],
     restore: () => restore(),
     install() {
       const dispatch = ((...args: unknown[]) => {
         const first = args[0];
         const argv = Array.isArray(first) ? first : first && typeof first === "object" && "cmd" in first ? first.cmd : undefined;
         const options = Array.isArray(first) ? args[1] : first;
-        const matches = Array.isArray(argv) && argv.length === command.length && argv.every((value, index) => value === command[index]) &&
+        const matches = Array.isArray(argv) && commands.some(command => argv.length === command.length && argv.every((value, index) => value === command[index])) &&
           options && typeof options === "object" && "cwd" in options && options.cwd === dir;
         const started = Reflect.apply(nativeSpawn, undefined, args);
         if (matches) {
           const owned = started as Child;
-          child = owned; void owned.exited.catch(() => undefined);
+          child = owned; children.add(owned); void owned.exited.catch(() => undefined);
         }
         return started;
       }) as typeof Bun.spawn;
@@ -71,8 +73,8 @@ interface CheckExecutionOptions {
 }
 
 /** Real leased children and native streams, with only the read/acquisition fault substituted. */
-export async function checkExecutionFixture(mode: "plain" | "running" | "read-error" | "cancel-error" | "errored-output" | "locked-output" | "held-output" | "cancelled-before-return", options: CheckExecutionOptions = {}) {
-  const root = tempDir("petrina-check-execution-"), ready = join(root, "ready.json"), script = join(root, "check.ts");
+export async function checkExecutionFixture(mode: "plain" | "running" | "read-error" | "cancel-error" | "errored-output" | "locked-output" | "held-output" | "cancelled-before-return" | "group-output", options: CheckExecutionOptions = {}) {
+  const root = tempDir("petrina-check-execution-"), ready = join(root, "ready.json"), parentReady = join(root, "parent-ready.json"), script = join(root, "check.ts");
   const controller = new AbortController();
   let lease: ProcessLease | undefined, child: Child | undefined, locked: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let restore = () => {}, handed = false, used = false;
@@ -96,7 +98,7 @@ export async function checkExecutionFixture(mode: "plain" | "running" | "read-er
       const actor = JSON.parse(readFileSync(ready, "utf8")) as { pid: number };
       await waitFor(async () => await childState(actor.pid) === "ended", "the independently leased check actor to end", CLEANUP_MS * SLOW);
     } catch (error) { errors.push(error); }
-    else if (mode === "held-output" && child) errors.push(new Error("The held-output actor's native identity is unavailable"));
+    else if ((mode === "held-output" || mode === "group-output") && child) errors.push(new Error("The held-output actor's native identity is unavailable"));
     if (errors.length) throw new AggregateError(errors, `Check fixture cleanup is unconfirmed; retained ${root}`);
   });
   const close = () => owner.close();
@@ -105,20 +107,21 @@ export async function checkExecutionFixture(mode: "plain" | "running" | "read-er
     lease = await createProcessLease();
     const json = import.meta.resolve("@petrina/test-support/fixture-json");
     const actor = `${mode === "cancelled-before-return" ? 'await Bun.write(Bun.stdout, "Original diagnostic\\n");' : ""} const { writeFixtureJson } = await import(${JSON.stringify(json)}); writeFixtureJson(${JSON.stringify(ready)}, { pid: process.pid }); await new Promise(() => undefined);`;
-    if (mode === "held-output") {
+    if (mode === "held-output" || mode === "group-output") {
       const worker = join(root, "worker.ts");
       writeFileSync(worker, lease.program(actor));
       writeFileSync(script, lease.program(`const { existsSync } = await import("node:fs");
-const worker = Bun.spawn([process.execPath, "--no-env-file", ${JSON.stringify(worker)}], { stdin: "ignore", stdout: "inherit", stderr: "inherit", detached: true });
-worker.unref(); while (!existsSync(${JSON.stringify(ready)})) await Bun.sleep(10); console.log("Leader finished"); process.exit(0);`));
+const worker = Bun.spawn([process.execPath, "--no-env-file", ${JSON.stringify(worker)}], { stdin: "ignore", stdout: "inherit", stderr: "inherit", detached: ${mode === "held-output"} });
+${mode === "held-output" ? 'worker.unref();' : ''} while (!existsSync(${JSON.stringify(ready)})) await Bun.sleep(10);
+${mode === "held-output" ? 'console.log("Leader finished"); process.exit(0);' : `await Bun.write(Bun.stdout, "started\\n"); const { writeFixtureJson } = await import(${JSON.stringify(json)}); writeFixtureJson(${JSON.stringify(parentReady)}, { pid: process.pid }); await new Promise(() => undefined);`}`));
     } else writeFileSync(script, lease.program(actor));
     // The fixture independently owns this real handle even if the runner cannot acquire its pipes.
     child = Bun.spawn([process.execPath, "--no-env-file", script], { cwd: root, env: process.env, stdin: "ignore", stdout: "pipe", stderr: "pipe", ...processHost.ownedSpawn });
     void child.exited.catch(() => undefined);
     const native = child;
-    if (mode === "cancelled-before-return" || mode === "running" || mode === "held-output")
-      await waitFor(() => existsSync(ready), "the native actor's diagnostic before the handle is returned", undefined, { during: native.exited });
-    if (mode === "running" && (typeof native.exitCode === "number" || native.signalCode)) throw new Error("The prepared check actor ended before its deadline could be tested");
+    if (mode === "cancelled-before-return" || mode === "running" || mode === "held-output" || mode === "group-output")
+      await waitFor(() => existsSync(ready) && (mode !== "group-output" || existsSync(parentReady)), "the native actor's diagnostic before the handle is returned", undefined, { during: native.exited });
+    if ((mode === "running" || mode === "group-output") && (typeof native.exitCode === "number" || native.signalCode)) throw new Error("The prepared check actor ended before its deadline could be tested");
     if (mode === "locked-output") locked = native.stdout.getReader();
     let output: ReadableStream<Uint8Array> = native.stdout;
     if (mode === "errored-output") {
@@ -166,6 +169,7 @@ worker.unref(); while (!existsSync(${JSON.stringify(ready)})) await Bun.sleep(10
     spawn.mockImplementation(dispatch);
     return { root, close, spawning: supply, child: () => child, ready: () => existsSync(ready), cancelledReaderClosed: () => cancelledReaderClosed,
       cancel: () => controller.abort(),
+      actorPid: () => existsSync(ready) ? (JSON.parse(readFileSync(ready, "utf8")) as { pid: number }).pid : undefined,
       run(records?: MachineRecords, includePending = false, onSpawn?: (pid: number) => void) {
         if (used) return Promise.reject(new Error("A prepared native check can only be handed to one execution"));
         used = true;
