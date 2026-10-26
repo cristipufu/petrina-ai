@@ -51,8 +51,15 @@ function holdCapacityWaits(engine: Engine): CapacityStop[] {
   return stops;
 }
 
+/** Only the native stage's immutable role/profile inputs; no completed work or execution evidence. */
+interface PreparedCapacityPlan {
+  readonly builderProfileId: string;
+  readonly reviewerProfileIds: readonly string[];
+  readonly reviewMaxRounds: 1;
+}
+
 /** One task on fake agents, delivering locally, with every tool counted as installed. */
-async function start(scenario: Scenario, options: { description?: string; before?: (engine: Engine) => void; focus?: "builder" | "review" } = {}) {
+async function start(scenario: Scenario, options: { description?: string; before?: (engine: Engine) => void; focus?: "builder" | "review"; preparedPlan?: PreparedCapacityPlan } = {}) {
   const root = tempDir("petrina-capacity-");
   roots.push(root);
   const lifetime = directDrivers(root); fixtures.add(lifetime);
@@ -71,9 +78,14 @@ async function start(scenario: Scenario, options: { description?: string; before
   if (options.focus) {
     const task = engine.task(taskId)!;
     await localFixtureSource(engine, task);
-    const profiles = scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"];
+    const profiles = options.preparedPlan ? [...options.preparedPlan.reviewerProfileIds]
+      : scenario.planner === "parallel" ? ["opus-high", "sol-high"] : ["opus-high"];
     task.plan = { rationale: "Focused native capacity stage; the private repository remains real", plannerProfileId: "sol-xhigh", stages: screenFixturePlan(profiles) };
     if (scenario.planner === "grok-build") task.plan.stages[0]!.profileIds = ["grok-xhigh"];
+    if (options.preparedPlan) {
+      task.plan.stages[0]!.profileIds = [options.preparedPlan.builderProfileId];
+      task.plan.stages[1]!.maxRounds = options.preparedPlan.reviewMaxRounds;
+    }
     task.approvePlan = false; task.approveDelivery = true;
     task.risk = { level: "low", why: "Private greeting fixture" };
     task.stageIndex = options.focus === "review" ? 1 : 0;
@@ -231,7 +243,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
     ["when the tool reports it as an error", { model: "gpt-6.1-sol", role: "builder", thrown: true, times: 4 }],
   ] as const) {
     it(`retries the same conversation, then continues the same step on another Codex model ${name}`, async () => {
-      const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [capacity] });
+      const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [capacity] }, { focus: "builder" });
       try {
         await sameModelWaits(run, SHORT_WAITS);
         const task = await run.done();
@@ -289,7 +301,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
   });
 
   it("keeps a draft while it waits, then continues in the same conversation", async () => {
-    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", partial: true }] }, { before: onlySol });
+    const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", partial: true }] }, { before: onlySol, focus: "builder" });
     try {
       const waiting = await capacityWait(run, 5_000);
       expect(readFileSync(join(waiting.worktree!, "capacity-draft.txt"), "utf8")).toBe("A greeting draft\n");
@@ -315,6 +327,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
   it("continues on another tool after the short retries when no other Codex model is free", async () => {
     const run = await start({ planner: "short", builder: "plain", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", partial: true, times: 4 }] }, {
       before: (engine) => { engine.s.profiles = engine.s.profiles.filter((profile) => profile.modelId !== "gpt-6-astra"); },
+      focus: "builder",
     });
     try {
       await sameModelWaits(run, SHORT_WAITS);
@@ -374,7 +387,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
   });
 
   it("accepts a finished result that only mentions the sentence", async () => {
-    const run = await start({ planner: "short", builder: "plain", mentionCapacity: true });
+    const run = await start({ planner: "short", builder: "plain", mentionCapacity: true }, { focus: "builder" });
     try {
       const task = await run.done();
       expect(run.fakes.received("builder")).toHaveLength(1);
@@ -393,7 +406,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
       reopen: "resume",
       capacity: [{ model: "gpt-6.1-sol", role: "code reviewer", partial: true, times: 4 }],
       nativeRetry: [{ role: "code reviewer", model: "opus", steps: [{ mark: "opus-reviewing" }, { wait: "opus-may-finish" }] }],
-    });
+    }, { focus: "review", preparedPlan: { builderProfileId: "sol-xhigh", reviewerProfileIds: ["opus-high", "sol-high"], reviewMaxRounds: 1 } });
     try {
       const [opening] = await waitFor(() => {
         const stops = run.stops.filter((stop) => stop.modelId === "gpt-6.1-sol");
@@ -531,7 +544,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
 
   it("retries the same profile when the agent already has the screen", async () => {
     const run = await start({ planner: "short", builder: "plain", screen: "ask", reopen: "resume", capacity: [{ model: "gpt-6.1-sol", role: "builder", onScreen: true, times: 4 }] }, {
-      before: (engine) => engine.setScreenUse("on"),
+      before: (engine) => engine.setScreenUse("on"), focus: "builder",
     });
     try {
       const waiting = await capacityWait(run, 5_000, "gpt-6.1-sol", 1);
@@ -572,7 +585,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
         { model: "gpt-6.1-sol", role: "code reviewer", times: 1 },
         { model: "gpt-6-astra", role: "code reviewer", times: 1 },
       ],
-    }, { before: onlyCodex });
+    }, { before: onlyCodex, focus: "review", preparedPlan: { builderProfileId: "sol-xhigh", reviewerProfileIds: ["sol-high", "astra-xhigh"], reviewMaxRounds: 1 } });
     try {
       const waiting = await capacityWait(run, 5_000, ["gpt-6.1-sol", "gpt-6-astra"]);
       expect(live(run).capacityResume).toHaveLength(2);
@@ -597,7 +610,7 @@ describe.concurrent("a Codex model that is at capacity", () => {
   });
 
   it("still records a real usage limit as the account running out", async () => {
-    const run = await start({ planner: "short", builder: "plain", limited: [{ model: "gpt-6.1-sol", role: "builder" }] });
+    const run = await start({ planner: "short", builder: "plain", limited: [{ model: "gpt-6.1-sol", role: "builder" }] }, { focus: "builder" });
     try {
       const task = await run.done();
       expect(run.engine.getState().pool.limited?.some((entry) => entry.toolId === "codex")).toBe(true);
@@ -613,7 +626,9 @@ const grokLostConnection: NativeStep = { notice: { method: "_x.ai/session/update
 
 describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
   it("retries Claude's own conversation after its explicit overload, then continues the step on another model", async () => {
-    const run = await start({ planner: "claude-build", builder: "plain", reopen: "resume", capacity: [{ model: "opus", role: "builder", shape: "claude", times: 4 }] });
+    const run = await start({ planner: "claude-build", builder: "plain", reopen: "resume", capacity: [{ model: "opus", role: "builder", shape: "claude", times: 4 }] }, {
+      focus: "builder", preparedPlan: { builderProfileId: "opus-high", reviewerProfileIds: ["sol-high"], reviewMaxRounds: 1 },
+    });
     try {
       await sameModelWaits(run, SHORT_WAITS, "opus");
       const task = await run.done();
@@ -640,7 +655,7 @@ describe.concurrent("a Claude Code or Grok model that is at capacity", () => {
       // Grok lost its connection and recovered by itself earlier in the same turn. That does not explain the stop.
       nativeRetry: [{ role: "builder", model: "grok-4.7", steps: [grokLostConnection, { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Back on the greeting." } } }] }],
       capacity: [{ model: "grok-4.7", role: "builder", shape: "grok", partial: true }],
-    });
+    }, { focus: "builder" });
     try {
       const waiting = await capacityWait(run, 5_000, "grok-4.7");
       expect(readFileSync(join(waiting.worktree!, "capacity-draft.txt"), "utf8")).toBe("A greeting draft\n");

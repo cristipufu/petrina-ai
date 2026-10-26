@@ -7843,6 +7843,18 @@
     "artifacts": "workstreams/shared-records-ownership-next/handoff-v2.json; pending-owner-map.json; root-integration-v2.json",
     "limits": "Focused Mac proofs only; complete integration, native platforms, other fixtures and task91172 remain separate."
   },
+  "capacityRecoveryFocused": {
+    "sourceSha256": "8f4de87d816462a2f6418571c656805b14ae9131aa730fc4c7b2634c95dd08dc",
+    "originalCases": 22,
+    "originalMatcherSites": 184,
+    "newFocusedVariants": 12,
+    "native": "22passed/0failed/0skipped;562dynamic expectations;normal14workers",
+    "observedStartsAndExits": 1592,
+    "programs": { "git": 1332, "bun": 130, "ps": 130 },
+    "typesConventionsAndSourceReview": "passed on recorded sources",
+    "artifacts": "workstreams/capacity-native-reduction-next/root-native-v1/summary.json; workstreams/capacity-native-reduction-independent-review/handoff.json",
+    "limits": "Focused Mac evidence; earlier cfdb1968launches used different production/host conditions. No paired/full/platform improvement claim."
+  },
   "resourceAudit": {
     "status": "in progress",
     "source": "cfdb64d669b170e5f388956a4a642aed6ad9b80b",
