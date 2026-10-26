@@ -31,7 +31,7 @@ async function start(reopen?: "load", clock = false, activity?: "grok") {
     let current: EngineProcess | undefined;
     const launch = async () => {
       if (current) await owners.stop(current);
-      current = await (clock ? owners.app(home, [join(import.meta.dir, "../../clock-harness.ts"), home, fakes.dir, clockFile]) : owners.harness(home, fakes.dir));
+      current = await (clock ? owners.harness(home, fakes.dir, undefined, { entry: join(import.meta.dir, "../../clock-harness.ts"), extra: [clockFile] }) : owners.harness(home, fakes.dir));
       return current;
     };
     const engine = await launch();

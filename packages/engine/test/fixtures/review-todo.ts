@@ -30,7 +30,7 @@ export function reviewProgressFixtures() {
       let current: EngineProcess | undefined;
       const launch = async () => {
         if (current) await owners.stop(current);
-        const engine = await owners.app(home, [join(import.meta.dir, "../clock-harness.ts"), home, fakes.dir, clock]);
+        const engine = await owners.harness(home, fakes.dir, undefined, { entry: join(import.meta.dir, "../clock-harness.ts"), extra: [clock] });
         current = engine;
         return setupWithCleanup(async () => {
           await owners.run(engine, async () => engine.until(state => Object.keys(ADAPTERS).every(id => state.tools.some(tool => tool.id === id && tool.status === "ready") && state.setup?.checks.some(check => check.id === id && check.status === "ready" && !check.checking)), "every review tool to be ready"));
