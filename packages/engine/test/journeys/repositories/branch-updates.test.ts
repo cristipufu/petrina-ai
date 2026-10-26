@@ -1,4 +1,3 @@
-import { FAKE_AGENT } from "../../fixtures.js";
 import { updateAgents } from "../../fixtures/update-agents.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
@@ -6,7 +5,7 @@ import { join } from "node:path";
 import { BUILT_IN_ROLES, journeyProblems, stepName, type Task } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import type { Scenario } from "../../fake-agent.js";
-import { Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
 const posix = process.platform !== "win32";
 const roots: string[] = [];
@@ -38,15 +37,8 @@ type Hook<T extends unknown[]> = (...args: T) => unknown;
 async function ship(scenario: Scenario, hooks: { setup?: Hook<[repo: string]>; beforeBuild?: Hook<[repo: string]>; atDeliveryCheck?: Hook<[repo: string]>; atBuilderPermission?: Hook<[repo: string, task: Task]> } = {}) {
   const root = tempDir("petrina-update-");
   roots.push(root);
-  // These two controls assert the native connector's actual reopen/fresh behavior.
-  const nativeConversation = scenario.reviewer === "important" && !scenario.fixes;
-  const native = nativeConversation ? new Fakes(join(root, "fake")) : undefined;
-  native?.scenario(scenario);
-  const scripted = native ? undefined : updateAgents(join(root, "replies"), scenario);
-  const fakes = native ?? scripted!;
-  const engine = new Engine(join(root, "data"), native
-    ? { agentCommand: () => [process.execPath, FAKE_AGENT, native.dir] }
-    : scripted!);
+  const fakes = updateAgents(join(root, "replies"), scenario);
+  const engine = new Engine(join(root, "data"), fakes);
   try {
     const repo = await makeProduct(root);
     await hooks.setup?.(repo);
@@ -256,43 +248,6 @@ describe.concurrent("work brought up to date with main", () => {
   });
 });
 
-describe.concurrent("the builder's own conversation", () => {
-  it("goes back to it for a fix round, with only its job now and where things stand", async () => {
-    const { task, fakes } = await ship({ reviewer: "important", reopen: "resume" });
-    expect(lines(task)).toContain("Went back to its own conversation from the last step");
-    const builder = fakes.prompts("builder");
-    // One conversation for the build and the fix round.
-    expect(new Set(fakes.received("builder").map((entry) => entry.session)).size).toBe(1);
-    const back = builder.find((prompt) => prompt.startsWith("Petrina is back with more work on this task"));
-    expect(back).toContain("You are fixing the review findings listed below");
-    expect(back).toContain("## Review findings (answer every one by id; fix every Important one)");
-    expect(back).not.toContain("You are the Builder in Petrina");
-  });
-
-  it("starts a fresh one, with what it reported, when the tool cannot reopen it", async () => {
-    const { task, fakes } = await ship({ reviewer: "important" });
-    expect(lines(task).some((line) => line.startsWith("Could not go back to its own conversation"))).toBe(true);
-    const fresh = fakes.openings("builder").at(-1)!;
-    expect(fresh).toContain("You are fixing the review findings listed below");
-    expect(fresh).toContain("## What the builder reports\nAdded a greeting.");
-  });
-});
-
-describe.concurrent("checks only look", () => {
-  it("puts back whatever a check changes in files git tracks, so nothing unreviewed ships", async () => {
-    const { task, repo } = await ship({ checks: "writes" });
-    expect(lines(task)).toContain("A check changed files, so Petrina put them back: checks only look, and fixes come from the builder");
-    expect(await git(repo, "ls-tree", "--name-only", "main")).toContain("README.md");
-    expect(await git(repo, "ls-tree", "--name-only", "main")).not.toContain("README.txt");
-  });
-
-  it("takes back a commit a check makes, so nothing the coordinator did not approve ships", async () => {
-    const { task, repo, before } = await ship({ checks: "commits" });
-    expect(lines(task)).toContain("A check made a commit, so Petrina put the work back as it was: checks only look, and fixes come from the builder");
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("Add a greeting");
-  });
-});
-
 describe.concurrent.skipIf(!posix)("the repository's own commit hooks", () => {
   // Like a hook that keeps employer-internal names out of a public repository: local, never committed.
   const guard = `hits=$(git diff --cached -U0 --no-color | grep '^+' | grep -inE 'internal-db-[0-9]+')
@@ -317,15 +272,4 @@ if [ -n "$hits" ]; then echo "pre-commit: staged changes contain internal names;
     expect(task.hooking).toBeUndefined();
   });
 
-  it("runs a commit-msg hook on the task's one commit message, with the builder's title, and undoes what it changes", async () => {
-    const check = `echo "Checking the commit title"
-echo "changed by a hook" >> README.md
-head -1 "$1" | grep -qE '^(feat|fix|chore): ' || { echo "commit-msg: use a conventional title" >&2; exit 1; }`;
-    const { task, repo, before } = await ship({ title: "feat: add a greeting" }, { setup: (repo) => hook(repo, "commit-msg", check) });
-    expect(task.checks?.results.find((run) => run.name === "Commit message hook")).toMatchObject({ ok: true, command: "git hook run commit-msg" });
-    const run = task.checks!.results.find((run) => run.name === "Commit message hook")!;
-    expect(readFileSync(run.logPath!, "utf8")).toContain("Checking the commit title");
-    expect(await git(repo, "log", "--format=%s", `${before}..main`)).toBe("feat: add a greeting");
-    expect(await git(repo, "show", "main:README.md")).toBe("# Demo");
-  });
 });

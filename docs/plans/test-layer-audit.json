@@ -6609,8 +6609,21 @@
       "status": "reviewed",
       "from": "packages/engine/test/update.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/repositories/branch-updates.test.ts"
+        "packages/engine/test/journeys/repositories/branch-updates.test.ts",
+        "packages/engine/test/contracts/agents/builder-conversation.test.ts",
+        "packages/engine/test/contracts/checks/restoration-before-delivery.test.ts"
       ],
+      "boundaryCostSlice": {
+        "originalCases": 15,
+        "transferredCases": 5,
+        "originalMatcherSites": 102,
+        "transferredMatcherSites": 17,
+        "remainingTenCallbacks": "byte-identical",
+        "focusedNative": "two actual Builder session cases pass on V4; three actual check/gate/approval/local-publication cases pass on V5",
+        "review": "Actual native owners and canonical fixture lifetime; real first session and report, literal declared argv and canonical Git-hook wrapper, actual confirmedDelivery full receipt. First three added receipt assertions failed against seven-character landed display; preserved and corrected without changing the original assertions.",
+        "artifacts": "workstreams/branch-update-cost-assessment/handoff-v5.json; root-integration-v5.json",
+        "limits": "No paired15case resource or complete/platform qualification claimed. Ten retained journeys still require complete integration."
+      },
       "layer": "journeys",
       "area": "repositories",
       "review": "Whole-file/case audit retained original declarations, matcher sites, helpers, platform variants and deadlines. Actual ordering/admission/learning-offer controllers and text rules moved to portable owners; real Git, source identity, check evidence, SQLite, ACP/restart, filesystem safety and publishing remain native. Root independently verified all frozen hashes, 181 per-case declaration groups/1398 matcher sites and34 exact source-body comparisons, including8 explicit assertion aliases. Setup-failure and restart cleanup ownership reviewed; uncertain cleanup retains private files.",
