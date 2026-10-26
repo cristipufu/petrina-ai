@@ -1,3 +1,6 @@
+import { completeAll } from "@petrina/core";
+import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+import { directDrivers, removeFixtureRoot } from "../../fixtures/direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterEach } from "bun:test";
 import { engineProcessCases } from "../../support.js";
@@ -6,7 +9,7 @@ import * as processes from "node:child_process";
 import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Engine } from "../../engine.js";
+import type { Engine } from "../../engine.js";
 import * as browserRecovery from "@petrina/agent-runtime/browser";
 import { CLEANUP_NOTE, recoverBrowserTemps } from "@petrina/agent-runtime/browser";
 import { browserProcesses } from "@petrina/platform/browser-processes";
@@ -16,71 +19,152 @@ import { Fakes, FAKE_AGENT, makeProduct, removeDir, tempDir, testBrowserRoot, wa
 import { expectRejection } from "@petrina/test-support/rejections";
 
 const cases = engineProcessCases();
-afterEach(() => cases.close());
+const inProcessClosers = new Set<() => Promise<void>>(), retainedRecoveries = new Set<string>();
+afterEach(() => completeAll([...inProcessClosers].map(close => close()).concat(cases.close())).then(() => undefined));
 const root = tempDir("petrina-browser-startup-");
 const browsers = testBrowserRoot();
-afterAll(() => { removeDir(root); if (!cases.retained.size) removeDir(browsers); });
+afterAll(() => { removeDir(root); if (!cases.retained.size && !retainedRecoveries.size) removeDir(browsers); });
 const notePattern = (fields: string) => new RegExp(`^${`${CLEANUP_NOTE} ${fields}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("elapsed=\\?", "elapsed=\\d+ms")}\n?$`);
 
 const BROWSER_RECOVERY_FAILURE = fileURLToPath(new URL("../../fixtures/browser-startup-failure.ts", import.meta.url));
 
 const RECOVERY_HOLD_WAIT_MS = 5_000;
 
+for (const result of [{ kind: "fulfilled" }, { kind: "rejected", error: new Error("Startup recovery failed after its hold") }, { kind: "rejected", error: undefined }] as const) it(`joins held startup recovery before shutdown and root disposal (${result.kind === "fulfilled" ? "success" : result.error === undefined ? "undefined" : "Error"})`, async () => {
+  const work = tempDir("petrina-startup-shutdown-"), owner = directDrivers(work);
+  const release = Promise.withResolvers<void>();
+  let commandRoot: string | undefined, commands: ReturnType<typeof cases.open> | undefined;
+  let startup: Promise<void> | undefined, receipt: Promise<{ value: void } | { error: unknown }> | undefined;
+  let command: ReturnType<ReturnType<typeof cases.open>["command"]> | undefined, finishing: Promise<void> | undefined;
+  let started = false, recovered = false;
+  const finish = (): Promise<void> => {
+    // Publish the release even when Bun ended the case without unwinding its body.
+    release.resolve();
+    if (finishing) return finishing;
+    let done!: () => void, failed!: (error: unknown) => void;
+    finishing = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
+    void (async () => {
+      const settled = await Promise.allSettled([owner.close(), commands?.close()]);
+      const errors = settled.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+      if (errors.length) throw new AggregateError(errors, "Startup shutdown owners could not confirm cleanup; roots retained");
+      // Both original results were observed when published; canonical close confirms native cleanup.
+      if (commandRoot && !commands) removeFixtureRoot(commandRoot);
+    })().then(done, failed);
+    void finishing.then(() => inProcessClosers.delete(finish), () => { inProcessClosers.delete(finish); retainedRecoveries.add(work); });
+    return finishing;
+  };
+  inProcessClosers.add(finish);
+  await setupWithCleanup(async () => {
+    commandRoot = tempDir("petrina-startup-shutdown-boundary-");
+    const ownedCommands = cases.open(commandRoot); commands = ownedCommands;
+    const engine = owner.open(join(work, "data"), { agentCommand: () => undefined, browserRecovery: async () => {
+      started = true;
+      try {
+        await release.promise;
+        if (result.kind === "rejected") throw result.error;
+        writeFixtureJson(join(work, "recovery-finished.json"), { finished: true });
+      } finally { recovered = true; }
+    } });
+    startup = engine.waitUntilReady();
+    receipt = startup.then(value => ({ value }), (error: unknown) => ({ error }));
+    expect(started).toBe(true);
+    const shutdown = engine.shutdown(), closing = owner.close();
+    let shutdownSettled = false, rootSettled = false;
+    let recoveredAtShutdown: boolean | undefined, recoveredAtClose: boolean | undefined;
+    void shutdown.then(() => { shutdownSettled = true; recoveredAtShutdown = recovered; }, () => { shutdownSettled = true; recoveredAtShutdown = recovered; });
+    void closing.then(() => { rootSettled = true; recoveredAtClose = recovered; }, () => { rootSettled = true; recoveredAtClose = recovered; });
+    const shutdownAgain = engine.shutdown();
+    // This independently owned actual command fully exits and drains; no continuation budget stands in for it.
+    command = ownedCommands.command(commandRoot, ["-e", 'console.log("startup boundary");']);
+    expect(await command.completion).toMatchObject({ code: 0, stdout: "startup boundary\n", stderr: "" });
+    expect(shutdownSettled).toBe(false);
+    expect(rootSettled).toBe(false);
+    expect(recovered).toBe(false);
+    expect(existsSync(work)).toBe(true);
+    expect(engine.store.database.query("SELECT 1 AS live").get()).toEqual({ live: 1 });
+    release.resolve();
+    const ready = await receipt;
+    if (result.kind === "rejected") {
+      expect("error" in ready).toBe(true);
+      if (!("error" in ready)) throw new Error("The original startup rejection became a ready result");
+      expect(ready.error).toBe(result.error);
+    } else expect("value" in ready).toBe(true);
+    await completeAll([shutdown, shutdownAgain, closing]);
+    expect(shutdownAgain).toBe(shutdown);
+    expect(recoveredAtShutdown).toBe(true);
+    expect(recoveredAtClose).toBe(true);
+    expect(engine.stopped).toBe(true);
+    expect(() => engine.store.database.query("SELECT 1").get()).toThrow();
+    expect(existsSync(work)).toBe(false);
+  }, finish);
+  await finish();
+});
+
 async function withPendingBrowserRecovery(
   check: (fixture: { engine: Engine; fakes: Fakes; work: string; registry: string; stale: string; startup: Promise<void>; ready: () => boolean; release: () => void }) => Promise<void>,
   options: { atHold?: (markReached: () => void) => void; observeMs?: number; bypassHold?: boolean } = {},
 ) {
-  const work = tempDir("petrina-browser-startup-pending-");
-  const data = join(work, "data");
-  const registry = join(data, "browser-temp");
-  const stale = mkdtempSync(join(browsers, "petrina-browser-"));
-  const fakes = new Fakes(join(work, "fake"));
-  mkdirSync(registry, { recursive: true });
-  writeFileSync(join(registry, "stale.json"), JSON.stringify(stale));
-  // Hold the promise the kernel awaits, rather than a process scan whose own
-  // deadline can finish recovery while product setup is still running.
-  let recovered = false;
+  const work = tempDir("petrina-browser-startup-pending-"), owner = directDrivers(work);
   const releaseRecovery = Promise.withResolvers<void>();
-  const recover = browserRecovery.recoverBrowserTemps;
-  let heldArgs: Parameters<typeof recover> | undefined;
-  const scopedRecovery = async (...args: Parameters<typeof recover>) => {
-    if (args[0] !== registry || args[1] !== browsers) throw new Error("Unexpected browser recovery owner");
-    heldArgs = args;
-    await recover(args[0], args[1], undefined, { ...browserProcesses, readFolder: async () => ({ pids: [], states: new Map() }) });
-    if (options.atHold) options.atHold(() => { recovered = true; });
-    else recovered = true;
-    await releaseRecovery.promise;
-  };
-  let engine: Engine | undefined;
-  let startup: Promise<void> | undefined;
+  let stale: string | undefined, startup: Promise<void> | undefined;
   let ready = false, settled = false;
-  let failure: { error: unknown } | undefined;
-  try {
-    // A control models an engine that no longer calls the held export at startup.
-    engine = new Engine(data, { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], browser: true, browserTempRoot: browsers, ...(options.bypassHold ? {} : { browserRecovery: scopedRecovery }) });
-    startup = engine.waitUntilReady();
-    void startup.then(() => { ready = true; settled = true; }, error => { failure = { error }; settled = true; });
+  let failure: { error: unknown } | undefined, closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    // A failed or timed-out test must release recovery before joining shutdown.
+    releaseRecovery.resolve();
+    if (closing) return closing;
+    let done!: () => void, failed!: (error: unknown) => void;
+    closing = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
+    void (async () => {
+      await owner.close();
+      if (startup) await waitFor(() => settled, "browser startup recovery to settle after releasing its test hold", RECOVERY_HOLD_WAIT_MS,
+        { during: startup.then(() => undefined, () => undefined) });
+      if (stale) removeFixtureRoot(stale);
+    })().then(done, failed);
+    void closing.then(() => inProcessClosers.delete(close), () => { inProcessClosers.delete(close); retainedRecoveries.add(work); });
+    return closing;
+  };
+  inProcessClosers.add(close);
+  const run = await setupWithCleanup(() => owner.prepare(async () => {
+    const data = join(work, "data"), registry = join(data, "browser-temp");
+    const currentStale = mkdtempSync(join(browsers, "petrina-browser-")); stale = currentStale;
+    const fakes = new Fakes(join(work, "fake"));
+    mkdirSync(registry, { recursive: true });
+    writeFixtureJson(join(registry, "stale.json"), stale);
+    // Hold the promise the kernel awaits, rather than a process scan whose own
+    // deadline can finish recovery while product setup is still running.
+    let recovered = false;
+    const recover = browserRecovery.recoverBrowserTemps;
+    let heldArgs: Parameters<typeof recover> | undefined;
+    const scopedRecovery = async (...args: Parameters<typeof recover>) => {
+      if (args[0] !== registry || args[1] !== browsers) throw new Error("Unexpected browser recovery owner");
+      heldArgs = args;
+      await owner.prepare(() => recover(args[0], args[1], undefined, { ...browserProcesses, readFolder: async () => ({ pids: [], states: new Map() }) }));
+      if (options.atHold) options.atHold(() => { recovered = true; });
+      else recovered = true;
+      await releaseRecovery.promise;
+    };
+    // The actual generation is registered before any asynchronous startup can settle.
+    const engine = owner.open(data, { agentCommand: () => [process.execPath, FAKE_AGENT, fakes.dir], browser: true, browserTempRoot: browsers, ...(options.bypassHold ? {} : { browserRecovery: scopedRecovery }) });
+    const starting = engine.waitUntilReady(); startup = starting;
+    void starting.then(() => { ready = true; settled = true; }, error => { failure = { error }; settled = true; });
+    // In bypass mode the kernel's default native recovery is the operation under test.
+    if (options.bypassHold) void owner.prepare(() => starting).catch(() => undefined);
+    return { current: engine, fakes, registry, stale: currentStale, startup: starting, recovered: () => recovered, heldArgs: () => heldArgs };
+  }), close);
+  await setupWithCleanup(async () => {
     // Bound observation only. The hold itself never expires during slow setup.
     await waitFor(() => {
       if (failure) throw failure.error;
-      if (recovered) return true;
+      if (run.recovered()) return true;
       if (ready) throw new Error("Browser startup finished without reaching its recovery hold");
       return false;
     }, "browser startup recovery to reach its held point", options.observeMs ?? RECOVERY_HOLD_WAIT_MS);
+    const heldArgs = run.heldArgs(), registry = run.registry;
     expect(heldArgs).toEqual([registry, browsers]);
-    await check({ engine, fakes, work, registry, stale, startup, ready: () => ready, release: releaseRecovery.resolve });
-  } finally {
-    try { await engine?.shutdown(); }
-    finally {
-      releaseRecovery.resolve();
-      try {
-        if (startup) await waitFor(() => settled, "browser startup recovery to settle after releasing its test hold", RECOVERY_HOLD_WAIT_MS);
-      } finally {
-        removeDir(stale);
-        removeDir(work);
-      }
-    }
-  }
+    await owner.run(run.current, () => check({ engine: run.current, fakes: run.fakes, work, registry: run.registry, stale: run.stale, startup: run.startup, ready: () => ready, release: releaseRecovery.resolve }));
+  }, close);
+  await close();
 }
 
 it("does not schedule queued work after shutdown while browser recovery is pending", async () => {
@@ -110,10 +194,11 @@ it("does not schedule queued work after shutdown while browser recovery is pendi
     expect(ready()).toBe(false);
     expect(engine.drivers.size).toBe(0);
     expect(fakes.opens()).toEqual([]);
-    await engine.shutdown();
+    const shutdown = engine.shutdown();
     expect(ready()).toBe(false);
     release();
     await startup;
+    await shutdown;
     expect(ready()).toBe(true);
     expect(engine.stopped).toBe(true);
     expect(engine.drivers.size).toBe(0);

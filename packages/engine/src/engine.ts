@@ -341,7 +341,7 @@ export class Engine extends Kernel implements Commands {
     this.screens.stop();
     const runs = [...this.runs.values(), ...[...this.helperRuns.values()].flatMap((runs) => [...runs])];
     for (const controller of this.drivers.values()) controller.abort();
-    this.shutdownDone = Promise.allSettled([this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(async () => {
+    this.shutdownDone = Promise.allSettled([this.startupReady, this.extraValidations.shutdown(), this.tools.shutdown(), this.profileReader.stop(), this.followUps.stop(), ...runs.map((run) => run.stop()), ...this.settling.values()]).then(async () => {
       // A driver can hand file handling to the background while it settles. Re-read ownership after
       // each group, including work registered by that cleanup, before callers may remove its folders.
       for (;;) {
@@ -365,9 +365,9 @@ export class Engine extends Kernel implements Commands {
     };
     // Ordinary state and interrupted-turn semantics never wait behind container cleanup.
     saveAndCloseLog();
-    // Only outstanding extra work may still write ownership/evidence. Its initial ownership
-    // is already saved above, so a forced exit during cleanup remains recoverable.
-    if (this.s.extraValidations?.length) this.shutdownDone = this.shutdownDone.finally(() => this.store.close());
+    // Startup recovery and outstanding extra work may still own private resources. State is
+    // already saved above; keep the database available until those operations settle.
+    if (!this.startupComplete || this.s.extraValidations?.length) this.shutdownDone = this.shutdownDone.finally(() => this.store.close());
     else this.store.close();
     return this.shutdownDone;
   }
