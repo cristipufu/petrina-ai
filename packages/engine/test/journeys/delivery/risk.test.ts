@@ -60,7 +60,9 @@ describe.concurrent("review depth and the delivery check follow the task's risk"
     }
   });
 
-  for (const optedIn of [true, false]) {
+
+
+  for (const optedIn of [true]) {
     it(optedIn ? "ships low-risk work without asking where the product opted in" : "still asks about low-risk work where the product did not opt in", async () => {
       const f = await setUp({ planner: "short", risk: "low" }, optedIn);
       try {

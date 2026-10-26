@@ -99,73 +99,11 @@ process.exit(existsSync("reject-shared") && existsSync("feature-shared") ? 1 : 0
   }), dispose);
 }
 
-it("finishes a shared delivery before later single-product requests on either destination", async () => {
-  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
-  await setupWithCleanup(async () => {
-  const f = (fixtureOwner = await fixture(["a", "b"]));
-  await setupWithCleanup(() => f.run(async () => {
-    const first = await f.add("first-a"), shared = await f.add("shared", [0, 1]);
-    const lastA = await f.add("last-a"), lastB = await f.add("last-b", [1]);
-    f.hold("first-a");
-    try {
-      f.schedule(); await waitFor(() => f.evidence().length === 1, "the first destination check");
-      expect(f.evidence()[0]!.title).toBe("first-a");
-      for (const task of [shared, lastA, lastB]) {
-        expect(task.state).toBe("waiting"); expect(task.agent).toBeUndefined(); expect(task.holdsSlot).toBe(false);
-        expect(f.engine().drivers.has(task.id)).toBe(false);
-      }
-      expect(lastB.statusLine).toContain("shared");
-      expect(f.engine().checkQueue.running).toBe(1); expect(f.engine().checkQueue.waiting).toBe(0);
-      f.release("first-a");
-      await waitFor(() => first.state === "done" && !f.engine().settling.has(first.id), "the first destination delivery");
-      f.schedule(); await waitFor(() => shared.state === "done" && !f.engine().settling.has(shared.id), "both shared destinations to land");
-      expect(f.evidence().map(run => [run.product, run.title])).toEqual([["a", "first-a"], ["a", "shared"], ["b", "shared"]]);
-      f.schedule(); await waitFor(() => [lastA, lastB].every(task => task.state === "done" && !f.engine().settling.has(task.id)), "both later single deliveries");
-      const runs = f.evidence(); expect(runs).toHaveLength(5);
-      expect(runs.filter(run => run.product === "a").map(run => run.title)).toEqual(["first-a", "shared", "last-a"]);
-      expect(runs.filter(run => run.product === "b").map(run => run.title)).toEqual(["shared", "last-b"]);
-      for (const owner of f.owners) {
-        const latest = runs.filter(run => run.product === owner.name).at(-1)!;
-        expect(await git(owner.path, "rev-parse", "main")).toBe(latest.sha);
-        expect(latest.files).toEqual(owner.name === "a" ? ["feature-first-a", "feature-last-a", "feature-shared"] : ["feature-last-b", "feature-shared"]);
-      }
-      expect(f.engine()["checks"].preparingCount).toBe(0);
-    } finally { f.release("first-a");  }
-
-  }), () => f.dispose());
-  await f.dispose();
-
-  }, async () => { await fixtureOwner?.dispose(); });
-});
 
 
 
-it("checks and lands another branch while a delivery to main still owns its turn", async () => {
-  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
-  await setupWithCleanup(async () => {
-  const f = (fixtureOwner = await fixture());
-  await setupWithCleanup(() => f.run(async () => {
-    const first = await f.add("first"), other = await f.add("other", [0], "next");
-    const base = executionFor(first).work.baseSha!;
-    f.hold("first");
-    try {
-      f.schedule();
-      await waitFor(() => other.state === "done" && !f.engine().settling.has(other.id), "the independent branch to finish");
-      expect(first.state).toBe("running");
-      const runs = f.evidence(); expect(runs).toHaveLength(2);
-      expect(runs.find(run => run.title === "other")!.files).toEqual(["feature-other"]);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(base);
-      expect(await git(f.owners[0]!.path, "rev-parse", "next")).toBe(runs.find(run => run.title === "other")!.sha);
-      f.release("first"); await waitFor(() => first.state === "done" && !f.engine().settling.has(first.id), "the original branch delivery to finish");
-      expect(f.evidence()).toHaveLength(2);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(runs.find(run => run.title === "first")!.sha);
-    } finally { f.release("first");  }
 
-  }), () => f.dispose());
-  await f.dispose();
 
-  }, async () => { await fixtureOwner?.dispose(); });
-});
 
 
 it("looks up an interrupted local publication after restart before checking and landing the next delivery", async () => {
@@ -311,66 +249,7 @@ for (const confirmation of ["own", "peer"] as const) it(`returns admitted check 
   }, async () => { await fixtureOwner?.dispose(); });
 });
 
-for (const interruption of ["question"] as readonly ("hold" | "question")[]) it(`refreshes every unpublished shared preparation after yielding its turn for a ${interruption}`, async () => {
-  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
-  await setupWithCleanup(async () => {
-  const f = (fixtureOwner = await fixture(["a", "b"])), shared = await f.add("shared", [0, 1]), second = await f.add("second");
-  await setupWithCleanup(() => f.run(async () => {
-    const shipping = f.engine()["shipping"], prepare = shipping["prepare"].bind(shipping), publish = shipping["publishLocal"].bind(shipping);
-    const preparedA = scopesFor(shared)[0]!.work;
-    let interrupted = false;
-    const published: { title: string; files: string[] }[] = [];
-    shipping["prepare"] = async (scope, stage, signal) => {
-      if (scope.task.id === shared.id && scope.work.productId === f.owners[1]!.id && !interrupted) {
-        interrupted = true;
-        expect(preparedA.shipping?.prepared).toBeDefined();
-        if (interruption === "hold") {
-          f.engine().setHeld(shared.id, true);
-          throw new WaitingForUsage("This task is on hold");
-        }
-        await f.engine()["turns"]["wait"](scope, "question", "Finish the shared delivery?", true, {}, signal, "Waiting for your answer", { roleId: "release-manager", profileId: "sol-high" }, false);
-      }
-      return prepare(scope, stage, signal);
-    };
-    shipping["publishLocal"] = async (scope, signal) => {
-      const files = (await git(scope.work.worktree!, "ls-tree", "--name-only", scope.work.shipping!.prepared!.tested)).split("\n").filter(file => file.startsWith("feature-")).sort();
-      published.push({ title: scope.task.title, files });
-      return publish(scope, signal);
-    };
-    f.hold("second");
-    try {
-      f.engine().schedule = Engine.prototype.schedule.bind(f.engine());
-      f.schedule();
-      await waitFor(() => f.evidence().some(run => run.title === "second"), "the follower to check while shared delivery yields");
-      expect(preparedA.shipping?.prepared).toBeUndefined();
-      expect(published).toEqual([]);
-      if (interruption === "question") {
-        f.engine().answer(f.engine().s.inbox.find(item => item.taskId === shared.id && item.kind === "question")!.id, "Continue");
-        await waitFor(() => shared.state === "waiting" && !f.engine().settling.has(shared.id), "the shared delivery to yield to the current holder");
-      }
-      f.release("second");
-      await waitFor(() => second.state === "done" && !f.engine().settling.has(second.id), "the follower to land its checked change");
-      if (interruption === "hold") f.engine().setHeld(shared.id, false);
-      await waitFor(() => shared.state === "done" && !f.engine().settling.has(shared.id), "the refreshed shared delivery to finish");
-      const aRuns = f.evidence().filter(run => run.product === "a");
-      expect(aRuns.map(run => [run.title, run.files])).toEqual([
-        ["shared", ["feature-shared"]], ["second", ["feature-second"]], ["shared", ["feature-second", "feature-shared"]],
-      ]);
-      expect(published).toEqual([
-        { title: "second", files: ["feature-second"] }, { title: "shared", files: ["feature-second", "feature-shared"] }, { title: "shared", files: ["feature-shared"] },
-      ]);
-      expect(await git(f.owners[0]!.path, "rev-parse", "main")).toBe(aRuns.at(-1)!.sha);
-      expect(f.engine()["shipping"]["admission"].entries()).toEqual([]);
-    } finally {
-      f.release("second"); shipping["prepare"] = prepare; shipping["publishLocal"] = publish;
 
-    }
-
-  }), () => f.dispose());
-  await f.dispose();
-
-  }, async () => { await fixtureOwner?.dispose(); });
-});
 
 for (const changed of [true]) it(`refreshes all shared products before publishing after ${changed ? "a changed" : "an unchanged"} product confirms its address`, async () => {
   let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
@@ -446,84 +325,7 @@ for (const changed of [true]) it(`refreshes all shared products before publishin
   }, async () => { await fixtureOwner?.dispose(); });
 });
 
-for (const [mode, stop] of [["pull-request", "single pool pause"], ["release", "shared engine drain"]] as const) it(`keeps prepared ${mode} candidates through a ${stop} without local destination turns`, async () => {
-  let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;
-  await setupWithCleanup(async () => {
-  const shared = stop.startsWith("shared"), f = (fixtureOwner = await fixture(shared ? ["a", "b"] : ["a"]));
-  await setupWithCleanup(() => f.run(async () => {
-    const task = await f.add("prepared", shared ? [0, 1] : [0]);
-    const engine = f.engine(), shipping = engine["shipping"], signal = new AbortController().signal, stage = task.plan!.stages[task.stageIndex]!;
-    const prepare = shipping["prepare"].bind(shipping), publish = shipping["publish"].bind(shipping), checkDelivery = shipping["checkDelivery"].bind(shipping);
-    const notes = shipping.releases.chooseVersion.bind(shipping.releases), companions = shipping["companions"].finish.bind(shipping["companions"]);
-    const github = engine["tools"].needGitHub.bind(engine["tools"]);
-    engine["tools"].needGitHub = async () => {};
-    shipping.releases.chooseVersion = async scope => {
-      scope.work.shipping!.version = "1.0.1"; scope.work.shipping!.tag = "v1.0.1"; scope.work.shipping!.after = "";
-      return [{ file: "package.json", version: "1.0.0", text: '{"name":"demo","version":"1.0.0"}\n' }];
-    };
-    for (const scope of scopesFor(task)) {
-      const work = scope.work;
-      work.delivery = mode; work.source!.destination.mode = mode; work.source!.destination.kind = mode === "release" ? "release" : "new-pr";
-      work.approvedFor = { by: "coordinator", mode, destination: destination(work, engine.repositoryOf(scope)) };
-      if (mode === "release") {
-        writeFileSync(join(work.worktree!, "package.json"), '{"name":"demo","version":"1.0.0"}\n');
-        await git(work.worktree!, "add", "."); await git(work.worktree!, "commit", "-qm", "Declare the release version");
-        await engine["updates"].fold(scope);
-        work.approvedSha = await git(work.worktree!, "rev-parse", "HEAD"); work.approvedPatch = await engine["updates"].patch(scope);
-        work.releasePreview = { start: work.approvedSha, base: work.baseSha, version: "1.0.1", tag: "v1.0.1", after: "", summary: "Prepared release", notes: "The approved release notes" };
-      }
-    }
-    const candidates: string[] = [], published: string[] = [];
-    let paused = false;
-    shipping["prepare"] = async (scope, currentStage, currentSignal) => {
-      const result = await prepare(scope, currentStage, currentSignal);
-      if (!paused) {
-        candidates.push(scope.work.shipping!.prepared!.tested);
-        if (candidates.length === scopesFor(task).length) {
-          paused = true;
-          if (stop.endsWith("drain")) engine.draining = true;
-          else engine.setPoolPaused(true);
-        }
-      }
-      return result;
-    };
-    // Observe publication at its normal admission boundary without a shared GitHub service.
-    shipping["checkDelivery"] = async () => "continue";
-    shipping["publish"] = async (scope, currentSignal) => {
-      published.push(scope.work.shipping!.prepared!.tested);
-      await shipping["recordDelivery"](scope, mode === "release"
-        ? { kind: "release", release: { tag: "v1.0.1", url: "https://github.com/acme/demo/releases/tag/v1.0.1" } }
-        : { kind: "pr", pr: { number: 1, url: "https://github.com/acme/demo/pull/1", state: "open" } }, currentSignal);
-      return "done";
-    };
-    shipping["companions"].finish = async () => true;
-    try {
-      expect(await shipping.deliver(task, stage, signal).catch(error => error)).toBeInstanceOf(WaitingForUsage);
-      expect(candidates).toHaveLength(scopesFor(task).length);
-      expect(scopesFor(task).map(({ work }) => work.shipping?.prepared?.tested)).toEqual(candidates);
-      expect(shipping["admission"].entries()).toEqual([]);
-      expect(published).toEqual([]);
-      const originalRuns = f.evidence();
-      expect(originalRuns).toHaveLength(scopesFor(task).length * (mode === "release" ? 2 : 1));
-      writeFileSync(join(f.owners[0]!.path, "later-main"), "A later outside commit\n");
-      await git(f.owners[0]!.path, "add", "."); await git(f.owners[0]!.path, "commit", "-qm", "Advance main while publication waits");
-      engine.draining = false; engine.setPoolPaused(false);
-      expect(await shipping.deliver(task, stage, signal)).toBe("stop");
-      expect(published).toEqual(candidates);
-      expect(f.evidence()).toEqual(originalRuns);
-      expect(shipping["admission"].entries()).toEqual([]);
-    } finally {
-      engine.draining = false; engine.setPoolPaused(false);
-      shipping["prepare"] = prepare; shipping["publish"] = publish; shipping["checkDelivery"] = checkDelivery;
-      shipping.releases.chooseVersion = notes; shipping["companions"].finish = companions; engine["tools"].needGitHub = github;
-      await engine.shutdown();
-    }
 
-  }), () => f.dispose());
-  await f.dispose();
-
-  }, async () => { await fixtureOwner?.dispose(); });
-});
 
 it("refreshes saved shared local candidates after shutdown before publishing any product", async () => {
   let fixtureOwner: Awaited<ReturnType<typeof fixture>> | undefined;

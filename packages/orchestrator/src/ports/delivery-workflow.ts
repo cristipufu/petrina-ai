@@ -5,6 +5,8 @@ import type { RepositoryContext, RepositoryWork } from "../repository-context.js
 
 export type DeliveryStage = NonNullable<RuntimeTask["plan"]>["stages"][number];
 export type DeliveryRunResult = "continue" | "stop";
+/** Queue admission re-reads the actual delivery order before a check may reuse its preparation. */
+export type DeliveryCheckPreparation = (() => Promise<boolean>) & { beforeQueue(): boolean };
 
 /** The same live admission owner used by the host's scheduler and native preparation. */
 export interface DeliveryWorkflowAdmission {
@@ -20,9 +22,13 @@ export interface DeliveryPhaseEffects {
   needGitHub(task: RuntimeTask): Promise<void>;
   readyToShip(scope: RepositoryContext, signal: AbortSignal): Promise<"ready" | "back">;
   head(scope: RepositoryContext): Promise<string>;
+  patch(scope: RepositoryContext, ref?: string): Promise<string | undefined>;
+  upToDate(scope: RepositoryContext, signal: AbortSignal): Promise<"current" | "moved" | "conflict">;
+  checkOrder(taskId: Id): number | undefined;
+  checksBeforeShipping(scope: RepositoryContext, signal: AbortSignal, preparation: DeliveryCheckPreparation): Promise<"passed" | "returned" | "blocked">;
   prepare(scope: RepositoryContext, stage: DeliveryStage, signal: AbortSignal): Promise<"ready" | DeliveryRunResult>;
   checkDelivery(scope: RepositoryContext, signal: AbortSignal): Promise<DeliveryRunResult>;
-  proofApprovalCurrent(task: RuntimeTask, signal: AbortSignal, prepared: boolean): Promise<boolean>;
+  proofApprovalCurrent(task: RuntimeTask, signal: AbortSignal, prepared?: boolean): Promise<boolean>;
   returnForDecision(task: RuntimeTask, why: "proof" | "acceptance"): Promise<void>;
   backToWork(scope: RepositoryContext): Promise<void>;
   publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again">;
@@ -32,6 +38,10 @@ export interface DeliveryPhaseEffects {
 }
 
 export interface DeliveryRecording {
+  changed(): void;
+  noteScope(scope: RepositoryContext, tone: "warn", text: string): void;
+  destination(scope: RepositoryContext): string;
+  sourceName(scope: RepositoryContext): string;
   stopped(): boolean;
   now(): number;
   role(id: Id, task?: RuntimeTask): Role | undefined;

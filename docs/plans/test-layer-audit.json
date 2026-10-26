@@ -3012,7 +3012,8 @@
       "splitFiles": [
         "packages/engine/test/journeys/delivery/destination-recovery.test.ts",
         "packages/orchestrator/test/orchestration/delivery/admission.test.ts",
-        "packages/orchestrator/test/orchestration/delivery/workflow.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/workflow.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/destination-family.test.ts"
       ],
       "layer": "journeys",
       "area": "delivery",
@@ -3033,7 +3034,8 @@
         "nativeMatrixOwners": 3,
         "review": "Actual sequencing and live admission shared with native host; exact receivers, raw Error/undefined identity, complete peer read settlement, root/generation fixture ownership and restart cleanup reviewed.",
         "artifact": "workstreams/delivery-workflow-next/{handoff.json,native-oracle-reconciliation.json,original-oracle-map.json}"
-      }
+      },
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/orchestrator/test/orchestration/delivery/destination-turns.test.ts",
@@ -3061,7 +3063,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/delivery.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/delivery/publication.test.ts"
+        "packages/engine/test/journeys/delivery/publication.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/publication-family.test.ts"
       ],
       "layer": "journeys",
       "area": "delivery",
@@ -3069,7 +3072,8 @@
       "validation": {
         "artifact": "workstreams/remaining-delivery-next/{case-audit.json,source-parity.json,self-review.md,root-parity/source-parity.json,root-audit/case-audit.json,root-qualification.json}",
         "rootQualification": "Final integrated source:259native0fail0skip/26exactfiles/2431consoleexpectations51.084s; core6/controller10pass,275total. All263original runtime identities retained with12newcontrols. All9typespass. Focused only; full/resource/platform qualification remains due."
-      }
+      },
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/engine/test/contracts/coordination/dependency-creation.test.ts",
@@ -4459,7 +4463,8 @@
         "packages/orchestrator/test/orchestration/profiles/saved-review-readiness.test.ts",
         "packages/engine/test/contracts/agents/saved-seat-availability.test.ts",
         "packages/engine/test/contracts/agents/reviewer-reopen-cap.test.ts",
-        "packages/engine/test/contracts/repositories/conflict-seat-reasons.test.ts"
+        "packages/engine/test/contracts/repositories/conflict-seat-reasons.test.ts",
+        "packages/orchestrator/test/orchestration/profiles/reviewer-seat-invalidation.test.ts"
       ],
       "layer": "contracts",
       "area": "repositories",
@@ -4469,7 +4474,8 @@
         "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
         "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
         "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
-      }
+      },
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/engine/test/contracts/context/phase-notes.test.ts",
@@ -4708,7 +4714,8 @@
         "packages/engine/test/contracts/delivery/proof-publishing.test.ts",
         "packages/engine/test/contracts/acceptance/reopened-proof-evidence.test.ts",
         "packages/engine/test/contracts/acceptance/proof-run-versions.test.ts",
-        "packages/engine/test/contracts/coordination/publishing-proof-return.test.ts"
+        "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts",
+        "packages/orchestrator/test/orchestration/acceptance/proof-run-versions.test.ts"
       ],
       "layer": "contracts",
       "area": "acceptance",
@@ -4718,7 +4725,8 @@
         "independentReview": "Root source/fixture/identity review; nonzero child-result and setup-failure findings fixed before integration. Public cleanup callback tightened to void|Promise<void>, actual duration-returning quit adapted without changing operation order.",
         "qualification": "Author normal-worker native260/0/61owners/33.90s plus v2affected4/0/3.52s; lower36 cases. No resource count claim. Final integrated root qualification pending; required full/resource/platform checks remain due.",
         "rootQualification": "Final root source:277native/support cases0fail0skip,3354expectations,64exactowners36.81s; core3/controller16 pass,296total. All270original identities retained with26newcontrols. All9types/conventions pass. Focused only; complete suite/resources/platforms remain due."
-      }
+      },
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/agent-runtime/test/rules/providers/interruptions.test.ts",
@@ -5014,11 +5022,13 @@
         "packages/engine/test/contracts/sources/shared-preparation.test.ts",
         "packages/engine/test/contracts/acceptance/shared-tree-freshness.test.ts",
         "packages/engine/test/journeys/context/shared-edits.test.ts",
-        "packages/engine/test/journeys/acceptance/shared-exhaustion.test.ts"
+        "packages/engine/test/journeys/acceptance/shared-exhaustion.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts"
       ],
       "layer": "journeys",
       "area": "repositories",
-      "reviewedCurrentOriginalDeclarations": 40
+      "reviewedCurrentOriginalDeclarations": 40,
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/engine/test/contracts/context/shared-acceptance-trees.test.ts",
@@ -5194,7 +5204,8 @@
       "from": "packages/engine/test/review-continuation-rounds.test.ts",
       "splitFiles": [
         "packages/engine/test/contracts/reviews/continued-evidence.test.ts",
-        "packages/engine/test/contracts/reviews/continued-approval.test.ts"
+        "packages/engine/test/contracts/reviews/continued-approval.test.ts",
+        "packages/orchestrator/test/orchestration/reviews/continued-evidence.test.ts"
       ],
       "layer": "contracts",
       "area": "context",
@@ -5205,7 +5216,8 @@
         "preservation": "222 original runtime identities retained among227; 1172 original matcher sites mapped to1181 current, including nine documented equivalent owner/port changes. Baseline metadata and previous partial migrations retained.",
         "qualification": "Root integrated native188pass/0fail/34files/29.18s, core26/controller13 pass; all9types/conventions pass. Complete combined qualification pending.",
         "fullQualification": "97f02a67"
-      }
+      },
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/engine/test/journeys/reviews/continued-delivery.test.ts",
@@ -5405,8 +5417,10 @@
       "layer": "journeys",
       "area": "delivery",
       "splitFiles": [
-        "packages/engine/test/journeys/delivery/risk.test.ts"
-      ]
+        "packages/engine/test/journeys/delivery/risk.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/approval-recovery-family.test.ts"
+      ],
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/engine/test/rules/prompts/role-contracts.test.ts",
@@ -5766,7 +5780,8 @@
       "status": "reviewed",
       "from": "packages/engine/test/runtime-wait-shared.test.ts",
       "splitFiles": [
-        "packages/engine/test/journeys/delivery/shared-prerequisite.test.ts"
+        "packages/engine/test/journeys/delivery/shared-prerequisite.test.ts",
+        "packages/orchestrator/test/orchestration/delivery/destination-family.test.ts"
       ],
       "layer": "journeys",
       "area": "runtime",
@@ -5779,7 +5794,8 @@
         "preservation": "All295original runtime name/context/outcome pairs retained, including3unchanged explicit opt-in skips; all201registrations (200literal/template+1conditional),1637matcher sites retained.18additional runtime controls separate.",
         "qualification": "Root applied-source24nativepass/0fail/6files18.07s includes new startup controls, actual indefinite leased shutdown/background and observer binding;5portable drain cases pass;all9types/conventions pass. Author frozen310pass/3unchanged opt-in skips; full integrated qualification pending.",
         "fullQualification": "97f02a67"
-      }
+      },
+      "controllerTransfer": "Policy permutations also run through actual profile, review, acceptance and delivery controllers with explicit modeled effects. Native source/version, transport, restart and cleanup boundaries retain real adapters; the paired case/oracle maps identify each transferred declaration."
     },
     {
       "file": "packages/engine/test/journeys/runtime/prerequisites.test.ts",

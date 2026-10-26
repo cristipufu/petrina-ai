@@ -3,7 +3,7 @@ import { completeAll } from "@petrina/core";
 import { prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { Coordination } from "../../../src/coordination.js";
-import { coordinator, finish, itemOf, taskOf, until, waitFor } from "../../support.js";
+import { finish, itemOf, taskOf, until, waitFor } from "../../support.js";
 
 import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
 const fixtures = sharedWorldFixtures();
@@ -12,40 +12,7 @@ async function pollPullRequests(engine: Engine, taskId: string) { const monitor 
 async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordination>[0], taskId: string) { const coordination = new Coordination(engine); const { landing, deliveryConfirmed } = (await coordination.call("task.inspect", { taskId })).task as { landing: string; deliveryConfirmed: boolean }; const [delivered, landed] = await completeAll(["delivered", "landed"].map(async (condition): Promise<string> => (await coordination.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome)); return { landing, deliveryConfirmed, delivered, landed }; }
 
 describe.concurrent("one task across products", () => {
-  for (const choice of [
-    { name: "all products opted in and shared acceptance passed", ask: false, secondOptedIn: true, acceptance: true, ships: true },
-    { name: "the shared task asks before shipping", ask: true, secondOptedIn: true, acceptance: true, ships: false },
-    { name: "one product did not opt in", ask: false, secondOptedIn: false, acceptance: true, ships: false },
-    { name: "shared acceptance has not run", ask: false, secondOptedIn: true, acceptance: false, ships: false },
-  ]) it(`${choice.ships ? "ships" : "asks about"} low-risk shared work when ${choice.name}`, async () => {
-    await fixtures.world(`low-risk-${choice.name.replaceAll(" ", "-")}`, async ({ shop, api, engine: withEngine }) => {
 
-    await withEngine(async engine => {
-
-      const first = await shop.preparedProduct(engine), second = await api.preparedProduct(engine);
-      for (const productId of [first, second]) {
-        const product = engine.getState().products.find((entry) => entry.id === productId)!;
-        engine.updateProduct(productId, { name: product.name, delivery: "pull-request", approveDelivery: true, shipLowRisk: productId === first || choice.secondOptedIn });
-      }
-      const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "A low-risk shared greeting", approveDelivery: choice.ask });
-      await prepareSharedDelivery(engine, id, { acceptance: choice.acceptance, risk: "low" });
-      engine.schedule();
-      const state = await until(engine, (state) => ["pr-open", "done", "failed"].includes(taskOf(state, id).state) || !!itemOf(state, id, "delivery"), coordinator(["plan", "design"]));
-      const task = taskOf(state, id);
-      expect(task.error).toBeUndefined();
-      expect(task.approveDelivery).toBe(choice.ask);
-      expect(task.state).toBe(choice.ships ? "pr-open" : "needs-you");
-      expect(!!itemOf(state, id, "delivery")).toBe(!choice.ships);
-      expect(shop.github().prs).toHaveLength(choice.ships ? 1 : 0);
-      expect(api.github().prs).toHaveLength(choice.ships ? 1 : 0);
-      if (choice.acceptance) {
-        expect(task.acceptancePassed).toBe(true);
-        expect(Object.keys(task.brief!.acceptance[0]!.versions!).sort()).toEqual([first, second].sort());
-      } else expect(task.acceptancePassed).toBeUndefined();
-
-    });
-    });
-  });
 
   for (const closed of [false, true]) it(`keeps dependents blocked with one merged PR and one ${closed ? "closed" : "open"} PR`, async () => {
     await fixtures.world(`landing-${closed}`, async ({ shop, api, engine: withEngine }) => {

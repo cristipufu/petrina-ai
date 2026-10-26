@@ -1,10 +1,10 @@
 import { CompanionLinks } from "./companion-links.js";
-import { DeliveryAdmission, DeliveryWorkflow } from "@petrina/orchestrator";
+import { DeliveryAdmission, DeliveryWorkflow, needsReleaseManager as deliveryNeedsReleaseManager } from "@petrina/orchestrator";
 import { ShippingVerifier, type DeliveryEvidence } from "./shipping-verifier.js";
 import { realPath } from "@petrina/repositories/paths";
 import { ReleasePrep } from "./release-prep.js";
 import { PrMonitor } from "./pr-monitor.js";
-import { clearDeliveryPreparation, executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
+import { executionFor, scopesFor, type RepositoryContext, type RepositoryWork } from "@petrina/orchestrator";
 import { checkOutcome, checkOutcomeLabel, proofDecision, refreshProofs, sameProofDecision, undecidedAcceptanceGap } from "@petrina/core";
 import { versionsOf } from "./repositories.js";
 import { landingState, syncRuntimeWait } from "@petrina/core";
@@ -28,7 +28,6 @@ import {
   lastIndexWhere,
   reviewerAt,
   openStep,
-  petrinaMoment,
   type DeliveryMode,
   type Product,
   type ShippingStep,
@@ -72,7 +71,7 @@ export function destination(task: { delivery: DeliveryMode; source?: TaskSource 
 
 /** Whether the delivery step needs an agent now: only a release, for its notes, until they are written. */
 export function needsReleaseManager(task: RepositoryWork): boolean {
-  return task.delivery === "release" && !task.shipping?.prepared && !task.shipping?.step && !task.shipping?.carriedOver;
+  return deliveryNeedsReleaseManager(task);
 }
 
 /** Text cut to fit where GitHub puts it, marked when it was cut. */
@@ -117,6 +116,9 @@ export class Shipping {
       needGitHub: task => this.tools.needGitHub(task),
       readyToShip: (scope, signal) => this.readyToShip(scope, signal),
       head: scope => git.head(scope.work.worktree!),
+      patch: (scope, ref) => this.updates.patch(scope, ref), upToDate: (scope, signal) => this.updates.upToDate(scope, signal, true),
+      checkOrder: taskId => this.checks.deliveryOrders.get(taskId),
+      checksBeforeShipping: (scope, signal, preparation) => this.checks.checksBeforeShipping(scope, signal, preparation),
       prepare: (scope, stage, signal) => this.prepare(scope, stage, signal),
       checkDelivery: (scope, signal) => this.checkDelivery(scope, signal),
       proofApprovalCurrent: (task, signal, prepared) => this.proofApprovalCurrent(task, signal, prepared),
@@ -127,6 +129,9 @@ export class Shipping {
       clearUnpublishedVersion: scope => this.clearUnpublishedVersion(scope),
       finishCompanions: task => this.companions.finish(task),
     }, {
+      changed: () => k.commit(), noteScope: (scope, tone, text) => k.log(scope, tone, text),
+      destination: scope => destination(scope.work, k.repositoryOf(scope)),
+      sourceName: scope => scope.work.source?.start.kind === "pull-request" ? `PR #${scope.work.source.start.number}` : scope.work.source?.start.branch ?? k.repositoryOf(scope)?.defaultBranch ?? "main",
       stopped: () => k.stopped, now: () => Date.now(), taskDetails: id => k.taskDetails(id), role: (id, task) => k.role(id, task),
       hasDecision: (taskId, kinds) => k.s.inbox.some(item => item.taskId === taskId && kinds.includes(item.kind)),
       raise: (target, kind, title, details) => { k.raise(target, kind, title, false, details); },
@@ -170,16 +175,8 @@ export class Shipping {
   private finishMany(task: MTask): void { this.workflow.finishMany(task); }
 
   /** A known-unpublished version commit is preparation, so it never reaches an editing role. */
-  async clearUnpublishedVersion(scope: RepositoryContext, preserveAttempts = false): Promise<void> {
-    const { work: repository } = scope;
-    if (!repository.shipping?.step && !repository.shipping?.pushed && repository.shipping?.start) {
-      const { moves, failures } = repository.shipping;
-      await this.backToWork(scope);
-      // Waiting invalidates the candidate, not the delivery attempts that actually happened.
-      if (preserveAttempts) repository.shipping = { moves, failures };
-      else delete repository.shipping;
-      this.k.commitNow();
-    }
+  clearUnpublishedVersion(scope: RepositoryContext, preserveAttempts = false): Promise<void> {
+    return this.workflow.clearUnpublishedVersion(scope, preserveAttempts);
   }
 
 
@@ -190,67 +187,8 @@ export class Shipping {
    * the latest main (freshly fetched for a GitHub delivery), with the checks passing on it. "back": the task went
    * back to the builder or the delivery check first.
    */
-  private async readyToShip(scope: RepositoryContext, signal: AbortSignal): Promise<"ready" | "back"> {
-    if (await this.readyCandidate(scope, signal) === "back") return "back";
-    let order = this.checks.deliveryOrders.get(scope.task.id);
-    const preparation = Object.assign(async () => await this.readyCandidate(scope, signal) === "ready", {
-      beforeQueue: () => {
-        this.beforePublishing(scope, true);
-        const current = this.checks.deliveryOrders.get(scope.task.id);
-        // A first turn follows the source preparation above. Only losing an existing turn
-        // can make that preparation obsolete without a wait in the check line.
-        const changed = order !== undefined && current !== order;
-        order = current;
-        return changed;
-      },
-    });
-    if (await this.checks.checksBeforeShipping(scope, signal, preparation) !== "passed") return "back";
-    const { task } = scope;
-    if (task.proofRequests?.length && !await this.proofApprovalCurrent(task, signal)) {
-      await this.returnForDecision(task, "proof");
-      return "back";
-    }
-    if (undecidedAcceptanceGap(task)) {
-      await this.returnForDecision(task, "acceptance");
-      return "back";
-    }
-    return "ready";
-  }
-
-  /** The same source and approval rule applies before queuing and again after a check-line wait. */
-  private async readyCandidate(scope: RepositoryContext, signal: AbortSignal): Promise<"ready" | "back"> {
-    const { task, work: repository } = scope;
-    // A version change from an earlier preparation is the delivery's, never the work's: it goes first.
-    await this.backToWork(scope);
-    const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
-    const backToCheck = (line: string): "back" => {
-      delete task.approvedProofDecision;
-      delete task.approvedAcceptanceGap;
-      this.clearApproval(scope);
-      clearDeliveryPreparation(scope);
-      task.stageIndex = check;
-      task.sub = 0;
-      petrinaMoment(task, "delivery", { outcome: W.askAgain, reason: W.changedSinceApproval, tone: "back" }, Date.now());
-      this.k.log(scope, "warn", line);
-      this.k.commit();
-      return "back";
-    };
-    const allowed = repository.approvedFor;
-    if (allowed && (allowed.mode !== repository.delivery || allowed.destination !== destination(repository, this.k.repositoryOf(scope)))) {
-      if (check >= 0) return backToCheck("Where it goes changed after it was approved, so it needs your OK again");
-      this.clearApproval(scope);
-    }
-    // Before anything moves (an approval from before patch-ids were kept goes by its commit).
-    const sourceName = repository.source?.start.kind === "pull-request" ? `PR #${repository.source.start.number}` : repository.source?.start.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main";
-    const approved = repository.approvedPatch ?? (repository.approvedSha ? await this.updates.patch(scope, repository.approvedSha) : undefined);
-    const update = await this.updates.upToDate(scope, signal, true);
-    if (update === "conflict") return "back";
-    const sameCommit = approved && check >= 0 && update === "current" && repository.approvedSha
-      && await git.head(repository.worktree!).catch(() => undefined) === repository.approvedSha;
-    if (approved && check >= 0 && !sameCommit && (await this.updates.patch(scope)) !== approved) {
-      return backToCheck(update === "moved" ? `${sourceName === "main" ? "Main" : sourceName} moved on, and on top of it this change reads differently from what you approved, so Petrina asks you again` : "The work changed after you approved the delivery, so Petrina asks you again");
-    }
-    return "ready";
+  private readyToShip(scope: RepositoryContext, signal: AbortSignal): Promise<"ready" | "back"> {
+    return this.workflow.readyToShip(scope, signal);
   }
 
   /** A decision covers the full prepared versions and every proof status the coordinator saw. */

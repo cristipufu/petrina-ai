@@ -35,6 +35,10 @@ export function deliveryWorkflowFixture() {
     needGitHub(task) { events.push(`login:${task.id}`); return hooks.needGitHub?.(task) ?? Promise.resolve(); },
     readyToShip(scope, signal) { phase("ready", scope); return hooks.readyToShip?.(scope, signal) ?? Promise.resolve("ready"); },
     head(scope) { phase("head", scope); return hooks.head?.(scope) ?? Promise.resolve(observed(scope.work).head); },
+    patch(scope, ref) { phase("patch", scope); return hooks.patch?.(scope, ref) ?? Promise.resolve(observed(scope.work).candidate); },
+    upToDate(scope, signal) { phase("update", scope); return hooks.upToDate?.(scope, signal) ?? Promise.resolve("current"); },
+    checkOrder(taskId) { return hooks.checkOrder ? hooks.checkOrder(taskId) : live.orders.get(taskId); },
+    checksBeforeShipping(scope, signal, preparation) { phase("checks", scope); return hooks.checksBeforeShipping?.(scope, signal, preparation) ?? Promise.resolve("passed"); },
     async prepare(scope, stage, signal) {
       phase("prepare", scope);
       if (hooks.prepare) return hooks.prepare(scope, stage, signal);
@@ -66,6 +70,10 @@ export function deliveryWorkflowFixture() {
     },
   };
   const host: DeliveryRecording = {
+    changed: () => { events.push("changed"); },
+    noteScope: (scope, tone, text) => { events.push(`log:${scope.task.id}:${scope.work.productId}:${tone}:${text}`); },
+    destination: scope => live.host.destination(scope),
+    sourceName: scope => scope.work.source?.start.kind === "pull-request" ? `PR #${scope.work.source.start.number}` : scope.work.source?.start.branch ?? "main",
     stopped: () => live.state.stopped, now: () => clock, role: (id, task) => roleForTask(BUILT_IN_ROLES, id, task),
     taskDetails: id => live.tasks.get(id) as RuntimeWaitTask | undefined,
     hasDecision: (id, kinds) => decisions.some(item => item.taskId === id && kinds.includes(item.kind)),
@@ -102,7 +110,7 @@ export function deliveryWorkflowFixture() {
     live.host.branch = () => "main";
     for (const { work } of scopesFor(task)) observations.set(work, { head: "scripted:head", candidate: "scripted:candidate" });
   };
-  return { ...live, register, workflow, effects, host, failures, hooks, events, checkpoints, decisions, published, observations, counts, add, prepareObservation,
+  return { ...live, admissionHost: live.host, register, workflow, effects, host, failures, hooks, events, checkpoints, decisions, published, observations, counts, add, prepareObservation,
     now: () => clock, advance: (ms: number) => { clock += ms; },
     run: (task: RuntimeTask, signal = new AbortController().signal) => workflow.deliver(task, task.plan!.stages[task.stageIndex]!, signal),
     stage: (task: RuntimeTask) => task.plan!.stages[task.stageIndex]!, scope: executionFor,

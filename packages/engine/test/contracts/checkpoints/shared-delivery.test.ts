@@ -1,7 +1,6 @@
 import { executionFor } from "@petrina/orchestrator";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
-import { describe, expect, it, spyOn } from "bun:test";
-import * as gitOps from "@petrina/repositories/git";
+import { describe, expect, it } from "bun:test";
 import { withRepositoryRecords, type RepositoryRecords } from "../../fixtures/shared-records.js";
 
 describe.concurrent("one task across products", () => {
@@ -66,49 +65,6 @@ describe.concurrent("one task across products", () => {
   });
 });
 
-describe("explicit repository execution contexts", () => {
-  for (const variant of ["unchanged", "changed commit", "moved source", "failed checks"] as const) it(`keeps delivery approval and checks authoritative: ${variant}`, async () => {
-    await withRepositoryRecords(`approval-${variant.replaceAll(" ", "-")}`, {}, async ({ engine, task, run: ownRun }) => {
-      const scope = executionFor(task, "first"), sha = "b".repeat(40);
-      scope.work.approvedSha = sha; scope.work.approvedPatch = "approved-patch";
-      task.plan = { rationale: "Approval test", plannerProfileId: "sol-high", stages: [
-          { id: "delivery-check", title: "Your delivery check", kind: "gate", gate: "delivery", roleId: "release-manager", profileIds: [] },
-          { id: "delivery", title: "Deliver", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
-      ] };
-      task.stageIndex = 1;
-      const shipping = engine["shipping"], back = shipping["backToWork"];
-      try {
-        shipping["backToWork"] = async () => {};
-        const update = spyOn(engine["updates"], "upToDate");
-        try {
-          update.mockResolvedValue(variant === "moved source" ? "moved" : "current");
-
-          const head = spyOn(gitOps, "head");
-          try {
-            head.mockResolvedValue(variant === "changed commit" ? "a".repeat(40) : sha);
-
-            const patch = spyOn(engine["updates"], "patch");
-            try {
-              patch.mockResolvedValue("different-patch");
-
-              const checks = spyOn(engine["checks"], "checksBeforeShipping");
-              try {
-                checks.mockResolvedValue(variant === "failed checks" ? "returned" : "passed");
-
-                const changed = variant === "changed commit" || variant === "moved source";
-                expect(await ownRun(() => engine["shipping"]["readyToShip"](scope, engine.stopRequested.signal))).toBe(variant === "unchanged" ? "ready" : "back");
-                expect(patch).toHaveBeenCalledTimes(changed ? 1 : 0);
-                expect(checks).toHaveBeenCalledTimes(changed ? 0 : 1);
-                if (changed) { expect(task.stageIndex).toBe(0); expect(scope.work.approvedSha).toBeUndefined(); }
-
-              } finally { checks.mockRestore(); }
-            } finally { patch.mockRestore(); }
-          } finally { head.mockRestore(); }
-        } finally { update.mockRestore(); }
-      } finally { shipping["backToWork"] = back; }
-    });
-  });
-});
 
 describe("shared check repair episodes", () => {
   const plan = () => ({ rationale: "Shared checks", plannerProfileId: "sol-high", stages: [

@@ -3,11 +3,10 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { completeAll, runtimeWaitView, type DeepMutable, type Product, type TaskRepository } from "@petrina/core";
+import { completeAll, type DeepMutable, type Product, type TaskRepository } from "@petrina/core";
 import { scopesFor } from "@petrina/orchestrator";
 import { WaitingForUsage } from "../../../src/usage.js";
 import { Fakes, FAKE_AGENT, git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
-import { rejectionOf } from "@petrina/test-support/rejections";
 
 
 /** Only delivery, release and admission are exercised; planning and review have already settled. */
@@ -85,125 +84,11 @@ function boundary() {
 }
 
 describe.concurrent("runtime waits on a task across products", () => {
-  it("finishes admitted preparation, then neither prepares the next product nor publishes either product", async () => {
-    const f = await fixture();
-    await setupWithCleanup(() => f.run(async () => {
-    const { products, first, task, hold, shipping, signal } = f;
-    const gate = f.gate, ready = shipping["readyToShip"].bind(shipping), prepare = shipping["prepare"].bind(shipping);
-    const preparing: string[] = [], publishing: string[] = [];
-    shipping["readyToShip"] = async (...args) => { preparing.push(args[0].work.productId); return ready(...args); };
-    shipping["prepare"] = async (...args) => {
-      const result = await prepare(...args);
-      if (args[0].work.productId === first.id) { gate.reached(); await gate.released; }
-      return result;
-    };
-    const publish = shipping["workflow"]["deliverOne"].bind(shipping["workflow"]);
-    shipping["workflow"]["deliverOne"] = (...args) => { publishing.push(args[0].work.productId); return publish(...args); };
-    let delivery: Promise<unknown> | undefined;
-    const settle = async () => { gate.release(); await setupWithCleanup(async () => { await delivery; }, () => { shipping["readyToShip"] = ready; shipping["prepare"] = prepare; shipping["workflow"]["deliverOne"] = publish; }); shipping["readyToShip"] = ready; shipping["prepare"] = prepare; shipping["workflow"]["deliverOne"] = publish; };
-    await setupWithCleanup(async () => {
-      const bases = task.repositories!.map(work => work.baseSha!);
-      const operation = f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal));
-      delivery = rejectionOf(operation);
-      await gate.wait(operation);
-      expect(task.repositories![0]!.shipping?.prepared).toBeDefined();
-      hold(); gate.release();
-      expect(await delivery).toBeInstanceOf(WaitingForUsage);
-      expect(preparing).toEqual([first.id]);
-      expect(publishing).toEqual([]);
-      expect(task.repositories![1]!.shipping).toBeUndefined();
-      expect(await completeAll(products.map(product => git(product.path!, "rev-parse", "main")))).toEqual(bases);
-      expect(task.repositories!.every(work => !work.landed)).toBe(true);
-      expect(task.rounds).toEqual({});
-    }, settle);
-    await settle();
 
-    }), () => f.dispose());
-    await f.dispose();
-  });
 
-  it("finishes the first product's admitted publication and holds the prepared companion until release", async () => {
-    const f = await fixture();
-    await setupWithCleanup(() => f.run(async () => {
-    const { engine, products, first, second, task, hold, shipping, signal } = f;
-    const gate = f.gate, verify = shipping.verifier.verifyLocal.bind(shipping.verifier);
-    const publish = shipping["workflow"]["deliverOne"].bind(shipping["workflow"]), publishing: string[] = [];
-    shipping["workflow"]["deliverOne"] = (...args) => { publishing.push(args[0].work.productId); return publish(...args); };
-    shipping.verifier.verifyLocal = async (...args) => {
-      if (args[0] === first.path) { gate.reached(); await gate.released; }
-      return verify(...args);
-    };
-    let delivery: Promise<unknown> | undefined;
-    const settle = async () => { gate.release(); await setupWithCleanup(async () => { await delivery; }, () => { shipping.verifier.verifyLocal = verify; shipping["workflow"]["deliverOne"] = publish; }); shipping.verifier.verifyLocal = verify; shipping["workflow"]["deliverOne"] = publish; };
-    await setupWithCleanup(async () => {
-      const secondBase = task.repositories![1]!.baseSha;
-      const operation = f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal));
-      delivery = rejectionOf(operation);
-      await gate.wait(operation);
-      expect(task.repositories!.every(work => !!work.shipping?.prepared)).toBe(true);
-      expect(task.repositories![0]!.shipping?.step).toBe("update");
-      hold(); gate.release();
-      expect(await delivery).toBeInstanceOf(WaitingForUsage);
-      expect(publishing).toEqual([first.id]);
-      expect(task.repositories![0]!.landed).toBeDefined();
-      expect(task.repositories![1]!.landed).toBeUndefined();
-      expect(task.repositories![1]!.shipping?.step).toBeUndefined();
-      expect(await git(second.path!, "rev-parse", "main")).toBe(secondBase!);
-      expect(runtimeWaitView(task, id => engine.task(id))?.held).toBe(true);
-      engine.setRuntimeWait(task.id, [], "The remaining product can now publish", "clear-shared");
-      expect(await f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal))).toBe("continue");
-      expect(await engine["driver"]["refreshAfterWait"](task, signal)).toBe(false);
-      expect(await f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal))).toBe("stop");
-      expect(publishing).toEqual([first.id, second.id]);
-      expect(task.repositories!.every(work => !!work.landed)).toBe(true);
-      expect(task.state).toBe("done");
-      for (const product of products) expect(readFileSync(join(product.path!, "task-change.txt"), "utf8")).toBe(`${product.name}: accepted work\n`);
-    }, settle);
-    await settle();
 
-    }), () => f.dispose());
-    await f.dispose();
-  });
 
-  it("returns to source updates before preparing a companion when the wait ended during the first preparation", async () => {
-    const f = await fixture();
-    await setupWithCleanup(() => f.run(async () => {
-    const { engine, products, first, task, hold, shipping, signal } = f;
-    const gate = f.gate, prepare = shipping["prepare"].bind(shipping);
-    const prepared: string[] = [];
-    shipping["prepare"] = async (...args) => {
-      prepared.push(args[0].work.productId);
-      const result = await prepare(...args);
-      if (prepared.length === 1) { gate.reached(); await gate.released; }
-      return result;
-    };
-    const operation = f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal));
-    const delivery = operation.catch(error => error);
-    const settle = async () => { gate.release(); await setupWithCleanup(async () => { await delivery; }, () => { shipping["prepare"] = prepare; }); shipping["prepare"] = prepare; };
-    await setupWithCleanup(async () => {
-      await gate.wait(operation); hold();
-      for (const product of products) {
-        writeFileSync(join(product.path!, "required-fix.txt"), `${product.name}: required fix\n`);
-        await git(product.path!, "add", "."); await git(product.path!, "commit", "-qm", "Land the prerequisite");
-      }
-      engine.setRuntimeWait(task.id, [], "The required sources are ready", "release-during-preparation");
-      gate.release();
-      expect(await delivery).toBe("continue");
-      expect(prepared).toEqual([first.id]);
-      expect(task.repositories!.every(work => !work.landed)).toBe(true);
-      expect(task.runtimeWait?.refreshPending).toBe(true);
-      expect(await engine["driver"]["refreshAfterWait"](task, signal)).toBe(false);
-      expect(await f.effect(() => shipping.deliver(task, task.plan!.stages[2]!, signal))).toBe("stop");
-      expect(task.state).toBe("done");
-      for (const product of products) expect(readFileSync(join(product.path!, "required-fix.txt"), "utf8")).toBe(`${product.name}: required fix\n`);
-      expect(task.runtimeWait?.refreshPending).toBeUndefined();
-      expect(task.rounds).toEqual({});
-    }, settle);
-    await settle();
 
-    }), () => f.dispose());
-    await f.dispose();
-  });
 
   it("settles interrupted admitted publishing while the refreshed companion can proceed", async () => {
     const f = await fixture();
