@@ -14,6 +14,14 @@ Reports live in a unique ignored `.test-results/resources/` directory. Keep its 
 bun run test:resources --report .test-results/resources/<run>
 ```
 
+Export every observed test, file, directory and Git caller in ranked JSON tables, plus a CSV of all native cases:
+
+```sh
+bun run test:resources:ledger .test-results/resources/<run> [output-directory]
+```
+
+The ledger reconciles case-attributed launches and unattributed hooks against the complete capture, without the summary's top-twenty limit. It reports missing file completions, invalid records and incomplete observations. Directory groups describe locations; grouping by the behavior being tested requires reviewing the cases and their shared fixtures. Rebuilding a ledger starts no tests or product processes. JSON includes Vitest cases with native launch coverage explicitly marked uninstrumented.
+
 | Artifact | What it records |
 |---|---|
 | `run.json` | Full-run outcome, runtime/OS/CPU count, elapsed time, explicitly copied root-child driver counters and sampling limits/errors. |

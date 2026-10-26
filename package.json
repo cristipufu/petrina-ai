@@ -21,6 +21,7 @@
     "test:coverage": "bun packages/engine/test/quality/coverage.ts",
     "test:install-browser": "bun packages/agent-runtime/node_modules/@playwright/mcp/cli.js install-browser --no-shell chromium",
     "test:affected": "bun packages/engine/test/quality/affected-run.ts",
-    "test:resources": "bun packages/engine/test/quality/resources.ts"
+    "test:resources": "bun packages/engine/test/quality/resources.ts",
+    "test:resources:ledger": "bun packages/engine/test/quality/resource-ledger.ts"
   }
 }
