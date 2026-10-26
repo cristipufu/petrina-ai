@@ -1,8 +1,11 @@
 import { expect, it } from "bun:test";
-import { beginAgentStep, BUILT_IN_ROLES, checkReviewEvidence, endAgentStep } from "@petrina/core";
-import { ReviewReports, ReviewRoundCompletion, type ReviewReport } from "@petrina/orchestrator";
+import { beginAgentStep, BUILT_IN_ROLES, checkReviewEvidence, DEFAULT_PROFILES, endAgentStep } from "@petrina/core";
+import { repositoryView, ReviewReports, ReviewRoundCompletion, type ReviewReport } from "@petrina/orchestrator";
+import { readFile } from "node:fs/promises";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
 import { acceptanceContext } from "../../fixtures/acceptance-context.js";
+import { builderContext } from "../../../src/builder-context.js";
+import { buildPrompt } from "../../../src/prompts.js";
 
 it("never asks reviewers to confirm a used-up acceptance failure, so reviewers who confirm what they are shown neither answer twice nor count it", async () => {
   const root = tempDir("petrina-held-acceptance-input-");
@@ -65,5 +68,33 @@ it("keeps an ordinary finding visible while withholding only the exhausted accep
     expect(snapshot.findings.map(finding => finding.id)).toEqual(["visible"]);
     const text = (await f.context.sectionsFor(f.scope, "code-reviewer", undefined, undefined, undefined, snapshot)).map(section => section.body).join("\n");
     expect(text).toContain("visible"); expect(text).not.toContain("Failed acceptance check: Greeting");
+  } finally { removeDir(root); }
+});
+
+it("supplies only the independent review finding to a fresh Builder and its immutable complete packet", async () => {
+  const root = tempDir("petrina-fresh-builder-packet-");
+  try {
+    const f = acceptanceContext(root), { task, scope } = f;
+    task.acceptanceBlocked = true; task.stageIndex = 0; task.fixing = true;
+    const held = { id: "held-acceptance", text: "Failed acceptance check: People see the greeting on the welcome page", severity: "blocking" as const, raisedBy: "opus-high", productIds: ["a", "b"], status: "open" as const, confirmedBy: [] };
+    const review = { id: "independent-review", text: "The greeting is missing on the welcome page.", severity: "blocking" as const, raisedBy: "opus-high", productIds: ["a"], status: "open" as const, confirmedBy: [] };
+    const nit = { id: "review-nit", text: "Consider a friendlier greeting.", severity: "suggestion" as const, raisedBy: "sol-high", productIds: ["a"], status: "open" as const, confirmedBy: [] };
+    task.findings.push(review, held, nit);
+    const builder = BUILT_IN_ROLES.find(role => role.id === "builder")!, view = repositoryView(scope);
+    const step = beginAgentStep(task, builder.id, "sol-high", 200, BUILT_IN_ROLES, undefined, scope.work);
+    const sections = await f.context.sectionsFor(scope, builder.id);
+    const supplied = await builderContext(root, view, builder, "fresh-builder", sections);
+    const prompt = buildPrompt({ task: view, product: f.products[0]!, role: builder, roles: BUILT_IN_ROLES,
+      profiles: DEFAULT_PROFILES, tools: [{ id: "codex", name: "Codex" }, { id: "claude-code", name: "Claude Code" }],
+      worktree: root, branch: "greeting", base: "", defaultBranch: "main", sections: supplied.sections,
+    });
+    expect(step.findingIds).toContain(review.id); expect(step.findingIds).not.toContain(held.id);
+    expect(prompt).toContain(review.text); expect(prompt).not.toContain(held.text);
+    expect(prompt).not.toContain(`[${held.id}]`); expect(prompt).not.toContain(`${held.id}: open`);
+    expect(prompt).not.toContain(held.id);
+    expect(supplied.snapshot).toBeDefined();
+    const packet = await readFile(supplied.snapshot!.file, "utf8");
+    expect(packet).toContain(review.id); expect(packet).not.toContain(held.id); expect(packet).not.toContain(held.text);
+    expect(held.status).toBe("open");
   } finally { removeDir(root); }
 });

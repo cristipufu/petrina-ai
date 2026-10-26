@@ -1508,10 +1508,10 @@
           "review": "The removed variant repeated the complete nonmixed failure sequence solely with a missing initial gate. Its gate insertion position, unchanged allowances, review-before-decision route, exact milestone text, proofDeliveryGate identity and checkpoint are tested on the actual extracted controller; native report/context/restart/delivery guarantees remain in the two retained richer journeys."
         }
       ],
-      "review": "All15 original runtime variants and142 literal matcher-site oracles reviewed against actual owners. Ten complete native variants retain actual shared Git, native review inputs/seats, check races, approval/landing and restart. Five repeated permutations use actual AcceptanceResults/routeAcceptance/WorkCompletion plus Context/ReviewReports/checkReviewEvidence and one real Store legacy-shape roundtrip; future pass/fail routing stays in two distinct controller cases. Original native-only conjunctions transfer explicitly to matching retained native cases, without synthetic landed/check/current flags. New completion controls cover ordering, receivers, rejection and execution binding across an awaited version effect.",
+      "review": "All15 original acceptance variants and142 original matcher-site oracles remain accounted for. Eight complete native variants retain actual shared Git, accepted Builder answers, continued context, native review inputs/seats, checks, approval/landing and restart. Repeated policy permutations use actual AcceptanceResults/routeAcceptance/WorkCompletion/ReviewReports/VerifierBallots/ReviewRoundCompletion/WorkflowObserver; fresh Context/buildPrompt and immutable packet remain real. The latest split maps all53 target matcher positions; three continued-only positions stay in the native continued case. Both finding orders are explicit premises. No portable test hand-marks a fix or fabricates current native proof. Existing operation ownership now covers setup, returned reads and replacement generations, with four real failure/race controls.",
       "validation": {
-        "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
-        "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
+        "artifact": "workstreams/acceptance-semantic-next/handoff-v6.json; workstreams/acceptance-semantic-independent-review/handoff-v6.json; acceptance-semantic-integrated-review.json",
+        "qualification": "Root integrated15native cases/3files and all450Orchestrator cases passed, all9types/conventions exit0. This is focused proof, not a current full/platform/resource qualification.",
         "fullQualification": "8f7e2893"
       },
       "from": "packages/engine/test/acceptance-repair-reviews.test.ts",
@@ -1521,7 +1521,8 @@
         "packages/orchestrator/test/orchestration/steps/work-completion.test.ts",
         "packages/engine/test/contracts/context/held-acceptance.test.ts",
         "packages/engine/test/contracts/context/legacy-acceptance.test.ts",
-        "packages/storage/test/contracts/acceptance/repair-recovery.test.ts"
+        "packages/storage/test/contracts/acceptance/repair-recovery.test.ts",
+        "packages/engine/test/contracts/testing/acceptance-repair-ownership.test.ts"
       ],
       "layer": "journeys",
       "area": "acceptance",
@@ -1537,9 +1538,8 @@
         "final repair after review"
       ],
       "reviewedOriginalRuntimePasses": 15,
-      "currentRuntimePasses": 15,
+      "currentRuntimePasses": 22,
       "reviewedOriginalAssertionSites": 142,
-      "currentAssertionSites": 142,
       "costQualification": {
         "status": "focused qualification passed; final integrated full/resource/platform remains pending",
         "before": {
@@ -1560,8 +1560,21 @@
           "scope": "Prior14 candidate cost-bearing native cases passed; corrected small owners observed zero launches. R3 adds observed operation settlement and passed12 controls plus the held-check case. No post-R3 full cost measurement is claimed."
         },
         "oracleDisposition": "workstreams/acceptance-cost-next/oracle-map.json",
-        "fixtureOwnership": "Public FixtureOperations publishes ownership before starters and close before stop, waits all real operations, retains resources on error/timeout and requires confirmed disposal. Root and independent review closed R3a/b/c; paired controlled and real-folder cases passed."
-      }
+        "fixtureOwnership": "Public FixtureOperations publishes ownership before starters and close before stop, waits all real operations, retains resources on error/timeout and requires confirmed disposal. Root and independent review closed R3a/b/c; paired controlled and real-folder cases passed.",
+        "latestSemanticSlice": {
+          "artifact": "workstreams/acceptance-semantic-next/cost-comparison.json",
+          "beforeNativeCases": 10,
+          "afterNativeCases": 8,
+          "beforeNativeLaunches": 2985,
+          "afterNativeLaunches": 2305,
+          "removedNativeLaunches": 680,
+          "limits": "Historical full-loaded native10 versus focused native8; new Context/ownership overhead unmeasured. No equivalent-group net, full-suite or duration saving claimed.",
+          "caseReconciliation": "workstreams/acceptance-semantic-next/case-reconciliation.json",
+          "oracleMap": "workstreams/acceptance-semantic-next/oracle-final.json"
+        }
+      },
+      "currentRuntimeScope": "Latest cost slice:8native journeys+7portable sequences+3Context contracts+4ownership controls; original15 lineage and other retained companion owners are separate.",
+      "assertionPreservation": "All142 original matcher-site oracles mapped across original slices; latest53-position mapping in oracle-final.json. Added controls are not described as original assertion sites."
     },
     {
       "file": "packages/engine/test/contracts/guidance/accepted-points.test.ts",
@@ -5955,7 +5968,7 @@
       "baselineDigest": "205fd6e32aa16d772aa4e29185edeca05365c4ee15e749d3d32f9d41fb2d4fe5",
       "status": "reviewed",
       "from": "packages/engine/test/shared-image-history.test.ts",
-      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live \u00d7 first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
+      "review": "Actual SQLite archive/membership and capture cleanup/removal/restart contracts retain all4 archived/live × first-product variants. Removed unrelated Git clones and remote rewrites; explicit product records and real captures provide the exact prerequisites. Read every original case, setup/teardown, variant loop and assertion; full mappings are in runtime/assertion reconciliation.",
       "validation": {
         "artifact": "state-api-next/runtime-reconciliation.json",
         "qualification": "Focused normal-parallel native/portable cases pass after explicit readiness correction; integrated full-suite/resource/platform qualification remains parent-owned.",
@@ -6989,7 +7002,7 @@
       "status": "reviewed",
       "layer": "orchestration",
       "area": "reviews",
-      "review": "Fifteen pure controller variants preserve both original mixed tests\u2019 reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
+      "review": "Fifteen pure controller variants preserve both original mixed tests’ reopening, classification, ownership, current-proof, native-check exclusion and immutable review-history assertions. Six severity/reporter variants and all four ownership tuples are explicit. Raw provider syntax, SQLite recording, ballot eligibility and restart remain separate native controls; no Engine, Git, database, native clock or program is imported.",
       "validation": "review-layers-16bce9e0/orchestrator-reviewed.json: all 228 cases / 14 files pass. All workspace types and conventions pass. reconciliation.json maps each original assertion category to its actual owner; original bodies retained. Full changed-batch qualification remains due."
     },
     {

@@ -1,10 +1,13 @@
-import { expect, it } from "bun:test";
+import { afterAll, expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { journeyView, nextLine } from "@petrina/core";
 import { waitFor } from "@petrina/test-support/fixtures";
 import { commandText } from "../../../src/checks.js";
-import { fixture, GREETING, PHONE, UNAVAILABLE, failing, passed, blocked, REPAIR_CHECK, FINAL_TEST, STILL_FAILS, ALL_SEATS } from "../../fixtures/acceptance-repairs.js";
+import { acceptanceRepairFixtures, GREETING, PHONE, UNAVAILABLE, failing, passed, blocked, REPAIR_CHECK, FINAL_TEST, STILL_FAILS, ALL_SEATS } from "../../fixtures/acceptance-repairs.js";
+
+const { fixture, close: closeFixtures } = acceptanceRepairFixtures();
+afterAll(closeFixtures);
 
 for (const [gate, custom] of [[false, false], [true, true]] as const) it(`runs every owed review after a successful early acceptance repair, then ${gate ? "asks at the planned delivery check" : "ships on its own as the task's settings allow"}${custom ? " (custom acceptance role)" : ""}`, async () => {
   const f = await fixture({ gate, custom });
@@ -70,7 +73,7 @@ for (const gate of [false]) it(`repairs a real failure while another required it
 });
 
 // The controller owns the failure-only added-gate variant. Keep full planned-gate and mixed-evidence journeys.
-for (const [gate, mixed] of [[true, false], [false, true]] as const) it(`keeps used-up acceptance failures open for one decision after every owed review, at ${gate ? "the planned" : "an added"} delivery check${mixed ? ", beside an unavailable item" : ""}`, async () => {
+for (const [gate, mixed] of [[true, false]] as const) it(`keeps used-up acceptance failures open for one decision after every owed review, at ${gate ? "the planned" : "an added"} delivery check${mixed ? ", beside an unavailable item" : ""}`, async () => {
   const f = await fixture({ gate, checklist: mixed ? [GREETING, PHONE] : [GREETING] });
   try {
     const [first, second] = f.ids;
@@ -126,7 +129,7 @@ for (const [gate, mixed] of [[true, false], [false, true]] as const) it(`keeps u
   } finally { await f.close(); }
 });
 
-for (const continued of [false, true]) it(`repairs an independent review finding on its own product only, without handing over a used-up acceptance failure${continued ? " to a Builder continuing its conversation" : ""}`, async () => {
+for (const continued of [true]) it(`repairs an independent review finding on its own product only, without handing over a used-up acceptance failure${continued ? " to a Builder continuing its conversation" : ""}`, async () => {
   const f = await fixture({ gate: true });
   try {
     const [first, second] = f.ids;
