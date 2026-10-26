@@ -225,7 +225,6 @@ export class AgentRun implements AgentSession {
     callbacks: RunCallbacks;
     command?: readonly string[];
     env?: NodeJS.ProcessEnv;
-    onGone?: (gone: Promise<void>) => void;
     onProcess?: (child: ChildProcess) => void;
     /** A login check only opens a conversation, never sends work or runs in a product's copy. */
     probe?: boolean;
@@ -260,6 +259,9 @@ export class AgentRun implements AgentSession {
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
     let disposableSession: string | undefined;
+    let confirmedGone!: () => void, unconfirmedGone!: (error: unknown) => void;
+    const processGone = new Promise<void>((resolve, reject) => { confirmedGone = resolve; unconfirmedGone = reject; });
+    void processGone.catch(() => undefined);
     const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= Promise.all([
       // A cleanup that cannot be confirmed leaves its reason in the task's log, as the browser's does.
       stopAll(child, graceMs, !options.probe, (line) => { if (callbacks.onLog) callbacks.onLog(`\n${line}\n`); else console.error(line); }),
@@ -276,16 +278,16 @@ export class AgentRun implements AgentSession {
         callbacks.onCleanupIncomplete?.();
       }
       return complete;
-    }));
-    const processGone = new Promise<void>((done) => {
-      child.once("exit", () => done());
-      child.once("error", () => done());
-    }).then(async () => {
-      // Exit alone does not prove browser/descendant cleanup. Finish it even after an unexpected exit,
-      // and never tell probe owners that an incomplete stop released their native ownership.
-      if (!await stop()) throw new Error(CLEANUP_INCOMPLETE);
-    });
-    processGone.catch(() => undefined);
+    }).then(complete => {
+      // A bounded stop can establish native completion even when the runtime lost
+      // its exit notification. Only that cleanup receipt releases external owners.
+      if (complete) confirmedGone();
+      else unconfirmedGone(new Error(CLEANUP_INCOMPLETE));
+      return complete;
+    }, error => { unconfirmedGone(error); throw error; }));
+    const finishAfterExit = () => { void stop().catch(() => undefined); };
+    child.once("exit", finishAfterExit);
+    child.once("error", finishAfterExit);
     const abort = () => void stop();
     signal.addEventListener("abort", abort, { once: true });
     // Stopped while starting: give up at once, without waiting for a tool that ignores being stopped.

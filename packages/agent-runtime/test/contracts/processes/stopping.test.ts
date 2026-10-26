@@ -35,6 +35,49 @@ const expectPausesReclaimed = (signals: Signals) => {
   }
 };
 
+it("confirms onGone from an actual successful stop when the child exit notification is lost", async () => nativeFixtures.use(async fixture => {
+  const controller = new AbortController();
+  let child: ChildProcess | undefined, run: AgentRun | undefined, lostExits = 0, streamsClosed = false;
+  let goneResult: { kind: "value" } | { kind: "error"; error: unknown } | undefined;
+  let closed!: () => void, failed!: (error: unknown) => void;
+  const nativeClosed = new Promise<void>((resolve, reject) => { closed = resolve; failed = reject; });
+  void nativeClosed.catch(() => undefined);
+  let restore: (() => void) | undefined;
+  const cleanup = async () => {
+    const errors: unknown[] = [];
+    try { restore?.(); } catch (error) { errors.push(error); }
+    const stopped = await Promise.allSettled([run?.stop()]);
+    for (const result of stopped) if (result.status === "rejected") errors.push(result.reason);
+    if (errors.length) throw new AggregateError(errors, "Lost-exit subject cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+    run = await fixture.agent(controller, { profile, callbacks,
+      onGone(gone) { void gone.then(() => { goneResult = { kind: "value" }; }, error => { goneResult = { kind: "error", error }; }); },
+      onProcess(actual) {
+        child = actual;
+        actual.once("close", () => { streamsClosed = true; closed(); });
+        actual.once("error", failed);
+        const emit = actual.emit, descriptor = Object.getOwnPropertyDescriptor(actual, "emit");
+        restore = () => { if (descriptor) Object.defineProperty(actual, "emit", descriptor); else Reflect.deleteProperty(actual, "emit"); };
+        actual.emit = function (this: ChildProcess, event: string | symbol, ...args: unknown[]) {
+          // Drop only notification delivery. The actual native exit record and close event remain untouched.
+          if (event === "exit") { lostExits++; return false; }
+          return Reflect.apply(emit, this, [event, ...args]);
+        };
+      },
+    });
+    expect(await run.stop()).toBe(true);
+    // This is checked at the successful stop boundary; an unobserved onGone must fail immediately.
+    expect(goneResult).toEqual({ kind: "value" });
+    expect(lostExits).toBe(1);
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+    expect(await childState(child!.pid!)).toBe("ended");
+    await waitFor(() => streamsClosed, "the actual lost-exit peer's output to close", 5_000, { during: nativeClosed });
+    expect(streamsClosed).toBe(true);
+  }, cleanup);
+  await cleanup();
+}));
+
 it.skipIf(process.platform === "win32")("stops an agent with no work after one list and no forced stop", async () => nativeFixtures.use(async fixture => {
   let child: ChildProcess | undefined, run: AgentRun | undefined, incomplete = 0, scans = 0;
   const original = processes.execFile, controller = new AbortController();
