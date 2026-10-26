@@ -1,9 +1,12 @@
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { describe, expect, it, spyOn } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkOf } from "@petrina/core";
+import { stopOwnedProcess } from "@petrina/platform/owned-process";
+import { engineProcessCases } from "../../support.js";
+import { shutdownActors } from "../../fixtures/shutdown-actors.js";
 import { Engine } from "../../engine.js";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { checkGit } from "@petrina/repositories/tool-readiness";
@@ -12,10 +15,12 @@ import { ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
 import { Fakes } from "../../support.js";
 import { SLOW } from "@petrina/test-support/slow";
 import { testGitEnv } from "@petrina/test-support/test-git-env";
-import { waitFor } from "@petrina/test-support/fixtures";
+import { tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { setupFixtures } from "../../fixtures/setup.js";
 
 const { fakeGh, fresh, agents, status, LIMIT } = setupFixtures();
+const probeCases = engineProcessCases();
+afterAll(() => probeCases.close());
 
 describe("Tool status", () => {
 it("tells Ready, Not logged in and Couldn't check apart for agent tools, without sending the AI a message", async () => {
@@ -59,17 +64,36 @@ it("shows Couldn't check for a tool that will not start, and Not installed when 
 for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
     it(`honors a short check deadline for a tool that ${behaviour === "stubborn" ? "never opens a conversation" : "never reports its login"} and ignores being stopped, stops it, and never piles up copies`, async () => {
       const timeoutMs = 2_000;
-      const fakes = new Fakes(fresh("fakes"));
-      const command = agents({ "claude-code": behaviour, codex: behaviour }, fakes.dir)!;
-      const data = fresh("data");
-      const cwd = join(data, "checks");
-      mkdirSync(cwd, { recursive: true });
-      // Follow the actual children: historical PIDs can name another process after an exit on Windows.
+      const root = tempDir("petrina-setup-probes-");
       const active = new Set<processes.ChildProcess>();
+      const native: { child: processes.ChildProcess; ended: Promise<number>; closed: Promise<void> }[] = [];
       const prepared: processes.ChildProcess[] = [];
+      const restores: (() => void)[] = [];
+      let actors: Awaited<ReturnType<typeof shutdownActors>> | undefined;
+      let nativeEngine: Engine | undefined;
+      let stopping = 0;
+      const request = (stop: () => void | Promise<void>) => Promise.resolve().then(stop);
+      // The case owner exists before lease acquisition, Engine startup or detached native admission.
+      return probeCases.use(root, async owners => {
+      actors = await owners.prepare(() => shutdownActors(root));
+      if (owners.signal.aborted) {
+        await actors.close();
+        throw new Error("Setup probes closed before their native programs were admitted");
+      }
+      const fakes = new Fakes(join(root, "fake"));
+      const unleased = agents({ "claude-code": behaviour, codex: behaviour }, fakes.dir)!;
+      const command = (profile: Parameters<typeof unleased>[0]) => {
+        const [program, _entry, ...args] = unleased(profile)!;
+        return [program!, actors!.actor, ...args];
+      };
+      const data = join(root, "data"), cwd = join(data, "checks");
+      mkdirSync(cwd, { recursive: true });
+      // Follow the actual children: historical PIDs are observations, never cleanup authority.
       let most = 0;
       const spawn = processes.spawn;
-      const watching = spyOn(processes, "spawn").mockImplementation(((...args: Parameters<typeof processes.spawn>) => {
+      const watching = spyOn(processes, "spawn");
+      restores.push(() => watching.mockRestore());
+      watching.mockImplementation(((...args: Parameters<typeof processes.spawn>) => {
         if (Array.isArray(args[1]) && args[1].includes("--stubborn")) {
           const child = prepared.shift();
           if (!child) throw new Error("A tool check started an unprepared replacement");
@@ -79,9 +103,10 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
       }) as typeof processes.spawn);
       // Count the engine's attempts separately from the prepared children, including an unwanted replacement.
       let starts = 0;
-      let stopping = 0;
       const start = AgentRun.start.bind(AgentRun);
-      const opening = spyOn(AgentRun, "start").mockImplementation((options) => start({
+      const opening = spyOn(AgentRun, "start");
+      restores.push(() => opening.mockRestore());
+      opening.mockImplementation((options) => start({
         ...options,
         onGone: (gone) => {
           stopping += 1;
@@ -89,7 +114,7 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
           options.onGone?.(gone);
         },
       }));
-      const engine = new Engine(data, {
+      const engine = nativeEngine = new Engine(data, {
         toolCheckTimeoutMs: timeoutMs,
         agentCommand: (profile) => {
           if (profile.toolId === "claude-code" || profile.toolId === "codex") starts += 1;
@@ -97,6 +122,7 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
         },
       });
       const prepare = async () => {
+        if (owners.signal.aborted) throw new Error("Setup probes are closing; no new preparation may start");
         expect(active.size).toBe(0);
         expect(stopping).toBe(0);
         writeFileSync(join(fakes.dir, "pids"), "");
@@ -106,7 +132,19 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
         for (const id of ["claude-code", "codex"] as const) {
           const profile = ENGINE_PROFILES.find((entry) => entry.toolId === id)!;
           const [program, ...args] = command(profile)!;
+          if (owners.signal.aborted) throw new Error("Setup probes are closing; no detached probe may start");
           const child = spawn(program!, args, { cwd, env: testGitEnv(), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+          // Record native exit and descriptor closure independently of AgentRun's later handoff.
+          const ended = new Promise<number>((resolve, reject) => {
+            child.once("exit", (code, signal) => code !== null ? resolve(code) : signal ? resolve(128) : reject(new Error("The prepared probe has no native end record")));
+            child.once("error", reject);
+          });
+          const closed = new Promise<void>((resolve, reject) => {
+            child.once("close", (code, signal) => code !== null || signal !== null ? resolve() : reject(new Error("The prepared probe did not confirm native descriptor closure")));
+            child.once("error", reject);
+          });
+          void ended.catch(() => undefined); void closed.catch(() => undefined);
+          native.push({ child, ended, closed });
           prepared.push(child);
           active.add(child);
           most = Math.max(most, active.size);
@@ -117,10 +155,9 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
           const path = join(fakes.dir, "pids");
           const ready = new Set(existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map(Number) : []);
           return prepared.every((child) => child.pid !== undefined && ready.has(child.pid));
-        }, "both stop-resistant tools to start", 20_000);
+        }, "both stop-resistant tools to start", 20_000, { during: Promise.race(native.slice(-2).map(record => record.closed)) });
         expect(active.size).toBe(2);
       };
-      try {
         await prepare();
         const from = Date.now();
         await engine.checkTools();
@@ -149,17 +186,23 @@ for (const behaviour of ["stubborn", "silent-stubborn"] as const) {
         for (const id of ["claude-code", "codex"] as const) expect(status(engine, id)).toBe("unknown");
         // Every copy is stopped, though each ignored being asked.
         await waitFor(() => active.size === 0 && stopping === 0, "the hung tools and their cleanup to finish", 6_000);
-      } finally {
-        const shutdown = engine.shutdown();
-        for (const child of active) child.kill("SIGKILL");
-        try {
-          await shutdown;
-          await waitFor(() => active.size === 0 && stopping === 0, "all tool-check children to exit after shutdown", 6_000);
-        } finally {
-          opening.mockRestore();
-          watching.mockRestore();
-        }
-      }
+      }, { stopPeers: async () => {
+        // Fallback follows every subject assertion. Request all independent stops before joining any.
+        const work = [request(() => nativeEngine?.shutdown()), request(() => actors?.close()), ...native.map(record => request(async () => {
+          record.child.stdout?.resume(); record.child.stderr?.resume();
+          const stopped = await stopOwnedProcess({ exited: record.ended,
+            get exitCode() { return record.child.exitCode; }, get signalCode() { return record.child.signalCode; },
+            kill: signal => record.child.kill(signal),
+          }, { graceMs: 100, forceMs: 1_000 }, (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); });
+          if (stopped !== "confirmed") throw new Error("The prepared probe's native stop was not confirmed; root retained");
+          await record.closed;
+        }))];
+        const settled = await Promise.allSettled(work);
+        const restored = await Promise.allSettled(restores.map(restore => request(restore)));
+        const errors = [...settled, ...restored].flatMap(result => result.status === "rejected" ? [result.reason] : []);
+        if (errors.length) throw new AggregateError(errors, "Setup probe cleanup was not confirmed; root retained");
+        await waitFor(() => active.size === 0 && stopping === 0, "all tool-check children to exit after shutdown", 6_000);
+      } });
     }, 60_000 * SLOW);
   }
 for (const releaseDuringCheck of [true, false]) {
