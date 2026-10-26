@@ -2,17 +2,18 @@ import { expect, it } from "bun:test";
 import { join } from "node:path";
 import type { ConversationNote } from "@petrina/core";
 import { executionFor, type AgentSessionOptions, type StartAgentSession } from "@petrina/orchestrator";
-import { Engine } from "../../engine.js";
-import { git, makeProduct, removeDir, tempDir } from "../../fixtures.js";
+import { git, makeProduct, tempDir } from "../../fixtures.js";
 import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { NotesResult, ReviewResult } from "../../../src/roles.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { directDrivers } from "../../fixtures/direct-drivers.js";
 
 // Real prompt preparation, Git and durable journey recording compose with a scripted provider.
 // Transport, sandbox and accounting behavior remain covered by the native ACP contracts.
 for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "parallel reviewer" : "main participant"} through the portable session contract`, async () => {
   const root = tempDir("petrina-session-port-");
-  let engine: Engine | undefined;
-  try {
+  const owner = directDrivers(root);
+  await setupWithCleanup(() => owner.prepare(async () => {
     const repo = await makeProduct(root);
     const roleId = parallel ? "code-reviewer" : "researcher";
     const agents = new ScriptedAgents(prompt => {
@@ -23,11 +24,12 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
     const openings: { reopen?: string; roleId: string; sessionId: string }[] = [];
     const start: StartAgentSession = async (options, role) => {
       // The host must not pass credentials, native handles or native launch settings across this port.
-      const expected: (keyof AgentSessionOptions)[] = ["profile", "cwd", "callbacks", "signal", "browser", "startTimeoutMs"];
+      const expected: (keyof AgentSessionOptions)[] = ["profile", "cwd", "callbacks", "signal", "browser", "startTimeoutMs", "onGone"];
       if (options.reopen) expected.push("reopen", "reopenTimeoutMs");
       expect(Object.keys(options).sort()).toEqual(expected.sort());
       expect(Object.keys(options.callbacks).sort()).toEqual(["onMessage", "onActivity", "onToolActivity", "onPlanStep", "onRetrying", "onPermission", "onCleanupIncomplete"].sort());
       expect(options.startTimeoutMs).toBe(1800);
+      expect(options.onGone).toBeFunction();
       expect(options.browser).toBe(false);
       expect(options.cwd).toBe(repo);
       expect(options.profile.id).toBe("opus-high");
@@ -38,7 +40,7 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
       opening.sessionId = session.sessionId;
       return session;
     };
-    engine = new Engine(join(root, "data"), { startAgentSession: start, startTimeoutMs: 1800, reopenTimeoutMs: 1900,
+    const engine = owner.open(join(root, "data"), { startAgentSession: start, startTimeoutMs: 1800, reopenTimeoutMs: 1900,
       agentCommand: () => { throw new Error("A scripted session must not resolve a native command"); } });
     engine.schedule = () => {};
     await engine.waitUntilReady();
@@ -52,7 +54,7 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
     const scope = executionFor(task);
     Object.assign(scope.work, { worktree: repo, branch: "main", base: "main", baseSha: await git(repo, "rev-parse", "HEAD") });
     if (parallel) task.hunt = { stageId: "step", round: 1, reported: {}, findings: 0 };
-    const run = async (resume?: ConversationNote) => {
+    const run = (resume?: ConversationNote) => owner.run(engine, async () => {
       delete scope.work.conversation;
       task.state = "running";
       let completed: ConversationNote | undefined;
@@ -61,7 +63,7 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
       else await engine!["turns"].turn(scope, roleId, "opus-high", () => [], NotesResult, new AbortController().signal, options);
       expect(completed).toBeDefined();
       return completed!;
-    };
+    });
     const first = await run();
     const second = await run(first);
     const fresh = await run({ ...second, sessionId: "unavailable-conversation" });
@@ -71,8 +73,6 @@ for (const parallel of [false, true]) it(`opens and resumes a ${parallel ? "para
     expect(openings.every(opening => opening.roleId === roleId)).toBe(true);
     expect(agents.received().map(prompt => prompt.turn)).toEqual([1, 2, 1]);
     expect(task.journey!.flatMap(step => step.agentInputs ?? []).map(input => input.mode)).toEqual(["fresh", "continued", "fresh"]);
-  } finally {
-    await engine?.shutdown();
-    removeDir(root);
-  }
+  }), () => owner.close());
+  await owner.close();
 });
