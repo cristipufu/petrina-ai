@@ -1,15 +1,15 @@
 import { draftOf } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
-import { coordinator, finish, git, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   it("saves an editing architect's work separately in each product before the shared review", async () => {
-    const { shop, api, start, fakes } = await setup("editing-design"); const engine = start();
-    try {
+    await fixtures.world("editing-design", async ({ shop, api, engine: withEngine, fakes }) => {
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const architect = engine.getState().roles.find((role) => role.result === "brief")!;
       engine.saveRole(architect.id, { ...draftOf(architect), canEdit: true });
@@ -19,14 +19,17 @@ describe.concurrent("one task across products", () => {
       expect(task.error).toBeUndefined();
       expect(task.repositories!.every((work) => work.completedStages.some((stage) => stage.includes(":author:")))).toBe(true);
       for (const work of task.repositories!) expect(await git(work.worktree!, "show", "HEAD:architecture.txt")).toContain("Before the design review");
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("shared-task repair regressions", () => {
   it("keeps each editing role's product report available to the next product and the combined reviewers", async () => {
-    const { shop, api, start, fakes } = await setup("editing-notes"); const engine = start();
-    try {
+    await fixtures.world("editing-notes", async ({ shop, api, engine: withEngine, fakes }) => {
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       engine.addRole({ ...draftOf(engine.getState().roles.find((role) => role.result === "notes")!), name: "Copywriter", result: "notes", canEdit: true });
       fakes.scenario({ planner: "copy", builder: "plain" });
@@ -40,6 +43,8 @@ describe.concurrent("shared-task repair regressions", () => {
       expect(reviews.length).toBeGreaterThan(0);
       for (const review of reviews) for (const name of names) expect(review.text).toContain(`Copywriter · ${name}`);
       expect(fakes.received("copywriter")[1]!.text).toContain(`Copywriter · ${names[0]}`);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });

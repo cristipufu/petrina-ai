@@ -3,22 +3,23 @@ import { commandInputText, checkDecisionLabel, decisionEvidence } from "@petrina
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { coordinator, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   for (const shared of [false, true]) it(`updates each product once before the Tester (${shared ? "shared" : "single"} task)`, async () => {
-    const { shop, api, start, fakes } = await setup(`tester-updates-${shared}`);
-    const engine = start();
+    await fixtures.world(`tester-updates-${shared}`, async ({ shop, api, engine: withEngine, fakes }) => {
+
+    await withEngine(async engine => {
     const updates = engine["updates"], original = updates.upToDate.bind(updates), prepared: string[] = [];
     updates.upToDate = (scope, signal) => {
       const task = scope.task, stage = task.plan?.stages[task.stageIndex];
       if (stage?.roleId === "tester" && !task.retest) prepared.push(scope.work.productId);
       return original(scope, signal);
     };
+
     try {
       const first = await engine.addProduct(shop.clone), second = shared ? await engine.addProduct(api.clone, "API") : undefined;
       const products = second ? [first, second] : [first];
@@ -28,15 +29,19 @@ describe.concurrent("one task across products", () => {
       expect(taskOf(state, id).error).toBeUndefined();
       expect(fakes.openings("tester").length).toBeGreaterThan(0);
       expect(prepared).toEqual(products);
-    } finally { updates.upToDate = original; await engine.shutdown(); }
+
+    } finally { updates.upToDate = original;  }
+    });
+    });
   });
 });
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
   it("attributes both products' reused failures after a shared unchanged repair", async () => {
-    const { shop, api, start, fakes } = await setup("unchanged-shared-check-repair");
-    const engine = start();
-    try {
+    await fixtures.world("unchanged-shared-check-repair", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const products = [first, second];
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", affectedProducts: products });
@@ -64,13 +69,16 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(checkDecisionLabel(taskOf(engine.getState(), id))).toBe("Your call: checks still failing");
       expect(taskOf(engine.getState(), id).statusLine).toBe("Checks still fail. Your call");
       expect(task.findings.filter(finding => finding.text.startsWith("Check failed"))).toHaveLength(2);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   it("returns a shared check repair started right before shipping through review, acceptance and the delivery check", async () => {
-    const { shop, api, start, fakes } = await setup("check-repair-before-shipping");
-    const engine = start();
-    try {
+    await fixtures.world("check-repair-before-shipping", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const products = [first, second];
       fakes.scenario({ planner: "tester-first", builder: "plain", reopen: "resume", affectedProducts: products, fixes: "change" });
@@ -100,6 +108,8 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(task.repositories!.map((work) => work.checkReturns)).toEqual([undefined, undefined]);
       expect(task.repositories!.every((work) => !work.pr && !work.approvedFor)).toBe(true);
       expect(itemOf(again, id, "delivery")!.title).toBe("Ready to ship “Welcome people in both products”");
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });

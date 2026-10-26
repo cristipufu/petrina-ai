@@ -1,3 +1,4 @@
+import { completeAll } from "@petrina/core";
 import { commandInputText } from "@petrina/core";
 import { prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
 import { fileURLToPath } from "node:url";
@@ -6,25 +7,29 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Coordination } from "../../../src/coordination.js";
-import { coordinator, finish, git, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
-async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordination>[0], taskId: string) { const coordination = new Coordination(engine); const { landing, deliveryConfirmed } = (await coordination.call("task.inspect", { taskId })).task as { landing: string; deliveryConfirmed: boolean }; const [delivered, landed] = await Promise.all(["delivered", "landed"].map(async (condition): Promise<string> => (await coordination.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome)); return { landing, deliveryConfirmed, delivered, landed }; }
+import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
+async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordination>[0], taskId: string) { const coordination = new Coordination(engine); const { landing, deliveryConfirmed } = (await coordination.call("task.inspect", { taskId })).task as { landing: string; deliveryConfirmed: boolean }; const [delivered, landed] = await completeAll(["delivered", "landed"].map(async (condition): Promise<string> => (await coordination.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome)); return { landing, deliveryConfirmed, delivered, landed }; }
 
 describe.concurrent("one task across products", () => {
   it("retires shared local deliveries into paged history and removes them only with their last product", async () => {
-    const { shop, api, start, fakes } = await setup("shared-history");
-    let engine = start();
-    try {
+    await fixtures.world("shared-history", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    const { first, second, id } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" })), title: "A shared local delivery", clientId: "shared-history-request", backlog: true });
       engine.schedule();
       expect(engine.task(id)?.state).toBe("backlog");
       expect(fakes.openings("planner")).toHaveLength(0);
-      await engine.shutdown();
-      engine = start();
+
+      return { first, second, id };
+
+    });
+
+    await withEngine(async engine => {
       expect(engine.task(id)?.selectedProducts?.map((choice) => choice.productId)).toEqual([first, second]);
       expect(engine.task(id)?.startedAt).toBeUndefined();
       engine.queueTask(id);
@@ -34,8 +39,10 @@ describe.concurrent("one task across products", () => {
       expect(engine.windowState().history?.total).toBe(1);
       for (const productId of [first, second]) expect(engine.historyPage({ productId }).items.map((item) => item.id)).toEqual([id]);
       expect(engine.taskDetails(id)?.repositories?.every((work) => work.cleanup?.removedAt && work.cleanup.reviewCopiesRemovedAt)).toBe(true);
-      await engine.shutdown();
-      engine = start();
+
+    });
+
+    await withEngine(async engine => {
       expect(engine.activeState().tasks).toEqual([]);
       const before = engine.taskDetails(id)!;
       const deliveries = before.repositories!.map((work) => work.landed);
@@ -50,13 +57,17 @@ describe.concurrent("one task across products", () => {
       engine.save();
       expect(engine.historyPage({}).total).toBe(0);
       expect(engine.taskDetails(id)).toBeUndefined();
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 
   it("prepares two separate copies only after approval, builds both and opens mutually linked PRs", async () => {
-    const { shop, api, start, fakes } = await setup("two");
-    const engine = start();
-    try {
+    await fixtures.world("two", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request", reason: "Both sides need the greeting." })) });
       const id = engine.addTask({ productId: first, title: "A shared greeting", approvePlan: false });
@@ -88,13 +99,16 @@ describe.concurrent("one task across products", () => {
       expect(task.timeline.filter((entry) => entry.text === "You approved the delivery")).toHaveLength(1);
       expect(await git(shop.clone, "branch", "--show-current")).toBe("main");
       expect(await git(api.clone, "branch", "--show-current")).toBe("main");
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   it("keeps a confirmed PR when another repository fails, then resumes after restart without publishing twice", async () => {
-    const { shop, api, start } = await setup("partial");
-    let engine = start();
-    try {
+    await fixtures.world("partial", async ({ shop, api, engine: withEngine }) => {
+
+    const { id } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       api.setGitHub((state) => { state.fail = { "pr create": 1 }; });
       const worksOn = [first, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const }));
@@ -112,8 +126,12 @@ describe.concurrent("one task across products", () => {
         expect(await coordinatorDelivery(engine, id)).toEqual({ landing: "open", deliveryConfirmed: false, delivered: "timed-out", landed: "timed-out" });
       }
       engine.task(id)!.activeProductId = interrupted;
-      await engine.shutdown();
-      engine = start();
+
+      return { id };
+
+    });
+
+    await withEngine(async engine => {
       const retry = engine.getState().inbox.find((item) => item.taskId === id && ["shipping", "stuck"].includes(item.kind))!;
       if (retry.kind === "shipping") engine.checkShipping(retry.id); else engine.retry(retry.id);
       const done = taskOf(await finish(engine, id), id);
@@ -122,15 +140,19 @@ describe.concurrent("one task across products", () => {
       expect(shop.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
       expect(done.repositories!.every((work) => work.companion?.state === "done")).toBe(true);
       expect(await coordinatorDelivery(engine, id)).toEqual({ landing: "awaiting-merge", deliveryConfirmed: true, delivered: "completed", landed: "timed-out" });
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 
   it("previews a release without a version commit and waits for the companion open PR after publishing", async () => {
-    const { shop, api, start } = await setup("mixed-release");
+    await fixtures.world("mixed-release", async ({ shop, api, engine: withEngine }) => {
     writeFileSync(join(api.clone, "package.json"), JSON.stringify({ name: "api", version: "1.0.0" }));
     await git(api.clone, "add", "."); await git(api.clone, "commit", "-qm", "Record the version"); await git(api.clone, "push", "-q", api.remote, "main");
-    const engine = start();
-    try {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "release" }], title: "Release the shared greeting" });
       await prepareSharedDelivery(engine, id, {});
@@ -147,11 +169,13 @@ describe.concurrent("one task across products", () => {
       expect(done.repositories![0]!.pr?.state).toBe("open"); expect(done.repositories![1]!.release).toBeDefined();
       expect(api.github().releases).toHaveLength(1);
       expect(shop.github().prs[0]!.body).toContain(api.github().releases[0]!.url);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   it("keeps a PR fork within its original product and retries its companion comment without duplicates", async () => {
-    const { shop, api, start, sourceRemotes } = await setup("fork-links");
+    await fixtures.world("fork-links", async ({ shop, api, engine: withEngine, sourceRemotes }) => {
     const fork = join(shop.dir, "fork.git"); await git(shop.dir, "clone", "-q", "--bare", shop.remote, fork);
     sourceRemotes["contributor/demo"] = fork;
     await git(shop.clone, "switch", "-q", "-c", "review-work");
@@ -162,8 +186,9 @@ describe.concurrent("one task across products", () => {
     await git(shop.clone, "push", "-q", shop.remote, `${initial}:refs/pull/7/head`);
     await git(shop.clone, "switch", "-q", "main");
     shop.setGitHub((state) => { state.forks = { "contributor/demo": fork }; state.lose = { "pr comment": 1 }; state.prs.push({ number: 7, url: "https://github.com/acme/demo/pull/7", state: "OPEN", title: "Original title", body: "Original description", headRefName: "review-work", baseRefName: "main", headRefOid: initial, headRepository: { nameWithOwner: "contributor/demo" }, isCrossRepository: true }); });
-    const engine = start();
-    try {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, worksOn: [{ productId: first, startFrom: { kind: "pull-request", value: "7" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "pull-request" }], title: "Update the shared PR" });
       const plan = await until(engine, (state) => !!itemOf(state, id, "plan"), coordinator([]));
@@ -181,13 +206,15 @@ describe.concurrent("one task across products", () => {
       expect(shop.github().calls.filter((args) => args[0] === "pr" && args[1] === "comment")).toHaveLength(1);
       expect(shop.github().pages!["issues/7/comments?per_page=100"]!.flat()).toHaveLength(1);
       expect(api.github().prs).toHaveLength(1);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
   for (const decision of ["approve-again", "send-back"] as const) it(`cleans earlier unpublished release versions before shared ${decision} after a later preview mismatch`, async () => {
-    const { shop, api, start, fakes } = await setup(`release-preview-mismatch-${decision}`);
+    await fixtures.world(`release-preview-mismatch-${decision}`, async ({ shop, api, engine: withEngine, fakes }) => {
     for (const world of [shop, api]) {
       writeFileSync(join(world.clone, "package.json"), JSON.stringify({ name: world === shop ? "shop" : "api", version: "1.0.0" }));
       await git(world.clone, "add", "package.json"); await git(world.clone, "commit", "-qm", "Record the release version"); await git(world.clone, "push", "-q", world.remote, "main");
@@ -207,8 +234,9 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       }
     `);
     await git(shop.clone, "add", "mutate-peer-release.cjs"); await git(shop.clone, "commit", "-qm", "Add a check helper"); await git(shop.clone, "push", "-q", shop.remote, "main");
-    let engine = start();
-    try {
+
+    const { id, approved } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       engine.setProductChecks(first, [{ name: "Update peer release record", command: commandInputText([process.execPath, "mutate-peer-release.cjs"]) }]);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "release" })), title: "Prepare two releases" });
@@ -243,9 +271,14 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       engine.setPoolPaused(false);
       const mismatch = await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator([]));
       expect(taskOf(mismatch, id).error).toBeUndefined();
-      await engine.shutdown(); engine = start();
+
+      return { id, approved };
+
+    });
+
+    await withEngine(async engine => {
       const restored = engine.task(id)!;
-      expect(await Promise.all(restored.repositories!.map((work) => git(work.worktree!, "rev-parse", "HEAD")))).toEqual(approved);
+      expect(await completeAll(restored.repositories!.map((work) => git(work.worktree!, "rev-parse", "HEAD")))).toEqual(approved);
       const decisionItem = itemOf(engine.getState(), id, "delivery")!;
       if (decision === "send-back") {
         engine.requestChanges(decisionItem.id, "Revisit the shared release before trying again");
@@ -266,19 +299,23 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
         expect(shop.github().releases).toHaveLength(2);
         expect(api.github().releases).toHaveLength(2);
       }
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 
   for (const decision of ["retry", "send-back"] as const) it(`keeps shared approval and offers ${decision} when release-version checks fail`, async () => {
-    const { shop, api, start, fakes } = await setup(`release-version-failure-${decision}`);
+    await fixtures.world(`release-version-failure-${decision}`, async ({ shop, api, engine: withEngine, fakes }) => {
     const allow = join(api.dir, "allow-release");
     writeFileSync(join(api.clone, "package.json"), JSON.stringify({ name: "api", version: "1.0.0" }));
     writeFileSync(join(api.clone, "version-check.cjs"), `if (require('./package.json').version !== '1.0.0' && !require('node:fs').existsSync(${JSON.stringify(allow)})) process.exit(1);`);
     await git(api.clone, "add", "."); await git(api.clone, "commit", "-qm", "Record the version"); await git(api.clone, "push", "-q", api.remote, "main");
     await git(api.remote, "update-ref", "refs/tags/v1.0.0", await git(api.clone, "rev-parse", "HEAD"));
     api.setGitHub((state) => state.releases.push({ tagName: "v1.0.0", url: "https://github.com/acme/api/releases/tag/v1.0.0", publishedAt: "2025-01-01T00:00:00Z", isDraft: false, name: "v1.0.0", body: "Previous release" }));
-    let engine = start();
-    try {
+
+    const { id, approval } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       engine.setProductChecks(second, [{ name: "Release version", command: commandInputText([process.execPath, "version-check.cjs"]) }]);
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: second, startFrom: { kind: "default" }, delivery: "release" }], title: "Check release preparation" });
@@ -305,7 +342,12 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(failed.repositories![1]!.checks!.results.every((run) => run.ok)).toBe(true);
       expect(fakes.received("builder")).toHaveLength(2);
       expect(shop.github().prs).toHaveLength(0); expect(api.github().releases).toHaveLength(1);
-      await engine.shutdown(); engine = start();
+
+      return { id, approval };
+
+    });
+
+    await withEngine(async engine => {
       expect(engine.task(id)!.repositories!.map((work) => work.approvedSha)).toEqual(approval.map((work) => work.sha));
       const decisionItem = itemOf(engine.getState(), id, "delivery")!;
       expect(decisionItem.body).toContain("API: getting the release ready failed");
@@ -329,6 +371,9 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       expect(done.state).toBe("pr-open");
       expect(shop.github().prs).toHaveLength(1); expect(api.github().releases).toHaveLength(2);
       expect(fakes.received("builder")).toHaveLength(decision === "send-back" ? 4 : 2);
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 });

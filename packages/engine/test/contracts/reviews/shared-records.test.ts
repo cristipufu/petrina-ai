@@ -1,20 +1,21 @@
 import { executionFor } from "@petrina/orchestrator";
-import { reviewRoundEnd } from "@petrina/core";
+import { completeAll, reviewRoundEnd } from "@petrina/core";
 import { afterAll, describe, expect, it } from "bun:test";
 import { reviewRecords } from "../../fixtures/review-records.js";
 import { ReviewResult } from "../../../src/roles.js";
-import { coordinator, itemOf, removeDir, tempDir, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, itemOf, removeDir, tempDir, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => completeAll([fixtures.close(), Promise.resolve().then(() => recordRoots.forEach(removeDir))]));
+const recordRoots: string[] = [];
 async function sharedRecords() { const root = tempDir("petrina-review-records-"); recordRoots.push(root); return reviewRecords(root); }
 
 describe.concurrent("one task across products", () => {
   for (const count of [1, 2]) it(`settles completed objections before waiting for voting usage across ${count} products`, async () => {
-    const { shop, api, start, fakes } = await setup(`objection-usage-${count}`);
-    let engine = start();
-    try {
+    await fixtures.world(`objection-usage-${count}`, async ({ shop, api, engine: withEngine, fakes }) => {
+
+    const { id } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone);
       const products = count === 1 ? [first] : [first, await engine.addProduct(api.clone, "API")];
       const id = engine.addTask({ productId: first, ...(count > 1 ? { worksOn: products.map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const })) } : {}), title: "Settle saved review objections" });
@@ -30,8 +31,12 @@ describe.concurrent("one task across products", () => {
       engine.s.inbox = engine.s.inbox.filter((item) => item.taskId !== id);
       engine.s.pool.limited = [...new Set(engine.s.profiles.map((profile) => profile.toolId))].map((toolId) => ({ toolId, until: Date.now() + 120_000, reason: "No voting usage left" }));
       engine.save();
-      await engine.shutdown();
-      engine = start();
+
+      return { id };
+
+    });
+
+    await withEngine(async engine => {
       await engine.waitUntilReady();
       const resumed = engine.task(id)!;
       // Scheduling must settle the saved reports before deciding whether an agent is needed.
@@ -41,7 +46,10 @@ describe.concurrent("one task across products", () => {
       await until(engine, (state) => !!itemOf(state, id, "delivery"), coordinator([]));
       expect(fakes.openings("verifier")).toHaveLength(0);
       expect(engine.getState().pool.limited?.length).toBeGreaterThan(0);
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 });
 

@@ -4,17 +4,17 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ReviewResult } from "../../../src/roles.js";
-import { coordinator, finish, git, headNow, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, finish, git, headNow, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   it("routes an incompletely repeated finding to its saved owner after restart and keeps ownership in History", async () => {
-    const { shop, api, start, fakes } = await setup("finding-owner-restart");
-    let engine = start();
-    try {
+    await fixtures.world("finding-owner-restart", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    const { second, id, findingId, report } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, title: "Keep routing the reported API repair", worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })) });
       await until(engine, (state) => !!itemOf(state, id, "delivery") || !!taskOf(state, id).error, coordinator(["plan", "design"]));
@@ -29,8 +29,12 @@ describe.concurrent("one task across products", () => {
       const findingId = task.findings.find((finding) => finding.text === report.text)!.id;
       task.findings.push({ id: "unknown-owner", text: "A separate finding has no known owner.", productIds: [], severity: "blocking", raisedBy: "sol-high", confirmedBy: [], status: "open" });
       engine.save();
-      await engine.shutdown();
-      engine = start();
+
+      return { second, id, findingId, report };
+
+    });
+
+    await withEngine(async engine => {
       const restored = engine.task(id)!;
       expect(restored.findings.find((finding) => finding.id === findingId)?.productIds).toEqual([second]);
       engine.requestChanges(itemOf(engine.getState(), id, "delivery")!.id, "Repair the known API finding.");
@@ -52,13 +56,17 @@ describe.concurrent("one task across products", () => {
       expect(archived.findings.find((finding) => finding.id === "unknown-owner")?.productIds).toEqual([]);
       expect(shop.github().prs).toHaveLength(0);
       expect(api.github().prs).toHaveLength(0);
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 
   it("keeps each parallel reviewer's complete snapshot map and queued coordinator message", async () => {
-    const { shop, api, start, fakes } = await setup("review-messages");
-    const engine = start();
-    try {
+    await fixtures.world("review-messages", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "parallel", builder: "plain", controlled: true });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Review the shared greeting" });
@@ -86,15 +94,19 @@ describe.concurrent("one task across products", () => {
       expect(taskOf(state, id).queued).toEqual([]);
       for (const match of copies) expect(existsSync(match[2]!)).toBe(false);
       for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   it("visits both affected saved builders in one shared repair pass and keeps separate answers", async () => {
-    const { shop, api, start, fakes } = await setup("shared-repair"); const engine = start();
+    await fixtures.world("shared-repair", async ({ shop, api, engine: withEngine, fakes }) => {
+    await withEngine(async engine => {
     const reviewedHeads = new Map<string, string>();
     // A failed read is reported by the test, not thrown into the engine's announcement.
     let captureFailure: unknown;
     let unsubscribe = () => {};
+
     try {
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reopen: "resume", reviewer: "important-twice", affectedProducts: [first, second], fixes: "change" });
@@ -139,12 +151,16 @@ describe.concurrent("one task across products", () => {
         expect(review).toContain(`last completed review: ${sha}`);
         expect(review).toContain(`git diff ${sha}..HEAD`);
       }
-    } finally { unsubscribe(); await engine.shutdown(); }
+
+    } finally { unsubscribe();  }
+    });
+    });
   });
 
   it("keeps unassigned Important findings under Together and sends them to no builder", async () => {
-    const { shop, api, start, fakes } = await setup("unassigned"); const engine = start();
-    try {
+    await fixtures.world("unassigned", async ({ shop, api, engine: withEngine, fakes }) => {
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reviewer: "important-twice" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Resolve ownership" });
@@ -168,14 +184,17 @@ describe.concurrent("one task across products", () => {
       expect(taskOf(delivered, id).state).toBe("pr-open");
       expect(fakes.received("code reviewer")).toHaveLength(reviews);
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });
 
 describe.concurrent("shared-task repair regressions", () => {
   it("repairs assigned review problems while leaving unassigned problems for the coordinator", async () => {
-    const { shop, api, start, fakes } = await setup("mixed-ownership"); const engine = start();
-    try {
+    await fixtures.world("mixed-ownership", async ({ shop, api, engine: withEngine, fakes }) => {
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "parallel", reviewRounds: 2, builder: "plain", reviewer: "important-twice", affectedProducts: [second], unassignedFinding: true, fixes: "change", reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Repair only the assigned problem" });
@@ -204,6 +223,8 @@ describe.concurrent("shared-task repair regressions", () => {
       expect(taskOf(delivered, id).state).toBe("pr-open");
       expect(fakes.received("code reviewer")).toHaveLength(reviews);
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });

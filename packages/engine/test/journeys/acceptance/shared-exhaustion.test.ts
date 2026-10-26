@@ -3,15 +3,14 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ScriptedAgents, scriptedResult } from "../../scripted-agents.js";
 import { answersTo, findingIds } from "../../scripted-findings.js";
-import { coordinator, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("shared-task repair regressions", () => {
   it("stops at exhausted acceptance allowances, keeps them after restart and renews every product on send-back", async () => {
-    const { shop, api, start } = await setup("acceptance-exhausted");
+    await fixtures.world("acceptance-exhausted", async ({ shop, api, engine: withEngine }) => {
     let owners: string[] = [], builds = 0;
     const agents = new ScriptedAgents(({ result, cwd, text }) => {
       switch (result) {
@@ -32,9 +31,10 @@ describe.concurrent("shared-task repair regressions", () => {
         default: throw new Error(`Unexpected participant in the acceptance repair fixture: ${result}`);
       }
     });
-    const restart = () => start({ startAgentSession: agents.start });
-    let engine = restart();
-    try {
+
+
+    const { id } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       owners = [first, second];
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Acceptance needs a decision" });
@@ -47,7 +47,12 @@ describe.concurrent("shared-task repair regressions", () => {
       expect(agents.received("build")).toHaveLength(6);
       expect(agents.received("brief")).toHaveLength(0);
       expect(agents.received("objections")).toHaveLength(0);
-      await engine.shutdown(); engine = restart();
+
+      return { id };
+
+    }, { startAgentSession: agents.start });
+
+    await withEngine(async engine => {
       expect(engine.task(id)!.repositories!.map((work) => work.acceptanceReturns)).toEqual([2, 2]);
       expect(agents.received("build")).toHaveLength(6);
       // An asymmetric saved allowance must be renewed too, rather than blocking the next shared pass.
@@ -59,6 +64,9 @@ describe.concurrent("shared-task repair regressions", () => {
       expect(current.repositories!.map((work) => work.acceptanceReturns ?? 0)).toEqual([0, 0]);
       // Re-exhaustion after this renewed checkpoint is a portable controller case in shared-renewal.test.ts.
       expect(shop.github().prs).toHaveLength(0); expect(api.github().prs).toHaveLength(0);
-    } finally { await engine.shutdown(); }
+
+    }, { startAgentSession: agents.start });
+
+    });
   });
 });

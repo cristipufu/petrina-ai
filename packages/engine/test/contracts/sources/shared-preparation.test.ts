@@ -2,16 +2,16 @@ import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { coordinator, git, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, git, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   it("retains a coordinator row omitted by the planner until the coordinator removes it", async () => {
-    const { shop, api, start, fakes } = await setup("omitted"); const engine = start();
-    try {
+    await fixtures.world("omitted", async ({ shop, api, engine: withEngine, fakes }) => {
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const worksOn = [first, second].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const }));
       fakes.scenario({ planner: "short", builder: "plain", worksOn: [worksOn[0]!] });
@@ -24,18 +24,21 @@ describe.concurrent("one task across products", () => {
       await engine.setTaskProducts(id, [worksOn[0]!]);
       expect(taskOf(engine.getState(), id).workRows).toHaveLength(1);
       expect(taskOf(engine.getState(), id).approveDelivery).toBe(false);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   for (const saved of ["approved", "approved SSH", "other repository", "other GitHub repository", "no origin", "empty other repository"] as const) it(`checks the saved clone's remote before retrying an addition with ${saved}`, async () => {
-    const { shop, api, remotes, start } = await setup(`clone-identity-${saved.replaceAll(" ", "-")}`);
+    await fixtures.world(`clone-identity-${saved.replaceAll(" ", "-")}`, async ({ shop, api, remotes, engine: withEngine }) => {
     if (saved === "approved SSH" || saved === "other GitHub repository") delete (remotes as Record<string, string>)["acme/api"];
-    const engine = start({ remote: undefined }); engine.setPoolPaused(true);
+
+    await withEngine(async engine => { engine.setPoolPaused(true);
     await engine.waitUntilReady();
     const products = engine.s.products, sources = engine["sources"];
     products.push({ id: "pending", name: "Original", repo: "acme/demo", tone: "blue" });
     const task = engine.task(engine.addTask({ productId: "pending", title: "Validate an approved clone", backlog: true }))!;
-    try {
+
     const folder = join(shop.dir, "saved-addition");
     if (saved === "empty other repository") {
       await git(shop.dir, "init", "-q", "--initial-branch=main", folder);
@@ -60,6 +63,8 @@ describe.concurrent("one task across products", () => {
     }
     expect(await git(folder, "config", "--local", "--list")).toBe(before);
     expect(existsSync(join(folder, ".git", "keep.txt"))).toBe(true);
-    } finally { await engine.shutdown(); }
+
+    }, { remote: undefined });
+    });
   });
 });

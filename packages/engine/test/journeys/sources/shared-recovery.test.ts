@@ -1,18 +1,17 @@
+import type { Engine } from "../../engine.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { coordinator, finish, git, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
+import { coordinator, finish, git, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   for (const recovery of ["unchanged", "fresh", "retry", "restart"] as const) it(`delivers to an addition's approved local branch after remote default changes: ${recovery}`, async () => {
-    const { shop, api, start, fakes, remotes } = await setup(`local-default-${recovery}`);
-    let engine = start();
-    try {
+    await fixtures.world(`local-default-${recovery}`, async ({ shop, api, engine: withEngine, fakes, remotes }) => {
+    const next = await withEngine(async engine => {
       const first = await engine.addProduct(shop.clone);
       fakes.scenario({ planner: "short", builder: "plain", reopen: "resume", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "local" }, { productId: "acme/api", repo: "acme/api", startFrom: { kind: "default" }, delivery: "local", reason: "The API also needs the greeting." }] });
       const id = engine.addTask({ productId: first, title: "A local greeting in both places" });
@@ -31,6 +30,7 @@ describe.concurrent("one task across products", () => {
       }
       if (recovery === "retry" || recovery === "restart") remotes["acme/api"] = join(api.dir, "unavailable.git");
       engine.approve(itemOf(engine.getState(), id, "plan")!.id);
+
       if (recovery === "retry" || recovery === "restart") {
         await until(engine, (state) => !!taskOf(state, id).error);
         expect(taskOf(engine.getState(), id).workRows![1]!.addition?.created).toBe(true);
@@ -38,9 +38,14 @@ describe.concurrent("one task across products", () => {
         await git(shop.dir, "clone", "-q", api.remote, folder);
         expect(await git(folder, "branch", "--list", "main")).toBe("");
         writeFileSync(join(folder, "keep.txt"), "Preserved completed clone\n");
-        if (recovery === "restart") { await engine.shutdown(); engine = start(); }
-        engine.retry(itemOf(engine.getState(), id, "stuck")!.id);
+
+        if (recovery === "restart") return resume;
+        await resume(engine);
+        return;
       }
+      await finishStep(engine);
+      async function resume(engine: Engine) { engine.retry(itemOf(engine.getState(), id, "stuck")!.id); await finishStep(engine); }
+      async function finishStep(engine: Engine) {
       const task = taskOf(await finish(engine, id), id);
       expect(task.error).toBeUndefined();
       expect(task.state).toBe("done");
@@ -63,13 +68,18 @@ describe.concurrent("one task across products", () => {
       }
       if (recovery === "retry" || recovery === "restart") expect(await git(folder, "status", "--short")).toContain("keep.txt");
       expect(api.github().prs).toHaveLength(0);
-    } finally { await engine.shutdown(); }
+
+      }
+    });
+    if (next) await withEngine(next);
+    });
   });
 
   for (const invalid of ["branch", "pull-request", "release"] as const) it(`requires a confirmed folder after correcting a proposed repository's invalid ${invalid} choice`, async () => {
-    const { shop, api, start, fakes } = await setup(`invalid-addition-${invalid}`);
-    let engine = start();
-    try {
+    await fixtures.world(`invalid-addition-${invalid}`, async ({ shop, api, engine: withEngine, fakes }) => {
+
+    const { id } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone);
       fakes.scenario({ worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", startFrom: invalid === "pull-request" ? { kind: "pull-request", value: "999" } : { kind: "branch", name: "missing-branch" }, delivery: invalid === "release" ? "release" : "pull-request" }] });
       const id = engine.addTask({ productId: first, title: "Correct the proposed API source" });
@@ -84,7 +94,12 @@ describe.concurrent("one task across products", () => {
       expect(corrected.addition).toBeUndefined();
       expect(() => engine.approve(itemOf(engine.getState(), id, "plan")!.id)).toThrow();
       expect(engine.task(id)!.repositories).toBeUndefined();
-      await engine.shutdown(); engine = start();
+
+      return { id };
+
+    });
+
+    await withEngine(async engine => {
       expect(() => engine.approve(itemOf(engine.getState(), id, "plan")!.id)).toThrow();
       // Guard older saved validation placeholders too: an empty folder is never coordinator approval.
       const row = engine.task(id)!.workRows![1]!;
@@ -101,12 +116,16 @@ describe.concurrent("one task across products", () => {
       expect(finished.state).toBe("pr-open");
       expect(await git(folder, "branch", "--show-current")).toBe("main");
       expect(shop.github().prs).toHaveLength(1); expect(api.github().prs).toHaveLength(1);
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 
   it("retries an interrupted clone in its saved folder and leaves an unrelated occupied folder untouched", async () => {
-    const { shop, api, start, fakes, remotes } = await setup("clone-retry"); let engine = start();
-    try {
+    await fixtures.world("clone-retry", async ({ shop, api, engine: withEngine, fakes, remotes }) => {
+    const { id, folder, firstCopy } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone);
       fakes.scenario({ planner: "short", builder: "plain", worksOn: [{ productId: first, startFrom: { kind: "default" }, delivery: "pull-request" }, { productId: "acme/api", repo: "acme/api", reason: "Both repositories need the greeting", startFrom: { kind: "default" }, delivery: "pull-request" }] });
       const id = engine.addTask({ productId: first, title: "Resume an addition" });
@@ -122,7 +141,12 @@ describe.concurrent("one task across products", () => {
       expect(taskOf(failed, id).workRows![1]!.addition?.created).toBe(true);
       mkdirSync(join(folder, ".git"), { recursive: true }); writeFileSync(join(folder, ".git", "interrupted"), "unfinished clone");
       remotes["acme/api"] = api.remote;
-      await engine.shutdown(); engine = start();
+
+      return { id, folder, firstCopy };
+
+    });
+
+    await withEngine(async engine => {
       engine.retry(itemOf(engine.getState(), id, "stuck")!.id);
       const done = taskOf(await finish(engine, id), id);
       expect(done.error).toBeUndefined();
@@ -130,6 +154,9 @@ describe.concurrent("one task across products", () => {
       expect(await git(folder, "branch", "--show-current")).toBe("main");
       expect(await git(shop.clone, "show", "HEAD:README.md")).toContain("Demo");
       expect(api.github().prs).toHaveLength(1);
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 });

@@ -2,24 +2,30 @@ import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { completeAll } from "@petrina/core";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import * as gitOps from "@petrina/repositories/git";
 import { addCopy, ensureWorktree } from "@petrina/repositories/git";
-import { git, removeDir, waitFor, type World } from "../../support.js";
+import { git, waitFor } from "../../support.js";
 import { Cleanup } from "../../../src/cleanup.js";
 import { withRepositoryRecords } from "../../fixtures/shared-records.js";
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [];
-afterAll(() => worlds.forEach(world => removeDir(world.dir)));
-const setup = (name: string) => sharedWorld(name, worlds);
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+import * as worldBoundary from "../../support.js";
+import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import type { CommandResult } from "@petrina/test-support/commands";
+import { tempDir, type World } from "../../support.js";
+import { rejectionOf } from "@petrina/test-support/rejections";
+import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   it("keeps cleanup awake until every product copy is removed without starting a system process", async () => {
-    const { shop, api, start } = await setup("cleanup-awake");
+    await fixtures.world("cleanup-awake", async ({ shop, api, engine: withEngine }) => {
     const paths: string[] = [];
     const activity: { active: boolean; copies: number }[] = [];
-    const engine = start({ awakeObserver: (active) => activity.push({ active, copies: paths.filter((path) => existsSync(path)).length }) });
-    try {
+
+    await withEngine(async engine => {
+
       engine.setPoolPaused(true);
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ productId: first, title: "Saved shared cleanup", backlog: true });
@@ -51,7 +57,9 @@ describe.concurrent("one task across products", () => {
       expect(activity).toEqual([{ active: true, copies: 2 }, { active: false, copies: 0 }]);
       expect(engine.cleanupJobs.size).toBe(0);
       for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
-    } finally { await engine.shutdown(); }
+
+    }, { awakeObserver: (active) => activity.push({ active, copies: paths.filter((path) => existsSync(path)).length }) });
+    });
   });
 });
 
@@ -201,5 +209,172 @@ describe("explicit repository execution contexts", () => {
         } finally { copies.mockRestore(); }
       } finally { clone.mockRestore(); }
     });
+  });
+});
+
+const actualMakeWorld = worldBoundary.makeWorld;
+type SetupMode = { kind: "close" } | { kind: "reject"; error: unknown };
+
+async function observeSharedSetup(family: ReturnType<typeof sharedWorldFixtures>, tag: string, mode: SetupMode,
+  acceptCloseFailure: (error: unknown) => void, registerCleanup: (cleanup: () => Promise<void>) => void) {
+  const ready = Promise.withResolvers<void>(), held = Promise.withResolvers<void>();
+  const nativeWork: Promise<World>[] = [], worlds: World[] = [];
+  let root: string | undefined, restore: (() => void) | undefined, peerReturned = false, callbacks = 0;
+  let running: Promise<{ error: unknown; peerAtReport: boolean } | { value: unknown; peerAtReport: boolean }> | undefined;
+  let closing: Promise<{ error: unknown; peerAtClose: boolean } | { value: undefined; peerAtClose: boolean }> | undefined;
+  let probe: Promise<string> | undefined, closeReported = false;
+  const close = async () => {
+    held.resolve();
+    // Join the original producer receipts and every real native call, even if a subject assertion failed.
+    const records = await Promise.allSettled([running, closing, ...nativeWork, probe,
+      Promise.resolve().then(() => restore?.()),
+    ]);
+    const native = records.slice(2, 2 + nativeWork.length), restored = records.at(-1)!, probed = records[2 + nativeWork.length]!;
+    const failures = [...native, records[2 + nativeWork.length]!, restored].filter(result => result.status === "rejected");
+    if (nativeWork.length === 2 && native.every(result => result.status === "fulfilled") && callbacks === 0 && restored.status === "fulfilled" && probed.status === "fulfilled" && root)
+      removeFixtureRoot(root);
+    if (failures.length) throw new AggregateError(failures.map(result => (result as PromiseRejectedResult).reason), "Shared setup control cleanup was not confirmed");
+  };
+  // Bun can end a timed-out callback without unwinding it; the file hook still owns this gate and spy.
+  registerCleanup(close);
+  await setupWithCleanup(async () => {
+    const forwarded = spyOn(worldBoundary, "makeWorld");
+    restore = () => forwarded.mockRestore();
+    forwarded.mockImplementation(async (name, options) => {
+      if (name !== `shared-shop-${tag}` && name !== `shared-api-${tag}`) return actualMakeWorld(name, options);
+      if (!options?.owner) throw new Error("Shared setup did not supply its required root owner");
+      root ??= dirname(options.owner.root);
+      const work = Promise.resolve().then(() => actualMakeWorld(name, options));
+      nativeWork.push(work);
+      let world: World;
+      try { world = await work; }
+      catch (error) { ready.reject(error); throw error; }
+      worlds.push(world);
+      if (worlds.length === 2) ready.resolve();
+      if (name === `shared-api-${tag}`) { await held.promise; peerReturned = true; }
+      if (mode.kind === "reject" && name === `shared-shop-${tag}`) throw mode.error;
+      return world;
+    });
+    running = family.world(tag, async fixture => { callbacks++; await fixture.engine(async () => undefined); }).then(
+      value => ({ value, peerAtReport: peerReturned }), error => ({ error, peerAtReport: peerReturned }),
+    );
+    await ready.promise;
+    if (mode.kind === "close") {
+      closing = family.close().then(
+        () => { closeReported = true; return { value: undefined, peerAtClose: peerReturned }; },
+        error => { closeReported = true; return { error, peerAtClose: peerReturned }; },
+      );
+    }
+    const shop = worlds.find(world => world.dir.endsWith("shop"))!;
+    // A real command completion is an event boundary, not an arbitrary continuation budget.
+    probe = git(shop.clone, "rev-parse", "HEAD");
+    expect(await probe).toBe(shop.initial);
+    if (mode.kind === "close") expect(closeReported).toBe(false);
+    expect(existsSync(root!)).toBe(true);
+    expect(callbacks).toBe(0);
+    held.resolve();
+    const reported = await running;
+    expect("error" in reported).toBe(true);
+    if (!("error" in reported)) throw new Error("The rejected shared setup handed a fixture to its caller");
+    expect(reported.peerAtReport).toBe(true);
+    expect(reported.error).toBeInstanceOf(AggregateError);
+    expect((reported.error as AggregateError).errors).toHaveLength(2);
+    if (mode.kind === "reject") expect((reported.error as AggregateError).errors[0]).toBe(mode.error);
+    else expect(((reported.error as AggregateError).errors[0] as Error).message).toContain("ownership is closing");
+    closing ??= family.close().then(() => ({ value: undefined, peerAtClose: peerReturned }), error => ({ error, peerAtClose: peerReturned }));
+    const stopped = await closing;
+    expect("error" in stopped).toBe(true);
+    if (!("error" in stopped)) throw new Error("The failed shared setup unexpectedly permitted root disposal");
+    acceptCloseFailure(stopped.error);
+    expect(stopped.peerAtClose).toBe(true);
+    expect(existsSync(root!)).toBe(true);
+    expect(callbacks).toBe(0);
+    const late = await rejectionOf(family.world(`${tag}-late`, async () => { callbacks++; }));
+    expect(late).toBeInstanceOf(Error);
+    expect(nativeWork).toHaveLength(2);
+  }, close);
+  await close();
+}
+
+for (const mode of [{ kind: "close" }, { kind: "reject", error: new Error("shared setup rejected") }, { kind: "reject", error: undefined }] as const) {
+  describe(`shared setup ownership: ${mode.kind === "close" ? "close while a peer is held" : String(mode.error)}`, () => {
+    const family = sharedWorldFixtures();
+    let expectedClose: { error: unknown } | undefined;
+    let cleanup: (() => Promise<void>) | undefined;
+    afterAll(async () => {
+      // Request closed admission before independently releasing and joining the controlled setup peer.
+      const closing = family.close();
+      const settled = await Promise.allSettled([closing, Promise.resolve().then(() => cleanup?.())]);
+      const failures = settled.flatMap((result, index) => result.status === "rejected"
+        && !(index === 0 && expectedClose && result.reason === expectedClose.error) ? [result.reason] : []);
+      if (failures.length) throw new AggregateError(failures, "Shared setup control could not all be closed");
+    });
+    it("joins both actual setups before reporting, prevents late handoff and retains uncertain roots", async () => {
+      const tag = `ownership-${mode.kind}-${mode.kind === "reject" && mode.error === undefined ? "undefined" : "error"}`;
+      await observeSharedSetup(family, tag, mode, error => { expectedClose = { error }; }, close => { cleanup = close; });
+    });
+  });
+}
+
+describe("shared generation manual-operation ownership", () => {
+  const family = sharedWorldFixtures();
+  const actors = coordinatorLifetimes();
+  let controlRoot: string | undefined, command: Promise<CommandResult> | undefined;
+  let running: Promise<void> | undefined;
+  const close = async () => {
+    const failures: unknown[] = [];
+    const settled = await Promise.allSettled([actors.close(), family.close(), running]);
+    for (const result of settled) if (result.status === "rejected") failures.push(result.reason);
+    if (failures.length) throw new AggregateError(failures, "Shared manual native operation cleanup was not confirmed");
+    if (controlRoot) { removeFixtureRoot(controlRoot); controlRoot = undefined; }
+  };
+  afterAll(close);
+  it("joins an actual leased command and its output before disposing the world after Engine shutdown", async () => {
+    const ready = Promise.withResolvers<void>(), stoppedEngine = Promise.withResolvers<void>();
+    let nativeCompleted = false, completedAtClose = false, closeReported = false;
+    let parent: string | undefined, shop: Omit<World, "start"> | undefined;
+    let lateEngine: import("../../fixtures/shared-world.js").SharedFixture["engine"] | undefined;
+    controlRoot = tempDir("petrina-shared-operation-control-");
+    await setupWithCleanup(async () => {
+      const lifetime = await actors.open(controlRoot!);
+      const actor = lifetime.program("owned-command.ts", 'console.log("owned command ready"); for await (const line of console) { if (line === "finish") process.exit(78); }');
+      let peer: ReturnType<typeof lifetime.start> | undefined;
+      running = family.world("owned-manual-command", async fixture => {
+        shop = fixture.shop; parent = dirname(shop.dir); lateEngine = fixture.engine;
+        expect("start" in fixture.shop).toBe(false); expect("start" in fixture.api).toBe(false);
+        await fixture.engine(async engine => {
+          engine.setPoolPaused(true);
+          const shutdown = engine.shutdown.bind(engine);
+          let restore: (() => void) | undefined;
+          try {
+            const observed = spyOn(engine, "shutdown");
+            restore = () => observed.mockRestore();
+            observed.mockImplementation(async () => { await shutdown(); stoppedEngine.resolve(); });
+            peer = lifetime.start(controlRoot!, [actor]);
+            command = peer.completion;
+            void peer.line().then(line => { if (line === "owned command ready") ready.resolve(); else ready.reject(new Error("The owned native command did not report readiness")); }, error => ready.reject(error));
+            const result = await command;
+            nativeCompleted = true;
+            expect(result.code).toBe(78);
+          } finally { restore?.(); }
+        });
+      });
+      await waitFor(() => !!shop && !!command, "the owned native operation to start", undefined, { during: running });
+      await Promise.race([ready.promise, running.then(() => { throw new Error("The command owner ended before native readiness"); })]);
+      const closing = family.close().then(() => { closeReported = true; completedAtClose = nativeCompleted; });
+      await Promise.race([stoppedEngine.promise, closing.then(() => { throw new Error("The fixture closed before actual Engine shutdown was observed"); })]);
+      expect(await git(shop!.clone, "rev-parse", "HEAD")).toBe(shop!.initial);
+      expect(existsSync(parent!)).toBe(true);
+      expect(closeReported).toBe(false);
+      peer!.write("finish\n");
+      await completeAll([running, closing]);
+      expect(completedAtClose).toBe(true);
+      expect(nativeCompleted).toBe(true);
+      expect(existsSync(parent!)).toBe(false);
+      let admitted = false;
+      expect(await rejectionOf(lateEngine!(async () => { admitted = true; }))).toBeInstanceOf(Error);
+      expect(admitted).toBe(false);
+    }, close);
+    await close();
   });
 });

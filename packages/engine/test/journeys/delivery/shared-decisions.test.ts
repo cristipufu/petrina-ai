@@ -1,14 +1,15 @@
+import type { Engine } from "../../engine.js";
+import { completeAll } from "@petrina/core";
 import { prepareSharedDelivery } from "../../fixtures/shared-preparation.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { Coordination } from "../../../src/coordination.js";
-import { coordinator, finish, itemOf, removeDir, taskOf, until, waitFor, type World } from "../../support.js";
+import { coordinator, finish, itemOf, taskOf, until, waitFor } from "../../support.js";
 
-import { sharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => sharedWorld(name, worlds);
-async function pollPullRequests(engine: ReturnType<Awaited<ReturnType<typeof setup>>["start"]>, taskId: string) { const monitor = engine["shipping"].monitor; await waitFor(() => !engine.drivers.has(taskId) && !monitor["following"].has(taskId), "the task's pull requests to be free to read"); await monitor.pollPullRequests(); }
-async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordination>[0], taskId: string) { const coordination = new Coordination(engine); const { landing, deliveryConfirmed } = (await coordination.call("task.inspect", { taskId })).task as { landing: string; deliveryConfirmed: boolean }; const [delivered, landed] = await Promise.all(["delivered", "landed"].map(async (condition): Promise<string> => (await coordination.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome)); return { landing, deliveryConfirmed, delivered, landed }; }
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
+async function pollPullRequests(engine: Engine, taskId: string) { const monitor = engine["shipping"].monitor; await waitFor(() => !engine.drivers.has(taskId) && !monitor["following"].has(taskId), "the task's pull requests to be free to read"); await monitor.pollPullRequests(); }
+async function coordinatorDelivery(engine: ConstructorParameters<typeof Coordination>[0], taskId: string) { const coordination = new Coordination(engine); const { landing, deliveryConfirmed } = (await coordination.call("task.inspect", { taskId })).task as { landing: string; deliveryConfirmed: boolean }; const [delivered, landed] = await completeAll(["delivered", "landed"].map(async (condition): Promise<string> => (await coordination.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome)); return { landing, deliveryConfirmed, delivered, landed }; }
 
 describe.concurrent("one task across products", () => {
   for (const choice of [
@@ -17,9 +18,10 @@ describe.concurrent("one task across products", () => {
     { name: "one product did not opt in", ask: false, secondOptedIn: false, acceptance: true, ships: false },
     { name: "shared acceptance has not run", ask: false, secondOptedIn: true, acceptance: false, ships: false },
   ]) it(`${choice.ships ? "ships" : "asks about"} low-risk shared work when ${choice.name}`, async () => {
-    const { shop, api, start } = await setup(`low-risk-${choice.name.replaceAll(" ", "-")}`);
-    const engine = start();
-    try {
+    await fixtures.world(`low-risk-${choice.name.replaceAll(" ", "-")}`, async ({ shop, api, engine: withEngine }) => {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       for (const productId of [first, second]) {
         const product = engine.getState().products.find((entry) => entry.id === productId)!;
@@ -40,13 +42,16 @@ describe.concurrent("one task across products", () => {
         expect(task.acceptancePassed).toBe(true);
         expect(Object.keys(task.brief!.acceptance[0]!.versions!).sort()).toEqual([first, second].sort());
       } else expect(task.acceptancePassed).toBeUndefined();
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   for (const closed of [false, true]) it(`keeps dependents blocked with one merged PR and one ${closed ? "closed" : "open"} PR`, async () => {
-    const { shop, api, start } = await setup(`landing-${closed}`);
-    const engine = start();
-    try {
+    await fixtures.world(`landing-${closed}`, async ({ shop, api, engine: withEngine }) => {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "A shared change" });
       await prepareSharedDelivery(engine, id, {});
@@ -88,12 +93,15 @@ describe.concurrent("one task across products", () => {
       expect(await coordinatorDelivery(engine, id)).toEqual(final);
       const coordination = new Coordination(engine);
       for (const productId of [first, second]) expect((await coordination.call("task.history", { productId, taskId: id })).items).toEqual([expect.objectContaining({ landing: final.landing, deliveryConfirmed: final.deliveryConfirmed })]);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 
   it("retries companion linking alone after both publications are confirmed", async () => {
-    const { shop, api, start } = await setup("links"); const engine = start();
-    try {
+    await fixtures.world("links", async ({ shop, api, engine: withEngine }) => {
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       api.setGitHub((state) => { state.fail = { "pr edit": 1 }; });
       const id = engine.addTask({ backlog: true, productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Finish links" });
@@ -105,6 +113,8 @@ describe.concurrent("one task across products", () => {
       const done = taskOf(await finish(engine, id), id);
       expect(done.error).toBeUndefined(); expect(done.repositories!.every((work) => work.companion?.state === "done")).toBe(true);
       for (const world of [shop, api]) expect(world.github().calls.filter((args) => args[0] === "pr" && args[1] === "create")).toHaveLength(1);
-    } finally { await engine.shutdown(); }
+
+    });
+    });
   });
 });

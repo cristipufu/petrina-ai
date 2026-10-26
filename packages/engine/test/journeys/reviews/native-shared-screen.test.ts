@@ -1,19 +1,20 @@
+import { completeAll } from "@petrina/core";
 import { beginRepair } from "@petrina/orchestrator";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Scenario } from "../../fake-agent.js";
-import { coordinator, git, itemOf, removeDir, taskOf, until, type World } from "../../support.js";
-import { nativeSharedWorld } from "../../fixtures/shared-world.js";
-const worlds: World[] = [], recordRoots: string[] = [];
-afterAll(() => { worlds.forEach(world => removeDir(world.dir)); recordRoots.forEach(removeDir); });
-const setup = (name: string) => nativeSharedWorld(name, worlds);
+import { coordinator, git, itemOf, taskOf, until } from "../../support.js";
+import { sharedWorldFixtures } from "../../fixtures/shared-world.js";
+const fixtures = sharedWorldFixtures();
+afterAll(() => fixtures.close());
 
 describe.concurrent("one task across products", () => {
   for (const decision of ["pause", "cancel"] as const) it(`cleans every product's saved review copies after restart and ${decision}`, async () => {
-    const { shop, api, start, fakes } = await setup(`screen-copy-${decision}`);
-    let engine = start();
-    try {
+    await fixtures.nativeWorld(`screen-copy-${decision}`, async ({ shop, api, engine: withEngine, fakes }) => {
+
+    const { copies, id } = await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "parallel", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Keep each review copy with its product" });
@@ -26,21 +27,29 @@ describe.concurrent("one task across products", () => {
         expect(dirname(copy)).toBe(join(shop.data, "worktrees", productId, `${id}.copies`));
         expect(existsSync(copy)).toBe(true);
       }
-      await engine.shutdown();
-      engine = start();
+
+      return { copies, id };
+
+    });
+
+    await withEngine(async engine => {
       expect(Object.values(engine.task(id)!.hunt!.screenTurns!).flatMap((entry) => Object.entries(entry.copies!))).toEqual(copies);
       engine[decision](id);
-      await Promise.all(engine.copyCleanups.values());
+      await completeAll([...engine.copyCleanups.values()]);
       for (const [, copy] of copies) expect(existsSync(copy)).toBe(false);
       for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
       expect(engine.task(id)!.hunt?.screenTurns).toBeUndefined();
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 
   it("gives a third answer its own portable copy in every product and resumes it there after a screen wait and restart", async () => {
-    const { shop, api, start, fakes } = await setup("third-answer-copies");
-    let engine = start();
-    try {
+    await fixtures.nativeWorld("third-answer-copies", async ({ shop, api, engine: withEngine, fakes }) => {
+
+    const { id, member, copies, kept, resumed, session, scenario, second } = await withEngine(async engine => {
+
       await engine.checkTools();
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       // Both initial verifiers say the Important finding does not block, so Antigravity gives the third answer, on the screen.
@@ -73,8 +82,12 @@ describe.concurrent("one task across products", () => {
       turn.conversation.repositoryCopies = resumed;
       for (const copy of Object.values(resumed)) writeFileSync(join(copy, "held.txt"), "Kept through the restart\n");
       engine.commitNow();
-      await engine.shutdown();
-      engine = start();
+
+      return { id, member, copies, kept, resumed, session, scenario, second };
+
+    });
+
+    await withEngine(async engine => {
       expect(engine.task(id)!.hunt!.screenTurns![member]!.copies).toEqual(resumed);
       engine.allowScreen(id);
       await until(engine, () => existsSync(join(fakes.dir, `on-screen-${session}`)), coordinator([]));
@@ -97,21 +110,25 @@ describe.concurrent("one task across products", () => {
       expect(new Set(fakes.received("verifier").map((entry) => entry.session)).size).toBe(3);
       for (const map of [resumed, kept, copies("vote-sol-high"), copies("vote-grok-high")]) for (const copy of Object.values(map)) expect(existsSync(copy)).toBe(false);
       for (const world of [shop, api]) expect(await git(world.clone, "worktree", "list", "--porcelain")).not.toContain(`${id}.copies`);
-    } finally { await engine.shutdown(); }
+
+    });
+
+    });
   });
 });
 
 describe.concurrent("shared delivery and hand-back regressions", () => {
   for (const peerOnly of [false, true]) it(`checks and routes deleted tests in ${peerOnly ? "only the other review snapshot" : "every changed review snapshot"} on hand-back`, async () => {
-    const { shop, api, start, fakes } = await setup(`hand-back-${peerOnly}`);
+    await fixtures.nativeWorld(`hand-back-${peerOnly}`, async ({ shop, api, engine: withEngine, fakes }) => {
     for (const world of [shop, api]) {
       mkdirSync(join(world.clone, "test"));
       writeFileSync(join(world.clone, "test", "greeting.test.ts"), 'import { test, expect } from "bun:test"; test("greeting", () => expect(true).toBe(true));\n');
       await git(world.clone, "add", "."); await git(world.clone, "commit", "-qm", "Keep the greeting test"); await git(world.clone, "push", "-q", world.remote, "main");
     }
     // Copying the launch command never starts a terminal or app.
-    const engine = start({ toolPath: () => process.execPath });
-    try {
+
+    await withEngine(async engine => {
+
       const first = await engine.addProduct(shop.clone), second = await engine.addProduct(api.clone, "API");
       fakes.scenario({ planner: "short", builder: "plain", screenRoles: ["code reviewer"], screenRoleHold: true, reopen: "resume" });
       const id = engine.addTask({ productId: first, worksOn: [first, second].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "pull-request" })), title: "Preserve hand-back ownership" });
@@ -149,6 +166,8 @@ describe.concurrent("shared delivery and hand-back regressions", () => {
       // Routing selects exactly the affected saved builders, even when the driven product was untouched.
       expect(beginRepair(engine, task, "review", task.stageIndex)).toBe(true);
       expect(task.repair!.products).toEqual(peerOnly ? changed : [first, second]);
-    } finally { await engine.shutdown(); }
+
+    }, { toolPath: () => process.execPath });
+    });
   });
 });
