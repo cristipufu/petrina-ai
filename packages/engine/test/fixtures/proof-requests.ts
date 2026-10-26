@@ -83,7 +83,13 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
       try { task.state = "running"; await lifetime.run(engine, () => engine["driver"].workflow["drive"](task.id)); if (engine.task(task.id)?.state === "failed") throw new Error(task.error); }
       finally { admit.mockRestore(); }
     };
-    return { root, engine, task, scope, owners, products, build, tester, review, gate, ship, advance, request, recordPass, drive, close, open: lifetime.open, stop: lifetime.stop, run: lifetime.run };
+    const f = { root, engine, task, scope, owners, products, build, tester, review, gate, ship,
+      advance: (...args: Parameters<typeof advance>) => lifetime.run(f.engine, () => advance(...args)),
+      request: (...args: Parameters<typeof request>) => lifetime.run(f.engine, () => request(...args)),
+      recordPass: (...args: Parameters<typeof recordPass>) => lifetime.run(f.engine, () => recordPass(...args)),
+      drive, close, open: lifetime.open, stop: lifetime.stop, run: lifetime.run,
+    };
+    return f;
   }), close);
 }
 function testerReply(f: Awaited<ReturnType<typeof fixture>>, answers: (ids: readonly string[]) => unknown[], before?: () => void | Promise<void>, checklist?: unknown[]) {

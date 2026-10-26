@@ -1487,7 +1487,8 @@
         "artifact": "workstreams/checks-audit-next/handoff.json; workstreams/checks-audit-review/",
         "qualification": "Author focused native358pass/7unchanged skips; core11/controller31; typed native/parser9 and controller11. Root binding corrections add2cases/9assertions. Combined root/full qualification pending.",
         "fullQualification": "8f7e2893"
-      }
+      },
+      "returnedFixtureOwnership": "See qualifications.returned-fixture-ownership; shared factory moved mechanically, all24variant bodies and170matchers retained."
     },
     {
       "file": "packages/engine/test/journeys/acceptance/repair-reviews.test.ts",
@@ -7467,6 +7468,17 @@
         "equivalentGroupGitAfter": 203
       },
       "limits": "Focused after versus fully loaded before; no whole-suite/time claim. First failed oracle/premise runs preserved; final integrated full/resource/platform qualification still pending."
+    },
+    "returned-fixture-ownership": {
+      "source": "eea2f534203f69ded802db00eaabcfbc74713a96a76e6de52ff62a6db436ef4b",
+      "rootNative": 113,
+      "files": 17,
+      "engineTypesExit": 0,
+      "conventionsExit": 0,
+      "preservation": "24required-gap variants/12case bodies/170matchers/6loops retained; four proof helpers unchanged; actual production query success/order/unavailable semantics retained.",
+      "review": "workstreams/returned-fixture-ownership-independent-review/handoff.json; rootreturned-fixture-integrated-review.json",
+      "failureControls": "Actual terminal peer/helper/close ordering; exactError/undefined rejection and strict retained-root default; native effects independently confirmed before expected-error cleanup.",
+      "resourceScope": "Focused17files/113cases:6904launches/6688Git; new8controls130launches, no missing/unmatched/unfinished/truncated/invalid observations. No full-suite/host-resource claim."
     }
   },
   "resourceAudit": {

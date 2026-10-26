@@ -1,5 +1,5 @@
 import { observeCommittedCode, scopesFor } from "@petrina/orchestrator";
-import { applyAcceptanceVersions, assignedProducts, type Task } from "@petrina/core";
+import { applyAcceptanceVersions, assignedProducts, completeAll, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import type { MTask } from "./kernel.js";
 import { repositoryObservationQueries } from "@petrina/repositories/observations";
@@ -9,13 +9,13 @@ export function committedCodeOf(task: MTask) {
 }
 
 export async function versionsOf(task: MTask): Promise<Record<string, string>> {
-  return Object.fromEntries(await Promise.all(scopesFor(task).map(async ({ work }) =>
+  return Object.fromEntries(await completeAll(scopesFor(task).map(async ({ work }) =>
     [work.productId, work.worktree ? await git.treeOf(work.worktree) ?? "unavailable" : "unavailable"])));
 }
 
 /** Unlike full trees, these identities exclude incoming main changes. */
 export async function changesOf(task: MTask): Promise<Record<string, string>> {
-  return Object.fromEntries(await Promise.all(scopesFor(task).map(async ({ work }) => [work.productId,
+  return Object.fromEntries(await completeAll(scopesFor(task).map(async ({ work }) => [work.productId,
     work.worktree && work.baseSha ? (await git.patchId(work.worktree, work.baseSha, await git.head(work.worktree))) ?? "unavailable" : "unavailable"])));
 }
 
