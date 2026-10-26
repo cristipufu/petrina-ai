@@ -5,16 +5,16 @@ import { namedCheckFailures } from "../../../src/related-check-evidence.js";
 import { removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "../../fixtures.js";
 import { TEST_WORKSPACES } from "../../quality/workspaces.js";
 import { CommandFailure, type Started } from "@petrina/test-support/commands";
-import { entryFixture as prepareEntry, prepareSuite, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn } from "../../fixtures/required-suite.js";
+import { entryFixture as prepareEntry, prepareSuite, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn, type BrowserStandIn, type ObservationStandIn } from "../../fixtures/required-suite.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
 
-function entryFixture(): string {
+function entryFixture(browser: BrowserStandIn = "ready", observation: ObservationStandIn = "unchanged"): string {
   const root = tempDir("petrina-quality-runner-"); roots.push(root);
-  return prepareEntry(root);
+  return prepareEntry(root, browser, observation);
 }
-const fixture = (scenario: Partial<Record<Suite, StandIn>> = {}) => prepareSuite(entryFixture(), scenario);
+const fixture = (scenario: Partial<Record<Suite, StandIn>> = {}, browser: BrowserStandIn = "ready", observation: ObservationStandIn = "unchanged") => prepareSuite(entryFixture(browser, observation), scenario);
 const command = (root: string) => [process.execPath, join(root, "packages", "engine", "test", "quality", "full-run.ts")];
 const environment = () => ({ ...testGitEnv(), PETRINA_TEST_BASE: "HEAD", GH_TOKEN: "fixture-host-account", CODEX_HOME: "fixture-host-tool-config" });
 function recorded(root: string, stdout: string) {
@@ -69,6 +69,52 @@ for (const invalid of ["missing inventory", "new flat test", "native effect in r
   expect(result.code).toBe(1);
   expect(result.stderr).toContain(invalid === "missing inventory" ? "missing complete" : invalid === "new flat test" ? "place tests in test/<layer>/<area>" : invalid === "custom native command" ? "shared native suite requires" : "real I/O belongs in contracts or journeys");
   expect(existsSync(join(root, "runs.log"))).toBe(false); expect(existsSync(join(root, ".test-results"))).toBe(false);
+});
+for (const browser of ["missing", "directory", "resolver-error"] as const) it(`refuses a ${browser} browser prerequisite before any suite or delivery evidence`, async () => {
+  const root = await fixture({}, browser);
+  const result = await runCommand(command(root), { cwd: root, env: environment() });
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("No tests ran.");
+  expect(result.stderr).toContain(browser === "resolver-error" ? "controlled bundled-browser resolver failure" : "bun run test:install-browser");
+  expect(result.stdout).toBe("");
+  expect(existsSync(join(root, "runs.log"))).toBe(false);
+  expect(existsSync(join(root, ".test-results"))).toBe(false);
+  const observed = JSON.parse(readFileSync(join(root, "browser-environment.json"), "utf8"));
+  expect(existsSync(observed.home)).toBe(false);
+});
+it("rejects commands changed during prerequisite preparation before running a suite", async () => {
+  const root = await fixture({}, "changed-command");
+  const result = await runCommand(command(root), { cwd: root, env: environment() });
+  expect(result.code, result.stdout + result.stderr).toBe(1);
+  expect(result.stderr).toContain("Test inputs changed");
+  expect(result.stderr).toContain("No tests ran");
+  expect(existsSync(join(root, "runs.log"))).toBe(false);
+  expect(existsSync(join(root, ".test-results"))).toBe(false);
+});
+it("rejects commands changed after the actual observation before any suite or result evidence", async () => {
+  const root = await fixture({}, "ready", "changed-command-after-observation");
+  const result = await runCommand(command(root), { cwd: root, env: environment() });
+  expect(result.code, result.stdout + result.stderr).toBe(1);
+  expect(existsSync(join(root, "runs.log")), result.stdout + result.stderr).toBe(false);
+  expect(JSON.parse(readFileSync(join(root, "packages", "storage", "package.json"), "utf8")).scripts.test).toBe("bun unrelated-after-observation.ts");
+  const reports = join(root, ".test-results"), folders = readdirSync(reports);
+  expect(folders).toHaveLength(1);
+  const folder = join(reports, folders[0]!);
+  expect(existsSync(join(folder, "impact.json"))).toBe(true);
+  for (const file of ["results.json", "files.json", "native-timings.json", "timing-cache-updates.json"])
+    expect(existsSync(join(folder, file)), file).toBe(false);
+  expect(existsSync(join(reports, "timings", "native.json"))).toBe(false);
+  expect(result.stderr).toContain("Test inputs changed while preparing the run; no suites started");
+});
+it("checks the prerequisite in the same private preliminary environment and ignores host browser overrides", async () => {
+  const root = await fixture();
+  const result = await runCommand(command(root), { cwd: root, env: { ...environment(), PLAYWRIGHT_BROWSERS_PATH: join(root, "unrelated-host-cache") } });
+  expect(result.code, result.stderr).toBe(0);
+  const browser = JSON.parse(readFileSync(join(root, "browser-environment.json"), "utf8"));
+  const evidence = recorded(root, result.stdout);
+  expect(evidence.environments.slice(0, 3).map(env => [env.home, env.gitConfig])).toEqual(Array.from({ length: 3 }, () => [browser.home, browser.gitConfig]));
+  expect(browser.token).toBeUndefined(); expect(browser.toolConfig).toBeUndefined(); expect(browser.browserOverride).toBeUndefined();
+  expect(existsSync(browser.home)).toBe(false);
 });
 it("resolves the copied runner's dependencies from the engine's own install", async () => {
   const root = await fixture(), modules = join(root, "packages", "engine", "node_modules"), copy = join(root, "packages", "engine", "test", "quality");

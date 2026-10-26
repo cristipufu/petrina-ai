@@ -12,6 +12,8 @@ import { keepTestTimings, seedTestTimings, type TimingHintUse } from "./timings.
 import { SuiteCoordinator } from "@petrina/test-support/suite-coordinator";
 import { executeTests } from "./execution.js";
 import { suiteRecords, workspaceOutcome } from "@petrina/test-support/suite-results";
+import { runCommand } from "@petrina/test-support/commands";
+import { observeBrowserPrerequisiteCommand } from "./browser-prerequisite.js";
 
 // This entry point is the required full check, never a focused test selector.
 const args = process.argv.slice(2);
@@ -31,7 +33,29 @@ const suite = (workspace: string) => workspace.split("/").at(-1)!;
 const initial = await inputs(ROOT);
 const errors = [...conventions(initial), ...nativeScriptProblems(initial)];
 if (errors.length) { console.error(errors.join("\n")); process.exit(1); }
+const validatedInputs = fingerprint(initial, impactRuntime().identity);
 const began = performance.now();
+let interrupted: number | undefined;
+const controller = new AbortController();
+const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; controller.abort(signal); };
+const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM", 143);
+process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
+const owned = createTestRun();
+let prerequisiteCleanupUnconfirmed = false;
+try {
+  const observedPrerequisite = await observeBrowserPrerequisiteCommand({
+    run: () => runCommand([process.execPath, "--no-env-file", join(import.meta.dir, "browser-prerequisite.ts")], {
+      cwd: ROOT, env: owned.env, signal: controller.signal, timeoutMs: 15_000,
+    }),
+  });
+  if (observedPrerequisite.kind === "rejected") {
+    prerequisiteCleanupUnconfirmed = !observedPrerequisite.safeToDispose;
+    throw observedPrerequisite.error;
+  }
+  const prerequisite = observedPrerequisite.result;
+  if (prerequisite.code !== 0) throw new Error(`Browser prerequisite unavailable. No tests ran.\n${prerequisite.stderr || prerequisite.stdout}`);
+const manifest = await inputs(ROOT);
+if (fingerprint(manifest, impactRuntime().identity) !== validatedInputs) throw new Error("Test inputs changed during prerequisite preparation. No tests ran; run the check again on stable inputs.");
 const folder = join(ROOT, ".test-results", `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`);
 mkdirSync(folder, { recursive: true });
 let plan: Awaited<ReturnType<typeof observe>> | ReturnType<typeof impactPlan>;
@@ -42,8 +66,8 @@ catch (error) {
   plan.reasons.push(error instanceof Error ? error.message : String(error));
 }
 writeFileSync(join(folder, "impact.json"), JSON.stringify(plan, null, 2));
-const manifest = await inputs(ROOT);
-if (fingerprint(manifest, impactRuntime().identity) !== plan.fingerprint) throw new Error("Test inputs changed while preparing the run; no suites started");
+const preparedInputs = fingerprint(await inputs(ROOT), impactRuntime().identity);
+if (fingerprint(manifest, impactRuntime().identity) !== plan.fingerprint || preparedInputs !== validatedInputs || preparedInputs !== plan.fingerprint) throw new Error("Test inputs changed while preparing the run; no suites started");
 const expectedFiles = [...manifest.keys()].filter(isTest).sort();
 writeFileSync(join(folder, "files.json"), JSON.stringify(expectedFiles, null, 2));
 const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim();
@@ -60,13 +84,7 @@ console.log(`Affected-test observation: ${plan.selected.length}/${plan.total} ca
 const coordinator = new SuiteCoordinator(REQUIRED_EXECUTIONS, { revision, fingerprint: plan.fingerprint });
 const details = new Map<string, { durationHints?: TimingHintUse }>();
 let timingOutput: string | undefined;
-let interrupted: number | undefined;
 let finished = false;
-const controller = new AbortController();
-const interrupt = (signal: "SIGINT" | "SIGTERM", code: number) => { interrupted = code; controller.abort(signal); };
-const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM", 143);
-process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
-const owned = createTestRun();
 try {
   await coordinator.run(async execution => {
     const native = execution.id === NATIVE_SCOPE.id;
@@ -82,8 +100,6 @@ try {
   }, controller.signal);
   finished = true;
 } finally {
-  try {
-    process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
     const records = suiteRecords(coordinator.results, plan.selected);
     const executions = records.executions.map(execution => ({ ...execution, ...details.get(execution.id) }));
     const results = records.results;
@@ -102,5 +118,12 @@ try {
     }
     if (!stable) console.error("Test inputs changed during the run, or the checkout revision moved. Results cannot authorize delivery.");
     process.exitCode = interrupted ?? (successful ? 0 : 1);
-  } finally { owned.close(); }
+}
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = interrupted ?? 1;
+} finally {
+  process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
+  if (prerequisiteCleanupUnconfirmed) console.error(`Browser prerequisite cleanup was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+  else owned.close();
 }

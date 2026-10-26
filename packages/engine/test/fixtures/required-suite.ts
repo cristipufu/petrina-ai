@@ -23,13 +23,38 @@ export type Suite = "core" | "desktop" | "orchestrator" | "test-support" | "stor
 export type StandIn = { report?: "fail" | "missing" | "truncated" | "omitted" | "counts" | "running" | "skipped"; code?: number; print?: string; change?: boolean; moveHead?: boolean; hold?: boolean };
 export const NOT_STARTED = "core and desktop and orchestrator did not all pass";
 export const EXAMPLE = "test/contracts/testing/example.test.ts";
+export type BrowserStandIn = "ready" | "missing" | "directory" | "resolver-error" | "changed-command";
+export type ObservationStandIn = "unchanged" | "changed-command-after-observation";
 
-/** Copy the actual entry point. Only Vitest report production is scripted; native packages run real Bun cases. */
-export function entryFixture(root: string): string {
+/** Copy the actual runner; control Vitest reports and only the browser-path boundary. Native packages run real Bun cases. */
+export function entryFixture(root: string, browser: BrowserStandIn = "ready", observation: ObservationStandIn = "unchanged"): string {
   const quality = join(root, "packages", "engine", "test", "quality");
   mkdirSync(join(root, "docs", "plans"), { recursive: true });
   writeFileSync(join(root, "docs", "plans", "test-layer-audit.json"), JSON.stringify({ version: 1, files: [] }));
   mkdirSync(quality, { recursive: true }); cpSync(QUALITY, quality, { recursive: true });
+  const executable = join(root, "fixture-bundled-browser");
+  if (browser === "ready" || browser === "changed-command") writeFileSync(executable, "Fixture file availability only; never launched.\n", { mode: 0o700 });
+  if (browser === "directory") mkdirSync(executable);
+  // Only this unrelated native path boundary is substituted. The actual gate and filesystem checks stay real.
+  writeFileSync(join(quality, "bundled-browser.ts"), `import { writeFixtureJson } from "@petrina/test-support/fixture-json";
+export function bundledChromiumExecutablePath() {
+  writeFixtureJson(${JSON.stringify(join(root, "browser-environment.json"))}, { home: process.env.HOME, gitConfig: process.env.GIT_CONFIG_GLOBAL,
+    token: process.env.GH_TOKEN, toolConfig: process.env.CODEX_HOME, browserOverride: process.env.PLAYWRIGHT_BROWSERS_PATH });
+  ${browser === "changed-command" ? `writeFixtureJson(${JSON.stringify(join(root, "packages", "storage", "package.json"))}, { scripts: { test: "bun unrelated-preparation.ts" } });` : ""}
+  ${browser === "resolver-error" ? 'throw new Error("controlled bundled-browser resolver failure");' : `return ${JSON.stringify(executable)};`}
+}`);
+  if (observation === "changed-command-after-observation") {
+    // Forward the copied actual observation, then model a concurrent edit after its own input snapshot.
+    const repository = join(quality, "repository.ts"), actual = readFileSync(repository, "utf8");
+    const declaration = "export async function observe(";
+    if (actual.split(declaration).length !== 2) throw new Error("The fixture needs exactly one actual observation boundary");
+    writeFileSync(repository, `import { writeFixtureJson } from "@petrina/test-support/fixture-json";\n${actual.replace(declaration, "async function fixtureActualObserve(")}\n
+export async function observe(...args: Parameters<typeof fixtureActualObserve>): ReturnType<typeof fixtureActualObserve> {
+  const plan = await fixtureActualObserve(...args);
+  writeFixtureJson(${JSON.stringify(join(root, "packages", "storage", "package.json"))}, { scripts: { test: "bun unrelated-after-observation.ts" } });
+  return plan;
+}\n`);
+  }
   for (const { name, folder } of PACKAGES) {
     const link = join(root, "packages", "engine", "node_modules", name);
     mkdirSync(dirname(link), { recursive: true }); fixtureFiles.directoryLink(folder, link);
@@ -41,7 +66,7 @@ export function entryFixture(root: string): string {
 
 export async function prepareSuite(root: string, scenario: Partial<Record<Suite, StandIn>> = {}) {
   const log = join(root, "runs.log"), environments = join(root, "environments.log");
-  writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\n");
+  writeFileSync(join(root, ".gitignore"), "node_modules\n.test-results\nruns.log\nenvironments.log\nstarted*\nbrowser-environment.json\n");
   const runner = join(root, "vitest-report.ts");
   writeFileSync(runner, `import { appendFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
