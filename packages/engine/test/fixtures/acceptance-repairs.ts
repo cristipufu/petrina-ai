@@ -14,6 +14,7 @@ import { Coordination } from "../../src/coordination.js";
 type ReviewReport = WorkflowEvent & { openImportant: string[]; stillOpen: string[]; reopened: unknown[]; heldForDecision?: string[]; reportCounts: { closing: { open: { important: number } } } };
 
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { installPreparedProduct } from "./prepared-product.js";
 
 export const GREETING = "People see the greeting on the welcome page";
 export const PHONE = "The greeting reads well on a phone";
@@ -49,9 +50,9 @@ export function acceptanceRepairFixtures() {
       const products: DeepMutable<Product>[] = [];
       for (let i = 0; i < 2; i++) {
         const dir = join(root, `product-${i}`); mkdirSync(dir);
-        const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
-        const id = await engine.addProduct(repo);
-        engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: options.gate });
+        const repo = await makeProduct(dir, { origin: "none" });
+        const id = installPreparedProduct(engine, { id: i === 0 ? "clone" : "clone-2", path: repo, name: `Product ${i + 1}`, repo: "local/clone",
+          tone: i === 0 ? "blue" : "green", defaultBranch: "main", delivery: "local", approveDelivery: options.gate });
         engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
         products.push(engine.s.products.find(product => product.id === id)!);
       }

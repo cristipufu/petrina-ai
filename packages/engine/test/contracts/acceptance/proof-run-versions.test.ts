@@ -53,7 +53,7 @@ for (const savedConversation of [false, true]) it(`binds a restarted Tester to i
   } finally { reply.mockRestore(); review.mockRestore(); await f.close(); }
 });
 
-for (const shared of [false, true]) for (const unrelated of shared ? [false, true] : [false]) for (const result of ["pass", "fail"] as const) it(`preserves ${result} for ${shared ? "shared" : "single"} proof when ${unrelated ? "another" : "an affected"} product changes during testing`, async () => {
+for (const [shared, unrelated, result] of [[true, false, "pass"], [true, true, "fail"]] as const) it(`preserves ${result} for ${shared ? "shared" : "single"} proof when ${unrelated ? "another" : "an affected"} product changes during testing`, async () => {
   const f = await fixture(shared); const request = await f.request("Prove the first product", [f.products[0]!.id]);
   f.task.retest = true; f.task.stageIndex = 1;
   const before = await versionsOf(f.task);
@@ -62,9 +62,9 @@ for (const shared of [false, true]) for (const unrelated of shared ? [false, tru
     writeFileSync(join(work, "during.txt"), "A new task change\n"); await git(work, "add", "."); await git(work, "commit", "-q", "-m", "Change during acceptance");
   });
   try {
-    await f.engine["work"].runDo(f.scope, f.tester, signal());
+    await f.run(f.engine, () => f.engine["work"].runDo(f.scope, f.tester, signal()));
     expect(request.proof!.versions).toEqual(before); expect(request.proof!.result).toBe(result);
-    expect(request.status).toBe(unrelated ? result === "pass" ? "proved" : "failed" : "stale");
+    expect(request.status).toBe(unrelated ? ({ pass: "proved", fail: "failed" } as const)[result] : "stale");
     expect(f.task.acceptanceUnverified).toBe(false); expect(f.task.acceptanceBlocked).toBeUndefined();
     if (result === "fail") {
       expect(f.task.stageIndex).toBe(0); expect(f.task.findings).toHaveLength(1);

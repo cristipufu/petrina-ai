@@ -1,5 +1,6 @@
 import { directDrivers, closeDirectDrivers, removeFixtureRoot } from "./direct-drivers.js";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { installPreparedProduct } from "./prepared-product.js";
 import { expect, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -27,9 +28,9 @@ async function fixture(shared = false, brief = false, fakes?: Fakes, options: En
     const products: DeepMutable<Product>[] = [];
     for (let i = 0; i < (shared ? 2 : 1); i++) {
       const dir = join(root, `product-${i}`); mkdirSync(dir);
-      const repo = await makeProduct(dir); await git(repo, "remote", "remove", "origin");
-      const id = await engine.addProduct(repo);
-      engine.updateProduct(id, { name: `Product ${i + 1}`, delivery: "local", approveDelivery: true });
+      const repo = await makeProduct(dir, { origin: "none" });
+      const id = installPreparedProduct(engine, { id: i === 0 ? "clone" : "clone-2", path: repo, name: `Product ${i + 1}`, repo: "local/clone",
+        tone: i === 0 ? "blue" : "green", defaultBranch: "main", delivery: "local", approveDelivery: true });
       engine.setProductChecks(id, [{ name: "Test", command: commandInputText([process.execPath, "-e", "process.exit(0)"]) }]);
       products.push(engine.s.products.find(product => product.id === id)!);
     }

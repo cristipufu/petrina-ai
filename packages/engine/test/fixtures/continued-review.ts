@@ -2,17 +2,19 @@ import { expect } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, MAINTENANCE_ROLES, type DeepMutable, type Finding, type Stage, type Task } from "@petrina/core";
-import { Engine } from "../engine.js";
+import { directDrivers, closeDirectDrivers } from "./direct-drivers.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { installPreparedProduct } from "./prepared-product.js";
 import { executionFor } from "@petrina/orchestrator";
 
 import { ReviewResult } from "../../src/roles.js";
 
-import { git, makeProduct, removeDir, tempDir } from "../fixtures.js";
+import { git, makeProduct, tempDir } from "../fixtures.js";
 
 // Controls for a coordinator's decision to continue an exhausted review (the whole workflow is in
 // review-continuation.test.ts): one review round at a time, on real working copies.
 export function continuedReviewFixtures() {
-const roots: string[] = [];
+const fixtures = new Set<ReturnType<typeof directDrivers>>();
 
 const COVERED = "review passed; 1 earlier important still open under your decision to continue";
 
@@ -25,15 +27,17 @@ const important = (id: string, extra: Partial<DeepMutable<Finding>> = {}): DeepM
  * acceptance testing comes before that review.
  */
 async function rounds(options: { shared?: boolean; later?: string; builder?: string; tested?: boolean } = {}) {
-  const root = tempDir("petrina-review-continuation-rounds-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+  const root = tempDir("petrina-review-continuation-rounds-");
+  const lifetime = directDrivers(root); fixtures.add(lifetime);
+  const close = async () => { await lifetime.close(); fixtures.delete(lifetime); };
+  return setupWithCleanup(() => lifetime.prepare(async () => {
+  const engine = lifetime.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
   engine.schedule = () => {};
   engine.setPoolPaused(true);
   const owner = async (index: number, name: string) => {
-    const repo = await makeProduct(join(root, `product-${index}`));
-    await git(repo, "remote", "remove", "origin");
-    const productId = await engine.addProduct(repo, name);
-    engine.updateProduct(productId, { name, delivery: "local", approveDelivery: true });
+    const repo = await makeProduct(join(root, `product-${index}`), { origin: "none" });
+    const productId = installPreparedProduct(engine, { id: index === 0 ? "clone" : "clone-2", path: repo, name, repo: "local/clone",
+      tone: index === 0 ? "blue" : "green", defaultBranch: "main", delivery: "local", approveDelivery: true });
     const product = engine.s.products.find((entry) => entry.id === productId)!;
     const worktree = join(root, `work-${index}`), baseSha = await git(repo, "rev-parse", "HEAD"), branch = `continued-${index}`;
     await git(repo, "worktree", "add", "-q", "-b", branch, worktree, baseSha);
@@ -92,11 +96,18 @@ async function rounds(options: { shared?: boolean; later?: string; builder?: str
     writeFileSync(join(owners[index]!.worktree, "feature.txt"), "the task's change, changed again\n");
     await git(owners[index]!.worktree, "commit", "-qam", "Change the feature");
   };
-  return { engine, task, owners, exhaust, after, review, open, step, commit, stageOf };
+  return { engine, task, owners,
+    exhaust: (...args: Parameters<typeof exhaust>) => lifetime.run(engine, () => exhaust(...args)),
+    after: () => lifetime.run(engine, after),
+    review: (...args: Parameters<typeof review>) => lifetime.run(engine, () => review(...args)),
+    commit: (...args: Parameters<typeof commit>) => lifetime.run(engine, () => commit(...args)),
+    run: <T>(start: () => Promise<T>) => lifetime.run(engine, start),
+    open, step, stageOf, close };
+  }), close);
 }
 
 /** The later review passed on, nothing sent back, the decision still accepted. */
 const passedCovered = (task: Task) => task.plan!.stages[task.stageIndex]!.id !== "security" && !task.fixing && task.reviewDecision?.accepted === true;
 
-return { COVERED, signal, important, rounds, passedCovered, close: () => roots.forEach(removeDir) };
+return { COVERED, signal, important, rounds, passedCovered, close: async () => { await closeDirectDrivers(fixtures); fixtures.clear(); } };
 }
