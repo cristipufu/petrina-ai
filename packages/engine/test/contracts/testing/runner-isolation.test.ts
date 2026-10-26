@@ -7,7 +7,9 @@ import { removeDir, runCommand, tempDir, testGitEnv, waitFor } from "../../fixtu
 import { TEST_GIT_IDENTITY, TEST_RUNNER } from "@petrina/test-support/run";
 import { testTempParent } from "@petrina/test-support/temp-parent";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
-import { installRunFailure, isolatedRunnerEnvironment } from "../../fixtures/required-suite.js";
+import { closeControlledRunner, installRunFailure, isolatedRunnerEnvironment } from "../../fixtures/required-suite.js";
+import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
 const fixture = tempDir("petrina-test-runner-");
 afterAll(() => removeDir(fixture));
@@ -15,26 +17,76 @@ const settlementCases = coordinatorLifetimes();
 afterEach(() => settlementCases.close());
 afterAll(() => settlementCases.close());
 
+it("retains a nested actor-free fixture after its worker exits successfully and drains", async () => {
+  const root = tempDir("petrina-focused-inner-retention-"), lifetime = await settlementCases.open(root);
+  const record = join(root, "retained.json");
+  let observed: { root: string; folder: string; browsers: string; nestedFolder: string; nestedBrowsers: string } | undefined;
+  const finish = async () => {
+    // The control starts no actors; confirm its actual owned runner before independent directory cleanup.
+    await lifetime.close();
+    if (existsSync(record)) observed ??= JSON.parse(readFileSync(record, "utf8"));
+    const settled = await Promise.allSettled([observed?.browsers, observed?.nestedBrowsers].map(async path => { if (path) removeFixtureRoot(path); }));
+    const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Actor-free retained runner roots could not be removed");
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
+      const file = join(root, "retained.test.ts");
+      writeFileSync(file, `import { it, expect } from "bun:test";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { engineProcessCases } from ${JSON.stringify(import.meta.resolve("../../fixtures/engine-processes.ts"))};
+import { writeFixtureJson } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-json"))};
+import { createTestRun } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/environment"))};
+import { registerFixtureRoot, FIXTURE_JOURNAL } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-retention"))};
+it("reports a failed finished fixture without starting a command", async () => {
+  const nested = createTestRun();
+  expect(nested.env[FIXTURE_JOURNAL]).not.toBe(process.env[FIXTURE_JOURNAL]);
+  const local = engineProcessCases(), root = join(nested.env.TMPDIR, "retained-child"); mkdirSync(root);
+  registerFixtureRoot(root, nested.env);
+  let error;
+  try { await local.use(root, async () => { throw undefined; }); } catch (failure) { error = failure; }
+  expect(error).toBeInstanceOf(AggregateError);
+  await local.close();
+  expect(nested.close()).toBe(false);
+  writeFixtureJson(${JSON.stringify(record)}, { root, folder: process.env.TMPDIR, browsers: process.env.PETRINA_TEST_BROWSERS, nestedFolder: nested.env.TMPDIR, nestedBrowsers: nested.env.PETRINA_TEST_BROWSERS });
+});`);
+      const child = lifetime.start(root, [TEST_RUNNER, file], isolatedRunnerEnvironment(root));
+      const result = await child.completion;
+      observed = JSON.parse(readFileSync(record, "utf8"));
+      expect(result.code, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("private files retained");
+      expect(existsSync(observed!.root)).toBe(true);
+      expect(existsSync(observed!.folder)).toBe(true);
+      expect(existsSync(observed!.browsers)).toBe(true);
+      expect(existsSync(observed!.nestedFolder)).toBe(true);
+      expect(existsSync(observed!.nestedBrowsers)).toBe(true);
+    }), finish);
+  await finish();
+});
+
 for (const failure of ["unconfirmed", "undefined"] as const) it(`retains focused-run files after an actual runner boundary rejects with ${failure}`, async () => {
   const root = tempDir("petrina-focused-settlement-"), lifetime = await settlementCases.open(root);
-  try {
-    await lifetime.prepare(async () => {
+  let browsers: string | undefined;
+  const close = () => closeControlledRunner(lifetime, browsers);
+  await setupWithCleanup(() => lifetime.prepare(async () => {
       const runner = installRunFailure(root, failure, "focused"), file = join(root, "not-started.test.ts");
       const marker = join(root, "test-started");
       writeFileSync(file, `import { it } from "bun:test"; import { writeFileSync } from "node:fs"; it("must not start", () => writeFileSync(${JSON.stringify(marker)}, ""));`);
       const child = lifetime.start(root, [runner, file], isolatedRunnerEnvironment(root));
       const result = await child.completion;
+      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
+      browsers = observed.browsers;
       expect(result.code, result.stdout + result.stderr).toBe(1);
       expect(existsSync(marker)).toBe(false);
-      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
       expect(relative(root, observed.folder)).not.toStartWith("..");
       expect(observed.folder).not.toBe(root);
       expect(existsSync(observed.folder)).toBe(true);
       expect(existsSync(observed.home)).toBe(true);
       expect(existsSync(observed.browsers)).toBe(true);
       expect(result.stderr).toContain("Test command settlement was not confirmed; private files retained");
-    });
-  } finally { await lifetime.close(); }
+    }), close);
+  await close();
+  if (browsers) expect(existsSync(browsers)).toBe(false);
 });
 
 

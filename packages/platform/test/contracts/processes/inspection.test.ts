@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as processes from "node:child_process";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
@@ -79,7 +79,11 @@ function describeRead(list: string | undefined, helper: Helper, elapsed: number,
 }
 
 import { SLOW } from "@petrina/test-support/slow";
-import { defunctProcess } from "@petrina/test-support/defunct-process";
+import { defunctProcesses } from "@petrina/test-support/defunct-process";
+
+const defuncts = defunctProcesses();
+afterEach(() => defuncts.close());
+afterAll(() => defuncts.close());
 
 describe("a process-list read's deadline", () => {
   const controlled = () => {
@@ -246,9 +250,8 @@ describe("a live process-list read", () => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("reads whether a child is running, defunct or already collected", async () => {
+  it.skipIf(process.platform === "win32")("reads whether a child is running, defunct or already collected", async () => defuncts.use(async defunct => {
     expect(await childState(process.pid, 4_000)).toBe("running");
-    const defunct = await defunctProcess();
     try {
       await waitFor(async () => (await childState(defunct.pid, 4_000)) === "ended", "the defunct process to show as ended", 10_000);
       // Existence alone says nothing: the defunct process still has its number.
@@ -259,7 +262,7 @@ describe("a live process-list read", () => {
     expect(await childState(collected.pid, 4_000)).toBe("ended");
     // Without a readable list, the state is unknown rather than guessed.
     expect(await childState(process.pid, 4_000, async () => undefined)).toBe("unknown");
-  });
+  }));
 
   it.skipIf(process.platform === "win32")("settles as failed at its deadline and kills the helper when the system never reports the helper's exit", async () => {
     // A helper that ignores the runtime's stop signal and lingers is what a finished child whose exit the

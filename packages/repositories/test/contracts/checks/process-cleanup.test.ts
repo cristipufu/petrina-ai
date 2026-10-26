@@ -1,11 +1,15 @@
 import { describe as originalDescribe } from "bun:test";
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { afterEach, afterAll, expect, it, spyOn } from "bun:test";
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHECK_EXIT_UNREPORTED } from "@petrina/core";
 import { childState, CLEANUP_INCOMPLETE, parseDescendants, readProcessList } from "@petrina/platform/process-tree";
-import { defunctProcess } from "@petrina/test-support/defunct-process";
+import { defunctProcesses } from "@petrina/test-support/defunct-process";
+
+const defuncts = defunctProcesses();
+afterEach(() => defuncts.close());
+afterAll(() => defuncts.close());
 import { waitFor } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
 import { runChecks } from "../../fixtures/check-runner.js";
@@ -164,14 +168,13 @@ it.skipIf(process.platform === "win32")("ends everything a check started when it
 });
 
 originalDescribe("a check whose exit the system never reports", () => {
-it.skipIf(process.platform === "win32")("settles within the grace as unknown, keeps its output, and stops what it started", async () => {
+it.skipIf(process.platform === "win32")("settles within the grace as unknown, keeps its output, and stops what it started", async () => defuncts.use(async defunct => {
     // What a lost exit looks like: the output ended, the runtime never reports the exit, and the system shows the
     // check defunct. A real defunct process stands in for the check; the runtime's report never comes.
   await worlds.use("petrina-checks-unreported-", async fixture => {
     const dir = fixture.dir;
-    let acquired: Awaited<ReturnType<typeof defunctProcess>> | undefined;
-    fixture.stop(async () => { await acquired?.release(); });
-    const defunct = acquired = await defunctProcess();
+    fixture.stop(() => defunct.release());
+
     const standIn = { pid: defunct.pid, exited: new Promise<number>(() => {}), stdout: new Response("finished\n").body!, stderr: new Response("").body! } as unknown as Bun.Subprocess<"ignore", "pipe", "pipe">;
     let spawning: ReturnType<typeof spyOn<typeof Bun, "spawn">> | undefined;
     fixture.restore(() => spawning?.mockRestore());
@@ -193,5 +196,5 @@ it.skipIf(process.platform === "win32")("settles within the grace as unknown, ke
       expect(run!.execution).toMatchObject({ exit: { status: "unreported" }, stdout: "eof", stderr: "eof", failure: { kind: "exit", message: CHECK_EXIT_UNREPORTED }, cleanup: "confirmed" });
     }
   });
-  });
+  }));
 });

@@ -1,7 +1,7 @@
 // The tests' own program runner: every outcome either a reported exit with complete output or an explicit
 // failure, under the worker's own deadline. Stand-ins are passed straight to the runner; the system-wide
 // process starter is never replaced.
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { childState, processList, waitForProcessesToEnd, type ProcessListRead } from "@petrina/platform/process-tree";
@@ -10,7 +10,11 @@ import { removeDir, tempDir, waitFor } from "../../../src/fixtures.js";
 import { currentSlow, SLOW, MOST_SLOW } from "@petrina/test-support/slow";
 import { rejectionOf } from "../../../src/rejections.js";
 import { failureOf } from "../../fixtures/command-failure.js";
-import { defunctProcess } from "../../../src/defunct-process.js";
+import { defunctProcesses } from "../../../src/defunct-process.js";
+
+const defuncts = defunctProcesses();
+afterEach(() => defuncts.close());
+afterAll(() => defuncts.close());
 import { createProcessLease } from "@petrina/test-support/process-lease";
 
 const root = tempDir("petrina-commands-");
@@ -302,8 +306,7 @@ describe("a command that does not end normally", () => {
     expect(cancelled).toBe(2);
   });
 
-  it.skipIf(!unix)("never confirms a defunct program whose exit was lost, signalling only its own handle", async () => {
-    const defunct = await defunctProcess();
+  it.skipIf(!unix)("never confirms a defunct program whose exit was lost, signalling only its own handle", async () => defuncts.use(async defunct => {
     const signals: string[] = [];
     let sent: ReturnType<typeof spyOn<typeof process, "kill">> | undefined;
     try {
@@ -320,7 +323,7 @@ describe("a command that does not end normally", () => {
       expect(signals).toEqual(["SIGKILL"]);
       expect(sent.mock.calls.filter(([target, signal]) => Math.abs(Number(target)) === defunct.pid && signal !== 0)).toEqual([]);
     } finally { sent?.mockRestore(); await defunct.release(); }
-  });
+  }));
 
   // Windows confirms cleanup through taskkill, not a process list. Unconfirmed is not unattempted: the program itself
   // is still stopped. At the busyness factor's ceiling, with cleanup's stop signals and the program's own handle sent

@@ -2,6 +2,7 @@ import { lstatSync } from "node:fs";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { Engine, type EngineOptions } from "../engine.js";
 import { removeDir } from "../fixtures.js";
 
@@ -15,6 +16,7 @@ export function removeFixtureRoot(root: string): void {
 
 /** Actual Engine generations plus manual operations omitted from the Engine's normal drain. */
 export function directDrivers(root: string) {
+  registerFixtureRoot(root);
   const active = new Map<Engine, FixtureOperations>();
   const completed = new WeakSet<Engine>();
   let closing = false, constructing = false;

@@ -1,3 +1,4 @@
+import { fixtureRetention, FIXTURE_JOURNAL } from "@petrina/test-support/fixture-retention";
 import { impactRuntime } from "./impact-runtime.js";
 // Every required workspace must run and pass. Vitest workspaces run first; all Bun packages
 // then share one normal native worker pool. Selection is observed, never used to omit tests.
@@ -42,6 +43,8 @@ const onInt = () => interrupt("SIGINT", 130), onTerm = () => interrupt("SIGTERM"
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
 const owned = createTestRun();
 const settlements = runSettlements();
+let disposal: Promise<boolean> | undefined, disposalFailure: { error: unknown } | undefined;
+const dispose = () => disposal ??= settlements.dispose(owned).catch(error => { disposalFailure = { error }; return false; });
 try {
   const observedPrerequisite = await settlements.observe({
     run: () => runCommand([process.execPath, "--no-env-file", join(import.meta.dir, "browser-prerequisite.ts")], {
@@ -53,6 +56,7 @@ try {
   }
   const prerequisite = observedPrerequisite.result;
   if (prerequisite.code !== 0) throw new Error(`Browser prerequisite unavailable. No tests ran.\n${prerequisite.stderr || prerequisite.stdout}`);
+  if (fixtureRetention(owned.env[FIXTURE_JOURNAL]!).kind !== "clear") throw new Error("Fixture cleanup was not confirmed during prerequisites. No tests ran.");
 const manifest = await inputs(ROOT);
 if (fingerprint(manifest, impactRuntime().identity) !== validatedInputs) throw new Error("Test inputs changed during prerequisite preparation. No tests ran; run the check again on stable inputs.");
 const folder = join(ROOT, ".test-results", `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`);
@@ -92,10 +96,12 @@ try {
       details.set(execution.id, { durationHints: seedTestTimings(ROOT, NATIVE_SCOPE, timings, expectedFiles) });
       timingOutput = timings;
     }
-    return executeTests(execution, { root: ROOT, folder, expectedFiles, env: owned.env, signal: controller.signal, settlements,
+    const evidence = await executeTests(execution, { root: ROOT, folder, expectedFiles, env: owned.env, signal: controller.signal, settlements,
       ...(native ? { timings } : {}),
       ...(resources ? { resources } : {}),
     });
+    if (fixtureRetention(owned.env[FIXTURE_JOURNAL]!).kind !== "clear") controller.abort("Fixture cleanup was not confirmed");
+    return evidence;
   }, controller.signal);
   finished = true;
 } finally {
@@ -103,8 +109,9 @@ try {
     const executions = records.executions.map(execution => ({ ...execution, ...details.get(execution.id) }));
     const results = records.results;
     const { complete, stableInputs: stable, successful } = coordinator.conclusion({ fingerprint: fingerprint(await inputs(ROOT), impactRuntime().identity), revision: (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim() }, interrupted !== undefined);
-    writeFixtureJson(join(folder, "results.json"), { mode: resources ? "resource-diagnostic" : "observation", ...(resources ? { deliveryEligible: false } : {}), scope: complete ? "complete" : "partial", source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), executions, results }, 2);
-    if (successful && !resources) {
+    const disposed = await dispose();
+    writeFixtureJson(join(folder, "results.json"), { mode: resources ? "resource-diagnostic" : "observation", ...(resources ? { deliveryEligible: false } : {}), scope: complete && disposed ? "complete" : "partial", cleanup: disposed ? "confirmed" : "retained", ...(!disposed ? { deliveryEligible: false } : {}), source, environment, stableInputs: stable, interrupted, ms: Math.round(performance.now() - began), executions, results }, 2);
+    if (successful && disposed && !resources) {
       const updates = timingOutput ? [{ executionId: NATIVE_SCOPE.id, ...keepTestTimings(ROOT, NATIVE_SCOPE, timingOutput, expectedFiles) }] : [];
       try { writeFixtureJson(join(folder, "timing-cache-updates.json"), updates, 2); }
       catch (error) { console.error(`Could not record optional duration-hint updates: ${error instanceof Error ? error.message : String(error)}`); }
@@ -116,12 +123,16 @@ try {
       console.log(`Execution times: ${executions.flatMap(execution => "ms" in execution ? [`${suite(execution.id)} ${(execution.ms / 1000).toFixed(1)}s (exit ${execution.code ?? "unreported"})`] : []).join("; ")}`);
     }
     if (!stable) console.error("Test inputs changed during the run, or the checkout revision moved. Results cannot authorize delivery.");
-    process.exitCode = interrupted ?? (successful ? 0 : 1);
+    process.exitCode = interrupted ?? (successful && disposed ? 0 : 1);
 }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = interrupted ?? 1;
 } finally {
   process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-  if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+  if (!await dispose()) {
+    console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+    if (disposalFailure) console.error(disposalFailure.error);
+    if (interrupted === undefined) process.exitCode = 1;
+  }
 }

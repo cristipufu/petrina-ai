@@ -5,6 +5,7 @@ import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { SLOW } from "@petrina/test-support/slow";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { makeWorld, tempDir, type World } from "../support.js";
 import { removeFixtureRoot } from "./direct-drivers.js";
 
@@ -37,6 +38,7 @@ export function repositoryWorldFixtures() {
     async use<T>(name: string, body: (scope: RepositoryWorldScope) => Promise<T>, resources?: { stopPeers(): void | Promise<void> }): Promise<T> {
       if (closing) throw new Error("Repository fixtures are closing; no new case may open");
       const root = tempDir("petrina-" + name + "-"), controller = new AbortController();
+      registerFixtureRoot(root);
       const owner = new FixtureOperations({
         label: "Repository fixture at " + root,
         allowanceMs: CLEANUP_MS * SLOW,

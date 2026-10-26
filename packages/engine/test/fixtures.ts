@@ -1,4 +1,3 @@
-export { defunctProcess } from "@petrina/test-support/defunct-process";
 export { ADDRESS, makeProduct, repositorySeed } from "@petrina/test-support/repositories";
 import { removeDir } from "@petrina/test-support/fixtures";
 export { tempDir, removeDir, waitFor, waitForFile, firstLine, testBrowserRoot } from "@petrina/test-support/fixtures";

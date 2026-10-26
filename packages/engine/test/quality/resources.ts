@@ -68,6 +68,8 @@ if (args.length) {
   mkdirSync(folder, { recursive: true });
   console.log(`Measuring the required full suite with normal workers. Resource artifacts: ${folder}`);
   const owned = createTestRun(), controller = new AbortController(), settlements = runSettlements();
+  let disposal: Promise<boolean> | undefined, disposalFailure: { error: unknown } | undefined;
+  const dispose = () => disposal ??= settlements.dispose(owned).catch(error => { disposalFailure = { error }; return false; });
   let interrupted: number | undefined;
   const onInt = () => { interrupted = 130; controller.abort("SIGINT"); }, onTerm = () => { interrupted = 143; controller.abort("SIGTERM"); };
   process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
@@ -155,10 +157,11 @@ if (args.length) {
     await Promise.all([full, child ? sample() : Promise.resolve()]);
     let rootUsage: unknown;
     try { rootUsage = resourceUsageRecord(child?.resourceUsage()); } catch { /* An unavailable counter remains absent. */ }
-    const diagnosticCode = interrupted ?? (settlements.safeToDispose ? code ?? 1 : 1);
+    const disposed = await dispose();
+    const diagnosticCode = interrupted ?? (disposed ? code ?? 1 : 1);
     writeFixtureJson(join(folder, "run.json"), { kind: "resource-diagnostic", deliveryEligible: false, command: "bun run test", workers: "unchanged defaults", code: diagnosticCode, fullExitCode, failure, ms: performance.now() - began,
       instrumentation: { gitCallers: process.env.PETRINA_TEST_RESOURCE_GIT_CALLERS === "1" },
-      privateEnvironment: settlements.safeToDispose ? "disposable" : "retained",
+      privateEnvironment: disposed ? "disposable" : "retained",
       environment: { platform: process.platform, arch: process.arch, bun: Bun.version, logicalCpus: cpus().length }, rootUsage, observerErrors, outputTruncated: [...outputTruncated], afterExitProcesses,
       sampling: { intervalMs: 1_000, samples, errors, ...(samples ? { peakAggregateRssBytes: peakRssBytes, peakObservedProcessEntries: peakProcesses, peakRollingCpuPercent } : {}),
         limits: "One-second samples miss short-lived children. Present process entries include zombies. RSS sums shared pages. ps CPU is rolling; Windows exposes cumulative CPU instead. Processes are associated by observed parent/birth identities; same-second PID reuse between samples can be indistinguishable." } }, 2);
@@ -170,6 +173,10 @@ if (args.length) {
     process.exitCode = interrupted ?? diagnosticCode;
   } finally {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-    if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+    if (!await dispose()) {
+      console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+      if (disposalFailure) console.error(disposalFailure.error);
+      if (interrupted === undefined) process.exitCode = 1;
+    }
   }
 }

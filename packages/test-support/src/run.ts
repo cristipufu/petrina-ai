@@ -50,6 +50,9 @@ if (import.meta.main) {
     process.exitCode = controller.signal.aborted ? controller.signal.reason === "SIGINT" ? 130 : 143 : 1;
   } finally {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
-    if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+    if (!await settlements.dispose(owned)) {
+      console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+      if (!controller.signal.aborted) process.exitCode = 1;
+    }
   }
 }

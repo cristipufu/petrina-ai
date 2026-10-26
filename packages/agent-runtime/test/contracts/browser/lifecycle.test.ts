@@ -1,6 +1,7 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { expect, it, spyOn } from "bun:test";
+import { afterEach, afterAll, expect, it, spyOn } from "bun:test";
 import { type ChildProcess } from "node:child_process";
 import { existsSync, linkSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
@@ -10,7 +11,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { AgentBrowser, browserTempRoot, CLEANUP_NOTE, recoverBrowserTemps } from "../../../src/browser.js";
 import { readProcessList, parseProcessState } from "@petrina/platform/process-tree";
 import { browserProcesses } from "@petrina/platform/browser-processes";
-import { defunctProcess } from "@petrina/test-support/defunct-process";
+import { defunctProcesses } from "@petrina/test-support/defunct-process";
+
+const defuncts = defunctProcesses();
+afterEach(() => defuncts.close());
+afterAll(() => defuncts.close());
 import { runCommand } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { tempDir, removeDir, testBrowserRoot, waitFor } from "@petrina/test-support/fixtures";
@@ -341,13 +346,19 @@ it.skipIf(process.platform === "win32")("never signals process numbers from an e
   }
 }, 30_000 * SLOW);
 
-it.skipIf(process.platform === "win32")("describes a finished but unreleased process as finished and keeps cleanup incomplete until it is released", async () => {
+it.skipIf(process.platform === "win32")("describes a finished but unreleased process as finished and keeps cleanup incomplete until it is released", async () => defuncts.use(async defunct => {
   const registry = join(root, "finished-unreleased");
   const notes: string[] = [];
-  const browser = await startBrowser(registry, process.env, notesIn(notes));
-  const defunct = await defunctProcess();
-  let scan: { restore(): void } | undefined;
-  try {
+  let browser: AgentBrowser | undefined, scan: { restore(): void } | undefined;
+  const cleanup = async () => {
+    const errors: unknown[] = [];
+    try { scan?.restore(); } catch (error) { errors.push(error); }
+    try { await defunct.release(); } catch (error) { errors.push(error); }
+    try { await browser?.close(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Finished-browser observation cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+    browser = await startBrowser(registry, process.env, notesIn(notes));
     await waitFor(async () => { const list = await readProcessList(4_000); return list !== undefined && parseProcessState(list, defunct.pid) === "finished"; }, "the stand-in to finish without being released", 10_000);
     // The helper's early list names it; the folder scans and its final state stay live.
     scan = answerEarlyList(browser, (done) => queueMicrotask(() => done([defunct.pid])));
@@ -362,12 +373,9 @@ it.skipIf(process.platform === "win32")("describes a finished but unreleased pro
     await browser.close();
     expect(existsSync(browser.directory)).toBe(false);
     expect(readdirSync(registry)).toEqual([]);
-  } finally {
-    scan?.restore();
-    await defunct.release();
-    await browser.close().catch(() => undefined);
-  }
-}, 30_000 * SLOW);
+  }, cleanup);
+  await cleanup();
+}), 30_000 * SLOW);
 
 it("stops unused endpoints and endpoints receiving their first connection", async () => {
   for (const connect of [false, true]) {

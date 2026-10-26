@@ -10,6 +10,20 @@ class PrivateRun {
   async close() { this.closes++; }
 }
 
+for (const code of [0, 7]) it(`keeps completed exit ${code} separate from an inner fixture's disposal veto`, async () => {
+  const record = runSettlements(), result = completed(code);
+  const owner = { calls: 0, available: false, close() { this.calls++; return this.available; } };
+  const observed = await record.observe({ run: async () => result });
+  expect(observed.kind === "completed" && observed.result).toBe(result);
+  expect(record.safeToDispose).toBe(true);
+  expect(await record.dispose(owner)).toBe(false);
+  expect(owner.calls).toBe(1);
+  // Only the actual environment owner can report that its retained fixtures were independently removed.
+  owner.available = true;
+  expect(await record.dispose(owner)).toBe(true);
+  expect(owner.calls).toBe(2);
+});
+
 for (const code of [0, 7]) it(`allows disposal after fully drained canonical completion with exit ${code}`, async () => {
   class Effects {
     calls = 0;

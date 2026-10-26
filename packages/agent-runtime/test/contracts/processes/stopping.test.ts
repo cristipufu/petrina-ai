@@ -1,5 +1,7 @@
 import { expectRejection } from "@petrina/test-support/rejections";
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { afterAll, afterEach, expect, it, spyOn } from "bun:test";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { stoppingActors } from "../../fixtures/stopping-actors.js";
 import { getEventListeners } from "node:events";
 import * as processes from "node:child_process";
 import type { ChildProcess } from "node:child_process";
@@ -8,15 +10,18 @@ import { join } from "node:path";
 import { AGENT_CLEANUP_NOTE, AgentRun, stopAll } from "@petrina/agent-runtime/acp-run";
 import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { childState, parseChildState, presentStates, processList, readProcessList } from "@petrina/platform/process-tree";
-import { defunctProcess as uncollected } from "@petrina/test-support/defunct-process";
+import { defunctProcesses } from "@petrina/test-support/defunct-process";
+
+const defuncts = defunctProcesses();
+afterEach(() => defuncts.close());
+afterAll(() => defuncts.close());
 import { finishedHelper } from "@petrina/test-support/process-helper";
 import { removeDir, tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { SLOW } from "@petrina/test-support/slow";
 
-const root = tempDir("petrina-agent-lifetime-");
-afterAll(() => removeDir(root));
+const nativeFixtures = stoppingActors();
+afterEach(() => nativeFixtures.close());
 const profile = ENGINE_PROFILES.find(profile => profile.id === "sol-high")!;
-const command = [process.execPath, join(import.meta.dir, "../../fixtures/session-agent.ts")];
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
 type Signals = ReturnType<typeof spyOn<typeof process, "kill">>;
 
@@ -160,24 +165,33 @@ await import(${JSON.stringify(join(import.meta.dir, "../../fixtures/session-agen
   }
 });
 
-it.skipIf(process.platform === "win32")("stops an agent with no work after one list and no forced stop", async () => {
+it.skipIf(process.platform === "win32")("stops an agent with no work after one list and no forced stop", async () => nativeFixtures.use(async fixture => {
   let child: ChildProcess | undefined, run: AgentRun | undefined, incomplete = 0, scans = 0;
-  const original = processes.execFile;
-  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
-    if (args[0] === "ps") scans++;
-    return Reflect.apply(original, processes, args);
-  }) as typeof processes.execFile);
-  const signals = spyOn(process, "kill");
-  try {
-    run = await AgentRun.start({ profile, cwd: root, command, callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, signal: new AbortController().signal, browser: false, onProcess: process => { child = process; } });
+  const original = processes.execFile, controller = new AbortController();
+  let scan: ReturnType<typeof spyOn<typeof processes, "execFile">> | undefined, signals: Signals | undefined;
+  const cleanup = async () => {
+    const settled = await Promise.allSettled([run?.stop()]);
+    const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    for (const restore of [() => signals?.mockRestore(), () => scan?.mockRestore()]) try { restore(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "No-work stop fixture cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+    scan = spyOn(processes, "execFile");
+    scan.mockImplementation(((...args: unknown[]) => {
+      if (args[0] === "ps") scans++;
+      return Reflect.apply(original, processes, args);
+    }) as typeof processes.execFile);
+    signals = spyOn(process, "kill");
+    run = await fixture.agent(controller, { profile, callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; } }, onProcess: process => { child = process; } });
     expect(await run.stop()).toBe(true);
     expect(scans).toBe(1);
     expect(incomplete).toBe(0);
     expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
     expect(signals.mock.calls.some(([, signal]) => signal === "SIGKILL")).toBe(false);
     expectPausesReclaimed(signals);
-  } finally { await run?.stop(); signals.mockRestore(); scan.mockRestore(); }
-});
+  }, cleanup);
+  await cleanup();
+}));
 
 
 const stopCases = [true, false].flatMap(firstTimesOut => [false, true].map(listedLate => ({ firstTimesOut, listedLate, stubborn: true, delay: 0, workerStubborn: true, cancel: false, firstRunning: false, overrun: 0 })));
@@ -331,60 +345,75 @@ await import(${JSON.stringify(join(import.meta.dir, "../../fixtures/session-agen
   }
 });
 
-for (const failure of ["unavailable", "timeout", "unpaused"] as const) it.skipIf(process.platform === "win32")(`keeps an incomplete-cleanup warning within the quit limit when process snapshots ${failure === "timeout" ? "all time out" : failure === "unpaused" ? "still show an owner running" : "are unavailable"}`, async () => {
-  let child: ChildProcess | undefined;
-  const original = processes.execFile;
-  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
-    if (args[0] !== "ps") return Reflect.apply(original, processes, args);
-    const done = args.at(-1) as (error: Error, stdout: string, stderr: string) => void;
-    if (failure === "unpaused") return Reflect.apply(original, processes, [...args.slice(0, -1), (error: Error | null, stdout: string, stderr: string) => {
-      // A successful old snapshot cannot confirm the pause, even if the live agent is paused.
-      const stale = stdout.split("\n").map(line => Number(line.trim().split(/\s+/)[0]) === child?.pid ? line.replace(/T\S*\s*$/, "S") : line).join("\n");
-      (done as (error: Error | null, stdout: string, stderr: string) => void)(error, stale, stderr);
-    }]);
-    const fail = () => done(new Error("Process list unavailable"), "", "");
-    if (failure === "timeout") setTimeout(fail, (args[2] as { timeout: number }).timeout);
-    else queueMicrotask(fail);
-    return undefined;
-  }) as typeof processes.execFile);
-  let incomplete = 0;
-  let run: AgentRun | undefined;
-  const signals = spyOn(process, "kill");
-  try {
+for (const failure of ["unavailable", "timeout", "unpaused"] as const) it.skipIf(process.platform === "win32")(`keeps an incomplete-cleanup warning within the quit limit when process snapshots ${failure === "timeout" ? "all time out" : failure === "unpaused" ? "still show an owner running" : "are unavailable"}`, async () => nativeFixtures.use(async fixture => {
+  let child: ChildProcess | undefined, incomplete = 0, run: AgentRun | undefined;
+  const original = processes.execFile, controller = new AbortController();
+  let scan: ReturnType<typeof spyOn<typeof processes, "execFile">> | undefined, signals: Signals | undefined;
+  const cleanup = async () => {
+    const settled = await Promise.allSettled([run?.stop()]);
+    const errors = settled.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    for (const restore of [() => signals?.mockRestore(), () => scan?.mockRestore()]) try { restore(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Incomplete-stop fixture cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+    scan = spyOn(processes, "execFile");
+    scan.mockImplementation(((...args: unknown[]) => {
+      if (args[0] !== "ps") return Reflect.apply(original, processes, args);
+      const done = args.at(-1) as (error: Error, stdout: string, stderr: string) => void;
+      if (failure === "unpaused") return Reflect.apply(original, processes, [...args.slice(0, -1), (error: Error | null, stdout: string, stderr: string) => {
+        const stale = stdout.split("\n").map(line => Number(line.trim().split(/\s+/)[0]) === child?.pid ? line.replace(/T\S*\s*$/, "S") : line).join("\n");
+        (done as (error: Error | null, stdout: string, stderr: string) => void)(error, stale, stderr);
+      }]);
+      const fail = () => done(new Error("Process list unavailable"), "", "");
+      if (failure === "timeout") setTimeout(fail, (args[2] as { timeout: number }).timeout);
+      else queueMicrotask(fail);
+      return undefined;
+    }) as typeof processes.execFile);
+    signals = spyOn(process, "kill");
     const logged: string[] = [];
-    run = await AgentRun.start({ profile, cwd: root, command: [...command, "--stubborn"], callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; }, onLog: (text) => { logged.push(text); } }, signal: new AbortController().signal, browser: false, onProcess: process => { child = process; } });
+    run = await fixture.agent(controller, { profile, stubborn: true, callbacks: { ...callbacks, onCleanupIncomplete: () => { incomplete++; }, onLog: text => { logged.push(text); } }, onProcess: process => { child = process; } });
     const from = Date.now();
     expect(await run.stop()).toBe(false);
     expect(Date.now() - from).toBeLessThan(7_000);
     expect(await run.stop()).toBe(false);
     expect(incomplete).toBe(1);
-    // One private line in the task's log says why: neither look could show the agent's programs.
-    const notes = logged.join("").split("\n").filter((line) => line.startsWith(AGENT_CLEANUP_NOTE));
+    const notes = logged.join("").split("\n").filter(line => line.startsWith(AGENT_CLEANUP_NOTE));
     expect(notes).toHaveLength(1);
     expect(notes[0]).toMatch(new RegExp(`^${AGENT_CLEANUP_NOTE} stage=forced elapsed=\\d+ms lists=unreadable,unreadable processes=0 shown=0 omitted=0$`));
     expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
     expectPausesReclaimed(signals);
-  } finally { await run?.stop(); signals.mockRestore(); scan.mockRestore(); }
-});
+  }, cleanup);
+  await cleanup();
+}));
 
 const groups = (timeout: number) => processList(["-A", "-o", "pid=,pgid=,stat="], timeout);
 
 it.skipIf(process.platform === "win32")("reclaims an uncollected fixture interrupted before its process number is read", async () => {
   let holderPid: number | undefined;
-  await expectRejection(uncollected(pid => { holderPid = pid; throw new Error("Fixture setup interrupted"); }), "Fixture setup interrupted");
+  await expectRejection(defuncts.use(async () => { throw new Error("The interrupted setup unexpectedly completed"); }, { beforeRead(pid) { holderPid = pid; throw new Error("Fixture setup interrupted"); } }), "Fixture setup interrupted");
   expect(holderPid).toBeDefined(); expect(alive(holderPid!)).toBe(false);
 });
 
 // The stop's final second reads the process list for what is still present after the forced stop. Only a complete
 // list showing it defunct confirms the stop; an unreadable list, or one that shows it running, never does.
-for (const list of ["defunct", "unreadable", "late", "throws", "running", "silent"] as const) it.skipIf(process.platform === "win32")(`${list === "defunct" ? "confirms" : "never confirms"} a stop whose agent exited without being collected when the final list ${{ defunct: "shows it defunct", unreadable: "cannot be read", late: "does not arrive by its deadline", throws: "throws an error", running: "shows it running", silent: "never names it or its group" }[list]}`, async () => {
-  const agent = await uncollected();
+for (const list of ["defunct", "unreadable", "late", "throws", "running", "silent"] as const) it.skipIf(process.platform === "win32")(`${list === "defunct" ? "confirms" : "never confirms"} a stop whose agent exited without being collected when the final list ${{ defunct: "shows it defunct", unreadable: "cannot be read", late: "does not arrive by its deadline", throws: "throws an error", running: "shows it running", silent: "never names it or its group" }[list]}`, async () => defuncts.use(async agent => {
   const self = agent.self;
   const complete = `${self}\n${agent.pid} ${agent.pid} Z`;
   const ownership = `${process.pid} ${process.ppid} S\n${agent.pid} ${agent.holderPid} Z`;
   const original = processes.execFile;
   let ownershipReads = 0;
-  const scan = spyOn(processes, "execFile").mockImplementation(((...args: unknown[]) => {
+  let scan: ReturnType<typeof spyOn<typeof processes, "execFile">> | undefined;
+  let clock: ReturnType<typeof spyOn<typeof Date, "now">> | undefined;
+  let sleep: ReturnType<typeof spyOn<typeof Bun, "sleep">> | undefined;
+  const cleanup = async () => {
+    const errors: unknown[] = [];
+    for (const restore of [() => sleep?.mockRestore(), () => clock?.mockRestore(), () => scan?.mockRestore()]) try { restore(); } catch (error) { errors.push(error); }
+    try { await agent.release(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Final stop observation cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+  scan = spyOn(processes, "execFile");
+  scan.mockImplementation(((...args: unknown[]) => {
     if (args[0] !== "ps") return Reflect.apply(original, processes, args);
     ownershipReads++;
     const done = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
@@ -393,12 +422,13 @@ for (const list of ["defunct", "unreadable", "late", "throws", "running", "silen
   }) as typeof processes.execFile);
   const wallNow = Date.now;
   let now = 0;
-  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  clock = spyOn(Date, "now");
+  clock.mockImplementation(() => now);
   // This process already ended. Control only the observation window; real stop/deadline
   // coverage below retains native clocks and reads, as do the live-agent cases above.
-  const sleep = spyOn(Bun, "sleep").mockImplementation(async ms => { now += ms instanceof Date ? ms.getTime() - now : ms; });
+  sleep = spyOn(Bun, "sleep");
+  sleep.mockImplementation(async ms => { now += ms instanceof Date ? ms.getTime() - now : ms; });
   const reads: number[] = [], notes: string[] = [];
-  try {
     const read = async (timeout: number) => {
       reads.push(timeout);
       if (list === "late") { await Bun.sleep(timeout); return undefined; }
@@ -420,11 +450,11 @@ for (const list of ["defunct", "unreadable", "late", "throws", "running", "silen
       expect(notes).toHaveLength(1);
       expect(notes[0]).toMatch(new RegExp(`^${AGENT_CLEANUP_NOTE} stage=forced elapsed=\\d+ms lists=read,read processes=\\d+ shown=\\d+ omitted=0 owned=.*${agent.pid}:${{ unreadable: "unknown", late: "unknown", throws: "unknown", running: "running", silent: "absent" }[list]}:target`));
     }
-  } finally { sleep.mockRestore(); clock.mockRestore(); scan.mockRestore(); await agent.release(); }
-});
+  }, cleanup);
+  await cleanup();
+}));
 
-it.skipIf(process.platform === "win32")("reports only what native observations prove when stopping an uncollected agent within the quit deadline", async () => {
-  const agent = await uncollected();
+it.skipIf(process.platform === "win32")("reports only what native observations prove when stopping an uncollected agent within the quit deadline", async () => defuncts.use(async agent => {
   const notes: string[] = [], reads: { timeout: number; ms: number; listing: string | undefined }[] = [];
   try {
     const read = async (timeout: number) => {
@@ -443,4 +473,48 @@ it.skipIf(process.platform === "win32")("reports only what native observations p
     // Setup proved the real target defunct; it cannot resume. release() confirms native
     // disappearance after its still-live holder ends, without another timed ps assumption.
   } finally { await agent.release(); }
-});
+}));
+
+// Actual entry/termination/pipe obligations paired with the portable captured-list policy.
+// Detached-fork/native-ancestry conjunctions remain separate; this fixed ACP peer does not fork.
+for (const entry of ["stop", "abort", "close"] as const) for (const exitsOnTerm of [false, true]) it.skipIf(process.platform === "win32")(`native AgentRun ${entry} retains termination and pipe ownership when its peer ${exitsOnTerm ? "exits" : "ignores TERM"}`, async () => nativeFixtures.use(async fixture => {
+  const controller = new AbortController();
+  let child: ChildProcess | undefined, run: AgentRun | undefined, incomplete = 0, streamsClosed = false;
+  let closed!: () => void, failed!: (error: unknown) => void;
+  const nativeClosed = new Promise<void>((resolve, reject) => { closed = resolve; failed = reject; });
+  void nativeClosed.catch(() => undefined);
+  let signals: Signals | undefined;
+  const cleanup = async () => {
+    const result = await Promise.allSettled([run?.stop()]);
+    const errors = result.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+    try { signals?.mockRestore(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Native public-entry fixture cleanup failed");
+  };
+  await setupWithCleanup(async () => {
+    signals = spyOn(process, "kill");
+    run = await fixture.agent(controller, { profile, stubborn: !exitsOnTerm,
+      callbacks: { ...callbacks, onCleanupIncomplete() { incomplete++; } },
+      onProcess(actual) {
+        child = actual;
+        actual.once("close", () => { streamsClosed = true; closed(); });
+        actual.once("error", failed);
+      },
+    });
+    const from = Date.now();
+    if (entry === "abort") controller.abort();
+    if (entry === "close") run.close();
+    const stopped = await run.stop();
+    expect(Date.now() - from).toBeLessThan(7_000);
+    expect(stopped).toBe(true);
+    expect(incomplete).toBe(0);
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+    expect(signals.mock.calls.some(([target, signal]) => Math.abs(target) === child!.pid && signal === "SIGTERM")).toBe(true);
+    expect(signals.mock.calls.some(([target, signal]) => Math.abs(target) === child!.pid && signal === "SIGKILL")).toBe(!exitsOnTerm);
+    expectPausesReclaimed(signals);
+    expect(await run.stop()).toBe(true);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+    await waitFor(() => streamsClosed, "the native ACP peer to report closed stdout and stderr", 5_000, { during: nativeClosed });
+    expect(streamsClosed).toBe(true);
+  }, cleanup);
+  await cleanup();
+}));

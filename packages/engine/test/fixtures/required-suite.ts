@@ -1,7 +1,7 @@
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
-import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { git, testGitEnv } from "../fixtures.js";
 import { sourceFacts } from "../quality/source.js";
@@ -33,6 +33,23 @@ export function isolatedRunnerEnvironment(root: string): NodeJS.ProcessEnv {
   const home = join(root, "caller-home"), temporary = join(root, "caller-temporary");
   mkdirSync(home, { recursive: true }); mkdirSync(temporary, { recursive: true });
   return { ...testGitEnv(), HOME: home, USERPROFILE: home, TMPDIR: temporary, TMP: temporary, TEMP: temporary, PETRINA_TEST_BASE: "HEAD" };
+}
+
+/** Only controlled unavailable-command cases use this: their browser parent never held an actor. */
+export async function closeControlledRunner(lifetime: { close(): Promise<void> }, browsers: string | undefined): Promise<void> {
+  // Native wrapper/independent peer cleanup must be confirmed before touching its recorded files.
+  await lifetime.close();
+  if (browsers === undefined) return;
+  if (!isAbsolute(browsers)) throw new Error("The controlled runner did not record an absolute browser parent");
+  let directory;
+  try { directory = lstatSync(browsers); }
+  catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return; throw error; }
+  if (!directory.isDirectory() || readdirSync(browsers).length) throw new Error("Controlled browser files remain; directory retained");
+  // rmdir is deliberately nonrecursive: a late file makes cleanup fail instead of deleting unknown work.
+  rmdirSync(browsers);
+  try { lstatSync(browsers); }
+  catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return; throw error; }
+  throw new Error("The controlled browser parent could not be removed");
 }
 
 /** Substitute only the actual runProcess boundary; plans, parsing, coordination and disposal stay actual. */

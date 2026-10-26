@@ -1,3 +1,4 @@
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { afterAll, afterEach, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -6,7 +7,7 @@ import { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
 import { runCommand } from "@petrina/test-support/commands";
 import { childState } from "@petrina/platform/process-tree";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
-import { entryFixture, isolatedRunnerEnvironment } from "../../fixtures/required-suite.js";
+import { closeControlledRunner, entryFixture, isolatedRunnerEnvironment } from "../../fixtures/required-suite.js";
 
 const cli = fileURLToPath(import.meta.resolve("../../quality/resources.ts"));
 const roots: string[] = [];
@@ -29,8 +30,9 @@ it("rejects an empty event file instead of manufacturing a zero-cost report", as
 
 for (const completedFirst of [false, true]) it(completedFirst ? "records a diagnostic failure when a final sampler is uncertain after the actual full command completed successfully" : "retains the diagnostic environment and stops its actual full command after uncertain sampler settlement", async () => {
   const root = tempDir("petrina-resource-settlement-"), lifetime = await settlementCases.open(root);
-  try {
-    await lifetime.prepare(async () => {
+  let browsers: string | undefined;
+  const close = () => closeControlledRunner(lifetime, browsers);
+  await setupWithCleanup(() => lifetime.prepare(async () => {
       entryFixture(root);
       const quality = join(root, "packages/engine/test/quality"), target = join(quality, "resources.ts");
       const record = join(root, "sampler-observation.json"), captured = join(root, "full-command.json"), release = join(root, "release-full");
@@ -70,8 +72,9 @@ const runCommand: typeof actualRunCommand = (argv, options = {}) => {
       // A real independent release also lets the original unsafe runner finish, so its deletion is observable.
       writeFileSync(release, "");
       const result = await child.completion;
-      expect(result.code, result.stdout + result.stderr).toBe(1);
       const observed = JSON.parse(readFileSync(record, "utf8"));
+      browsers = observed.browsers;
+      expect(result.code, result.stdout + result.stderr).toBe(1);
       expect(observed.calls).toBe(completedFirst ? 2 : 1);
       if (completedFirst) expect(observed.fullCode).toBe(0);
       expect(relative(root, observed.folder)).not.toStartWith("..");
@@ -91,6 +94,7 @@ const runCommand: typeof actualRunCommand = (argv, options = {}) => {
       expect(actual.pid).toBeGreaterThan(0);
       // Subject termination is observed before the independent lease/handle fallback in finally.
       expect(await childState(actual.pid)).toBe("ended");
-    });
-  } finally { await lifetime.close(); }
+    }), close);
+  await close();
+  if (browsers) expect(existsSync(browsers)).toBe(false);
 });

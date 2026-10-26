@@ -1,3 +1,4 @@
+import { confirmStoppedProcesses } from "./agent-stop.js";
 import { ProcessObservations, readObservation, type ProcessListRead } from "./process-observations.js";
 import { stoppedProcessStates, parseDescendants, parseChildState, type ChildState, type ObservedProcess } from "./process-snapshots.js";
 export { parseDescendants, parseChildState, parseProcessState, type ChildState, type ProcessState, type ObservedProcess } from "./process-snapshots.js";
@@ -66,19 +67,14 @@ export function presentStates(list: string | undefined, present: readonly number
  * never proof that a target still answering to a signal has ended.
  */
 export async function waitForProcessesToEnd(targets: readonly number[], ms: number, read: ProcessListRead = readProcessGroups): Promise<{ ended: boolean; processes: ObservedProcess[] }> {
-  const alive = (target: number) => {
-    try { process.kill(target, 0); return true; }
-    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
-  };
-  const end = Date.now() + ms, from = Date.now() + ms / 4;
-  let listing: Promise<string | undefined> | undefined;
-  for (; Date.now() < end; await Bun.sleep(50)) {
-    if (!targets.some(alive)) return { ended: true, processes: [] };
-    listing ??= Date.now() >= from ? readObservation(read, Math.max(50, end - Date.now())) : undefined;
-  }
-  const present = targets.filter(alive);
-  if (!present.length) return { ended: true, processes: [] };
-  return presentStates(await listing, present);
+  return confirmStoppedProcesses(targets, ms, {
+    now: () => Date.now(), sleep: ms => Bun.sleep(ms), selfPid: process.pid,
+    possiblyPresent(target) {
+      try { process.kill(target, 0); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+    },
+    readGroups: timeout => read(timeout),
+  });
 }
 
 /**

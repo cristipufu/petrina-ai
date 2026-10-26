@@ -13,7 +13,8 @@ import type { ClaudeSandbox } from "./sandbox.js";
 import { SandboxUnavailable, sandboxFailure } from "./sandbox-failures.js";
 import { adapterEntry, ADAPTERS } from "./tools.js";
 import { AgentBrowser, cleanupNote } from "./browser.js";
-import { CLEANUP_INCOMPLETE, descendantsKnown, parseDescendants, readProcessList, readProcessGroups, waitForProcessesToEnd, type ObservedProcess, type ProcessListRead } from "@petrina/platform/process-tree";
+import { CLEANUP_INCOMPLETE, readProcessList, readProcessGroups, type ProcessListRead } from "@petrina/platform/process-tree";
+import { stopAgentPrograms, type StopDiagnostic } from "@petrina/platform/agent-stop";
 import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageInfo, type UsageLimited } from "./usage.js";
 import type { SessionNotice } from "./provider-interruptions.js";
 import { AgentMessages } from "./agent-messages.js";
@@ -118,30 +119,6 @@ interface RunState {
 
 const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-function send(pids: readonly number[], signal: NodeJS.Signals): void {
-  for (const pid of pids) {
-    try {
-      process.kill(pid, signal);
-    } catch {
-      // Already gone.
-    }
-  }
-}
-
-async function exited(pids: readonly number[], ms: number): Promise<boolean> {
-  for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(50)) if (!pids.some(alive)) return true;
-  return !pids.some(alive);
-}
-
 /** The first words of an agent stop's private note when it cannot confirm that everything stopped: one line in the task's log or a test's output. */
 export const AGENT_CLEANUP_NOTE = "Agent cleanup incomplete:";
 
@@ -158,74 +135,20 @@ export async function stopAll(child: ChildProcess, graceMs: number, collectProgr
     if (!running(child)) return true;
     return processHost.stopTree(child.pid, 3000);
   }
-  // Login probes never receive work. Stop their group at once, so a process lookup cannot hold
-  // their forced stop past the tool check's deadline for starting the next probe.
-  // launch.ts forces engine exit after seven seconds. Reserve its last second for confirming
-  // the kill; process lookup and graceful stopping share the preceding six seconds.
-  const forceBy = Date.now() + 6_000;
-  const rescanBudget = collectPrograms ? 3_200 : 0;
-  const started = Date.now(), lists: string[] = [];
-  let stage = "graceful", remaining: ObservedProcess[] = [];
-  const confirmed = (result: boolean) => {
-    if (!result) note?.(cleanupNote(AGENT_CLEANUP_NOTE, [["stage", stage], ["elapsed", `${Date.now() - started}ms`], ["lists", lists.join(",") || "none"]], remaining));
-    return result;
-  };
-  let complete = true;
-  let pids = [child.pid];
-  let paused = false;
-  const resume = () => {
-    if (!paused) return;
-    send([-child.pid!, ...pids], "SIGCONT");
-    paused = false;
-  };
-  const collect = async (budget: number) => {
-    const owners: number[] = [];
-    const workers = await descendantsKnown(owners, budget, async (timeout) => {
-      // Repeat before every attempt. Only a snapshot showing known owners paused or gone
-      // can confirm ownership, even when the OS read succeeded but its delivery was delayed.
-      paused = true;
-      owners.splice(0, owners.length, ...pids.filter(alive));
-      send([-child.pid!, ...pids], "SIGSTOP");
-      const stdout = await readProcessList(timeout);
-      if (stdout !== undefined) {
-        // Keep discoveries even from an unconfirmed snapshot. On a retry they are known
-        // owners too, and must themselves appear paused before the list can be trusted.
-        const found = parseDescendants(stdout, owners);
-        send(found, "SIGSTOP");
-        pids = [...new Set([...pids, ...found])];
-      }
-      return stdout;
-    }, [4_000, 4_000], true);
-    lists.push(workers === undefined ? "unreadable" : "read");
-    if (workers === undefined) complete = false;
-  };
-  try {
-    if (collectPrograms && running(child)) {
-      // Preserve the four-second first read and recover failures before losing parent links.
-      await collect(4_800);
-    }
-    send([-child.pid], "SIGTERM");
-    send(pids, "SIGTERM");
-    resume(); // Deliver pending TERM and allow a normal shutdown during the existing grace.
-    // A slow or failed first lookup must not let the grace wait consume the final lookup.
-    // Still give SIGTERM time to take effect after a slow first read: a zero-length grace wait
-    // needlessly starts another slow scan even when all captured programs are exiting normally.
-    const graceLeft = Math.max(500, forceBy - rescanBudget - Date.now());
-    if (await exited([-child.pid, ...pids], Math.min(graceMs, graceLeft, Math.max(0, forceBy - Date.now())))) return confirmed(complete);
-    stage = "forced";
-    // Pause again before finding anything started during graceful shutdown. Keep the full
-    // remaining read allowance: splitting it would discard consistently slow snapshots.
-    if (collectPrograms) await collect(Math.min(rescanBudget, Math.max(0, forceBy - Date.now())));
-    pids = pids.filter(alive);
-    send([-child.pid], "SIGKILL");
-    send(pids, "SIGKILL");
-    const final = await waitForProcessesToEnd([-child.pid, ...pids], 1_000, read);
-    remaining = final.processes;
-    return confirmed(final.ended && complete);
-  } finally {
-    // Even a failed read or a signal denied by the OS must never leave our programs paused.
-    resume();
-  }
+  return stopAgentPrograms({ pid: child.pid, running: () => running(child) }, graceMs, collectPrograms, {
+    now: () => Date.now(), sleep: ms => Bun.sleep(ms), selfPid: process.pid,
+    alive(target) {
+      try { process.kill(target, 0); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+    },
+    possiblyPresent(target) {
+      try { process.kill(target, 0); return true; }
+      catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+    },
+    signal: (target, signal) => { process.kill(target, signal); },
+    readParents: timeout => readProcessList(timeout), readGroups: timeout => read(timeout),
+    ...(note ? { incomplete: (facts: StopDiagnostic) => note(cleanupNote(AGENT_CLEANUP_NOTE, [["stage", facts.stage], ["elapsed", `${facts.elapsedMs}ms`], ["lists", facts.lists.join(",") || "none"]], facts.processes)) } : {}),
+  });
 }
 
 export class AgentRun implements AgentSession {

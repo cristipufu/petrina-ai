@@ -1,11 +1,15 @@
-import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, afterAll, describe, expect, it, spyOn } from "bun:test";
 import { createProcessLease } from "@petrina/test-support/process-lease";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import * as operations from "../../../src/git.js";
 import { childState } from "@petrina/platform/process-tree";
-import { defunctProcess } from "@petrina/test-support/defunct-process";
+import { defunctProcesses } from "@petrina/test-support/defunct-process";
+
+const defuncts = defunctProcesses();
+afterEach(() => defuncts.close());
+afterAll(() => defuncts.close());
 import { firstLine, removeDir, waitFor, waitForFile } from "@petrina/test-support/fixtures";
 import { testGitEnv } from "@petrina/test-support/test-git-env";
 
@@ -61,10 +65,9 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     } finally { await lease.close(); }
   });
 
-  it.skipIf(process.platform === "win32")("fails within a bounded grace when a command's exit is never reported, keeping its complete output", async () => {
+  it.skipIf(process.platform === "win32")("fails within a bounded grace when a command's exit is never reported, keeping its complete output", async () => defuncts.use(async defunct => {
     // What a lost exit looks like: the output ended, the runtime never reports the exit, and the system shows the
     // child gone or defunct. A real defunct process stands in for the child; the runtime's report never comes.
-    const defunct = await defunctProcess();
     const gone = Bun.spawn([process.execPath, "-e", "process.exit(0)"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     await gone.exited;
     const standIn = (pid: number, out: string, err: string) => ({ pid, exited: new Promise<number>(() => {}), stdout: new Response(out).body!, stderr: new Response(err).body!, kill() {} }) as unknown as ReturnType<typeof Bun.spawn>;
@@ -86,7 +89,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
       spawning.mockRestore();
       await defunct.release();
     }
-  });
+  }));
 
   it("bounds the whole command when an exited parent's child retains its output pipe", async () => {
     // Prepare both actors before measuring output draining: cold process startup is a separate contract.
@@ -121,8 +124,7 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
     }
   });
 
-  it.skipIf(process.platform === "win32")("detects a lost exit even when the runtime never closes an output stream", async () => {
-    const defunct = await defunctProcess();
+  it.skipIf(process.platform === "win32")("detects a lost exit even when the runtime never closes an output stream", async () => defuncts.use(async defunct => {
     let cancelled = false;
     const stdout = new ReadableStream<Uint8Array>({
       start(controller) { controller.enqueue(new TextEncoder().encode("partial diagnostic\n")); },
@@ -138,5 +140,5 @@ while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(20);`;
       expect(Date.now() - started).toBeLessThan(25_000);
       expect(cancelled).toBe(true);
     } finally { spawning.mockRestore(); await defunct.release(); }
-  });
+  }));
 });

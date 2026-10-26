@@ -5,6 +5,7 @@ import { testGitEnv } from "@petrina/test-support/test-git-env";
 import { CommandFailure, runCommand, CLEANUP_MS, type CommandResult, type Started } from "@petrina/test-support/commands";
 import { settleCommandAfterStop } from "@petrina/test-support/command-settlement";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
+import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { FALLBACK_TIMEOUT } from "@petrina/test-support/run";
 import { join } from "node:path";
@@ -257,6 +258,7 @@ function coordinatorPeer(command: OwnedCommand, lines: string[]): CoordinatorPro
 type CreateEngine = (proc: Spawned, hello: ShellMessage, home: string, completion: Promise<CommandResult>, controller: AbortController) => EngineProcess;
 
 function processFixture(root: string, resources: { stopPeers(): void | Promise<void> } | undefined, create: CreateEngine) {
+  registerFixtureRoot(root);
   const commands = new Set<OwnedCommand>(), active = new Map<EngineProcess, FixtureOperations>(), stopped = new WeakSet<EngineProcess>(), ended = new WeakSet<EngineProcess>();
   const admission = new AbortController();
   let accepting = true;

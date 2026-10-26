@@ -5,8 +5,10 @@ import { namedCheckFailures } from "../../../src/related-check-evidence.js";
 import { removeDir, runCommand, tempDir, testGitEnv, waitForFile } from "../../fixtures.js";
 import { TEST_WORKSPACES } from "../../quality/workspaces.js";
 import { CommandFailure, type Started } from "@petrina/test-support/commands";
-import { entryFixture as prepareEntry, prepareSuite, installRunFailure, isolatedRunnerEnvironment, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn, type BrowserStandIn, type ObservationStandIn } from "../../fixtures/required-suite.js";
+import { closeControlledRunner, entryFixture as prepareEntry, prepareSuite, installRunFailure, isolatedRunnerEnvironment, PACKAGES, EXAMPLE, NOT_STARTED, type Suite, type StandIn, type BrowserStandIn, type ObservationStandIn } from "../../fixtures/required-suite.js";
 import { coordinatorLifetimes } from "../../fixtures/coordinator-lifetime.js";
+import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -21,6 +23,49 @@ function entryFixture(browser: BrowserStandIn = "ready", observation: Observatio
 const fixture = (scenario: Partial<Record<Suite, StandIn>> = {}, browser: BrowserStandIn = "ready", observation: ObservationStandIn = "unchanged") => prepareSuite(entryFixture(browser, observation), scenario);
 const command = (root: string) => [process.execPath, join(root, "packages", "engine", "test", "quality", "full-run.ts")];
 const environment = () => ({ ...testGitEnv(), PETRINA_TEST_BASE: "HEAD", GH_TOKEN: "fixture-host-account", CODEX_HOME: "fixture-host-tool-config" });
+
+it("records the completed execution but stops later suites when an inner actor-free root is retained", async () => {
+  const root = tempDir("petrina-full-inner-retention-"), lifetime = await settlementCases.open(root);
+  const record = join(root, "retained.json");
+  let observed: { root: string; folder: string; browsers: string } | undefined;
+  const finish = async () => {
+    // No fixture actors started; join the actual controlled suite runner before removing external roots.
+    await lifetime.close();
+    if (existsSync(record)) observed ??= JSON.parse(readFileSync(record, "utf8"));
+    if (observed) removeFixtureRoot(observed.browsers);
+  };
+  await setupWithCleanup(() => lifetime.prepare(async () => {
+      prepareEntry(root); await prepareSuite(root);
+      const runner = join(root, "vitest-report.ts");
+      const before = readFileSync(runner, "utf8");
+      // The existing suite boundary emits its normal successful report and actual exit0.
+      // Only its own actor-free fixture ownership is added; no product/check verdict is invented.
+      writeFileSync(runner, `import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { engineProcessCases } from ${JSON.stringify(import.meta.resolve("../../fixtures/engine-processes.ts"))};
+import { writeFixtureJson } from ${JSON.stringify(import.meta.resolve("@petrina/test-support/fixture-json"))};
+const local = engineProcessCases(), retained = join(process.env.TMPDIR, "retained-suite-fixture"); mkdirSync(retained);
+try { await local.use(retained, async () => { throw undefined; }); } catch { /* The actual strict owner retains this actor-free root. */ }
+await local.close();
+writeFixtureJson(${JSON.stringify(record)}, { root: retained, folder: process.env.TMPDIR, browsers: process.env.PETRINA_TEST_BROWSERS });
+${before}`);
+      const child = lifetime.start(root, [join(root, "packages/engine/test/quality/full-run.ts")], isolatedRunnerEnvironment(root));
+      const result = await child.completion;
+      observed = JSON.parse(readFileSync(record, "utf8"));
+      const saved = recorded(root, result.stdout);
+      expect(result.code, result.stdout + result.stderr).toBe(1);
+      expect(saved.ran).toEqual(["core"]);
+      expect(saved.report).toMatchObject({ scope: "partial", cleanup: "retained", deliveryEligible: false });
+      expect(saved.report.executions[0]).toMatchObject({ code: 0 });
+      expect(saved.report.results[0]).not.toHaveProperty("notRun");
+      expect(saved.report.results.slice(1).every((work: object) => "notRun" in work)).toBe(true);
+      expect(existsSync(observed!.root)).toBe(true);
+      expect(existsSync(observed!.folder)).toBe(true);
+      expect(existsSync(observed!.browsers)).toBe(true);
+      expect(existsSync(join(saved.folder, "timing-cache-updates.json"))).toBe(false);
+    }), finish);
+  await finish();
+});
 function recorded(root: string, stdout: string) {
   const reported = stdout.match(/Reports: ([^\r\n]+)/)?.[1];
   if (!reported) throw new Error("The runner did not identify its evidence folder");
@@ -44,15 +89,17 @@ function expectRuns(ran: string[], native: boolean) {
 
 for (const failure of ["unconfirmed", "undefined"] as const) it(`retains the full runner's private environment and starts no later workspace after ${failure} settlement`, async () => {
   const root = tempDir("petrina-full-settlement-"), lifetime = await settlementCases.open(root);
-  try {
-    await lifetime.prepare(async () => {
+  let browsers: string | undefined;
+  const close = () => closeControlledRunner(lifetime, browsers);
+  await setupWithCleanup(() => lifetime.prepare(async () => {
       prepareEntry(root); installRunFailure(root, failure);
       await prepareSuite(root);
       const child = lifetime.start(root, [join(root, "packages/engine/test/quality/full-run.ts")], isolatedRunnerEnvironment(root));
       const result = await child.completion;
+      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
+      browsers = observed.browsers;
       expect(result.code, result.stdout + result.stderr).toBe(1);
       expect(existsSync(join(root, "runs.log"))).toBe(false);
-      const observed = JSON.parse(readFileSync(join(root, "command-observation.json"), "utf8"));
       expect(relative(root, observed.folder)).not.toStartWith("..");
       expect(observed.folder).not.toBe(root);
       expect(existsSync(observed.folder)).toBe(true);
@@ -64,8 +111,9 @@ for (const failure of ["unconfirmed", "undefined"] as const) it(`retains the ful
       const folder = resolve(root, reported!);
       expect(JSON.parse(readFileSync(join(folder, "results.json"), "utf8"))).toMatchObject({ scope: "partial", stableInputs: true });
       expect(existsSync(join(folder, "timing-cache-updates.json"))).toBe(false);
-    });
-  } finally { await lifetime.close(); }
+    }), close);
+  await close();
+  if (browsers) expect(existsSync(browsers)).toBe(false);
 });
 
 for (const args of [["test/chosen.test.ts"], ["--watch"], ["-t", "chosen"], ["--reporter=json"], ["--help", "chosen"], ["chosen", "-h"]]) it(`rejects root arguments before any repository scan: ${args.join(" ")}`, async () => {

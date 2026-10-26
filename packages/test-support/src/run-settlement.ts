@@ -31,10 +31,9 @@ export function runSettlements() {
         return observation;
       } finally { pending--; }
     },
-    async dispose(owned: { close(): void | Promise<void> }): Promise<boolean> {
+    async dispose(owned: { close(): void | boolean | Promise<void | boolean> }): Promise<boolean> {
       if (!safeToDispose()) return false;
-      await owned.close();
-      return true;
+      return await owned.close() !== false;
     },
   };
 }

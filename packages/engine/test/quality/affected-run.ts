@@ -1,3 +1,4 @@
+import { fixtureRetention, FIXTURE_JOURNAL } from "@petrina/test-support/fixture-retention";
 import { impactRuntime } from "./impact-runtime.js";
 // Repository-specific early feedback. Only the complete configured suite can authorize delivery.
 import { mkdirSync } from "node:fs";
@@ -51,12 +52,18 @@ const onTerm = () => { interrupted = 143; controller.abort("SIGTERM"); };
 process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
 const owned = createTestRun();
 const settlements = runSettlements();
+let disposal: Promise<boolean> | undefined, disposalFailure: { error: unknown } | undefined;
+const dispose = () => disposal ??= settlements.dispose(owned).catch(error => { disposalFailure = { error }; return false; });
 const coordinator = executionPlan.length ? new SuiteCoordinator(executionPlan, { revision, fingerprint: plan.fingerprint }) : undefined;
 try {
-  await coordinator?.run(execution => executeTests(execution, {
-    root: ROOT, folder, expectedFiles: plan.selected, env: owned.env, signal: controller.signal, settlements,
-    ...(execution.id === NATIVE_SCOPE.id ? { files: plan.selected.filter(file => execution.workspaces.some(workspace => file.startsWith(`${workspace}/`))) } : {}),
-  }), controller.signal);
+  await coordinator?.run(async execution => {
+    const evidence = await executeTests(execution, {
+      root: ROOT, folder, expectedFiles: plan.selected, env: owned.env, signal: controller.signal, settlements,
+      ...(execution.id === NATIVE_SCOPE.id ? { files: plan.selected.filter(file => execution.workspaces.some(workspace => file.startsWith(`${workspace}/`))) } : {}),
+    });
+    if (fixtureRetention(owned.env[FIXTURE_JOURNAL]!).kind !== "clear") controller.abort("Fixture cleanup was not confirmed");
+    return evidence;
+  }, controller.signal);
 } finally {
   try {
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
@@ -64,10 +71,12 @@ try {
     const conclusion = coordinator?.conclusion(final, interrupted !== undefined);
     const records = suiteRecords(coordinator?.results ?? [], plan.selected);
     const stableInputs = final.revision === revision && final.fingerprint === plan.fingerprint;
+    const disposed = await dispose();
     writeFixtureJson(join(folder, "results.json"), {
       kind: "affected-feedback", deliveryEligible: false, source,
       environment: { platform: process.platform, arch: process.arch, bun: Bun.version },
-      scope: conclusion?.complete ? "selected-complete" : coordinator ? "partial" : "no-work",
+      scope: !disposed ? "partial" : conclusion?.complete ? "selected-complete" : coordinator ? "partial" : "no-work",
+      cleanup: disposed ? "confirmed" : "retained",
       stableInputs, interrupted, ms: Math.round(performance.now() - began), ...records,
     }, 2);
     if (!coordinator) console.log("No affected tests selected; no validation was performed.");
@@ -75,8 +84,12 @@ try {
       console.log("Affected feedback summary (the full delivery check is still required):");
       for (const work of records.results) console.log(`  ${work.workspace}: ${workspaceOutcome(work, records.executions.find(execution => execution.id === work.executionId)!)}`);
     }
-    process.exitCode = interrupted ?? (stableInputs && (!coordinator || conclusion?.successful) ? 0 : 1);
+    process.exitCode = interrupted ?? (disposed && stableInputs && (!coordinator || conclusion?.successful) ? 0 : 1);
   } finally {
-    if (!await settlements.dispose(owned)) console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+    if (!await dispose()) {
+      console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
+      if (disposalFailure) console.error(disposalFailure.error);
+      if (interrupted === undefined) process.exitCode = 1;
+    }
   }
 }

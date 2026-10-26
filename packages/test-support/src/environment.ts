@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { shortTempParent, testTempParent, TEST_BROWSERS } from "./temp-parent.js";
 import { fixtureFiles } from "./fixture-files.js";
+import { createFixtureJournal, fixtureRetention, FIXTURE_JOURNAL, registerFixtureRoot } from "./fixture-retention.js";
 
 export const TEST_GIT_IDENTITY = { name: "Petrina Test Runner", email: "test-runner@example.com" };
 
@@ -60,17 +61,42 @@ export function testEnvironment(folder: string, browsers: string, inherited: Nod
 }
 
 /** Shared ownership for the complete runner and focused engine runner, including partial startup failures. */
-export function createTestRun(): { env: NodeJS.ProcessEnv; close(): void } {
+export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
   const parent = testTempParent(tmpdir());
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const folder = mkdtempSync(join(parent, "petrina-tests-"));
-  let browsers: string | undefined;
-  const close = () => {
-    try { rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
-    finally { if (browsers) rmSync(browsers, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+  const journal = join(folder, "fixture-journal");
+  let browsers: string | undefined, prepared = false, closed = false;
+  const remove = () => {
+    const errors: unknown[] = [];
+    for (const root of [folder, browsers]) if (root) {
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+      catch (error) { errors.push(error); }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, "Private test environment could not be removed");
+  };
+  const close = (): boolean => {
+    if (closed) return true;
+    if (fixtureRetention(journal).kind !== "clear") return false;
+    remove(); closed = true;
+    return true;
   };
   try {
+    // The parent must retain these actual paths if this nested runner cannot dispose them.
+    registerFixtureRoot(folder);
     browsers = mkdtempSync(join(shortTempParent(process.platform, folder), "pb-"));
-    return { env: testEnvironment(folder, browsers), close };
-  } catch (error) { close(); throw error; }
+    registerFixtureRoot(browsers);
+    createFixtureJournal(journal); prepared = true;
+    const env = testEnvironment(folder, browsers);
+    env[FIXTURE_JOURNAL] = journal;
+    return { env, close };
+  } catch (error) {
+    try {
+      // No child was admitted before this function returned, so partial preparation has no actors.
+      if (prepared) { if (!close()) throw new Error("Private test environment retained incomplete fixture evidence"); }
+      else remove();
+    } catch (cleanup) { throw new AggregateError([error, cleanup], "Test environment preparation and cleanup failed"); }
+    throw error;
+  }
 }
