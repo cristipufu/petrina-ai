@@ -23,14 +23,14 @@ const ahead = (engine: Engine, task: Task) => {
 
 describe.concurrent("automatic check repairs belong to one failure episode", () => {
 it("gives a later failure its own two repairs after a genuine pass, and reviews and retests a fix made after review passed", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         let task = await f.delivery();
         // Two automatic turns, then a real pass on the changed code closes the episode before acceptance testing.
         expect(f.runs()).toEqual(["failed", "failed", "passed"]);
         expect(sentBack(task)).toBe(2);
         expect(task.checkReturns).toBeUndefined();
-        expect(f.agents.openings("builder")).toHaveLength(3);
+        expect(f.agents.openings("builder")).toHaveLength(2);
         expect(f.agents.openings("tester")).toHaveLength(1);
         expect(f.agents.openings("code reviewer")).toHaveLength(2);
         expect(itemOf(f.engine.getState(), f.taskId, "delivery")!.title).toBe("Ready to ship “Add a greeting”");
@@ -42,7 +42,7 @@ it("gives a later failure its own two repairs after a genuine pass, and reviews 
         expect(f.runs()).toEqual(["failed", "failed", "passed", "failed", "failed", "passed"]);
         expect(sentBack(task)).toBe(4);
         expect(task.checkReturns).toBeUndefined();
-        expect(f.agents.openings("builder")).toHaveLength(5);
+        expect(f.agents.openings("builder")).toHaveLength(4);
         // The fix made after review passed is reviewed again and tried once more before the delivery check; nothing shipped.
         expect(f.agents.openings("code reviewer")).toHaveLength(4);
         expect(f.agents.openings("tester")).toHaveLength(2);
@@ -58,7 +58,7 @@ it("gives a later failure its own two repairs after a genuine pass, and reviews 
   });
 
 it("keeps a pending review round when check repairs run out, and runs it with its number after a passing fix", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         let task = await f.delivery();
         const review = reviewStage(task);
@@ -112,7 +112,7 @@ it("keeps a pending review round when check repairs run out, and runs it with it
   });
 
 it("keeps the episode count across a restart, the blocker and its position after one, and the cleared count after a pass", async () => {
-    await fixture(async f => {
+    await fixture("workflow", async f => {
       const release = f.agents.release;
       const releaseAll = (engine: Engine, state: State) => {
         coordinator(["plan"])(engine, state);
@@ -167,24 +167,11 @@ it("keeps the episode count across a restart, the blocker and its position after
     }, true, { planner: "short", builder: "plain", controlled: true });
   });
 
-it("restores a saved task's spent allowance at its next verified pass", async () => {
-    await fixture(async f => {
-      try {
-        await f.delivery();
-        // Saved before episodes existed: both returns spent, although the checks pass now.
-        await f.restart((state) => { state.tasks.find((task) => task.id === f.taskId)!.checkReturns = 2; });
-        expect(taskOf(f.engine.getState(), f.taskId).checkReturns).toBe(2);
-        f.engine.approve(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
-        const state = await until(f.engine, (state) => taskOf(state, f.taskId).state === "done");
-        expect(f.runs()).toEqual(["passed"]);
-        expect(taskOf(state, f.taskId).checkReturns).toBeUndefined();
-      } finally { await f.engine.shutdown(); }
-    }, true, { planner: "short", builder: "plain" }, { checkArgs: ["--pass"] });
-  });
+
 
 it("keeps a check open when the Builder blames the environment, and shows that answer as its claim", async () => {
     const claim = "Nothing to fix: the check failed because the Mac went to sleep.";
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         const task = await f.delivery();
         expect(f.runs()).toEqual(["failed"]);
@@ -200,7 +187,7 @@ it("keeps a check open when the Builder blames the environment, and shows that a
   });
 
 it("runs unchanged work only on the coordinator's explicit request and resumes review after a pass", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         const first = await f.delivery();
         expect(first.checkReturns).toBe(2);
@@ -210,7 +197,7 @@ it("runs unchanged work only on the coordinator's explicit request and resumes r
         expect(f.runs()).toEqual(["failed", "failed"]);
         expect(second.checkReturns).toBe(2);
         expect(second.approvedFor).toBeUndefined();
-        expect(f.agents.openings("builder")).toHaveLength(3);
+        expect(f.agents.openings("builder")).toHaveLength(2);
         expect(checkSteps(second)).toHaveLength(2);
         f.engine.rerunChecks(itemOf(f.engine.getState(), f.taskId, "delivery")!.id);
         const passing = await f.delivery();

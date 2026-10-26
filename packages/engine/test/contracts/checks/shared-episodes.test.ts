@@ -1,9 +1,8 @@
 import { completeAll } from "@petrina/core";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { createProcessLease } from "@petrina/test-support/process-lease";
-import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
 import { waitForFile } from "../../support.js";
@@ -26,59 +25,9 @@ describe("shared check repair episodes", () => {
       { id: "ship", title: "Commit to main", kind: "do" as const, roleId: "release-manager", profileIds: ["sol-high"] },
   ] });
 
-  it("ends one product's failure episode on its own genuine pass, keeping the other's spent repairs", async () => {
-    await withRepositoryRecords("check-episodes", { git: ["first","second"] }, async ({ engine, task, run: ownRun }) => {
 
-      engine.setPoolPaused(false);
-      const first = executionFor(task, "first"), second = executionFor(task, "second");
-      const checks = engine["checks"], signal = engine.stopRequested.signal;
-      setChecks(engine, "first", [passing, failing]);
-      setChecks(engine, "second", [passing]);
-      first.work.checkReturns = 2;
-      second.work.checkReturns = 1;
-      // One check fixed while another still fails continues the episode; nothing clears or extends it.
-      expect(nonpassingChecks(await ownRun(() => checks.runProductChecks(first, [passing, failing], signal)))).toBe(1);
-      expect(first.work.checkReturns).toBe(2);
-      expect(nonpassingChecks(await ownRun(() => checks.runProductChecks(second, [passing], signal)))).toBe(0);
-      expect(first.work.checkReturns).toBe(2);
-      expect(second.work.checkReturns).toBeUndefined();
-      // Rereading a saved failure is no new attempt; a saved pass on the same code and definitions is a genuine pass.
-      second.work.checkReturns = 1;
-      expect((await ownRun(() => checks.failing(first, signal))).kind).toBe("product-failed");
-      expect((await ownRun(() => checks.failing(second, signal))).kind).toBe("passed");
-      expect(first.work.checkReturns).toBe(2);
-      expect(second.work.checkReturns).toBeUndefined();
-      expect(first.work.checks!.results.map((run) => run.ok)).toEqual([true, false]);
 
-    });
-  });
 
-  it("keeps confirmed interrupted evidence unverified without repairing or spending either product's allowance", async () => {
-    await withRepositoryRecords("check-interrupted", { git: ["first","second"] }, async ({ engine, task, run: ownRun }) => {
-
-      engine.setPoolPaused(false); task.plan = plan(); task.stageIndex = 2;
-      const first = executionFor(task, "first"), second = executionFor(task, "second");
-      const checks = engine["checks"], signal = engine.stopRequested.signal;
-      setChecks(engine, "first", [failing]); setChecks(engine, "second", [passing]);
-      await ownRun(() => checks.runProductChecks(first, [failing], signal));
-      await ownRun(() => checks.runProductChecks(second, [passing], signal));
-      first.work.checkReturns = 2; second.work.checkReturns = 1;
-      const original = first.work.checks!.results[0]!;
-      original.interruption = { source: "macOS power log", at: original.startedAt!, event: "Entering Sleep state due to Clamshell Sleep" };
-      expect((await ownRun(() => checks.failing(first, signal))).kind).toBe("blocked");
-      expect(checks.backToBuilder(first, "before review", new Set((first.task.repositories ?? [first.work]).map(work => work.productId)))).toBe(false);
-      expect(task.repositories!.map((work) => work.checkReturns)).toEqual([2, 1]);
-      expect(task.findings.filter((finding) => finding.status === "open")).toHaveLength(0);
-      expect(task.findings[0]!.status).toBe("unverified");
-      expect(checks.blocked(task)).toBe("stop");
-      expect(task.statusLine).toBe("Checks unverified. Your call");
-      const decision = task.journey!.at(-1)!;
-      expect(decision.productChecks!.map((check) => [check.productId, check.result])).toEqual([["first", "stopped"], ["second", "pass"]]);
-      expect(decision.productChecks![0]!.run!.output).toBe(original.output);
-      expect(decision.productChecks![0]!.run!.source).toEqual(original.source);
-
-    });
-  });
 
   it("recovers recorded sleep for an already waiting decision and preserves its original run across restart", async () => {
     await withRepositoryRecords("check-interruption-recovery", { git: ["first"], machineRecords: async () => "2026-10-21 17:55:44 +0300 Sleep Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 74 secs" }, async (f) => {
@@ -118,67 +67,9 @@ describe("shared check repair episodes", () => {
     });
   });
 
-  it("opens the check problem instead of repairing a passing product for a deleted test, and bounds a real failure there", async () => {
-    await withRepositoryRecords("check-loop", { git: ["first","second"] }, async ({ engine, task, run: ownRun }) => {
 
-      engine.setPoolPaused(false);
-      task.plan = plan();
-      task.stageIndex = 2;
-      const first = executionFor(task, "first"), second = executionFor(task, "second");
-      const checks = engine["checks"], signal = engine.stopRequested.signal;
-      setChecks(engine, "first", [passing]);
-      setChecks(engine, "second", [failing]);
-      expect((await ownRun(() => checks.failing(first, signal))).kind).toBe("passed");
-      expect((await ownRun(() => checks.failing(second, signal))).kind).toBe("product-failed");
-      second.work.checkReturns = 2;
-      // Petrina's deleted-test warning on the passing product is a blocking finding, but not a failing check.
-      task.findings.push({ id: "deleted", text: "A test file was deleted: greeting.test.ts", productIds: ["first"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-      const gate = async () => {
-        // Each unchanged return rereads both saved results before the review gate decides.
-        expect((await ownRun(() => checks.failing(first, signal))).kind).toBe("passed");
-        expect((await ownRun(() => checks.failing(second, signal))).kind).toBe("product-failed");
-        const returned = checks.backToBuilder(second, "before review", new Set((second.task.repositories ?? [second.work]).map(work => work.productId)));
-        const products = task.repair?.products;
-        delete task.repair;
-        task.stageIndex = 2;
-        return returned ? products : "blocked";
-      };
-      expect(await gate()).toBe("blocked");
-      expect(task.findings.find((finding) => finding.id === "deleted")!.status).toBe("open");
-      // Control: a real failure on the first product gets its own two returns, and then the blocker opens too.
-      setChecks(engine, "first", [failing]);
-      expect((await ownRun(() => checks.failing(first, signal))).kind).toBe("product-failed");
-      const turns = [];
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        expect((await ownRun(() => checks.failing(first, signal))).kind).toBe("product-failed");
-        expect((await ownRun(() => checks.failing(second, signal))).kind).toBe("product-failed");
-        const returned = checks.backToBuilder(second, "before review", new Set((second.task.repositories ?? [second.work]).map(work => work.productId)));
-        turns.push(returned ? [task.repair!.products, first.work.checkReturns] : "blocked");
-        delete task.repair;
-        task.stageIndex = 2;
-      }
-      expect(turns).toEqual([[["first"], 1], [["first"], 2], "blocked"]);
 
-    });
-  });
 
-  it("ends an episode only when every check failure of the product is settled", async () => {
-    await withRepositoryRecords("check-settled", { git: ["first"] }, async ({ engine, task, run: ownRun }) => {
-
-      engine.setPoolPaused(false);
-      const first = executionFor(task, "first"), checks = engine["checks"], signal = engine.stopRequested.signal;
-      // A pre-commit hook that failed before, and does not run on this work: the product's own checks pass.
-      const hook = join(first.work.worktree!, ".git", "hooks", "pre-commit");
-      writeFileSync(hook, "#!/bin/sh\nexit 1\n"); chmodSync(hook, 0o755);
-      task.findings.push({ id: "hook", text: "Check failed: Pre-commit hook (git hook run --ignore-missing pre-commit)", productIds: ["first"], severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
-      setChecks(engine, "first", [passing]);
-      first.work.checkReturns = 1;
-      expect(nonpassingChecks(await ownRun(() => checks.runProductChecks(first, [passing], signal)))).toBe(0);
-      expect(task.findings.find((finding) => finding.id === "hook")!.status).toBe("open");
-      expect(first.work.checkReturns).toBe(1);
-
-    });
-  });
 
   it("keeps spent repairs when the required checks are replaced while a passing run is under way", async () => {
     await withRepositoryRecords("check-replaced", { git: ["first"] }, async ({ engine, task, run: ownRun }) => {

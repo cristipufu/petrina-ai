@@ -19,7 +19,7 @@ const reviewStage = (task: Task) => task.plan!.stages.findIndex((stage) => stage
 
 describe.concurrent("failed checks are evidence until something changes", () => {
 it("keeps an early static failure current across returns and restart, with heavy checks visibly skipped", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         f.engine.setProductChecks(f.productId, [{ name: "Tests", command: f.command("--pass") }, { name: "Type check", command: f.command() }]);
         const task = await f.delivery();
@@ -42,10 +42,11 @@ it("keeps an early static failure current across returns and restart, with heavy
   });
 
 it("finishes the current reviewer but starts no delivery preparation while the pool is paused", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       const release = f.agents.release;
       try {
         f.setCheck("--pass");
+        f.start();
         await waitFor(() => {
           for (const prompt of f.agents.received()) if (prompt.role !== "code reviewer") release(prompt.session);
           coordinator(["plan"])(f.engine, f.engine.getState());
@@ -69,7 +70,7 @@ it("finishes the current reviewer but starts no delivery preparation while the p
   });
 
 it("reuses one passing run through read-only reviewers, acceptance and delivery without dropping an acceptance pass", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         f.setCheck("--pass");
         const task = await f.delivery();
@@ -89,7 +90,7 @@ it("reuses one passing run through read-only reviewers, acceptance and delivery 
   });
 
 it("spends no acceptance turn on unchanged failing code before asking the coordinator", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         const task = await f.delivery();
         expect(f.runs()).toEqual(["failed"]);
@@ -107,7 +108,7 @@ it("spends no acceptance turn on unchanged failing code before asking the coordi
   });
 
 it("asks the coordinator before final acceptance when later checks fail after their builder returns are exhausted", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         f.setCheck("--pass");
         const original = await f.delivery();
@@ -156,7 +157,7 @@ it("asks the coordinator before final acceptance when later checks fail after th
   });
 
 it("returns unchanged work twice without using a review round, keeps the failure after restart, and checks a real fix", async () => {
-    await fixture(async f => {
+    await fixture("workflow", async f => {
       try {
         let task = await f.delivery();
         const review = task.plan!.stages.find((stage) => stage.kind === "review-chain")!;
@@ -271,7 +272,7 @@ it("returns unchanged work twice without using a review round, keeps the failure
   });
 
 it("does not consume more rounds when reviews were already exhausted, including a saved run from before the update", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         // Start with passing checks and a real review that uses up its sole round.
         f.setCheck("--pass");
@@ -317,7 +318,7 @@ it("does not consume more rounds when reviews were already exhausted, including 
   });
 
 it("runs changed commands on the same code, including at final delivery preparation", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         let task = await f.delivery();
         const failedTree = task.checks!.tree;
@@ -339,7 +340,7 @@ it("runs changed commands on the same code, including at final delivery preparat
   });
 
 it("keeps a forced check decision and allows explicit reruns without approving delivery or replenishing repairs", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         const blocked = await f.delivery();
         expect(f.runs()).toEqual(["failed"]);
@@ -371,7 +372,7 @@ it("keeps a forced check decision and allows explicit reruns without approving d
   });
 
 it("keeps completed evidence when a changed check is cancelled, then runs the required check after restart", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         const captured = (await f.delivery()).checks;
         f.setCheck("--hold");
@@ -394,7 +395,7 @@ it("keeps completed evidence when a changed check is cancelled, then runs the re
   });
 
 it("requires a fresh final run when main moves after approval", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         f.setCheck("--pass");
         const reviewedTree = (await f.delivery()).checks!.tree;
@@ -415,7 +416,7 @@ it("requires a fresh final run when main moves after approval", async () => {
 
 for (const exhausted of [false, true]) {
     it(`reviews a real fix normally after port checks fail with builder returns ${exhausted ? "used up" : "available"}`, async () => {
-      await fixture(async f => {
+      await fixture("built", async f => {
         try {
           f.setCheck("--pass");
           await f.delivery();

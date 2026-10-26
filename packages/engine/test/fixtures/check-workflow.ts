@@ -8,9 +8,12 @@ import { coordinator, itemOf, makeProduct, taskOf, traceTaskWait, until, tempDir
 import { scriptedToolProbe } from "../scripted-probes.js";
 import { checkAgents, type CheckScript } from "./check-agents.js";
 import { checkCommand } from "./check-command.js";
+import { checksPrepared } from "./checks-prepared.js";
+
+export type CheckWorkflowStart = "workflow" | "built";
 
 /** Real Git, checks, SQLite, restarts and driver composition; provider replies use the shared session interface. */
-async function prepareWorkflow(root: string, lifetime: ReturnType<typeof directDrivers>, available: () => void, approveDelivery = true, scenario: CheckScript = { planner: "short" }, extra?: { checkArgs?: string[] } | string) {
+async function prepareWorkflow(entry: CheckWorkflowStart, root: string, lifetime: ReturnType<typeof directDrivers>, available: () => void, approveDelivery = true, scenario: CheckScript = { planner: "short" }, extra?: { checkArgs?: string[] } | string) {
   // Check-command options, or a trace label when a wait needs one.
   const checkOptions = typeof extra === "string" || extra == null ? {} : extra;
   const trace = typeof extra === "string" ? extra : undefined;
@@ -30,14 +33,22 @@ async function prepareWorkflow(root: string, lifetime: ReturnType<typeof directD
   engine.setProductDelivery(productId, "local", approveDelivery);
   const setCheck = (...args: string[]) => engine.setProductChecks(productId, [{ name: "Welcome", command: command(...args) }]);
   setCheck(...(checkOptions.checkArgs ?? []));
-  const taskId = engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
-  let deliveryWaits = 0;
+  const taskId = entry === "built" ? await checksPrepared(engine, root, productId, scenario, available)
+    : engine.addTask({ productId, title: "Add a greeting", description: "[no-check]" });
+  let started = entry === "workflow", deliveryWaits = 0;
+  const start = () => {
+    available();
+    if (started) return;
+    started = true;
+    engine.setPoolPaused(false); engine.schedule();
+  };
   return {
     agents, repo, taskId, productId, root, log, command, setCheck,
     get engine() { return engine; },
-    runs,
+    runs, start,
     run: <T>(start: () => Promise<T>) => { available(); return lifetime.run(engine, start); },
     delivery: () => {
+      start();
       const generation = engine;
       return lifetime.run(generation, () => traceTaskWait(trace ? `${trace}: delivery ${++deliveryWaits}` : undefined, () => generation.getState(), taskId,
         () => until(generation, (state) => !!itemOf(state, taskId, "delivery"), coordinator(["plan"])).then((state) => taskOf(state, taskId))));
@@ -78,7 +89,7 @@ export function checkWorkflowFixtures() {
     void stopped.then(() => active.delete(owner), () => { active.delete(owner); retained.add(root); });
     return stopped;
   };
-  async function use<T>(body: (fixture: CheckWorkflow) => Promise<T>, approveDelivery = true, scenario: CheckScript = { planner: "short" }, extra?: { checkArgs?: string[] } | string): Promise<T> {
+  async function use<T>(entry: CheckWorkflowStart, body: (fixture: CheckWorkflow) => Promise<T>, approveDelivery = true, scenario: CheckScript = { planner: "short" }, extra?: { checkArgs?: string[] } | string): Promise<T> {
     if (closing) throw new Error("Check workflow fixtures are closing");
     const root = tempDir("petrina-check-failure-"), owner = directDrivers(root);
     active.set(owner, root);
@@ -86,7 +97,7 @@ export function checkWorkflowFixtures() {
     const close = () => { closed = true; return closeOwner(owner, root); };
     const available = () => { if (closed || closing) throw new Error("Check workflow fixture is closing"); };
     const value = await setupWithCleanup(() => owner.prepare(async () => {
-      const fixture = await prepareWorkflow(root, owner, available, approveDelivery, scenario, extra);
+      const fixture = await prepareWorkflow(entry, root, owner, available, approveDelivery, scenario, extra);
       available();
       return body(fixture);
     }), close);

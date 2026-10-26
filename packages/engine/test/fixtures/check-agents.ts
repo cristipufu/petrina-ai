@@ -1,3 +1,4 @@
+import type { PlanDraft } from "@petrina/core";
 import { ReopenFailed, type StartAgentSession } from "@petrina/orchestrator";
 import { acceptanceAgents } from "./acceptance-agents.js";
 import { ReleaseEvents } from "../release-events.js";
@@ -16,6 +17,20 @@ export interface CheckScript {
 
 const label = (prompt: ScriptedPrompt) => prompt.roleId.replaceAll("-", " ");
 
+/** The same immutable accepted recipe feeds ordinary Planner replies and native prepared starts. */
+export function checkPlan(configured: CheckScript): PlanDraft {
+  const build = { kind: "do" as const, title: "Build", roleId: "builder", profileIds: [configured.planner === "tester-first" ? "opus-xhigh" : "sol-xhigh"] };
+  const review = { kind: "review-chain" as const, title: "Review", roleId: "code-reviewer", profileIds: configured.planner === "short" ? ["opus-high"] : configured.planner === "tester-first" ? ["opus-xhigh", "sol-xhigh"] : ["opus-high", "sol-high"], maxRounds: configured.planner === "short" ? 1 : 2 };
+  return { rationale: "Only the declared check workflow is under test.", stages: [
+    ...(configured.planner ? [] : [{ kind: "converge" as const, title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 }]),
+    build,
+    ...(configured.planner === "tester-first" ? [{ kind: "do" as const, title: "Try it like a user", roleId: "tester", profileIds: ["opus-high"] }] : []),
+    review,
+  ] };
+}
+
+export const checkBrief = () => ({ summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [], answers: [] });
+
 export function checkAgents() {
   let script: CheckScript = {};
   const releases = new ReleaseEvents();
@@ -27,17 +42,8 @@ export function checkAgents() {
     if (["build", "checks", "findings", "votes"].includes(prompt.result)) return replies.respond(prompt, signal);
     await beforeReply(prompt, signal);
     switch (prompt.result) {
-      case "plan": {
-        const build = { kind: "do", title: "Build", roleId: "builder", profileIds: [configured.planner === "tester-first" ? "opus-xhigh" : "sol-xhigh"] };
-        const review = { kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: configured.planner === "short" ? ["opus-high"] : configured.planner === "tester-first" ? ["opus-xhigh", "sol-xhigh"] : ["opus-high", "sol-high"], maxRounds: configured.planner === "short" ? 1 : 2 };
-        return scriptedResult({ rationale: "Only the declared check workflow is under test.", stages: [
-          ...(configured.planner ? [] : [{ kind: "converge", title: "Design", roleId: "architect", profileIds: ["opus-xhigh"], reviewerRoleId: "design-reviewer", reviewerProfileIds: ["sol-xhigh"], maxRounds: 2 }]),
-          build,
-          ...(configured.planner === "tester-first" ? [{ kind: "do", title: "Try it like a user", roleId: "tester", profileIds: ["opus-high"] }] : []),
-          review,
-        ] });
-      }
-      case "brief": return scriptedResult({ summary: "A greeting file.", forUsers: ["People see a greeting"], areas: ["Greeting"], acceptance: ["A greeting file exists"], risks: [], answers: [] });
+      case "plan": return scriptedResult(checkPlan(configured));
+      case "brief": return scriptedResult(checkBrief());
       case "objections": return scriptedResult({ objections: [] });
       case "guide": return scriptedResult({ missed: true, line: "Every greeting also shows on the welcome page.", why: "The reviewers checked the greeting only where it was added." });
       default: throw new Error(`Unexpected participant in the check fixture: ${prompt.result}`);

@@ -14,7 +14,7 @@ const fixture = workflows.use;
 
 describe.concurrent("failed checks are evidence until something changes", () => {
 it.skipIf(process.platform === "win32")("checks a corrected commit title and changed local hook even when the code stays the same", async () => {
-    await fixture(async f => {
+    await fixture("built", async f => {
       try {
         f.setCheck("--pass");
         const hook = join(f.repo, ".git", "hooks", "commit-msg");
@@ -57,7 +57,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
     }
 
     it.skipIf(process.platform === "win32")(`revalidates a passing ${hookName} launcher, preserves a failure across restart, and refreshes it on explicit Retry`, async () => {
-      await fixture(async f => {
+      await fixture("built", async f => {
         try {
           f.setCheck("--pass");
           const hook = await externalHook(f, true);
@@ -103,7 +103,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
     });
 
     it.skipIf(process.platform === "win32")(`explicit Retry refreshes a saved pass as well as the opaque ${hookName}`, async () => {
-      await fixture(async f => {
+      await fixture("built", async f => {
         try {
           f.setCheck("--pass");
           const hook = await externalHook(f, true);
@@ -129,7 +129,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
     });
 
     it.skipIf(process.platform === "win32")(`notices identical ${hookName} launchers in different folders, before review and delivery`, async () => {
-      await fixture(async f => {
+      await fixture("built", async f => {
         try {
           f.setCheck("--pass");
           const bad = join(f.root, "bad-hooks");
@@ -170,7 +170,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
 
     for (const originallyPassed of [false, true]) {
       it.skipIf(process.platform === "win32")(`reruns product checks before refreshing a saved ${hookName} ${originallyPassed ? "pass" : "failure"} with no recorded definition`, async () => {
-        await fixture(async f => {
+        await fixture("built", async f => {
           try {
             f.setCheck("--pass");
             const hook = join(f.repo, ".git", "hooks", hookName);
@@ -226,7 +226,7 @@ for (const hookName of ["pre-commit", "commit-msg"] as const) {
     }
 
     it.skipIf(process.platform === "win32")(`keeps an older failed suite while refreshing ${hookName}, until a real fix`, async () => {
-      await fixture(async f => {
+      await fixture("built", async f => {
         try {
           const hook = join(f.repo, ".git", "hooks", hookName);
           writeFileSync(hook, '#!/bin/sh\necho "Old hook failed"\nexit 1\n');
