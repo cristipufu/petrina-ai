@@ -46,7 +46,9 @@ export async function checkSetupFixture() {
     writeFixtureJson(config, {});
     const script = programs.write("check.ts", "local-check", () => `
 const { appendFileSync, existsSync, readFileSync, writeFileSync } = require("node:fs");
-const [kind, config, log] = process.argv.slice(2);
+const { join } = require("node:path");
+const [kind] = process.argv.slice(2);
+const config = join(import.meta.dir, "..", "commands.json"), log = join(import.meta.dir, "..", "invocations.jsonl");
 const choice = JSON.parse(readFileSync(config, "utf8"))[kind] ?? {};
 appendFileSync(log, JSON.stringify({ kind, pid: process.pid }) + "\\n");
 if (choice.mark) writeFileSync(choice.mark, "ready");
@@ -73,7 +75,7 @@ process.exit(choice.code ?? 0);`);
     task.stageIndex = 1; task.state = "running";
     engine.setPoolPaused(false);
     let commands: Record<string, SetupCommand> = {};
-    const argv = (kind: string) => [process.execPath, script, kind, config, log];
+    const argv = (kind: string) => [process.execPath, script, kind];
     const current = () => executionFor(engine.task(taskId)!);
     const run = (lowLevel = false) => {
       const actual = engine, scope = current(), stopped = controller.signal;
