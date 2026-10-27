@@ -1,13 +1,14 @@
 import { registerFixtureRoot } from "./fixture-retention.js";
 import { spawn, type ChildProcess } from "node:child_process";
-import { lstatSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { processList } from "@petrina/platform/process-tree";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { FixtureOperations } from "./fixture-operations.js";
 import { createProcessLease, type ProcessLease } from "./process-lease.js";
 import { CLEANUP_MS } from "./command-budgets.js";
-import { tempDir, removeDir, waitFor } from "./fixtures.js";
+import { tempDir, waitFor } from "./fixtures.js";
+import { removeFixtureRoot } from "./fixture-roots.js";
 import { currentSlow } from "./slow.js";
 
 export interface DefunctProcess {
@@ -62,11 +63,7 @@ export function defunctProcesses() {
       }, dispose() {},
     });
     const owner = new FixtureOperations({ ...deadlines, label: `Defunct fixture at ${root}`, stop: () => actors.close(),
-      dispose() {
-        removeDir(root);
-        try { lstatSync(root); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-        throw new Error("The collected defunct fixture root could not be removed");
-      },
+      dispose: () => removeFixtureRoot(root),
     });
     let observed = false;
     const entry = { seal() { accepting = false; }, close() {

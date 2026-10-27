@@ -8,8 +8,8 @@ import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
-import { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
-import { lstatSync } from "node:fs";
+import { tempDir, waitFor } from "@petrina/test-support/fixtures";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { readProcessList, parseChildState } from "@petrina/platform/process-tree";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 
@@ -78,11 +78,7 @@ export function stoppingActors() {
           const errors = [...domains, ...await cleanup, ...physical].flatMap(result => result.status === "rejected" ? [result.reason] : []);
           if (errors.length) throw new AggregateError(errors, "Stopping fixture cleanup was not confirmed");
         },
-        dispose() {
-          removeDir(root);
-          try { lstatSync(root); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-          throw new Error("The stopped ACP fixture root could not be removed");
-        },
+        dispose: () => removeFixtureRoot(root),
       });
       let observed = false;
       const entry = { seal() { accepting = false; }, close: () => {

@@ -1,6 +1,6 @@
 import { spyOn } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { lstatSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRun } from "../../src/acp-run.js";
 import { AgentBrowser } from "../../src/browser.js";
@@ -9,6 +9,7 @@ import { browserProcesses } from "@petrina/platform/browser-processes";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { createProcessLease, type ProcessLease } from "@petrina/test-support/process-lease";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
@@ -19,11 +20,6 @@ import { nativeSession } from "./native-session.js";
 type Result<T> = { kind: "value"; value: T } | { kind: "error"; error: unknown };
 const observe = <T>(work: Promise<T>): Promise<Result<T>> => work.then(value => ({ kind: "value", value }), error => ({ kind: "error", error }));
 const arm = (expired: () => void, ms: number) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
-function removeRoot(root: string) {
-  rmSync(root, { recursive: true, force: true });
-  try { lstatSync(root); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  throw new Error("Browser cleanup fixture root remains");
-}
 function captured(child: ChildProcess) {
   const exited = new Promise<number>((resolve, reject) => {
     child.once("exit", (code, signal) => code === null ? reject(new Error(`Owned helper ended by ${signal}`)) : resolve(code));
@@ -88,7 +84,7 @@ export function browserCleanupFixtures() {
           try { await browser?.close(); } catch (error) { errors.push(error); }
           if (errors.length) throw new AggregateError(errors, "Independent browser cleanup was not confirmed");
         },
-        dispose() { removeRoot(browsers); removeRoot(root); },
+        dispose() { removeFixtureRoot(browsers); removeFixtureRoot(root); },
       });
       let closeObserved = false;
       const entry = { close() {

@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { lstatSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FixtureOperations } from "./fixture-operations.js";
 import { registerFixtureRoot } from "./fixture-retention.js";
-import { tempDir, removeDir, waitFor } from "./fixtures.js";
+import { tempDir, waitFor } from "./fixtures.js";
+import { removeFixtureRoot } from "./fixture-roots.js";
 import { CLEANUP_MS } from "./command-budgets.js";
 import { currentSlow, SLOW } from "./slow.js";
 import type { ProcessLease } from "./process-lease.js";
@@ -26,11 +27,7 @@ export async function createGuardianLease(workerProgram: (body: string, port: nu
       child?.stdin?.end();
       return completion;
     },
-    dispose() {
-      removeDir(root);
-      try { lstatSync(root); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-      throw new Error("The ended guardian root could not be removed");
-    },
+    dispose: () => removeFixtureRoot(root),
   });
   try {
     writeFileSync(program, GUARDIAN_PROGRAM);

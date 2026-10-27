@@ -1,18 +1,11 @@
-import { lstatSync, rmSync } from "node:fs";
+import { removeFixtureRoot } from "@petrina/test-support/fixture-roots";
 import { FixtureOperations } from "@petrina/test-support/fixture-operations";
 import { CLEANUP_MS } from "@petrina/test-support/commands";
 import { SLOW } from "@petrina/test-support/slow";
 import { registerFixtureRoot } from "@petrina/test-support/fixture-retention";
 import { Engine, type EngineOptions } from "../engine.js";
 
-/** Preserve filesystem errors; disposal is complete only when the private folder is absent. */
-export function removeFixtureRoot(root: string): void {
-  try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
-  catch (cause) { throw new Error(`Direct-driver fixture could not remove ${root}`, { cause }); }
-  try { lstatSync(root); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  throw new Error(`Direct-driver fixture could not remove ${root}`);
-}
+export { removeFixtureRoot };
 
 /** Actual Engine generations plus manual operations omitted from the Engine's normal drain. */
 export function directDrivers(root: string, policy: { allowOverlap?: true; beforeRemoveRoot?(): void | Promise<void> } = {}) {
