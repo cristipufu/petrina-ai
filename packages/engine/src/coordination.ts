@@ -102,6 +102,9 @@ function voterPlaces(engine: Engine, task: Task) {
 }
 export function drainStatus(engine: Engine) {
   const state = engine.activeState();
+  const observed = engine.drainObservation();
+  const cleanupBlockers = observed.cleanup.blockers.map(blocker => ({ taskId: blocker.taskId, state: blocker.state,
+    reason: blocker.state === "failed" ? "Agent cleanup was not confirmed. Its working files were kept." : "Waiting for the agent's programs to stop." }));
   const active = state.tasks.filter((task) => !engine.isPausedCheck(task.id) && (engine.settling.has(task.id) || engine.drivers.has(task.id) || task.holdsSlot));
   const blockers = state.inbox
     .filter((item) => active.some((task) => task.id === item.taskId) && (item.blocking || item.kind === "screen"))
@@ -110,6 +113,10 @@ export function drainStatus(engine: Engine) {
   // start again, distinct from a screen request still keeping an admitted group open.
   return {
     drained: engine.inFlight() === 0 && blockers.length === 0,
+    pendingWork: observed.pending,
+    cleanupBlockers: cleanupBlockers.slice(0, 100),
+    cleanupBlockerCount: cleanupBlockers.length,
+    cleanupFailureCount: observed.cleanup.blockers.filter(blocker => blocker.state === "failed").length,
     active: active.slice(0, 100).map((task) => taskSummary(engine, task)),
     activeCount: active.length,
     blockers: blockers.slice(0, 100),

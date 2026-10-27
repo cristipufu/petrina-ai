@@ -77,7 +77,15 @@ export class EngineLifecycle implements LifecycleControl {
   private async settle(): Promise<void> {
     if (this.finishing) return;
     const op = this.store.current;
-    if (!op || op.phase !== "draining" || !drainStatus(this.engine).drained) return;
+    if (!op || op.phase !== "draining") return;
+    const drain = drainStatus(this.engine);
+    if (drain.pendingWork || drain.blockerCount) return;
+    if (drain.cleanupFailureCount) {
+      this.store.finish("failed", "Agent cleanup was not confirmed. Its working files were kept.");
+      if (["stop", "restart"].includes(op.kind)) this.onHandoff?.(false);
+      return;
+    }
+    if (!drain.drained) return;
     if (op.kind === "pause") {
       this.store.finish("completed");
       this.engine.commitNow();

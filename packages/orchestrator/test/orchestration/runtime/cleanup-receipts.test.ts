@@ -40,6 +40,43 @@ it("publishes a single stop before synchronous reentry and preserves the actual 
   expect(receipts.size).toBe(0);
 });
 
+for (const error of [new Error("Retained cleanup"), undefined]) it(`projects a scoped failed blocker separately from unrelated pending cleanup: ${String(error)}`, async () => {
+  const receipts = new CleanupReceipts(), peer = deferred<void>();
+  receipts.observe("pending", {}, peer.promise, "other-copy");
+  try {
+    await outcome(receipts.request("failed", {}, () => Promise.reject(error), "failed-copy"));
+    const snapshot = receipts.snapshot();
+    expect(snapshot.waiting).toBe(1);
+    expect(snapshot.blockers.map(row => [row.taskId, row.resource, row.state])).toEqual([
+      ["pending", "other-copy", "pending"], ["failed", "failed-copy", "failed"],
+    ]);
+    expect(snapshot.failure).toBeDefined();
+    expect(snapshot.failure!.error).toBe(error);
+    expect(snapshot.blockers[1]!.failure!.error).toBe(error);
+    expect(receipts.snapshot("failed", "other-copy")).toEqual({ waiting: 0, blockers: [] });
+    expect(receipts.snapshot("pending").failure).toBeUndefined();
+    expect(receipts.size).toBe(2); expect(receipts.pending).toBe(1);
+  } finally { peer.resolve(); }
+  await receipts.wait("pending");
+  expect(receipts.snapshot().waiting).toBe(0);
+  expect(receipts.has("failed")).toBe(true);
+  expect(receipts.has("pending")).toBe(false);
+});
+
+it("keeps ordered peer failures in the same snapshot used by the cleanup barrier", async () => {
+  const receipts = new CleanupReceipts(), first = new Error("First retained owner");
+  await Promise.allSettled([receipts.request("one", {}, () => Promise.reject(first)), receipts.request("two", {}, () => Promise.reject(undefined))]);
+  const snapshot = receipts.snapshot(), waited = await outcome(receipts.wait());
+  expect(snapshot.waiting).toBe(0); expect(snapshot.blockers).toHaveLength(2);
+  expect(snapshot.failure?.error).toBeInstanceOf(AggregateError);
+  expect((snapshot.failure!.error as AggregateError).errors[0]).toBe(first);
+  expect((snapshot.failure!.error as AggregateError).errors[1]).toBeUndefined();
+  expect(waited.kind).toBe("error");
+  if (waited.kind !== "error" || !(waited.error instanceof AggregateError)) throw new Error("The retained barrier lost its failures");
+  expect(waited.error.errors[0]).toBe(first); expect(waited.error.errors[1]).toBeUndefined();
+  expect(receipts.size).toBe(2);
+});
+
 it("keeps different tasks and working copies independent while their native cleanup is pending", async () => {
   const receipts = new CleanupReceipts(), left = deferred<void>(), right = deferred<void>();
   receipts.observe("left", {}, left.promise, "copy-a");
@@ -108,6 +145,8 @@ for (const failure of ["incomplete", "native-rejection"] as const) it(`wakes a f
     expect((await outcome(receipts.wait("task", "copy"))).kind).toBe("error");
     expect(receipts.has("task")).toBe(true);
     expect(receipts.pending).toBe(1);
+    expect(receipts.snapshot().waiting).toBe(0);
+    expect(receipts.snapshot().blockers[0]?.state).toBe("failed");
   } finally { native.resolve(); rawStop.resolve(true); }
   await rawStop.promise;
   expect((await outcome(receipts.wait("task"))).kind).toBe("error");

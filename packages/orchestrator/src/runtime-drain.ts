@@ -2,6 +2,8 @@ export interface DrainEffects {
   requestStop(): void;
   stopped(): boolean;
   inFlight(): number;
+  /** Present even when the original failure is undefined. It never confirms cleanup. */
+  failure?(): { error: unknown } | undefined;
 }
 export interface DrainClock { now(): number; sleep(ms: number): Promise<void> }
 
@@ -13,9 +15,16 @@ export async function drainRuntime(effects: DrainEffects, clock: DrainClock, lim
   while (!effects.stopped()) {
     const left = effects.inFlight();
     if (left !== last) { onWait?.(left); last = left; }
-    if (left === 0 || clock.now() - started >= limitMs) return left;
+    if (left === 0) {
+      const failure = effects.failure?.();
+      if (failure) throw failure.error;
+      return 0;
+    }
+    if (clock.now() - started >= limitMs) return left;
     await clock.sleep(500);
   }
+  const failure = effects.failure?.();
+  if (failure) throw failure.error;
   return 0;
 }
 

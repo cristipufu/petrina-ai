@@ -190,7 +190,12 @@ export async function launch(options: LaunchOptions): Promise<void> {
       })
       .then((left) => {
         if (left) return;
-        stop();
+        return stop();
+      }).catch(error => {
+        console.error("Petrina could not confirm cleanup while stopping:", error);
+        // The existing shutdown still joins every owner. A known cleanup failure is
+        // a nonzero terminal result, never permission to force or remove its files.
+        void stop(1).catch(error => console.error("While stopping:", error));
       });
   };
   process.on("SIGINT", stopGently);

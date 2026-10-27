@@ -7,6 +7,10 @@ import { WaitClock } from "@petrina/storage/worklog";
 import { SLOW } from "@petrina/test-support/slow";
 import { TestResult } from "../../../src/roles.js";
 import { turnCleanupFixtures, type Observed } from "../../fixtures/turn-cleanup.js";
+import { LifecycleStore } from "@petrina/storage/lifecycle-store";
+import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
+import { EngineLifecycle } from "../../../src/lifecycle.js";
+import { drainStatus } from "../../../src/coordination.js";
 
 const fixtures = turnCleanupFixtures();
 afterEach(() => fixtures.close());
@@ -130,6 +134,7 @@ for (const error of [new Error("Opening failed before returning a session"), und
       options.callbacks.onCleanupIncomplete?.();
       throw error;
     });
+
     const opened = await f.observe(() => f.engine["turns"]["openAgentRun"](f.scope, role, profile, f.root, f.abort.signal,
       { roleId: role.id, profile, waits: new WaitClock(), journeyId: "failed-opening", agentSeat: role.id }, { main: true }));
     expect(launches).toBe(1);
@@ -151,3 +156,77 @@ for (const error of [new Error("Opening failed before returning a session"), und
     f.acknowledgeRetained(owned, cleanup);
   } finally { await f.finish(); }
 }, 30_000 * SLOW);
+
+for (const [kind, stop] of [["pause", "false"], ["stop", "reject-error"], ["restart", "reject-undefined"]] as const) {
+  it(`reports retained cleanup as a failed ${kind} after unrelated admitted work settles`, async () => {
+    const f = await fixtures.fixture({ stop });
+    const peer = Promise.withResolvers<void>(), release = () => peer.resolve();
+    let lifecycle: EngineLifecycle | undefined, store: LifecycleStore | undefined;
+    // File-hook fixture cleanup aborts before joining its operations, even if Bun timed out the body.
+    f.abort.signal.addEventListener("abort", release, { once: true });
+    const closeRecords = () => {
+      const errors: unknown[] = [];
+      try { lifecycle?.close(); lifecycle = undefined; } catch (error) { errors.push(error); }
+      try { store?.close(); store = undefined; } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, "Lifecycle control records did not close");
+    };
+    f.restore(closeRecords);
+    const cleanup = async () => {
+      release(); f.abort.signal.removeEventListener("abort", release);
+      const errors: unknown[] = [];
+      try { closeRecords(); } catch (error) { errors.push(error); }
+      try { await f.finish(); } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, "Retained-drain control cleanup failed");
+    };
+    await setupWithCleanup(async () => {
+      const returned = await f.observe(() => f.engine["turns"].turn(f.scope, "tester", "opus-high", () => [], TestResult, f.abort.signal));
+      expect(returned.kind).toBe("error");
+      if (returned.kind !== "error") throw new Error("The failed cleanup accepted a read-only turn");
+      f.engine.fail(f.task.id, returned.error);
+      const before = drainStatus(f.engine);
+      expect(before.drained).toBe(false); expect(before.activeCount).toBe(0); expect(before.blockerCount).toBe(0);
+      expect(before.pendingWork).toBe(0); expect(before.cleanupFailureCount).toBe(1);
+      expect(before.cleanupBlockers).toEqual([{ taskId: f.task.id, state: "failed", reason: "Agent cleanup was not confirmed. Its working files were kept." }]);
+      expect(f.engine.inFlight()).toBeGreaterThan(0);
+      expect(f.engine.agentCleanup.has(f.task.id)).toBe(true); expect(existsSync(f.root)).toBe(true);
+      const holding = f.observe(() => f.engine.trackWork(peer.promise));
+      let handoffs = 0;
+      const signals: boolean[] = [];
+      await f.owner.run(f.engine, async () => { store = new LifecycleStore(f.engine.dataDir); });
+      if (f.abort.signal.aborted) throw new Error("Lifecycle control setup finished after fixture close");
+      lifecycle = new EngineLifecycle(f.engine, store!, async () => { handoffs++; }, active => signals.push(active));
+      const requestId = `retained-${kind}`;
+      expect((await f.owner.run(f.engine, () => lifecycle!.request(kind, { requestId }))).outcome).toBe("pending");
+      const waiting = await f.observe(() => f.engine.drain(0));
+      expect(waiting.kind).toBe("value");
+      if (waiting.kind !== "value") throw new Error("Retained failure skipped unrelated admitted work");
+      expect(waiting.value).toBeGreaterThan(0);
+      await f.owner.run(f.engine, () => lifecycle!["settle"]());
+      expect(store!.current?.phase).toBe("draining"); expect(handoffs).toBe(0);
+      expect(signals).toEqual(kind === "pause" ? [] : [true]);
+      release(); await holding;
+      await f.owner.run(f.engine, () => lifecycle!["settle"]());
+      expect(store!.current?.phase).toBe("failed");
+      expect((lifecycle.receipt(requestId)?.operation as { error: string }).error).toBe("Agent cleanup was not confirmed. Its working files were kept.");
+      expect(lifecycle.receipt(requestId)?.outcome).toBe("failed");
+      expect((await f.owner.run(f.engine, () => lifecycle!.request(kind, { requestId }))).outcome).toBe("failed");
+      expect(lifecycle.status().status).toBe("failed"); expect(lifecycle.status().drained).toBe(false);
+      expect(signals).toEqual(kind === "pause" ? [] : [true, false]); expect(handoffs).toBe(0);
+      const drained = await f.observe(() => f.engine.drain(Infinity));
+      expect(drained.kind).toBe("error");
+      if (drained.kind !== "error") throw new Error("Retained failure became a successful manual drain");
+      expect(drained.error).toBe(returned.error);
+      expect(f.engine.agentCleanup.has(f.task.id)).toBe(true); expect(f.storeClosed).toBe(false);
+      closeRecords();
+      const shutdown = await f.observe(() => f.engine.shutdown());
+      expect(shutdown.kind).toBe("error");
+      if (shutdown.kind !== "error") throw new Error("A failed lifecycle granted successful shutdown");
+      expect(shutdown.error).toBe(returned.error); expect(f.storeClosed).toBe(true);
+      const owned = await f.closeSubject(); expect(owned.kind).toBe("error"); expect(existsSync(f.root)).toBe(true);
+      f.acknowledgeRetained(owned, returned.error);
+    }, cleanup);
+    await cleanup();
+  }, 30_000 * SLOW);
+}

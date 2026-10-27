@@ -1,4 +1,10 @@
 interface Failure { error: unknown }
+interface CleanupBlocker {
+  taskId: string;
+  resource?: string;
+  state: "pending" | "failed";
+  failure?: Failure;
+}
 function completion() {
   let resolve!: () => void, reject!: (error: unknown) => void;
   const promise = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
@@ -118,12 +124,23 @@ export class CleanupReceipts {
       pending.forEach(work => seen.add(work));
       await Promise.allSettled(pending);
     }
-    const errors = [...this.active].filter(matches).flatMap(receipt => {
-      const failure = this.failure(receipt);
-      return failure ? [failure.error] : [];
-    });
-    if (errors.length === 1) throw errors[0];
-    if (errors.length) throw new AggregateError(errors, "Agent cleanup was not confirmed for every owner");
+    const failure = this.snapshot(taskId, resource).failure;
+    if (failure) throw failure.error;
+  }
+
+  /** In-memory failure is retained ownership, rather than work that can finish by waiting. */
+  snapshot(taskId?: string, resource?: string): { waiting: number; blockers: CleanupBlocker[]; failure?: Failure } {
+    const blockers: CleanupBlocker[] = [...this.active]
+      .filter(receipt => (taskId === undefined || receipt.taskId === taskId) && (resource === undefined || receipt.resource === resource))
+      .map(receipt => {
+        const failure = this.failure(receipt);
+        return { taskId: receipt.taskId, ...(receipt.resource !== undefined ? { resource: receipt.resource } : {}),
+          state: failure ? "failed" : "pending", ...(failure ? { failure } : {}) };
+      });
+    const errors = blockers.flatMap(blocker => blocker.failure ? [blocker.failure.error] : []);
+    const failure = errors.length === 1 ? { error: errors[0] } : errors.length
+      ? { error: new AggregateError(errors, "Agent cleanup was not confirmed for every owner") } : undefined;
+    return { waiting: blockers.length - errors.length, blockers, ...(failure ? { failure } : {}) };
   }
 
   has(taskId: string): boolean { return [...this.active].some(receipt => receipt.taskId === taskId); }

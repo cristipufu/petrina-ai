@@ -49,3 +49,37 @@ it("keeps sleep prevention for each live ownership source and never after shutdo
     expect(keepsIdleSleep({ ...owners, stopped: true })).toBe(false);
   }
 });
+
+for (const error of [new Error("Cleanup retained"), undefined, new AggregateError([new Error("First owner"), undefined], "Peer cleanup retained")]) {
+  it(`finishes unrelated admitted work before reporting the exact retained failure: ${String(error)}`, async () => {
+    let at = 0, index = 0, requested = false, failureReads = 0;
+    const counts = [2, 1, 0], seen: number[] = [], waits: number[] = [];
+    const result = await drainRuntime({ requestStop() { requested = true; }, stopped: () => false,
+      inFlight() { expect(requested).toBe(true); return counts[index++]!; },
+      failure() { failureReads++; expect(index).toBe(3); return { error }; },
+    }, { now: () => at, async sleep(ms) { waits.push(ms); at += ms; } }, Infinity, left => seen.push(left))
+      .then(value => ({ kind: "value" as const, value }), error => ({ kind: "error" as const, error }));
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("Retained cleanup became a successful drain");
+    expect(result.error).toBe(error); expect(failureReads).toBe(1);
+    expect(seen).toEqual([2, 1, 0]); expect(waits).toEqual([500, 500]);
+  });
+}
+
+it("keeps the original deadline while unrelated work remains despite a known cleanup failure", async () => {
+  let at = 0, failureReads = 0;
+  const result = await drainRuntime({ requestStop() {}, stopped: () => false, inFlight: () => 1,
+    failure() { failureReads++; return { error: new Error("Retained owner") }; },
+  }, { now: () => at, async sleep(ms) { at += ms; } }, 1_000);
+  expect(result).toBe(1); expect(at).toBe(1_000); expect(failureReads).toBe(0);
+});
+
+it("does not report already-stopped retained uncertainty as a successful drain", async () => {
+  let reads = 0;
+  const result = await drainRuntime({ requestStop() {}, stopped: () => true, inFlight() { reads++; return 0; }, failure: () => ({ error: undefined }) },
+    { now: () => 0, async sleep() { throw new Error("A stopped owner must not wait"); } }, Infinity)
+    .then(value => ({ kind: "value" as const, value }), error => ({ kind: "error" as const, error }));
+  expect(result.kind).toBe("error");
+  if (result.kind !== "error") throw new Error("Missing failure value became missing failure presence");
+  expect(result.error).toBeUndefined(); expect(reads).toBe(0);
+});

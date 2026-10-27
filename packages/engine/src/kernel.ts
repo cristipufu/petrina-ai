@@ -511,8 +511,18 @@ export abstract class Kernel {
 
   /** Agents whose work is lost by a restart: reviewers and voters working side by side (never reopened) and a Release Manager mid-delivery. */
   inFlight(): number {
+    return this.inFlightWithCleanup(this.agentCleanup.size);
+  }
+
+  private inFlightWithCleanup(cleanup: number): number {
     const agents = this.runs.size + [...this.helperRuns.values()].reduce((sum, runs) => sum + runs.size, 0);
-    return agents || inFlightWork({ agents: 0, settling: [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length, copyCleanups: this.copyCleanups.size, background: this.backgroundWork.size + this.agentCleanup.size, terminals: this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length });
+    return agents || inFlightWork({ agents: 0, settling: [...this.settling.keys()].filter(id => !this.isPausedCheck(id)).length, copyCleanups: this.copyCleanups.size, background: this.backgroundWork.size + cleanup, terminals: this.s.tasks.filter(task => task.driving && !this.isPausedCheck(task.id)).length });
+  }
+
+  /** A failed receipt still blocks reuse/disposal, but cannot finish by waiting in this engine. */
+  drainObservation() {
+    const cleanup = this.agentCleanup.snapshot();
+    return { pending: this.inFlightWithCleanup(cleanup.waiting), cleanup };
   }
 
   /** Keep macOS awake only while this engine still owns active work or its cleanup. */
@@ -545,7 +555,8 @@ export abstract class Kernel {
     return drainRuntime({
       requestStop: () => { this.draining = true; this.stopRequested.abort(); this.checkQueue.pump(); },
       stopped: () => this.stopped,
-      inFlight: () => this.inFlight(),
+      inFlight: () => this.drainObservation().pending,
+      failure: () => this.agentCleanup.snapshot().failure,
     }, { now: () => Date.now(), sleep: ms => Bun.sleep(ms) }, limitMs, onWait);
   }
 
