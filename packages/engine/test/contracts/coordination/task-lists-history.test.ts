@@ -3,12 +3,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 describe("focused coordination and durable decisions", () => {
 it("bounds and filters lists before pagination, rejects changed continuations and keeps task queries small", async () => {
-    const { e, c, taskId } = await fixture();
+  return owners.use(async ({ e, c, taskId }) => {
+
     for (let i = 0; i < 130; i++) e.addTask({ productId: "product", title: `Work ${i}`, description: "x".repeat(8000) });
     const page = await c.call("task.list", {});
     expect((page.items as unknown[]).length).toBe(25);
@@ -24,10 +24,12 @@ it("bounds and filters lists before pagination, rejects changed continuations an
     expect(JSON.stringify(await c.call("task.inspect", { taskId })).length).toBeLessThan(2000);
   });
 });
+});
 
 describe("focused coordination and durable decisions", () => {
 it("reads and filters paged history without loading archived conversations, and keeps focused waits bounded", async () => {
-    const { e, c, taskId } = await fixture();
+  return owners.use(async ({ e, c, taskId }) => {
+
     const template = structuredClone(e.task(taskId)!);
     e.s.products.push({ id: "other", name: "Other", repo: "local/other", tone: "green" });
     for (let index = 0; index < 150; index++) {
@@ -74,10 +76,12 @@ it("reads and filters paged history without loading archived conversations, and 
     expect((await c.call("task.history", { cursor: page.next })).outcome).toBe("changed");
   });
 });
+});
 
 describe("focused coordination and durable decisions", () => {
 it("lists shared current work, history and inbox requests under each product without reading archived bodies", async () => {
-    const { e, c, taskId } = await fixture();
+  return owners.use(async ({ e, c, taskId }) => {
+
     e.s.products.push({ id: "other", name: "Other", repo: "local/other", tone: "green" });
     const sharedId = e.addTask({ productId: "product", title: "Shared transfer", worksOn: ["product", "other"].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" })) });
     const otherId = e.addTask({ productId: "other", title: "Other transfer" });
@@ -127,4 +131,5 @@ it("lists shared current work, history and inbox requests under each product wit
       expect((await c.call("inbox.list", { taskId: "missing" })).outcome).toBe("missing");
     } finally { e.store.history.get = readBody; }
   });
+});
 });

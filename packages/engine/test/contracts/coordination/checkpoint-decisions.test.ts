@@ -5,12 +5,12 @@ import { requestRevision } from "../../../src/coordination.js";
 
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 describe("focused coordination and durable decisions", () => {
 it("binds checkpoint approval to source and all assignments, while unrelated activity stays valid", async () => {
-    const { e, c, taskId, offer, inspect } = await fixture();
+  return owners.use(async ({ e, c, taskId, offer, inspect }) => {
+
     const t = e.task(taskId)!;
     executionFor(t).work.source = {
       product: { id: "product", name: "Example", repo: "local/example" },
@@ -39,10 +39,12 @@ it("binds checkpoint approval to source and all assignments, while unrelated act
     expect((await c.call("inbox.approve", { ...args, requestId: "already-gone" })).outcome).toBe("handled");
   });
 });
+});
 
 describe("focused coordination and durable decisions", () => {
 it("serializes app plan edits with decisions and returns the saved outcome after a lost reply", async () => {
-    const { e, c, taskId, offer, inspect } = await fixture();
+  return owners.use(async ({ e, c, taskId, offer, inspect }) => {
+
     e.task(taskId)!.plan = {
       stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["opus-high"] }],
       rationale: "",
@@ -57,10 +59,12 @@ it("serializes app plan edits with decisions and returns the saved outcome after
     expect((await approve).outcome).toBe("changed");
   });
 });
+});
 
 describe("focused coordination and durable decisions", () => {
 it("separates questions, once-only permissions, checkpoints, lessons and review-guide proposals", async () => {
-    const { e, c, offer, inspect } = await fixture();
+  return owners.use(async ({ e, c, offer, inspect }) => {
+
     for (const kind of ["question", "permission", "learnings", "guide", "screen", "stuck", "driving"] as const) {
       const itemId = offer(kind, "- First useful lesson\n- Second useful lesson"),
         read = await inspect(itemId);
@@ -100,9 +104,11 @@ it("separates questions, once-only permissions, checkpoints, lessons and review-
     );
   });
 });
+});
 
 it("exposes every saved disagreement objection and its answer through paged inspection and design reads", async () => {
-  const { e, c, taskId, task } = await fixture();
+  return owners.use(async ({ e, c, taskId, task }) => {
+
   task.brief = { summary: "Proposed design", forUsers: [], areas: [], acceptance: [], risks: [] };
   task.objections = [{ id: "objection", round: 1, text: "Blocking objection\n" + "Full available evidence\n".repeat(1000), blocking: true, raisedBy: "sol-xhigh", status: "open", answer: "Recorded answer" }];
   e.s.inbox.push({ id: "disagreement", taskId, kind: "disagreement", title: "Decide the disagreement", body: "Choose how to proceed", at: 1, blocking: false });
@@ -119,4 +125,5 @@ it("exposes every saved disagreement objection and its answer through paged insp
   task.objections[0]!.answer = "A changed answer";
   expect((await c.call("inbox.approve", { itemId: "disagreement", revision, requestId: "old-evidence" })).outcome).toBe("changed");
   expect(e.s.inbox).toHaveLength(1);
+  });
 });

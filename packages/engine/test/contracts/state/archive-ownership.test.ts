@@ -1,12 +1,11 @@
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { coordinatorRecords } from "../../fixtures/coordinator-records.js";
-import { removeDir } from "../../fixtures.js";
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-const fixture = () => coordinatorRecords(roots);
+import { coordinatorRecordFixtures } from "../../fixtures/coordinator-records.js";
+const owners = coordinatorRecordFixtures();
+afterAll(() => owners.close());
 
 it("evicts only dirty archive entries without retiring live tasks during a details read", async () => {
-  const { engine, task } = await fixture();
+  return owners.use(async ({ engine, task, owner: lifetime }) => {
+
   try {
     const ids = Array.from({ length: 18 }, (_, index) => engine.addTask({ productId: "p", title: `History ${index}`, backlog: true }));
     for (const id of ids) engine.cancel(id);
@@ -15,7 +14,12 @@ it("evicts only dirty archive entries without retiring live tasks during a detai
     engine.save(false);
     task.state = "cancelled"; task.column = "done"; task.finishedAt = Date.now(); engine.commit(task);
     const liveBefore = engine.store.database.query("SELECT id FROM active_tasks ORDER BY id").all();
-    const save = spyOn(engine.store, "save"), archive = spyOn(engine.store, "saveArchivedTask");
+    lifetime.check();
+    const save = spyOn(engine.store, "save");
+    lifetime.onStop(() => save.mockRestore());
+lifetime.check();
+    const archive = spyOn(engine.store, "saveArchivedTask");
+    lifetime.onStop(() => archive.mockRestore());
     try {
       expect(engine.taskDetails(ids[16]!)).toBeDefined();
       expect(save).not.toHaveBeenCalled(); expect(archive).not.toHaveBeenCalled();
@@ -39,10 +43,12 @@ it("evicts only dirty archive entries without retiring live tasks during a detai
       expect(engine.taskDetails(task.id)).toBeDefined();
     } finally { save.mockRestore(); archive.mockRestore(); }
   } finally { await engine.shutdown(); }
+  });
 });
 
 it("keeps clean archives out of general commits and eviction, while persisting decisions on archived offers", async () => {
-  const { engine } = await fixture();
+  return owners.use(async ({ engine }) => {
+
   const guarded: object[] = [];
   try {
     const ids = Array.from({ length: 18 }, (_, index) => engine.addTask({ productId: "p", title: `Old ${index}`, backlog: true }));
@@ -70,4 +76,5 @@ it("keeps clean archives out of general commits and eviction, while persisting d
     engine.removeQueued(old.id, id!);
     expect(engine.store.history.get(old.id)!.queued.some(message => message.id === id)).toBe(false);
   } finally { for (const session of guarded) Reflect.deleteProperty(session, "toJSON"); await engine.shutdown(); }
+  });
 });

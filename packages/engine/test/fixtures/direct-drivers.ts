@@ -13,6 +13,27 @@ export function directDrivers(root: string, policy: { allowOverlap?: true; befor
   const active = new Map<Engine, FixtureOperations>();
   const completed = new WeakSet<Engine>();
   let closing = false, constructing = false;
+  const births = new Set<Promise<void>>();
+  type Stops = { generations: PromiseSettledResult<void>[]; constructions: PromiseSettledResult<void>[] };
+  let stopping: Promise<void> | undefined, stopResults: Promise<Stops> | undefined;
+  const stopAll = (): Promise<void> => {
+    if (stopping) return stopping;
+    closing = true;
+    const stopped = Promise.withResolvers<void>(), observed = Promise.withResolvers<Stops>();
+    stopping = stopped.promise; stopResults = observed.promise;
+    // Publish both receipts before a generation's shutdown can synchronously reenter close.
+    const generations = Promise.allSettled([...active.values()].map(generation => generation.close()));
+    const constructions = Promise.allSettled([...births]);
+    void Promise.all([generations, constructions]).then(([generations, constructions]) => observed.resolve({ generations, constructions }), observed.reject);
+    void stopResults.then(results => {
+      const failed = [...results.generations, ...results.constructions].filter(result => result.status === "rejected");
+      if (failed.length) stopped.reject(new AggregateError(failed.map(result => result.reason), "Engine generations or constructions could not all be stopped"));
+      else stopped.resolve();
+    }, stopped.reject);
+    // Root close also reads the tagged outcomes below; keep this original public promise observed.
+    void stopping.catch(() => undefined);
+    return stopping;
+  };
   const deadlines = {
     allowanceMs: CLEANUP_MS * SLOW,
     arm(expired: () => void, ms: number) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
@@ -20,8 +41,10 @@ export function directDrivers(root: string, policy: { allowOverlap?: true; befor
   const owner = new FixtureOperations({
     ...deadlines, label: `Direct-driver fixture at ${root}`,
     stop: async () => {
-      const settled = await Promise.allSettled([...active.values()].map(generation => generation.close()));
-      const failed = settled.filter(result => result.status === "rejected");
+      void stopAll().catch(() => undefined);
+      const settled = await stopResults!;
+      // Birth failures already belong to the root's reserved construction operation. Report them once.
+      const failed = settled.generations.filter(result => result.status === "rejected");
       if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Engine generations could not all be stopped");
     },
     dispose: policy.beforeRemoveRoot ? async () => { await policy.beforeRemoveRoot!(); removeFixtureRoot(root); } : () => removeFixtureRoot(root),
@@ -35,6 +58,8 @@ export function directDrivers(root: string, policy: { allowOverlap?: true; befor
     const construction = new Promise<void>((resolve, reject) => { born = resolve; failed = reject; });
     // Constructor callbacks can synchronously reenter close before a generation exists in active.
     // Publish that birth's ownership first, so root cleanup also joins any late-born shutdown.
+    births.add(construction);
+    void construction.then(() => births.delete(construction), () => undefined);
     void owner.run(() => construction).catch(() => undefined);
     constructing = true;
     let engine: Engine;
@@ -66,7 +91,7 @@ export function directDrivers(root: string, policy: { allowOverlap?: true; befor
     return generation.close();
   };
   const close = (): Promise<void> => { closing = true; return owner.close(); };
-  return { prepare, open, run, stop, close };
+  return { prepare, open, run, stop, stopAll, close };
 }
 
 /** Observe every fixture owner before reporting any failure; retain shared stand-in folders on uncertainty. */

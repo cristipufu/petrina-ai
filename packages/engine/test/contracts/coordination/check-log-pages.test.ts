@@ -17,12 +17,12 @@ import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 import { interfaceClient } from "../../fixtures/coordinator-interface.js";
 import { checkSetupFixture } from "../../fixtures/check-setup.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 for (const kind of ["cli", "mcp"] as const) {
 it(`${kind} rejects stale saved-explanation continuations without returning a fresh partial page`, async () => {
-    const { home, engine, task } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, engine, task, owner: lifetime }) => {
+
     const directory = join(home, "checks", task.id);
     mkdirSync(directory, { recursive: true });
     const logPath = join(directory, "empty.log");
@@ -30,7 +30,9 @@ it(`${kind} rejects stale saved-explanation continuations without returning a fr
     const run: CheckRun = { name: "Check", command: "stand-in", ok: false, ms: 1, output: "", logComplete: false };
     executionFor(task).work.checks = { at: 1, results: [run] };
     const token = "stale-explanation-key-12345678901";
+    lifetime.check();
     const server = serve(engine, { port: 0, token });
+    lifetime.onStop(() => server.stop(true));
     writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
     const call = interfaceClient(kind, home);
     try {
@@ -55,12 +57,15 @@ it(`${kind} rejects stale saved-explanation continuations without returning a fr
         }
         expect((await call("journey.check", args)).text).toBe(run.output.slice(0, 40));
       }
-    } finally { server.stop(true); }
-  });
+    } finally { await server.stop(true); }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+});
 }
 
 it("labels older check logs without creation identity as unverified and uses only their saved excerpt", async () => {
-  const { home, task, coordination } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, task, coordination }) => {
+
   const directory = join(home, "checks", task.id);
   mkdirSync(directory, { recursive: true });
   const logPath = join(directory, "older.log");
@@ -87,10 +92,13 @@ it("labels older check logs without creation identity as unverified and uses onl
   expect(failedCapture.text).toBe(saved);
   expect(failedCapture.commandOutcome).toBe("unknown");
   expect(failedCapture.reportedOk).toBe(false);
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
 });
 
 it("paginates legacy saved failure details independently of a long or empty process log", async () => {
-  const { home, task, coordination } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, task, coordination }) => {
+
   const directory = join(home, "checks", task.id);
   mkdirSync(directory, { recursive: true });
   const logPath = join(directory, "recorded.log");
@@ -122,6 +130,8 @@ it("paginates legacy saved failure details independently of a long or empty proc
     expect((await coordination.call("journey.check", { taskId: task.id, index: 0, section: "result", cursor: savedResult.next })).outcome).toBe("changed");
     run.output = saved;
   }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
 });
 
 for (const kind of ["cli", "mcp"] as const) {
@@ -182,7 +192,7 @@ it(`${kind} inspects compact checkpoints and follows only the selected saved dia
     const { operation: savedOperation, ...savedArgs } = check.diagnostics.savedResultRead;
     const continued = await call(savedOperation, { ...savedArgs, cursor: check.diagnostics.savedResult.next });
     expect(check.diagnostics.savedResult.text + continued.text).toBe(work.checks!.results[0]!.output);
-  } finally { server.stop(true); }
+  } finally { await server.stop(true); }
   } finally { await native.close(); }
 });
 }

@@ -13,12 +13,12 @@ import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 import { interfaceClient } from "../../fixtures/coordinator-interface.js";
 import { createdFailure, retarget } from "../../fixtures/coordinator-check-log.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 for (const kind of ["cli", "mcp"] as const) {
 it(`${kind} refuses a hard-linked connection file and preserves ordinary logs, symbolic-link refusal and paginated saved explanations`, async () => {
-    const { home, engine, task } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, engine, task, owner: lifetime }) => {
+
     const directory = join(home, "checks", task.id);
     mkdirSync(directory, { recursive: true });
     const saved = "Ordinary failure note\n" + "Additional saved explanation\n".repeat(1000);
@@ -28,7 +28,9 @@ it(`${kind} refuses a hard-linked connection file and preserves ordinary logs, s
     executionFor(task).work.checks = { at: 1, results: [run] };
     task.journey = [{ id: "recorded-check", kind: "petrina", work: "checks", startedAt: 1, endedAt: 2, round: 1, sub: 0, productChecks: [{ name: run.name, result: "fail", run }] }];
     const token = "hard-link-test-connection-key-123";
+    lifetime.check();
     const server = serve(engine, { port: 0, token });
+    lifetime.onStop(() => server.stop(true));
     const connection = { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token };
     writeConnection(home, connection);
     const call = interfaceClient(kind, home);
@@ -90,13 +92,16 @@ it(`${kind} refuses a hard-linked connection file and preserves ordinary logs, s
       while (page.next) { page = await call("journey.check", { taskId: task.id, index: 0, cursor: page.next }); text += page.text; }
       expect(text).toBe(ordinary);
       expect(text.includes(token)).toBe(false);
-    } finally { server.stop(true); }
-  });
+    } finally { await server.stop(true); }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+});
 }
 
 for (const kind of ["cli", "mcp"] as const) {
 it(`${kind} refuses a substituted connection file carrying the recorded device and file number`, async () => {
-    const { home, engine, task } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, engine, task, owner: lifetime }) => {
+
     const log = "Original process diagnostic\n".repeat(400);
     const saved = "Ordinary saved explanation\n".repeat(400);
     const run = await createdFailure(home, task.id, log);
@@ -107,7 +112,9 @@ it(`${kind} refuses a substituted connection file carrying the recorded device a
     const itemId = "substituted-preview";
     engine.s.inbox.push({ id: itemId, taskId: task.id, kind: "delivery", title: "Inspect the delivery", body: "Check the recorded diagnostics", at: 2, blocking: false });
     const token = "fixed-number-test-connection-key-1";
+    lifetime.check();
     const server = serve(engine, { port: 0, token });
+    lifetime.onStop(() => server.stop(true));
     const connection = { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token };
     writeConnection(home, connection);
     const call = interfaceClient(kind, home);
@@ -149,13 +156,16 @@ it(`${kind} refuses a substituted connection file carrying the recorded device a
       expect(diagnostics.completeness).toBe("missing-file");
       expect(diagnostics.savedResult.text).toBe(saved.slice(0, 500));
       expect(diagnostics.processExcerpt).toBeUndefined();
-    } finally { server.stop(true); }
-  });
+    } finally { await server.stop(true); }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+});
 }
 
 for (const kind of ["cli", "mcp"] as const) {
 it(`${kind} rejects log shortcuts and replaced-file continuations while preserving ordinary logs and excerpts`, async () => {
-    const { home, engine, task } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, engine, task, owner: lifetime }) => {
+
     const directory = join(home, "checks", task.id);
     mkdirSync(directory, { recursive: true });
     const log = "Original diagnostic near the beginning\n" + "Remaining diagnostic line\n".repeat(10);
@@ -166,7 +176,9 @@ it(`${kind} rejects log shortcuts and replaced-file continuations while preservi
     utimesSync(logPath, timestamp, timestamp);
     executionFor(task).work.checks = { at: 1, results: [run] };
     const token = "private-test-connection-key-12345";
+    lifetime.check();
     const server = serve(engine, { port: 0, token });
+    lifetime.onStop(() => server.stop(true));
     writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
     const call = interfaceClient(kind, home);
     try {
@@ -201,6 +213,8 @@ it(`${kind} rejects log shortcuts and replaced-file continuations while preservi
       let page = await call("journey.check", args), full = String(page.text);
       while (page.next) { page = await call("journey.check", { ...args, cursor: page.next }); full += page.text; }
       expect(full).toBe(log);
-    } finally { server.stop(true); }
-  });
+    } finally { await server.stop(true); }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+});
 }

@@ -1,7 +1,6 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 
-import { Engine } from "../../engine.js";
 import { Coordination } from "../../../src/coordination.js";
 import { EngineClient } from "../../client.js";
 import { EngineLifecycle } from "../../../src/lifecycle.js";
@@ -9,7 +8,7 @@ import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { serve } from "../../../src/server.js";
 import { writeConnection } from "../../../src/instance.js";
 
-import { tempDir, SLOW, waitFor } from "../../support.js";
+import { SLOW, waitFor } from "../../support.js";
 import { serial, type Result } from "../../../src/coordination.js";
 import { FolderLock } from "../../../src/instance.js";
 
@@ -17,12 +16,12 @@ import { exitCode } from "../../../src/coordination-cli.js";
 
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { roots, fixture } = owners;
 afterAll(() => owners.close());
 
 describe("focused coordination and durable decisions", () => {
 it("uses one drain definition for admitted steps, questions, permissions and cleanup, while saved screen work waits separately", async () => {
-    const { e, home, taskId, offer } = await fixture();
+  return owners.use(async ({ e, home, taskId, offer, owner: lifetime }) => {
+
     await Promise.all([...e.backgroundWork]);
     let release!: () => void;
     const work = new Promise<void>((resolve) => {
@@ -42,12 +41,17 @@ it("uses one drain definition for admitted steps, questions, permissions and cle
         cleaned = resolve;
       }),
     );
+    lifetime.onStop(() => { release(); cleaned(); e.settling.delete(taskId); });
+    lifetime.check();
     const store = new LifecycleStore(home);
+    const closeStore = lifetime.afterBody(() => store.close());
     let stops = 0;
+    lifetime.check();
     const life = new EngineLifecycle(e, store, async () => {
       stops++;
       store.finish("completed");
     });
+    lifetime.onStop(() => life.close());
     try {
       expect((life.status().blockers as { kind: string }[]).map((item) => item.kind)).toEqual(["question", "permission", "screen"]);
       expect((await life.request("stop", { requestId: "drain-everything" })).outcome).toBe("pending");
@@ -71,24 +75,28 @@ it("uses one drain definition for admitted steps, questions, permissions and cle
       release();
       cleaned();
       life.close();
-      store.close();
+      await closeStore();
       e.settling.delete(taskId);
     }
   });
 });
+});
 
 for (const kind of ["stop", "restart"] as const) {
 it(`signals only accepted desktop ${kind} handoffs, and clears a failed handoff`, async () => {
-  const home = tempDir("petrina-desktop-handoff-signal-");
-  roots.push(home);
-  const e = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+  return owners.useEngine(async ({ e, home, owner: lifetime }) => {
   e.schedule = () => {};
   new Coordination(e);
-  const store = new LifecycleStore(home);
+  lifetime.check();
+    const store = new LifecycleStore(home);
+    const closeStore = lifetime.afterBody(() => store.close());
   const signals: boolean[] = [];
-  const lifecycle = new EngineLifecycle(e, store, async () => { throw new Error("controlled handoff failure"); }, (active) => signals.push(active));
+  lifetime.check();
+    const lifecycle = new EngineLifecycle(e, store, async () => { throw new Error("controlled handoff failure"); }, (active) => signals.push(active));
+    lifetime.onStop(() => lifecycle.close());
   let unblock!: () => void;
   const hold = new Promise<void>((resolve) => { unblock = resolve; });
+  lifetime.onStop(() => { unblock(); e.settling.delete("admitted"); });
   e.settling.set("admitted", hold);
   try {
     expect((await lifecycle.request(kind, { requestId: `accepted-${kind}` })).outcome).toBe("pending");
@@ -102,36 +110,44 @@ it(`signals only accepted desktop ${kind} handoffs, and clears a failed handoff`
     expect((await lifecycle.request(kind, { requestId: `accepted-${kind}` })).outcome).toBe("failed");
     expect(signals).toEqual([true, true, false]);
   } finally {
-    unblock(); e.settling.delete("admitted"); lifecycle.close(); store.close(); await e.shutdown();
+    unblock(); e.settling.delete("admitted"); lifecycle.close(); await closeStore(); await e.shutdown();
   }
+
+  }, { prefix: "petrina-desktop-handoff-signal-", options: { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] } });
 });
 }
 
 for (const next of ["resume", "stop", "restart"]) {
 it(`a lost ${next} reply during a pause cannot reserve a receipt without applying its live engine effects`, async () => {
-  const home = tempDir("petrina-lost-lifecycle-");
-  roots.push(home);
-  const e = new Engine(home, { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+  return owners.useEngine(async ({ e, home, owner: lifetime }) => {
   e.schedule = () => {};
   const ownership = FolderLock.take(home)!;
-  const store = new LifecycleStore(home);
+  const releaseOwnership = lifetime.afterBody(() => ownership.release());
+  lifetime.check();
+    const store = new LifecycleStore(home);
+    const closeStore = lifetime.afterBody(() => store.close());
   let stops = 0;
-  const lifecycle = new EngineLifecycle(e, store, async () => { stops++; store.finish("completed"); });
+  lifetime.check();
+    const lifecycle = new EngineLifecycle(e, store, async () => { stops++; store.finish("completed"); });
+    lifetime.onStop(() => lifecycle.close());
   const token = "lost-reply-connection-key-12345678";
-  const server = serve(e, { port: 0, token, lifecycle });
+  lifetime.check();
+    const server = serve(e, { port: 0, token, lifecycle });
+    lifetime.onStop(() => server.stop(true));
   writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
   let unblock!: () => void;
   let queued: Promise<Result> | undefined;
+  lifetime.onStop(() => { unblock?.(); e.settling.clear(); });
   e.settling.set("admitted-work", new Promise(() => {}));
   try {
     expect((await lifecycle.request("pause", { requestId: "pause" })).outcome).toBe("pending");
     const gate = new Promise<void>((resolve) => { unblock = resolve; });
-    const held = serial(e, () => gate);
+    const held = lifetime.prepare(() => serial(e, () => gate));
     // Stand-in transport: submit behind another app action, then lose the reply. Offline
     // recovery runs before the serialized engine request has had a chance to apply itself.
     const dropped = new EngineClient(home, () => { throw new Error("must not launch"); });
     (dropped as unknown as { request: (name: string, args: Record<string, unknown>) => Promise<Result> }).request = async (name, args) => {
-      queued = lifecycle.request(name.slice(7), args);
+      queued = lifetime.prepare(() => lifecycle.request(name.slice(7), args));
       return { outcome: "disconnected" };
     };
     const args = { requestId: "lost-control" };
@@ -160,28 +176,38 @@ it(`a lost ${next} reply during a pause cannot reserve a receipt without applyin
   } finally {
     unblock?.();
     await queued;
-    e.settling.clear(); lifecycle.close(); server.stop(true); ownership.release(); store.close();
+    e.settling.clear(); lifecycle.close(); await server.stop(true); await releaseOwnership(); await closeStore();
     await e.shutdown();
   }
+
+  }, { prefix: "petrina-lost-lifecycle-", options: { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] } });
 });
 }
 
 for (const next of ["resume", "stop", "restart"]) {
 it(`allows ${next} to replace a draining pause while retaining stop/restart admission rules`, async () => {
-  const { e, home, taskId, task } = await fixture();
-  const store = new LifecycleStore(home);
+  return owners.use(async ({ e, home, taskId, task, owner: lifetime }) => {
+
+  lifetime.check();
+    const store = new LifecycleStore(home);
+    const closeStore = lifetime.afterBody(() => store.close());
   let stops = 0;
-  const lifecycle = new EngineLifecycle(e, store, async () => { stops++; store.finish("completed"); });
-  const server = serve(e, { port: 0, token: "regression-connection-key-12345678", lifecycle });
+  lifetime.check();
+    const lifecycle = new EngineLifecycle(e, store, async () => { stops++; store.finish("completed"); });
+    lifetime.onStop(() => lifecycle.close());
+  lifetime.check();
+    const server = serve(e, { port: 0, token: "regression-connection-key-12345678", lifecycle });
+    lifetime.onStop(() => server.stop(true));
   writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token: "regression-connection-key-12345678" });
   const client = new EngineClient(home);
   let settle!: () => void;
   e.settling.set(taskId, new Promise<void>((resolve) => { settle = resolve; }));
+  lifetime.onStop(() => { settle(); e.settling.delete(taskId); });
   task.state = "running";
   task.holdsSlot = true;
   e.s.inbox.push({ id: "permission", taskId, kind: "permission", title: "Still needs permission", blocking: true, at: 1 });
   try {
-    const pauseWait = client.call("engine.pause", { requestId: "pause", wait: true, timeoutMs: 3000 });
+    const pauseWait = lifetime.prepare(() => client.call("engine.pause", { requestId: "pause", wait: true, timeoutMs: 3000 }));
     await waitFor(() => store.current?.kind === "pause", "the accepted pause");
     expect((await client.call("engine.pause", { requestId: "follow-pause" })).outcome).toBe("pending");
     expect((await client.call("engine.start", { requestId: "find-engine" })).outcome).toBe("completed");
@@ -201,7 +227,8 @@ it(`allows ${next} to replace a draining pause while retaining stop/restart admi
     if (next !== "resume") await waitFor(() => store.current?.phase === "completed", "the replacement drain to finish");
     expect(stops).toBe(next === "resume" ? 0 : 1);
   } finally {
-    settle(); e.settling.delete(taskId); lifecycle.close(); server.stop(true); store.close();
+    settle(); e.settling.delete(taskId); lifecycle.close(); await server.stop(true); await closeStore();
   }
+  });
 });
 }

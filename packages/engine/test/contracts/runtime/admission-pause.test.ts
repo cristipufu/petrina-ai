@@ -5,12 +5,12 @@ import { z } from "zod";
 import { makeProduct, waitFor } from "../../fixtures.js";
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 for (const step of ["delivery", "agent"]) {
 it(`releases a ${step} reservation when pause arrives during preparation, and resumes it exactly once`, async () => {
-  const { e, home, taskId, task, c } = await fixture();
+  return owners.use(async ({ e, home, taskId, task, c, owner: lifetime }) => {
+
   // Startup cleanup also belongs to a drain. Finish it before isolating the admitted step's reservation.
   await e.waitUntilReady(); await Promise.all([...e.backgroundWork]);
   e.schedule = () => e["driver"].schedule();
@@ -24,6 +24,7 @@ it(`releases a ${step} reservation when pause arrives during preparation, and re
   if (step !== "delivery") task.agent = { roleId: "builder", profileId: "opus-high", since: 1, step: 1 };
   let release!: () => void;
   const hold = new Promise<void>((resolve) => { release = resolve; });
+  lifetime.onStop(() => release());
   let attempts = 0, published = 0;
   const finish = () => { task.state = "done"; task.holdsSlot = false; delete task.agent; e.commit(); return "stop" as const; };
   if (step === "delivery") {
@@ -59,16 +60,19 @@ it(`releases a ${step} reservation when pause arrives during preparation, and re
     expect(attempts).toBe(2);
     expect(published).toBe(step === "delivery" ? 1 : 0);
   } finally { release(); }
+  });
 });
 }
 
 it("releases the agent reservation when pause arrives during check preparation, retaining one pending attempt for resume", async () => {
-  const { e, home, taskId, task, c } = await fixture();
+  return owners.use(async ({ e, home, taskId, task, c, owner: lifetime }) => {
+
   await e.waitUntilReady(); await Promise.all([...e.backgroundWork]);
   e.schedule = () => { e.checkQueue.pump(); e["driver"].schedule(); };
   e["driver"]["prepare"] = async () => {};
   e.tidy = () => {};
   const product = await makeProduct(home);
+  lifetime.check();
   e.s.products[0]!.path = product;
   executionFor(task).work.worktree = product;
   task.plan = { stages: [{ id: "step", title: "Work", kind: "do", roleId: "builder", profileIds: ["opus-high"] }], rationale: "Do the work", plannerProfileId: "opus-high" };
@@ -79,8 +83,10 @@ it("releases the agent reservation when pause arrives during check preparation, 
   let release!: () => void, preparing!: () => void;
   const hold = new Promise<void>(resolve => { release = resolve; });
   const prepared = new Promise<void>(resolve => { preparing = resolve; });
+  lifetime.onStop(() => release());
   const checks = e["checks"];
   const captureState = checks["captureState"].bind(checks);
+  lifetime.onStop(() => { checks["captureState"] = captureState; });
   let captures = 0, attempts = 0;
   checks["captureState"] = async (...args: Parameters<typeof captureState>) => {
     const state = await captureState(...args);
@@ -128,4 +134,5 @@ it("releases the agent reservation when pause arrives during check preparation, 
     expect(e.checkQueue.running).toBe(0);
     expect(e.waitingChecks.size).toBe(0);
   } finally { release(); checks["captureState"] = captureState; }
+  });
 });

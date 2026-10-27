@@ -7,9 +7,11 @@ afterAll(() => metadata.close());
 
 describe.concurrent("when take over is not available", () => {
   it("is refused for a task with no agent, with a plain reason", async () => {
-    const { engine, taskId } = await metadata.fixture();
+  return metadata.use(async ({ engine, taskId }) => {
+
     await expectRejection(engine.takeOver(taskId), TAKE_OVER_WORDS.noAgent);
     expect((engine.getState() as State).terminals).toEqual([]);
     expect(() => engine.setTerminal("iterm")).toThrow("That terminal is not on this machine");
   });
+});
 });

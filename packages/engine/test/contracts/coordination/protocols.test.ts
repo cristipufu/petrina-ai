@@ -13,7 +13,6 @@ import { mcpTools } from "../../../src/mcp-catalog.js";
 import { CLI, engineProcessCases, tempDir } from "../../support.js";
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 const peerCases = engineProcessCases();
 afterEach(() => peerCases.close());
@@ -22,9 +21,13 @@ describe("the shared terminal and MCP connection", () => {
 it("uses typed discoverable tools and the same engine for both interfaces without exposing its key", async () => {
     const peerRoot = tempDir("petrina-coordination-peer-");
     return peerCases.use(peerRoot, async peers => {
-      const { e, home, taskId, offer, inspect } = await fixture(),
-        store = new LifecycleStore(home);
+  return owners.use(async ({ e, home, taskId, offer, inspect, owner: lifetime }) => {
+      lifetime.check();
+    const store = new LifecycleStore(home);
+    const closeStore = lifetime.afterBody(() => store.close());
       let life: EngineLifecycle | undefined, server: ReturnType<typeof serve> | undefined;
+    lifetime.onStop(() => life?.close());
+    lifetime.onStop(() => server?.stop(true));
       const token = "coordination-key-0123456789012345";
       try {
       life = new EngineLifecycle(e, store, async () => {});
@@ -138,8 +141,9 @@ it("uses typed discoverable tools and the same engine for both interfaces withou
         }
       } finally {
         try { life?.close(); }
-        finally { try { store.close(); } finally { await server?.stop(true); } }
+        finally { try { await closeStore(); } finally { await server?.stop(true); } }
       }
-    });
+  });
+});
   });
 });

@@ -1,13 +1,12 @@
 import { headroom, limitOf } from "@petrina/core";
 import { afterAll, expect, it, spyOn } from "bun:test";
-import { coordinatorRecords } from "../../fixtures/coordinator-records.js";
-import { removeDir } from "../../fixtures.js";
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
-const fixture = () => coordinatorRecords(roots);
+import { coordinatorRecordFixtures } from "../../fixtures/coordinator-records.js";
+const owners = coordinatorRecordFixtures();
+afterAll(() => owners.close());
 
 it("starts available Antigravity models while Argon's weekly quota is exhausted", async () => {
-  const { engine, task } = await fixture();
+  return owners.use(async ({ engine, task, owner: lifetime }) => {
+
   engine.schedule = () => {};
   engine.s.profiles = engine.s.profiles.filter(profile => profile.toolId === "antigravity");
   const argon = engine.s.profiles.find(profile => profile.modelId?.includes("argon"))!;
@@ -25,17 +24,22 @@ it("starts available Antigravity models while Argon's weekly quota is exhausted"
     entry.state = "waiting"; entry.stageIndex = 0;
     entry.plan = { rationale: "Build", plannerProfileId: flash.id, stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: [index ? flash.id : argon.id] }] };
   }
-  const start = spyOn(engine["driver"].workflow, "startDriver").mockImplementation(() => {});
+  lifetime.check();
+    const start = spyOn(engine["driver"].workflow, "startDriver");
+    lifetime.onStop(() => start.mockRestore());
+    start.mockImplementation(() => {});
   try {
     engine["driver"].schedule();
     expect(start.mock.calls.map(args => args[0])).toEqual([task.id, other.id]);
     expect([task.agent?.profileId, other.agent?.profileId]).toEqual([flash.id, flash.id]);
     expect(engine.s.pool.limited?.every(limit => limit.model === "argon")).toBe(true);
   } finally { start.mockRestore(); await engine.shutdown(); }
+  });
 });
 
 it("replaces an account's old quota groups after a subscription change without clearing unrelated or retry limits", async () => {
-  const { engine } = await fixture();
+  return owners.use(async ({ engine }) => {
+
   const now = Date.now(), resetsAt = now + 3_600_000;
   const alpha = { id: "alpha", toolId: "provider", model: "Group Alpha", modelId: "group-alpha", effort: "high" as const };
   const report = (model: string, kind = "seven_day", utilization = 0.01) => ({ toolId: "provider", model, kind, name: model === "group" ? "Shared models" : model, utilization, status: utilization === 1 ? "rejected" as const : "allowed" as const, resetsAt });
@@ -66,4 +70,5 @@ it("replaces an account's old quota groups after a subscription change without c
     expect(limitOf(persisted, alpha, now)).toBeUndefined();
     expect(persisted.limited!.some(entry => entry.toolId === "other")).toBe(true);
   } finally { await engine.shutdown(); }
+  });
 });

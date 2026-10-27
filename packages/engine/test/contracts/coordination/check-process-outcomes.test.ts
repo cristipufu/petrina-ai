@@ -4,7 +4,6 @@ import { afterAll, expect, it } from "bun:test";
 
 import { join } from "node:path";
 import type { CheckRun } from "@petrina/core";
-import { Engine } from "../../engine.js";
 
 import { serve } from "../../../src/server.js";
 import { writeConnection } from "../../../src/instance.js";
@@ -12,13 +11,13 @@ import { engineEnv, runChecks, SLOW } from "../../support.js";
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 import { interfaceClient } from "../../fixtures/coordinator-interface.js";
 const owners = coordinatorApiFixtures();
-const { engines, fixture } = owners;
 afterAll(() => owners.close());
 const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
 
 for (const kind of ["cli", "mcp"] as const) {
 it(`${kind} reads saved startup failures beside real process output, including historical evidence after restart`, async () => {
-    const { home, engine, task } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, engine, task, owner: lifetime }) => {
+
     const runs = await runChecks(home, [
       { name: "Missing", argv: [join(home, "no-such-check")] },
       { name: "Failed", argv: [process.execPath, "-e", 'console.error("Error printed by the check"); process.exit(1)'] },
@@ -32,7 +31,9 @@ it(`${kind} reads saved startup failures beside real process output, including h
     executionFor(task).work.checks = { at: 1, sha: "original", results: runs };
     task.journey = [{ id: "original-checks", kind: "petrina", work: "checks", startedAt: 1, endedAt: 2, round: 1, sub: 0, productChecks: runs.map((run) => ({ name: run.name, result: run.ok ? "pass" : "fail", run })) }];
     const token = "check-outcome-key-123456789012345";
+    lifetime.check();
     let server = serve(engine, { port: 0, token });
+    lifetime.onStop(() => server.stop(true));
     const connect = () => writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
     connect();
     const call = interfaceClient(kind, home);
@@ -57,10 +58,10 @@ it(`${kind} reads saved startup failures beside real process output, including h
       }
       executionFor(task).work.checks = { at: 3, sha: "later", results: [runs[2]!] };
       task.state = "paused";
-      server.stop(true);
+      await server.stop(true);
       await engine.shutdown();
-      const restarted = new Engine(home, { ...options, admissionsClosed: true });
-      engines.push(restarted);
+      const restarted = await lifetime.restart(engine, { ...options, admissionsClosed: true });
+      lifetime.check();
       server = serve(restarted, { port: 0, token });
       connect();
       const original = await call("journey.check", { taskId: task.id, nodeId: "original-checks", index: 0 });
@@ -75,6 +76,8 @@ it(`${kind} reads saved startup failures beside real process output, including h
       const failed = await call("journey.check", { taskId: task.id, nodeId: "original-checks", index: 1 });
       expect(failed.text).toBe("Error printed by the check\n");
       expect(failed.completeness).toBe("complete");
-    } finally { server.stop(true); }
-  });
+    } finally { await server.stop(true); }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+});
 }

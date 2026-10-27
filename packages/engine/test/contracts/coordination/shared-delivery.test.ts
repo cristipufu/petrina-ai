@@ -15,12 +15,12 @@ import { coordinationCli } from "../../../src/coordination-cli.js";
 
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 describe("focused coordination and durable decisions", () => {
 it("distinguishes confirmed delivery, awaiting merge, landing, cancellation and unconfirmed mark done", async () => {
-    const { e, c, taskId } = await fixture();
+  return owners.use(async ({ e, c, taskId }) => {
+
     const task = e.task(taskId)!;
     task.state = "done";
     expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("landing", "marked-done");
@@ -39,9 +39,11 @@ it("distinguishes confirmed delivery, awaiting merge, landing, cancellation and 
     expect((await c.call("watch.wait", { target: "task", taskId, condition: "delivered", timeoutMs: 0 })).outcome).toBe("timed-out");
   });
 });
+});
 
 it("cancels an awaiting-merge task using the existing cancellation behavior", async () => {
-  const { e, c, taskId, task } = await fixture();
+  return owners.use(async ({ e, c, taskId, task }) => {
+
   task.state = "pr-open";
   executionFor(task).work.pr = { number: 1, state: "open", url: "https://github.com/example/product/pull/1", openedAt: 1 };
   const args = { taskId, requestId: "cancel-awaiting-merge" };
@@ -49,20 +51,24 @@ it("cancels an awaiting-merge task using the existing cancellation behavior", as
   expect(e.task(taskId)!.state as string).toBe("cancelled");
   expect(executionFor(task).work.pr!.state).toBe("open");
   expect((await c.call("task.cancel", args)).outcome).toBe("completed");
+  });
 });
 
 it("keeps closed, unmerged pull requests unconfirmed in inspection, history and waits", async () => {
-  const { e, c, taskId, task } = await fixture();
+  return owners.use(async ({ e, c, taskId, task }) => {
+
   task.state = "done";
   executionFor(task).work.pr = { number: 1, state: "closed", url: "https://github.com/example/product/pull/1", openedAt: 1 };
   expect((await c.call("task.inspect", { taskId })).task).toHaveProperty("deliveryConfirmed", false);
   e.save();
   expect((await c.call("task.history", { taskId })).items).toEqual([expect.objectContaining({ landing: "closed", deliveryConfirmed: false })]);
   for (const condition of ["delivered", "landed"]) expect((await c.call("watch.wait", { target: "task", taskId, condition, timeoutMs: 0 })).outcome).toBe("timed-out");
+  });
 });
 
 it("keeps a one-product task you marked done unconfirmed after a later lookup finds its pull request merged", async () => {
-  const { e, c, taskId, task } = await fixture();
+  return owners.use(async ({ e, c, taskId, task }) => {
+
   const confirmed = e.task(e.addTask({ productId: "product", title: "Published by Petrina" }))!;
   const merged = { number: 1, state: "merged" as const, url: "https://github.com/example/product/pull/1", openedAt: 1 };
   for (const [entry, cleanup] of [[task, { markedDone: true, pullRequest: "none" as const }], [confirmed, undefined]] as const) {
@@ -90,10 +96,12 @@ it("keeps a one-product task you marked done unconfirmed after a later lookup fi
   expect(e.activeState().tasks.map((entry) => entry.id)).not.toContain(taskId);
   expect(await delivery(taskId)).toEqual(unconfirmed);
   expect((await c.call("watch.wait", { target: "task", taskIds: [confirmed.id, taskId], condition: "landed", timeoutMs: 0 })).outcome).toBe("timed-out");
+  });
 });
 
 it("judges shared delivery across every product in CLI and MCP summaries, waits and History", async () => {
-  const { e, home } = await fixture();
+  return owners.use(async ({ e, home, owner: lifetime }) => {
+
   e.s.products.push({ id: "other", name: "Other", repo: "local/other", tone: "green" });
   const worksOn = ["product", "other"].map((productId) => ({ productId, startFrom: { kind: "default" as const }, delivery: "pull-request" as const }));
   const work = (productId: string, state: "open" | "merged" | "closed") => ({
@@ -104,7 +112,9 @@ it("judges shared delivery across every product in CLI and MCP summaries, waits 
   // The lead merged first; its companion pull request is still open.
   const awaiting = shared("Shared change", [work("product", "merged"), work("other", "open")], { state: "pr-open", column: "ready", statusLine: "Waiting for every pull request to merge" });
   const token = "shared-landing-connection-key-1234";
-  const server = serve(e, { port: 0, token });
+  lifetime.check();
+    const server = serve(e, { port: 0, token });
+    lifetime.onStop(() => server.stop(true));
   writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token });
   const client = new EngineClient(home, () => { throw new Error("coordination cannot launch"); });
   const interfaces: Record<string, (name: string, args: Record<string, unknown>) => Promise<Result>> = {
@@ -112,7 +122,10 @@ it("judges shared delivery across every product in CLI and MCP summaries, waits 
     cli: async (name, args) => {
       const argv = [...name.split("."), "--json"];
       for (const [key, value] of Object.entries(args)) argv.push(`--${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`, typeof value === "string" ? value : JSON.stringify(value));
-      const output = spyOn(console, "log").mockImplementation(() => {});
+      lifetime.check();
+    const output = spyOn(console, "log");
+    lifetime.onStop(() => output.mockRestore());
+    output.mockImplementation(() => {});
       try { await coordinationCli(argv, client); return JSON.parse(String(output.mock.calls.at(-1)![0])); } finally { output.mockRestore(); }
     },
   };
@@ -128,7 +141,7 @@ it("judges shared delivery across every product in CLI and MCP summaries, waits 
     // A pending landed wait finishes only once the companion lands too.
     const before = await wait(interfaces.mcp!, "landed", [awaiting.id]);
     const listeners = e.listeners.size;
-    const waits = Object.values(interfaces).map((call) => wait(call, "landed", [awaiting.id], { marker: before.marker, timeoutMs: 5000 * SLOW }));
+    const waits = Object.values(interfaces).map((call) => lifetime.prepare(() => wait(call, "landed", [awaiting.id], { marker: before.marker, timeoutMs: 5000 * SLOW })));
     await waitFor(() => e.listeners.size >= listeners + 2, "both landed waits", undefined, { during: Promise.all(waits) });
     Object.assign(awaiting, { repositories: [work("product", "merged"), work("other", "merged")], state: "done", column: "done", statusLine: "All products have landed", finishedAt: 200 });
     e.commit();
@@ -158,5 +171,6 @@ it("judges shared delivery across every product in CLI and MCP summaries, waits 
         expect((await wait(call, condition, [awaiting.id, mixed.id])).outcome).toBe("timed-out");
       }
     }
-  } finally { server.stop(true); }
+  } finally { await server.stop(true); }
+  });
 });

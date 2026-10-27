@@ -171,3 +171,22 @@ for (const failure of [new Error("Engine construction failed"), undefined]) it(`
   }, finish);
   await finish();
 });
+
+it("closes all Engine admission while joining an actual generation's last manual operation", async () => {
+  const root = tempDir("petrina-direct-stop-all-"), owner = directDrivers(root);
+  const engine = owner.open(join(root, "data")), release = Promise.withResolvers<void>();
+  const work = owner.run(engine, () => release.promise.then(() => writeFileSync(join(root, "last.txt"), "Settled")));
+  const stopping = owner.stopAll(), stoppingAgain = owner.stopAll();
+  try {
+    await engine.shutdown();
+    expect(() => owner.open(join(root, "replacement"))).toThrow("closing");
+    expect(existsSync(root)).toBe(true);
+    release.resolve();
+    await Promise.all([work, stopping, stoppingAgain]);
+    expect(stoppingAgain).toBe(stopping);
+    expect(readFileSync(join(root, "last.txt"), "utf8")).toBe("Settled");
+    expect(existsSync(root)).toBe(true);
+    await owner.close();
+    expect(existsSync(root)).toBe(false);
+  } finally { release.resolve(); await owner.close(); }
+});

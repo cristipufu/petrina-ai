@@ -9,14 +9,16 @@ import { CLI } from "../../support.js";
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 import { interfaceClient } from "../../fixtures/coordinator-interface.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 for (const kind of ["cli", "mcp"] as const) {
 it(`${kind} reports rejected starting points, preserves the previous source and replays the saved rejection`, async () => {
-    const { home, engine, task, coordination } = await fixture({ prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+  return owners.use(async ({ home, engine, task, coordination, owner: lifetime }) => {
+
     engine.s.inbox.push({ id: "plan", taskId: task.id, kind: "plan", title: "Review the plan", at: 1, blocking: false });
+    lifetime.check();
     const server = serve(engine, { port: 0, token: "source-validation-key-12345678901" });
+    lifetime.onStop(() => server.stop(true));
     writeConnection(home, { api: `http://127.0.0.1:${server.port}`, url: `ws://127.0.0.1:${server.port}/ws`, pid: process.pid, token: "source-validation-key-12345678901" });
     const call = interfaceClient(kind, home);
     const choice = { productId: "product", startFrom: { kind: "default" }, delivery: "local" };
@@ -56,6 +58,8 @@ it(`${kind} reports rejected starting points, preserves the previous source and 
       }
       engine.s.inbox = [];
       expect((await call("task.source", { taskId: task.id, choice, requestId: "no-plan-checkpoint" }, 2)).message).toContain("plan check before work starts");
-    } finally { server.stop(true); }
-  });
+    } finally { await server.stop(true); }
+
+  }, { prefix: "petrina-coordination-outcomes-", title: "Inspect outcomes" });
+});
 }

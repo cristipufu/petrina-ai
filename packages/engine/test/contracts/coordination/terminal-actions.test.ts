@@ -1,19 +1,28 @@
 import {afterAll,describe,expect,it,spyOn} from "bun:test";
 import {expectRejection} from "@petrina/test-support/rejections";
-import {coordinatorRecords} from "../../fixtures/coordinator-records.js";
-import {removeDir} from "../../fixtures.js";
+import {coordinatorRecordFixtures} from "../../fixtures/coordinator-records.js";
 import {dispatch} from "../../../src/server.js";
 
 describe("the local API's limits on take over and hand back", () => {
-  const roots: string[] = [];
-  afterAll(() => roots.forEach(removeDir));
+const owners = coordinatorRecordFixtures();
+afterAll(() => owners.close());
 
   it("takes a task id and a note of at most 4000 characters", async () => {
-    const {engine} = await coordinatorRecords(roots);
+  return owners.use(async ({engine, owner: lifetime}) => {
+
     const calls: unknown[][] = [];
-    const takeOver = spyOn(engine, "takeOver").mockImplementation(async (...args) => {calls.push(["takeOver", ...args]); return {command: "launcher"};});
-    const handBack = spyOn(engine, "handBack").mockImplementation(async (...args) => {calls.push(["handBack", ...args]);});
-    const setTerminal = spyOn(engine, "setTerminal").mockImplementation((...args) => {calls.push(["setTerminal", ...args]);});
+    lifetime.check();
+    const takeOver = spyOn(engine, "takeOver");
+    lifetime.onStop(() => takeOver.mockRestore());
+    takeOver.mockImplementation(async (...args) => {calls.push(["takeOver", ...args]); return {command: "launcher"};});
+    lifetime.check();
+    const handBack = spyOn(engine, "handBack");
+    lifetime.onStop(() => handBack.mockRestore());
+    handBack.mockImplementation(async (...args) => {calls.push(["handBack", ...args]);});
+    lifetime.check();
+    const setTerminal = spyOn(engine, "setTerminal");
+    lifetime.onStop(() => setTerminal.mockRestore());
+    setTerminal.mockImplementation((...args) => {calls.push(["setTerminal", ...args]);});
     try {
     await dispatch(engine, { name: "takeOver", args: ["task-7", "copy"] });
     await dispatch(engine, { name: "handBack", args: ["task-7", "x".repeat(4000), true] });
@@ -27,4 +36,5 @@ describe("the local API's limits on take over and hand back", () => {
     await expectRejection(dispatch(engine, { name: "setTerminal", args: ["iTerm; rm"] }));
     } finally {takeOver.mockRestore(); handBack.mockRestore(); setTerminal.mockRestore(); await engine.shutdown();}
   });
+});
 });

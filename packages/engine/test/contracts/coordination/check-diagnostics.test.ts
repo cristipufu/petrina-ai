@@ -3,19 +3,17 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { Engine } from "../../engine.js";
 import { Coordination } from "../../../src/coordination.js";
 
 import { runChecks, SLOW } from "../../support.js";
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { engines, fixture } = owners;
 afterAll(() => owners.close());
 
 describe("focused coordination and durable decisions", () => {
 it("preserves original long diagnostics after later checks and a restart, and reports unavailable evidence honestly", async () => {
-    const { e, c, home, taskId } = await fixture(),
-      t = e.task(taskId)!;
+  return owners.use(async ({ e, c, home, taskId, owner: lifetime }) => {
+    const t = e.task(taskId)!;
     const directory = join(home, "checks", taskId);
     mkdirSync(directory, { recursive: true });
     const prefix = "Original failure near the beginning\n", repeated = "long output\n";
@@ -47,8 +45,7 @@ it("preserves original long diagnostics after later checks and a restart, and re
     const next = page.next;
     e.commitNow();
     await e.shutdown();
-    const restarted = new Engine(home, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
-    engines.push(restarted);
+    const restarted = await lifetime.restart(e, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     const focused = new Coordination(restarted);
     while (page.next) {
       page = await focused.call("journey.check", { taskId, nodeId: "checks", index: 0, cursor: page.next });
@@ -63,10 +60,12 @@ it("preserves original long diagnostics after later checks and a restart, and re
     expect((await focused.call("journey.check", { taskId, index: 0 })).completeness).toBe("excerpt-only");
   });
 });
+});
 
 describe("focused coordination and durable decisions", () => {
 it("reports missing, unfinished and incomplete diagnostics separately, and keeps UTF-8 pages intact", async () => {
-    const { e, c, home, taskId } = await fixture();
+  return owners.use(async ({ e, c, home, taskId }) => {
+
     const directory = join(home, "checks", taskId);
     mkdirSync(directory, { recursive: true });
     const original = "é🙂λ".repeat(10);
@@ -89,4 +88,5 @@ it("reports missing, unfinished and incomplete diagnostics separately, and keeps
     executionFor(e.task(taskId)!).work.checks!.results[0]!.logPath = join(directory, "missing.log");
     expect((await c.call("journey.check", { taskId, index: 0 })).completeness).toBe("missing-file");
   });
+});
 });

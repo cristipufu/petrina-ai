@@ -7,12 +7,12 @@ import { recordToolActivity } from "../../../src/record-tool-activity.js";
 
 import { coordinatorApiFixtures } from "../../fixtures/coordinator-api.js";
 const owners = coordinatorApiFixtures();
-const { fixture } = owners;
 afterAll(() => owners.close());
 
 describe("focused coordination and durable decisions", () => {
 it("inspects per-seat tool evidence without putting commands or invocation lists in live updates", async () => {
-    const { e, c, taskId } = await fixture();
+  return owners.use(async ({ e, c, taskId }) => {
+
     const task = e.task(taskId)!;
     task.state = "running";
     task.journey = [{ id: "activity", kind: "agent", startedAt: 1, round: 1, sub: 0 }];
@@ -56,4 +56,5 @@ it("inspects per-seat tool evidence without putting commands or invocation lists
     expect(task.hunt.work!["reviewer:1"]!.toolActivity!.runningTool).toBeDefined();
     expect(e.store.load()!.tasks.find(task => task.id === taskId)!.journey![0]!.toolInvocations).toEqual(records);
   });
+});
 });
