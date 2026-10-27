@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { ChildProcess } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,6 +7,10 @@ import { ENGINE_PROFILES } from "../../../src/tools.js";
 import { createProcessLease } from "@petrina/test-support/process-lease";
 import { tempDir, removeDir, waitFor } from "@petrina/test-support/fixtures";
 import { nativeSession } from "../../fixtures/native-session.js";
+import { browserCleanupFixtures } from "../../fixtures/browser-cleanup-owned.js";
+
+const observers = browserCleanupFixtures();
+afterEach(() => observers.close());
 
 describe("Stopping during startup", () => {
   for (const probe of [true, false]) it(probe ? "lets a tool check report while its stubborn agent stops" : "waits for a task's stubborn agent to stop before releasing its copy", async () => {
@@ -46,3 +50,17 @@ describe("Stopping during startup", () => {
     }
   });
 });
+
+for (const failure of [new Error("The native process observer failed"), undefined]) it(`publishes native cleanup before a probe's process observer throws ${failure === undefined ? "undefined" : "Error"}`, async () => observers.use(async fixture => {
+  let receiptAtObserver: Promise<void> | undefined;
+  const opened = await fixture.open({ probe: true, onProcess() { receiptAtObserver = fixture.gone; throw failure; } });
+  expect(opened.kind).toBe("error");
+  if (opened.kind !== "error") throw new Error("The native process observer failure disappeared");
+  expect(opened.error).toBe(failure);
+  expect(receiptAtObserver).toBeDefined();
+  expect(fixture.events).toEqual(["gone", "process"]);
+  expect(receiptAtObserver).toBe(fixture.gone);
+  await receiptAtObserver;
+  await fixture.ended();
+  expect(fixture.incomplete).toBe(0);
+}));

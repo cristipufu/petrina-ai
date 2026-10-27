@@ -556,8 +556,10 @@ export class AgentRun implements AgentSession {
       // External observers can throw or abort synchronously. All ownership, exit and abort
       // handlers are installed now, and a failure here follows the same cleanup as a failed open.
       try {
-        options.onProcess?.(child);
+        // A probe may report a failed opening before its stop settles. Publish that
+        // cleanup authority before any other observer can throw or abort the opening.
         options.onGone?.(processGone);
+        options.onProcess?.(child);
       } catch (error) { observerFailed = true; throw error; }
       // Login/identity probes send no browser work. An observer can abort before this admission.
       if (!signal.aborted && !options.probe && options.browser !== false) {
