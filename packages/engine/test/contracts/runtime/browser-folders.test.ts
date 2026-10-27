@@ -1,22 +1,26 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { afterAll, afterEach, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import type { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { AgentBrowser, browserTempRoot, CLEANUP_NOTE } from "@petrina/agent-runtime/browser";
-import { browserProcesses } from "@petrina/platform/browser-processes";
+import { AgentRun } from "@petrina/agent-runtime/acp-run";
+import { WaitClock } from "@petrina/storage/worklog";
+import { turnCleanupFixtures } from "../../fixtures/turn-cleanup.js";
 import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
 import { refuseFolder } from "@petrina/test-support/refuse-folder";
 import { Engine } from "../../engine.js";
-import { finish, removeDir, SLOW, taskOf, tempDir, testBrowserRoot, waitFor } from "../../support.js";
+import { finish, removeDir, SLOW, taskOf, tempDir, testBrowserRoot } from "../../support.js";
 
 import { completeAll } from "@petrina/core";
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
 
 const worlds = nativeWorldFixtures();
 afterAll(worlds.close);
+const cleanupFixtures = turnCleanupFixtures();
+afterEach(() => cleanupFixtures.close());
 
 async function crash(browser: AgentBrowser): Promise<void> {
   const child = (browser as unknown as { child: ChildProcess }).child;
@@ -65,49 +69,49 @@ it("finishes a scripted workflow unrelated to browsing while the standard browse
   await cleanup();
 }, 120_000 * SLOW);
 
-it.skipIf(process.platform === "win32")("saves a failed browser cleanup's private note in the task's own log and only the shared warning on the task", async () => {
-  // The first agent's helper dies before its conversation opens, and this engine cannot read the folder scans.
-  const opened: AgentBrowser[] = [];
-  let unavailable = true;
-  const start = AgentBrowser.start;
-  let started: ReturnType<typeof spyOn<typeof AgentBrowser, "start">> | undefined;
-  let closing = false;
-  await worlds.world("browser-cleanup-note", async fixture => {
-  const world = fixture.world;
-  started = spyOn(AgentBrowser, "start");
-  started.mockImplementation(async (...args) => {
-    const browser = await start.call(AgentBrowser, args[0], args[1], args[2], args[3], { ...browserProcesses, readFolder: directory => unavailable ? Promise.resolve(undefined) : browserProcesses.readFolder(directory) });
-    const first = !opened.length;
-    opened.push(browser);
-    if (closing) { await browser.close(); throw new Error("Browser fixture closed during native browser start"); }
-    if (first) await crash(browser);
-    return browser;
-  });
-  return fixture.engine(async engine => {
+it("saves a failed browser cleanup's private note in the task's own log and only the shared warning on the task", async () => {
+  // This host boundary receives a Runtime diagnostic. Actual native formatting, callback
+  // delivery and retained browser ownership are paired in Runtime browser/cleanup-note.
+  const f = await cleanupFixtures.fixture({ nativeOpening: true });
   try {
-    const productId = await engine.addProduct(world.clone);
-    const id = engine.addTask({ productId, title: "Greet the guest", description: "[no-check]" });
-    const log = join(world.data, "logs", `${id}.log`);
-    const notes = await waitFor(() => {
-      const lines = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((line) => line.includes(CLEANUP_NOTE)) : [];
-      return lines.length ? lines : undefined;
-    }, "the failed cleanup's note in the task's saved log", 60_000);
+    const role = f.engine.role("tester", f.task)!, profile = f.engine.profile("opus-high")!;
+    const note = `${CLEANUP_NOTE} stage=exited-before-close elapsed=1ms helper=signal-SIGKILL,closed,unused early=not-taken tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0`;
+    const failure = new Error("The controlled browser opening failed"), written: Promise<void>[] = [];
+    const save = f.engine.agentLog.bind(f.engine), saved = spyOn(f.engine, "agentLog");
+    f.restore(() => saved.mockRestore());
+    saved.mockImplementation((id, text) => {
+      const writing = f.owner.run(f.engine, () => save(id, text));
+      void writing.catch(() => undefined); written.push(writing); return writing;
+    });
+    const start = spyOn(AgentRun, "start"); f.restore(() => start.mockRestore());
+    start.mockImplementation(async options => {
+      expect(options.command).toEqual([join(f.root, "unconfigured-agent-must-never-launch")]);
+      options.callbacks.onLog?.(`\n${note}\n`);
+      options.callbacks.onCleanupIncomplete?.();
+      throw failure;
+    });
+    const opened = await f.observe(() => f.engine["turns"]["openAgentRun"](f.scope, role, profile, f.root, f.abort.signal,
+      { roleId: role.id, profile, waits: new WaitClock(), journeyId: "browser-log-routing", agentSeat: role.id }, { main: true }));
+    expect(opened.kind).toBe("error");
+    if (opened.kind !== "error" || !(opened.error instanceof AggregateError)) throw new Error("The failed native opening lost its cleanup refusal");
+    expect(opened.error.errors[0]).toBe(failure);
+    const cleanup = opened.error.errors[1];
+    expect((cleanup as Error).message).toBe("Agent cleanup was not confirmed");
+    await completeAll(written);
+    const notes = readFileSync(join(f.engine.dataDir, "logs", `${f.task.id}.log`), "utf8").split("\n").filter(line => line.includes(CLEANUP_NOTE));
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatch(new RegExp(`^${CLEANUP_NOTE} stage=exited-before-close elapsed=\\d+ms helper=signal-SIGKILL,closed,unused early=not-taken tree=not-taken folder1=unavailable folder2=unavailable folder3=unavailable confirmed=no reasons=list-unreadable processes=0 shown=0 omitted=0$`));
-    await waitFor(() => engine.task(id)?.timeline.some((entry) => entry.text === CLEANUP_INCOMPLETE), "the shared cleanup warning on the task");
-    expect(engine.task(id)!.timeline.some((entry) => entry.text.includes(CLEANUP_NOTE))).toBe(false);
-    expect(existsSync(opened[0]!.directory)).toBe(true);
-  } finally {
-    unavailable = false;
-    await engine.shutdown();
-    started?.mockRestore();
-    await completeAll(opened.map(browser => browser.close()));
-  }
-  });
-  }, { browser: true }, { async stopPeers() {
-    closing = true; unavailable = false;
-    await completeAll([(async () => { started?.mockRestore(); })(), ...opened.map(browser => browser.close())]);
-  } });
+    expect(notes[0]).toBe(note);
+    expect(f.task.timeline.some(entry => entry.text === CLEANUP_INCOMPLETE)).toBe(true);
+    expect(f.task.timeline.some(entry => entry.text.includes(CLEANUP_NOTE))).toBe(false);
+    const shutdown = await f.engine.shutdown().then(() => ({ kind: "value" as const }), error => ({ kind: "error" as const, error }));
+    expect(shutdown.kind).toBe("error");
+    if (shutdown.kind !== "error") throw new Error("Native cleanup uncertainty became a successful Engine shutdown");
+    expect(shutdown.error).toBe(cleanup);
+    expect(f.storeClosed).toBe(true);
+    const owned = await f.closeSubject();
+    expect(owned.kind).toBe("error"); expect(existsSync(f.root)).toBe(true);
+    f.acknowledgeRetained(owned, cleanup);
+  } finally { await f.finish(); }
 }, 90_000 * SLOW);
 
 it("keeps parallel fixtures' browser folders apart and recovers only an engine's own leftovers at startup", async () => {
