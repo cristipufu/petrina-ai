@@ -555,12 +555,17 @@ export class AgentRun implements AgentSession {
     const ready = (async () => {
       // External observers can throw or abort synchronously. All ownership, exit and abort
       // handlers are installed now, and a failure here follows the same cleanup as a failed open.
-      try {
-        // A probe may report a failed opening before its stop settles. Publish that
-        // cleanup authority before any other observer can throw or abort the opening.
-        options.onGone?.(processGone);
-        options.onProcess?.(child);
-      } catch (error) { observerFailed = true; throw error; }
+      // A probe may report a failed opening before its stop settles. Publish cleanup
+      // first, and notify the actual-handle owner even if another observer failed.
+      const observerErrors: unknown[] = [];
+      for (const notify of [() => options.onGone?.(processGone), () => options.onProcess?.(child)]) {
+        try { notify(); } catch (error) { observerErrors.push(error); }
+      }
+      if (observerErrors.length) {
+        observerFailed = true;
+        if (observerErrors.length === 1) throw observerErrors[0];
+        throw new AggregateError(observerErrors, "The agent's ownership observers failed");
+      }
       // Login/identity probes send no browser work. An observer can abort before this admission.
       if (!signal.aborted && !options.probe && options.browser !== false) {
         browserReady = AgentBrowser.start(options.browserRoot, options.env ?? process.env, callbacks.onLog, options.browserTempRoot);

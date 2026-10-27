@@ -44,7 +44,7 @@ export function browserCleanupFixtures() {
     async use<T>(body: (fixture: {
       root: string; registry: string; logs: string[]; readonly browser: AgentBrowser | undefined;
       readonly gone: Promise<void> | undefined; readonly incomplete: number; readonly events: readonly string[];
-      open(options?: { browser?: true; probe?: boolean; onProcess?(child: ChildProcess): void }): Promise<Result<AgentRun>>;
+      open(options?: { browser?: true; probe?: boolean; onGone?(gone: Promise<void>): void; onProcess?(child: ChildProcess): void }): Promise<Result<AgentRun>>;
       ended(): Promise<void>; restoreScans(): void;
     }) => Promise<T>): Promise<T> {
       const root = tempDir("petrina-browser-cleanup-owned-"); registerFixtureRoot(root);
@@ -109,7 +109,7 @@ export function browserCleanupFixtures() {
             for (const record of children) await waitFor(() => record.ended && record.drained,
               "the actual helper to terminate and drain", CLEANUP_MS, { during: record.closing });
           },
-          open(options: { browser?: true; probe?: boolean; onProcess?(child: ChildProcess): void } = {}) {
+          open(options: { browser?: true; probe?: boolean; onGone?(gone: Promise<void>): void; onProcess?(child: ChildProcess): void } = {}) {
             if (!accepting || opening) return Promise.reject(new Error("Fixture admits exactly one native opening"));
             opening = true;
             if (options.browser) {
@@ -139,7 +139,7 @@ export function browserCleanupFixtures() {
               ...(options.probe !== undefined ? { probe: options.probe } : {}),
               callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny",
                 onLog: text => logs.push(text), onCleanupIncomplete: () => { incomplete++; } },
-              onGone(value) { gone = value; events.push("gone"); void value.catch(() => undefined); },
+              onGone(value) { gone = value; events.push("gone"); void value.catch(() => undefined); options.onGone?.(value); },
               onProcess(child) { children.push(captured(child)); events.push("process"); options.onProcess?.(child); },
             })));
             openings.push(work); return work;

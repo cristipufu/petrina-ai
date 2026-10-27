@@ -1,5 +1,5 @@
 import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { afterAll, afterEach, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { join } from "node:path";
@@ -8,6 +8,10 @@ import { AgentBrowser } from "../../../src/browser.js";
 import { ENGINE_PROFILES } from "../../../src/tools.js";
 import { childState } from "@petrina/platform/process-tree";
 import { removeDir, tempDir } from "@petrina/test-support/fixtures";
+import { browserCleanupFixtures } from "../../fixtures/browser-cleanup-owned.js";
+
+const observerFixtures = browserCleanupFixtures();
+afterEach(() => observerFixtures.close());
 
 const roots: string[] = [];
 afterAll(() => roots.forEach(removeDir));
@@ -15,6 +19,21 @@ const folder = () => { const root = tempDir("petrina-session-lifetime-"); roots.
 const profile = ENGINE_PROFILES.find(profile => profile.id === "sol-high")!;
 const command = [process.execPath, join(import.meta.dir, "../../fixtures/session-agent.ts")];
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
+
+for (const first of [new Error("The cleanup observer failed"), undefined]) it(`notifies both ownership observers and preserves their failures when cleanup observer throws ${first === undefined ? "undefined" : "Error"}`, async () => observerFixtures.use(async fixture => {
+  const second = new Error("The process observer failed");
+  const opened = await fixture.open({ probe: true, onGone() { throw first; }, onProcess() { throw second; } });
+  expect(fixture.events).toEqual(["gone", "process"]);
+  expect(opened.kind).toBe("error");
+  if (opened.kind !== "error" || !(opened.error instanceof AggregateError)) throw new Error("An ownership observer failure disappeared");
+  expect(opened.error.errors).toHaveLength(2);
+  expect(opened.error.errors[0]).toBe(first);
+  expect(opened.error.errors[1]).toBe(second);
+  expect(fixture.gone).toBeDefined();
+  await fixture.gone;
+  await fixture.ended();
+  expect(fixture.incomplete).toBe(0);
+}));
 
 for (const observer of ["onProcess", "onGone"] as const) for (const reopen of [false, true]) it(`reclaims a started agent when its ${observer} observer throws (${reopen ? "reopen" : "fresh"})`, async () => {
   const root = folder();
