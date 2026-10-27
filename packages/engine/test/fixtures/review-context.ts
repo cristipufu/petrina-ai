@@ -7,57 +7,49 @@ import { type DeepMutable, type Finding } from "@petrina/core";
 import { Context } from "../../src/context.js";
 import { Engine } from "../engine.js";
 import { executionFor } from "@petrina/orchestrator";
-import { Fakes, git, makeProduct, removeDir, tempDir, testBrowserRoot, waitFor } from "../fixtures.js";
+import { Fakes, git, makeProduct, tempDir, testBrowserRoot, waitFor } from "../fixtures.js";
+import { closeDirectDrivers, directDrivers, removeFixtureRoot } from "./direct-drivers.js";
 import type { Scenario } from "../fake-agent.js";
 
 export function reviewContextFixtures() {
-interface RootOwner { root: string; browsers?: string; engines: Set<Engine>; errors: unknown[] }
+interface RootOwner { root: string; browsers?: string; lifetime: ReturnType<typeof directDrivers> }
 const roots = new Map<string, RootOwner>();
-const engines = new Map<Engine, { root: RootOwner; stopping?: Promise<void> }>();
+const engines = new Map<Engine, RootOwner>();
+let closing = false;
 const createRoot = (prefix: string): RootOwner => {
-  const root = tempDir(prefix), owner = { root, engines: new Set<Engine>(), errors: [] };
-  registerFixtureRoot(root);
+  if (closing) throw new Error("Review context fixtures are closing; no new root may open");
+  const root = tempDir(prefix);
+  const owner: RootOwner = { root, lifetime: directDrivers(root, { beforeRemoveRoot: () => {
+    if (owner.browsers) removeFixtureRoot(owner.browsers);
+  } }) };
   roots.set(root, owner);
   return owner;
 };
-const ownEngine = (owner: RootOwner, engine: Engine) => {
-  owner.engines.add(engine); engines.set(engine, { root: owner });
+const openEngine = (owner: RootOwner, ...args: Parameters<RootOwner["lifetime"]["open"]>) => {
+  const engine = owner.lifetime.open(...args);
+  engines.set(engine, owner);
   return engine;
 };
 const shutdown = (engine: Engine): Promise<void> => {
   const owner = engines.get(engine);
-  if (!owner) return engine.shutdown();
-  if (owner.stopping) return owner.stopping;
-  const work = (async () => {
-    try {
-      await engine.shutdown();
-      owner.root.engines.delete(engine); engines.delete(engine);
-    } catch (error) { owner.root.errors.push(error); throw error; }
-  })();
-  owner.stopping = work;
-  const clear = () => { owner.stopping = undefined; };
-  void work.then(clear, clear);
-  return work;
+  if (!owner) return Promise.reject(new Error("Review context cannot stop an unowned Engine"));
+  return owner.lifetime.stop(engine);
 };
-const closeRoot = async (owner: RootOwner) => {
-  await Promise.allSettled([...owner.engines].map(engine => shutdown(engine)));
-  if (owner.errors.length || owner.engines.size) throw new AggregateError(owner.errors, `Review context cleanup is unconfirmed; retained ${owner.root}${owner.browsers ? ` and ${owner.browsers}` : ""}`);
-  removeDir(owner.root);
-  if (owner.browsers) removeDir(owner.browsers);
-  if (existsSync(owner.root) || (owner.browsers && existsSync(owner.browsers))) throw new Error(`Review context folders could not be removed: ${owner.root}${owner.browsers ? ` and ${owner.browsers}` : ""}`);
-  roots.delete(owner.root);
-};
-const close = async () => {
-  const results = await Promise.allSettled([...roots.values()].map(owner => closeRoot(owner)));
-  const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-  if (errors.length) throw new AggregateError(errors, "Review context fixture cleanup could not be confirmed");
+const closeRoot = (owner: RootOwner) => owner.lifetime.close();
+const close = () => {
+  closing = true;
+  return closeDirectDrivers([...roots.values()].map(owner => owner.lifetime));
 };
 
 const earlier: DeepMutable<Finding> = { id: "older", text: "An earlier bug", severity: "blocking", raisedBy: "sol-high", confirmedBy: [], status: "fixed", answer: { fixed: true, text: "Fixed the earlier bug", at: 1 } };
 
-async function bare() {
-  const owner = createRoot("petrina-review-input-"), { root } = owner;
-  return setupWithCleanup(async () => {
+async function bare<T>(body: (world: Awaited<ReturnType<typeof prepareBare>>) => Promise<T>): Promise<T> {
+  const owner = createRoot("petrina-review-input-");
+  return setupWithCleanup(() => owner.lifetime.prepare(async () => body(await prepareBare(owner))), () => closeRoot(owner));
+}
+
+async function prepareBare(owner: RootOwner) {
+  const { root } = owner;
   const repo = await makeProduct(root);
   writeFileSync(join(repo, "REVIEW.md"), "# Rules\nPreserve the original rule.\n");
   await git(repo, "add", "REVIEW.md"); await git(repo, "commit", "-qm", "Record the original review guide");
@@ -66,7 +58,7 @@ async function bare() {
   writeFileSync(join(repo, "greeting.txt"), "FIRST-CHANGE\n");
   await git(repo, "add", "."); await git(repo, "commit", "-qm", "Add the greeting");
   const first = await git(repo, "rev-parse", "HEAD");
-  const engine = ownEngine(owner, new Engine(join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] }));
+  const engine = openEngine(owner, join(root, "data"), { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
   engine.schedule = () => {}; engine.setPoolPaused(true);
   engine.s.products.push({ id: "p", name: "Product", path: repo, repo: "local/product", tone: "blue" });
   const id = engine.addTask({ productId: "p", title: "A precise review", backlog: true });
@@ -76,19 +68,20 @@ async function bare() {
   task.brief = { summary: "Frozen brief", forUsers: [], areas: [], risks: [], acceptance: [] };
   const context = new Context(engine, { pendingPoints: async () => [] });
   return { root, repo, base, first, engine, task, context, scope: executionFor(task), shutdown: () => shutdown(engine) };
-  }, () => closeRoot(owner));
 }
 
 const originalLines = Array.from({ length: 60 }, (_, index) => `Original line ${index}\n`).join("");
 
 interface RunOptions { browser?: boolean; single?: boolean; shared?: boolean; limit?: number; limited?: Scenario["limited"]; reviewer?: Scenario["reviewer"]; seedFinding?: boolean; settledHistory?: boolean; advance?: boolean }
-function run(reopen: Scenario["reopen"], options: RunOptions & { browser: true }): Promise<Awaited<ReturnType<typeof startRun>> & { browsers: string }>;
-function run(reopen: Scenario["reopen"], options?: RunOptions): ReturnType<typeof startRun>;
-function run(reopen: Scenario["reopen"], options: RunOptions = {}) { return startRun(reopen, options); }
+function run<T>(reopen: Scenario["reopen"], options: RunOptions, body: (world: Awaited<ReturnType<typeof prepareRun>>) => Promise<T>): Promise<T> { return startRun(reopen, options, body); }
 
-async function startRun(reopen: Scenario["reopen"], options: RunOptions) {
-  const owner = createRoot("petrina-review-resume-"), { root } = owner;
-  return setupWithCleanup(async () => {
+async function startRun<T>(reopen: Scenario["reopen"], options: RunOptions, body: (world: Awaited<ReturnType<typeof prepareRun>>) => Promise<T>): Promise<T> {
+  const owner = createRoot("petrina-review-resume-");
+  return setupWithCleanup(() => owner.lifetime.prepare(async () => body(await prepareRun(owner, reopen, options))), () => closeRoot(owner));
+}
+
+async function prepareRun(owner: RootOwner, reopen: Scenario["reopen"], options: RunOptions) {
+  const { root } = owner;
   // Only browser-instruction contracts need native browser ownership; keep their private folder across restarts.
   const browsers = options.browser ? testBrowserRoot() : undefined;
   owner.browsers = browsers;
@@ -103,7 +96,7 @@ async function startRun(reopen: Scenario["reopen"], options: RunOptions) {
     writeFixtureJson(script, { hold: { title: "You are fixing the review findings", file: hold } });
   }
   const engineOptions = { agentCommand: () => [process.execPath, join(import.meta.dir, "../fake-agent.ts"), fakes.dir, `--script=${script}`], toolPath: () => process.execPath, usageCommands: { codex: null, grok: null, antigravity: null }, browser: options.browser ?? false, ...(browsers ? { browserTempRoot: browsers } : {}) };
-  let engine = ownEngine(owner, new Engine(data, engineOptions));
+  let engine = openEngine(owner, data, engineOptions);
   engine.setPoolPaused(true); await engine.checkTools(); engine.setPoolLimit(options.limit ?? 2);
   const productId = await engine.addProduct(await makeProduct(root)); engine.setProductDelivery(productId, "local", true);
   let second: string | undefined;
@@ -158,13 +151,12 @@ async function startRun(reopen: Scenario["reopen"], options: RunOptions) {
     return { productId: id, before, base: await git(product.path!, "rev-parse", "HEAD") };
   };
   const done = () => { rmSync(hold, { force: true }); return waitFor(() => { tick(); return engine.getState().inbox.some((item) => item.kind === "delivery") && task(); }, "the reviewed delivery"); };
-  const restart = () => setupWithCleanup(async () => {
+  const restart = () => owner.lifetime.prepare(async () => {
     await shutdown(engine);
-    engine = ownEngine(owner, new Engine(data, engineOptions));
-  }, () => closeRoot(owner));
+    engine = openEngine(owner, data, engineOptions);
+  });
   engine.setPoolPaused(false);
   return { engine: () => engine, fakes, task, tick, done, restart, beforeFix, advanceMain, hold, root, browsers, shutdown: () => shutdown(engine) };
-  }, () => closeRoot(owner));
 }
 
 type Hunted = { stageId: string; round: number; input?: { heads: Readonly<Record<string, string>> } };
@@ -177,8 +169,11 @@ const important = (id: string): DeepMutable<Finding> => ({ id, text: `The ${id} 
 
 const place = (key: string, profileId: string, toolId: string, findingIds: string[], extra: object = {}) => ({ key, profileId, toolId, findingIds, reason: "Chosen for the initial pair.", ...extra });
 
-async function ballot(profileIds: string[], findingIds: string[], round = 1) {
-    const f = await bare();
+async function ballot<T>(profileIds: string[], findingIds: string[], round: number, body: (world: Awaited<ReturnType<typeof prepareBallot>>) => Promise<T>): Promise<T> {
+    return bare(async f => body(prepareBallot(f, profileIds, findingIds, round)));
+}
+
+function prepareBallot(f: Awaited<ReturnType<typeof prepareBare>>, profileIds: string[], findingIds: string[], round: number) {
     const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds };
     f.task.plan = { rationale: "Verify", plannerProfileId: "sol-high", stages: [stage] }; f.task.stageIndex = 0; f.task.rounds = { [stage.id]: round };
     f.task.findings = findingIds.map(important);

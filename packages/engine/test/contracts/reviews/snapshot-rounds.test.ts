@@ -12,7 +12,8 @@ afterAll(close);
 
 describe("one fresh review version per owner", () => {
   it("keeps both identities from the paired observation when HEAD moves before material is prepared", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     const before = { head: await git(f.repo, "rev-parse", "HEAD"), tree: await git(f.repo, "rev-parse", "HEAD^{tree}") };
     const read = gitOps.commitVersion;
     const paired = spyOn(gitOps, "commitVersion").mockImplementation(async path => {
@@ -35,9 +36,11 @@ describe("one fresh review version per owner", () => {
       expect(heads).not.toHaveBeenCalled(); expect(trees).not.toHaveBeenCalled();
     } finally { paired.mockRestore(); heads.mockRestore(); trees.mockRestore(); await f.shutdown(); }
   });
+});
 
   it("does not prepare review material from unavailable, partial, malformed or rejected observations", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     const before = { head: await git(f.repo, "rev-parse", "HEAD"), tree: await git(f.repo, "rev-parse", "HEAD^{tree}") };
     try {
       // None of these reads may write review material or change this private committed fixture.
@@ -62,10 +65,12 @@ describe("one fresh review version per owner", () => {
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 it("records a passed round against its saved snapshot, and omits unknown versions on older inputs", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     try {
       const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high"] };
       f.task.plan = { rationale: "Review", plannerProfileId: "sol-high", stages: [stage] };
@@ -90,10 +95,12 @@ it("records a passed round against its saved snapshot, and omits unknown version
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 it("gives queued voters complete reproduction evidence without current peer ballots", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     const reviews = f.engine["reviews"];
     const stage = { id: "review", title: "Review", kind: "review-chain" as const, roleId: "code-reviewer", profileIds: ["sol-high", "opus-high"] };
     f.task.plan = { rationale: "Verify", plannerProfileId: "sol-high", stages: [stage] }; f.task.stageIndex = 0;
@@ -119,10 +126,12 @@ it("gives queued voters complete reproduction evidence without current peer ball
     } finally { together.mockRestore(); turn.mockRestore(); await f.shutdown(); }
   });
 });
+});
 
 describe("bounded verifier places after handoffs", () => {
 it("records only what a takeover still owes, and its step still expects every place", async () => {
-    const f = await ballot(["opus-high", "sol-high", "grok-high"], ["a", "b"]);
+    await ballot(["opus-high", "sol-high", "grok-high"], ["a", "b"], 1, async f => {
+
     const signal = new AbortController().signal;
     const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
     f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true }, findings: 2, input };
@@ -164,10 +173,12 @@ it("records only what a takeover still owes, and its step still expects every pl
     } finally { together.mockRestore(); turn.mockRestore(); await f.shutdown(); }
   });
 });
+});
 
 describe("bounded verifier places after handoffs", () => {
 it("counts only the findings a third answer was given in its live status", async () => {
-    const f = await ballot(["opus-high", "sol-high", "grok-high"], ["a", "b"]);
+    await ballot(["opus-high", "sol-high", "grok-high"], ["a", "b"], 1, async f => {
+
     const signal = new AbortController().signal;
     const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
     f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true }, findings: 2, input };
@@ -180,4 +191,5 @@ it("counts only the findings a third answer was given in its live status", async
       expect(status).toBe("1 fresh agent giving a third answer on 1 important finding");
     } finally { together.mockRestore(); await f.shutdown(); }
   });
+});
 });

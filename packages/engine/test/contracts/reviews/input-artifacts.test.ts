@@ -12,7 +12,8 @@ afterAll(close);
 
 describe("immutable review inputs", () => {
 it("prepares only port comparisons and keeps lockfile evidence out of the inline port material", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     try {
       writeFileSync(join(f.repo, "bun.lock"), "PORT-LOCKFILE-SENTINEL\n".repeat(1_000));
       mkdirSync(join(f.repo, "packages", "[new]"), { recursive: true });
@@ -39,10 +40,12 @@ it("prepares only port comparisons and keeps lockfile evidence out of the inline
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 for (const empty of ["old", "new", "both"]) it(`prepares a port whose ${empty} commit range is empty`, async () => {
-    const f = await bare();
+    await bare(async f => {
+
     try {
       f.scope.work.portReview = { from: f.base, head: empty === "new" ? f.first : f.base, onto: empty === "old" ? f.base : f.first, files: ["greeting.txt"] };
       const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
@@ -53,10 +56,12 @@ for (const empty of ["old", "new", "both"]) it(`prepares a port whose ${empty} c
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 it("keeps earlier facts frozen while delivering new coordinator notes, including after saving and reopening the input", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     try {
       const ref = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), new AbortController().signal);
       f.task.findings[0]!.status = "open"; f.task.findings[0]!.confirmedBy.push("opus-high");
@@ -76,10 +81,12 @@ it("keeps earlier facts frozen while delivering new coordinator notes, including
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 it("prepares exact full and incremental comparisons with the base guide, independently of later refs and worktree edits", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     try {
       f.scope.work.reviewedSha = f.first;
       writeFileSync(join(f.repo, "greeting.txt"), "FIRST-CHANGE\nFIX-ONLY\n");
@@ -103,10 +110,12 @@ it("prepares exact full and incremental comparisons with the base guide, indepen
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 it("keeps lockfile patches separate, with paths in the statistics and the complete evidence available", async () => {
-    const f = await bare();
+    await bare(async f => {
+
     try {
       f.scope.work.reviewedSha = f.first;
       writeFileSync(join(f.repo, "bun.lock"), "LOCKFILE-ONLY-SENTINEL\n".repeat(5_000));
@@ -129,10 +138,13 @@ it("keeps lockfile patches separate, with paths in the statistics and the comple
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe("immutable review inputs", () => {
 it("prepares each shared product's own base guide and comparison, and rejects a damaged artifact", async () => {
-    const a = await bare(), b = await bare();
+    await bare(async a => {
+await bare(async b => {
+
     try {
       b.scope.work.productId = "second";
       a.task.repositories = [a.scope.work, b.scope.work].map((work) => ({ ...work, completedStages: [] }));
@@ -154,9 +166,12 @@ it("prepares each shared product's own base guide and comparison, and rejects a 
     } finally { await a.shutdown(); await b.shutdown(); }
   });
 });
+});
+});
 
 it("checks each seat's remembered bases, including missing, unchanged, forward, port and incompatible anchors", async () => {
-  const f = await bare();
+  await bare(async f => {
+
   try {
     const bases = reviewBases(f.scope), heads = { p: f.first };
     expect((await reviewBaseUpdates(f.scope, bases, heads)).sections).toEqual([]);
@@ -176,4 +191,5 @@ it("checks each seat's remembered bases, including missing, unchanged, forward, 
     f.scope.work.portReview = { from: f.base, head: f.first, onto: f.first, files: ["greeting.txt"] };
     expect((await reviewBaseUpdates(f.scope, bases, heads)).reason).toContain("conflict port review");
   } finally { await f.shutdown(); }
+});
 });

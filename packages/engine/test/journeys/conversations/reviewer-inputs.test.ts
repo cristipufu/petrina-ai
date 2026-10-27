@@ -18,7 +18,8 @@ afterAll(() => prepared.close());
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("records compact frozen evidence for three fresh reviewers after a real conflict, restart and usage replacement", async () => {
-    const f = await run("resume", { advance: true, settledHistory: true, limit: 3 });
+    await run("resume", { advance: true, settledHistory: true, limit: 3 }, async f => {
+
     try {
       await f.beforeFix();
       await f.advanceMain(undefined, true);
@@ -85,11 +86,12 @@ it("records compact frozen evidence for three fresh reviewers after a real confl
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`continues each own ${mode} reviewer after main advances, with current full and incremental evidence`, async () => {
     const reopen = mode === "single" ? "load" : "resume";
-    const exercise = async (f: Awaited<ReturnType<typeof run>>) => {
+    const exercise = async (f: Parameters<Parameters<typeof run>[2]>[0]) => {
       try {
         await f.beforeFix();
         const moved = await f.advanceMain();
@@ -172,7 +174,7 @@ for (const mode of ["pair", "single", "shared", "builder-update"] as const) it(`
       } finally { await f.shutdown(); }
     };
     const options = { advance: true, single: mode === "single", shared: mode === "shared" };
-    if (mode === "shared") return exercise(await run(reopen, options));
+    if (mode === "shared") return run(reopen, options, exercise);
     const f = await prepared.reviewRun(reopen, options);
     return f.use(() => exercise(f));
   });
@@ -219,7 +221,8 @@ for (const reopen of ["resume", "load"] as const) for (const single of [false, t
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("keeps a queued reviewer blind to a faster peer, including after an engine restart", async () => {
-    const f = await run("resume", { limit: 1 });
+    await run("resume", { limit: 1 }, async f => {
+
     try {
       await waitFor(() => { f.tick((role, session) => role !== "code reviewer" || !f.fakes.settings(session).includes("model=gpt-6.1-sol")); return Object.keys(f.task().hunt?.reported ?? {}).length === 1; }, "one blind reviewer to finish");
       const ref = structuredClone(f.task().hunt!.input!);
@@ -233,6 +236,7 @@ it("keeps a queued reviewer blind to a faster peer, including after an engine re
       expect(task.journey!.find((step) => step.roleId === "code-reviewer" && step.round === 2)!.agentInputs!.every((input) => input.mode === "continued")).toBe(true);
     } finally { await f.shutdown(); }
   });
+});
 });
 
 describe.concurrent("reviewer conversations across fix rounds", () => {

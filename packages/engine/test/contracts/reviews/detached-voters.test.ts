@@ -11,7 +11,8 @@ afterAll(close);
 
 describe("bounded verifier places after handoffs", () => {
 it("gives each third place, a replaced one included, its own portable copy and records its answer on that place", async () => {
-    const f = await ballot(["opus-high", "sol-high", "grok-high", "argon-high"], ["x", "y"]);
+    await ballot(["opus-high", "sol-high", "grok-high", "argon-high"], ["x", "y"], 1, async f => {
+
     const signal = new AbortController().signal;
     const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
     f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true, "3": true }, findings: 2, input };
@@ -52,10 +53,12 @@ it("gives each third place, a replaced one included, its own portable copy and r
     } finally { turn.mockRestore(); await f.shutdown(); }
   });
 });
+});
 
 describe("bounded verifier places after handoffs", () => {
 it("brings a third place stopped by a full model back into the copy it made, while its peer still works", async () => {
-    const f = await ballot(["opus-high", "sol-high", "grok-high", "argon-high"], ["x", "y"]);
+    await ballot(["opus-high", "sol-high", "grok-high", "argon-high"], ["x", "y"], 1, async f => {
+
     const signal = new AbortController().signal;
     const input = await prepareReviewInput(f.engine.dataDir, f.scope, await f.context.captureReview(f.scope), signal);
     f.task.hunt = { stageId: f.stage.id, round: 1, reported: { "0": true, "1": true, "2": true, "3": true }, findings: 2, input };
@@ -92,10 +95,12 @@ it("brings a third place stopped by a full model back into the copy it made, whi
     } finally { turn.mockRestore(); await f.shutdown(); }
   });
 });
+});
 
 describe("bounded verifier places after handoffs", () => {
 it("gives a verifier its own copy when a screen wait saved before the folder rule kept that folder name", async () => {
-    const f = await ballot(["opus-high", "sol-high"], ["a"]);
+    await ballot(["opus-high", "sol-high"], ["a"], 1, async f => {
+
     // Two accepted profile names: the earlier version saved `_46`'s copy as vote-_46, which is F's encoded folder now.
     f.engine.s.profiles.push({ ...f.engine.profile("opus-high")!, id: "_46" }, { ...f.engine.profile("sol-high")!, id: "F" });
     const signal = new AbortController().signal;
@@ -135,4 +140,5 @@ it("gives a verifier its own copy when a screen wait saved before the folder rul
       expect(await git(f.repo, "worktree", "list", "--porcelain")).not.toContain(`${f.task.id}.copies`);
     } finally { continued.mockRestore(); fresh.mockRestore(); await f.shutdown(); }
   });
+});
 });

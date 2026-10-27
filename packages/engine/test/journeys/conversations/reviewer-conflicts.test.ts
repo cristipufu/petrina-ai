@@ -16,7 +16,7 @@ afterAll(() => prepared.close());
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 for (const { between, shared, single } of [{}, { between: "pause" }, { between: "restart" }, { shared: true }, { single: true }] as { between?: "pause" | "restart"; shared?: boolean; single?: boolean }[]) it(`drops ${single ? "a single reviewer's conversation" : "reviewer conversations"} when main conflicts${shared ? " in one shared product" : ""} and records why on each seat's next start${between ? `, across a ${between} before admission` : ""}`, async () => {
-    const exercise = async (f: Awaited<ReturnType<typeof run>>) => {
+    const exercise = async (f: Parameters<Parameters<typeof run>[2]>[0]) => {
       try {
         await f.beforeFix();
         const moved = await f.advanceMain(undefined, true);
@@ -62,7 +62,7 @@ for (const { between, shared, single } of [{}, { between: "pause" }, { between: 
         expect(task.reviewFreshReasons).toBeUndefined();
       } finally { await f.shutdown(); }
     };
-    if (shared || between === "restart") return exercise(await run(single ? "load" : "resume", { advance: true, shared, single }));
+    if (shared || between === "restart") return run(single ? "load" : "resume", { advance: true, shared, single }, exercise);
     const f = await prepared.reviewRun(single ? "load" : "resume", { advance: true, shared, single });
     return f.use(() => exercise(f));
   });
@@ -70,7 +70,8 @@ for (const { between, shared, single } of [{}, { between: "pause" }, { between: 
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("stops before reopening reviewers when main replaces the saved base history", async () => {
-    const f = await run("resume", { advance: true });
+    await run("resume", { advance: true }, async f => {
+
     try {
       await f.beforeFix();
       const product = f.engine().s.products[0]!;
@@ -84,10 +85,12 @@ it("stops before reopening reviewers when main replaces the saved base history",
     } finally { await f.shutdown(); }
   });
 });
+});
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
 it("returns failed checks on updated code to the Builder before spending another review", async () => {
-    const f = await run("resume", { advance: true });
+    await run("resume", { advance: true }, async f => {
+
     try {
       await f.beforeFix(); await f.advanceMain();
       writeFileSync(join(f.root, "fail-check"), "");
@@ -98,6 +101,7 @@ it("returns failed checks on updated code to the Builder before spending another
       expect(task.timeline.some((entry) => entry.text.includes("before review"))).toBe(true);
     } finally { await f.shutdown(); }
   });
+});
 });
 
 describe.concurrent("reviewer conversations across fix rounds", () => {
