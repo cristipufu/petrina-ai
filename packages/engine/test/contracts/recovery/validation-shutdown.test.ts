@@ -1,10 +1,10 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { resolve as testFixturePath } from "node:path";
 const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { waitFor } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 
@@ -13,25 +13,27 @@ import { ENGINE_PROFILES } from "@petrina/agent-runtime/tools";
 import { WaitClock } from "@petrina/storage/worklog";
 
 
-import { ExtraFixtures } from "../../extra-fixtures.js";
+import { extraFixture } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const { engines } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const mode of ["none", "queued", "running"] as const) it(`saves ordinary work and closes its log immediately on shutdown with ${mode} extra work`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const ordinary = await f.add(); ordinary.title = "Unrelated interrupted turn";
     const profile = ENGINE_PROFILES.find(profile => profile.id === "sol-high")!;
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     const run = await AgentRun.start({ profile, cwd: executionFor(ordinary).work.worktree!, command: [process.execPath, join(TEST_FIXTURE_ROOT, "fake-agent.ts"), "--tool=codex"],
       callbacks: { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" }, signal: controller.signal, browser: false });
     f.engine.runs.set(ordinary.id, run); f.engine.drivers.set(ordinary.id, controller);
     const turn = f.engine.tracking.turn(ordinary, { roleId: "builder", profile, waits: new WaitClock(), journeyId: ordinary.journey!.at(-1)!.id, agentSeat: "main" }, run, "HANG-FOREVER please", "first", controller.signal).catch(() => undefined);
+    owner.onStop(async () => { await Promise.allSettled([turn]); });
     let releaseCleanup = () => {};
+    owner.onStop(() => releaseCleanup?.());
     let stopped: Promise<void> | undefined;
     try {
       await waitFor(() => run.prompting, "the ordinary turn to start");
@@ -46,7 +48,7 @@ for (const mode of ["none", "queued", "running"] as const) it(`saves ordinary wo
       // No earlier save contains this last ordinary change. Shutdown must save it before
       // any slow cleanup, and a turn ending during that cleanup must remain unfinished.
       ordinary.description = "Saved at the instant Petrina stops";
-      stopped = f.engine.shutdown();
+      stopped = owner.stop(f.engine);
       if (mode !== "none") {
         expect(f.engine.store.loadActive()!.tasks.find(task => task.id === ordinary.id)!.description).toBe(ordinary.description);
         expect(f.engine.store.loadActive()!.extraValidations).toHaveLength(1);
@@ -59,7 +61,7 @@ for (const mode of ["none", "queued", "running"] as const) it(`saves ordinary wo
         stoppedEvidence = structuredClone(f.engine.s.extraValidations![0]!);
       }
       releaseCleanup(); await stopped;
-      const replacement = new Engine(f.data, f.settings); engines.push(replacement);
+      const replacement = owner.open(f.data, f.settings);
       await replacement.extraValidations.ready;
       const [lost] = replacement.tracking.log.turns({ taskId: ordinary.id });
       expect(lost).toMatchObject({ end: "lost" });
@@ -81,6 +83,10 @@ for (const mode of ["none", "queued", "running"] as const) it(`saves ordinary wo
           expect(existsSync(record.snapshot)).toBe(false);
         }
       }
-    } finally { releaseCleanup(); await (stopped ?? f.engine.shutdown()); await turn; }
+    } finally { releaseCleanup(); await (stopped ?? owner.stop(f.engine)); await turn; }
+
   });
+
+  });
+});
 });

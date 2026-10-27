@@ -1,27 +1,29 @@
+import { completeAll } from "@petrina/core";
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId, DeepMutable, Product, TaskRepository } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { scopesFor } from "@petrina/orchestrator";
-import { git, makeProduct, removeDir, tempDir } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { scopesFor } from "@petrina/orchestrator";
+import { git, makeProduct } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 /** Only post-wait updates and the next admission: each product owns its own private repository. */
-async function fixture() {
-  const root = tempDir("petrina-wait-refresh-"); roots.push(root);
+async function prepareFixture(owner: EngineCaseOwner) {
+  const root = owner.root;
   const home = join(root, "data");
   const open = () => {
-    const engine = new Engine(home, { agentCommand: () => undefined, terminals: () => [] });
+    const engine = owner.open(home, { agentCommand: () => undefined, terminals: () => [] });
     engine.schedule = () => {};
     engine.s.setup!.checks = engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
     engine.s.tools.forEach(tool => { tool.status = "ready"; });
     return engine;
   };
   let engine = open();
-  const products: DeepMutable<Product>[] = await Promise.all(["shop", "api"].map(async (id): Promise<DeepMutable<Product>> => {
+  const products: DeepMutable<Product>[] = await completeAll(["shop", "api"].map(async (id): Promise<DeepMutable<Product>> => {
     const path = await makeProduct(join(root, id));
     writeFileSync(join(path, "feature.txt"), "Original value\n");
     await git(path, "add", "."); await git(path, "commit", "-qm", "Prepare the common source");
@@ -31,7 +33,7 @@ async function fixture() {
   const prerequisite = engine.addTask({ productId: "shop", title: "Land the shared fix", backlog: true });
   const id = engine.addTask({ productId: "shop", title: "Refresh every product", backlog: true });
   const task = engine.task(id)!;
-  task.repositories = await Promise.all(products.map(async (product): Promise<DeepMutable<TaskRepository>> => {
+  task.repositories = await completeAll(products.map(async (product): Promise<DeepMutable<TaskRepository>> => {
     const worktree = join(root, `${product.id}-work`), branch = "task-change";
     await git(product.path!, "worktree", "add", "-qb", branch, worktree, "main");
     const baseSha = await git(worktree, "rev-parse", "HEAD");
@@ -48,7 +50,8 @@ async function fixture() {
     { id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: ["sol-high"] },
     { id: "review", kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high"] },
   ] };
-  const signal = new AbortController().signal;
+  const controller = new AbortController(), signal = controller.signal;
+  owner.onStop(() => controller.abort());
   const admitted: string[] = [];
   const observe = () => { engine["work"].runDo = async scope => { admitted.push(scope.work.productId); return "stop"; }; };
   observe();
@@ -70,16 +73,20 @@ async function fixture() {
       engine.setRuntimeWait(id, [prerequisite], "The next step needs every product's fix", "hold");
       engine.setRuntimeWait(id, [], "The coordinator resolved the prerequisites", "clear");
     },
-    refresh: () => engine["driver"]["refreshAfterWait"](engine.task(id)!, signal),
-    async drive() { engine.startDriver(id); await engine.settling.get(id); },
-    async restart() { await engine.shutdown(); engine = open(); await engine.waitUntilReady(); observe(); },
-    close: () => engine.shutdown(),
+    refresh: () => { const current = engine; return owner.run(current, () => current["driver"]["refreshAfterWait"](current.task(id)!, signal)); },
+    async drive() { const current = engine; return owner.run(current, async () => { current.startDriver(id); await current.settling.get(id); }); },
+    restart: () => owner.prepare(async () => { await owner.stop(engine); owner.check(); engine = open(); await engine.waitUntilReady(); observe(); }),
+    close: () => owner.stop(engine),
   };
+}
+
+function fixture<T>(owner: EngineCaseOwner, body: (fixture: Awaited<ReturnType<typeof prepareFixture>>) => Promise<T>): Promise<T> {
+  return owner.prepare(async () => { const value = await prepareFixture(owner); owner.check(); return body(value); });
 }
 
 describe.concurrent("post-wait source updates across products", () => {
   it("keeps an existing port intact while updating its companion, and finishes the owed port check after restart", async () => {
-    const f = await fixture();
+    return cases.use("petrina-wait-refresh-", owner => fixture(owner, async (f) => {
     try {
       await f.advance(0, true); await f.port();
       const first = f.scopes()[0]!.work;
@@ -104,10 +111,12 @@ describe.concurrent("post-wait source updates across products", () => {
       expect(f.task().runtimeWait?.refreshPending).toBeUndefined();
       expect(f.task().timeline.filter(line => line.text.includes("source checks are complete"))).toHaveLength(1);
     } finally { await f.close(); }
-  });
+
+  }));
+});
 
   it("examines the companion after a new conflict and retains the conflict until its Builder finishes", async () => {
-    const f = await fixture();
+    return cases.use("petrina-wait-refresh-", owner => fixture(owner, async (f) => {
     try {
       const first = await f.advance(0, true), second = await f.advance(1); f.release();
       expect(await f.refresh()).toBe(true);
@@ -119,10 +128,12 @@ describe.concurrent("post-wait source updates across products", () => {
       // All unresolved work is now the existing port; another pass must allow that port to run.
       expect(await f.refresh()).toBe(false);
     } finally { await f.close(); }
-  });
+
+  }));
+});
 
   it("keeps every newly conflicted owner in the ordinary repair order and preserves its return step", async () => {
-    const f = await fixture();
+    return cases.use("petrina-wait-refresh-", owner => fixture(owner, async (f) => {
     try {
       await f.advance(0, true); await f.advance(1, true); f.release();
       expect(await f.refresh()).toBe(true);
@@ -130,10 +141,12 @@ describe.concurrent("post-wait source updates across products", () => {
       expect(f.task().repair).toEqual({ products: ["shop", "api"], index: 0, returnStage: 1, kind: "review", portProducts: ["shop", "api"] });
       expect(await f.refresh()).toBe(false);
     } finally { await f.close(); }
-  });
+
+  }));
+});
 
   it("preserves an admitted publication's candidate while its remaining companion gets the source update", async () => {
-    const f = await fixture();
+    return cases.use("petrina-wait-refresh-", owner => fixture(owner, async (f) => {
     try {
       const first = f.scopes()[0]!.work;
       const head = await git(first.worktree!, "rev-parse", "HEAD");
@@ -151,10 +164,12 @@ describe.concurrent("post-wait source updates across products", () => {
       expect(f.task().runtimeWait?.refreshPending).toBeUndefined();
       expect(first.shipping).toEqual(admitted);
     } finally { await f.close(); }
-  });
+
+  }));
+});
 
   it.each([false, true])("stops before Builder admission on an unavailable companion and retains the update across restart (existing port: %s)", async existing => {
-    const f = await fixture();
+    return cases.use("petrina-wait-refresh-", owner => fixture(owner, async (f) => {
     try {
       await f.advance(0, true); if (existing) await f.port();
       const latest = await f.advance(1); f.release();
@@ -176,5 +191,7 @@ describe.concurrent("post-wait source updates across products", () => {
       expect(f.admitted).toEqual(["shop"]);
       expect(f.task().runtimeWait?.refreshPending).toBe(true);
     } finally { await f.close(); }
-  });
+
+  }));
+});
 });

@@ -1,3 +1,6 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { afterAll } from "bun:test";
+import { completeAll } from "@petrina/core";
 import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
@@ -10,6 +13,9 @@ import { routeMessages } from "@petrina/core";
 import { prepareReviewInput, type ReviewInput } from "../../../src/review-context.js";
 import { historyGuidance } from "../../../src/review-history.js";
 import { makeProduct, waitFor } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 const notesTitle = "The coordinator's notes on this task (preserve product decisions; read each instruction in its original step)";
 const note = (id: string, text = `EXACT-DECISION-${id}: keep the agreed product behaviour.`) => ({
@@ -18,8 +24,8 @@ const note = (id: string, text = `EXACT-DECISION-${id}: keep the agreed product 
 const oldNotes = () => [note("n1"), note("n2"), note("n3"), note("n4")];
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
-async function fixture(builtIn: "builder" | "architect" | "design-reviewer" | "code-reviewer" = "builder", peer = false, initialNotes = oldNotes()) {
-  const { root, repo, fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-note-continuation-", "Keep every coordinator decision", { builder: "plain", architect: "plain", reopen: "resume", controlled: true }, "ORIGINAL-NOTE-TASK");
+async function prepareFixture(owner: EngineCaseOwner, builtIn: "builder" | "architect" | "design-reviewer" | "code-reviewer" = "builder", peer = false, initialNotes = oldNotes()) {
+  return nativeCoordinatorTask(owner, async ({ root, repo, fakes, engine, task, scope, dispose: close }) => {
   try {
     // Added role ids must obey the same result contract as their built-in counterparts.
     const role = { ...engine.role(builtIn)!, id: `notes-${builtIn}` };
@@ -35,6 +41,7 @@ async function fixture(builtIn: "builder" | "architect" | "design-reviewer" | "c
     if (parallel) task.hunt = { stageId: "work", round: 1, reported: {}, profiles: { "0": "sol-high", ...(peer ? { "1": "astra-xhigh" } : {}) } };
     const controllers: AbortController[] = [];
     const pending: Promise<unknown>[] = [];
+    owner.onStop(async () => { await completeAll([...controllers.map(async controller => { controller.abort(); }), Promise.allSettled(pending).then(() => undefined)]); });
     let completed: ConversationNote | undefined;
     let review: ReviewInput | undefined;
     const given = async (member?: string) => [
@@ -42,6 +49,7 @@ async function fixture(builtIn: "builder" | "architect" | "design-reviewer" | "c
       ...(design ? [{ title: "Objections from the design reviewer", body: "UNCHANGED-DESIGN-OBJECTION" }, { title: "The coordinator's call", body: "UNCHANGED-DESIGN-CALL" }] : []),
     ];
     const run = async (resume?: ConversationNote, seat = 0, earlier: readonly StepNote[] = []) => {
+      owner.check();
       if (!parallel && fakes.received().length) engine.finishStep(scope);
       if (earlier.length) {
         task.stepNotes = earlier.map(entry => ({ ...entry }));
@@ -72,6 +80,12 @@ async function fixture(builtIn: "builder" | "architect" | "design-reviewer" | "c
     };
     return { engine, task, scope, fakes, run, dispose, role, data: join(root, "data"), setReview: (input: ReviewInput) => { review = input; } };
   } catch (error) { await close(); throw error; }
+
+  }, "Keep every coordinator decision", { builder: "plain", architect: "plain", reopen: "resume", controlled: true }, "ORIGINAL-NOTE-TASK");
+}
+
+function fixture<T>(owner: EngineCaseOwner, body: (value: Awaited<ReturnType<typeof prepareFixture>>) => Promise<T>, builtIn: "builder" | "architect" | "design-reviewer" | "code-reviewer" = "builder", peer = false, initialNotes = oldNotes()): Promise<T> {
+  return owner.prepare(async () => { const fixture = await prepareFixture(owner, builtIn, peer, initialNotes); owner.check(); return body(fixture); });
 }
 
 function completeNotes(saved: ConversationNote, notes: readonly ReturnType<typeof note>[]) {
@@ -93,7 +107,7 @@ function truthfulOmissions(input: JourneyAgentInput, ids: string[]) {
 }
 
 for (const builtIn of ["builder", "architect", "design-reviewer", "code-reviewer"] as const) it(`sends only new background notes on the ${builtIn} result contract's managed return`, async () => {
-  const f = await fixture(builtIn);
+  return cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
   try {
     const first = await f.run();
     const added = note("n5");
@@ -128,10 +142,12 @@ for (const builtIn of ["builder", "architect", "design-reviewer", "code-reviewer
     for (const entry of f.task.notes!) expect(replay.opening.text).not.toContain(entry.text);
     completeNotes(replay.saved, [...oldNotes(), added]);
   } finally { await f.dispose(); }
+
+  }, builtIn));
 });
 
 it("delivers a new waiting note once without replaying old decisions or changing their receipts", async () => {
-  const f = await fixture();
+  return cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
   try {
     const first = await f.run();
     const text = "NEW-WAITING-DECISION: preserve all earlier choices.";
@@ -155,10 +171,12 @@ it("delivers a new waiting note once without replaying old decisions or changing
     expect(replay.opening.text).not.toContain(text);
     expect(f.task.session.filter(line => line.coordinatorMessageId === id)).toHaveLength(1);
   } finally { await f.dispose(); }
+
+  }));
 });
 
 it("sends revisions over earlier-attempt versions, current order and withdrawals in its actual managed opening", async () => {
-  const f = await fixture();
+  return cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
   try {
     const first = await f.run();
     const original = oldNotes();
@@ -195,10 +213,12 @@ it("sends revisions over earlier-attempt versions, current order and withdrawals
     expect(fresh.opening.text).not.toContain("unchanged in the saved complete context");
     completeNotes(fresh.saved, current);
   } finally { await f.dispose(); }
+
+  }));
 });
 
 it("compares each parallel seat with its own notes and keeps new broadcast receipts separate", async () => {
-  const f = await fixture("code-reviewer", true);
+  return cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
   try {
     const first = await f.run();
     const intermediate = note("n5");
@@ -228,10 +248,12 @@ it("compares each parallel seat with its own notes and keeps new broadcast recei
       for (const entry of [...oldNotes(), intermediate, { text }]) expect(packet.split(entry.text)).toHaveLength(2);
     }
   } finally { await f.dispose(); }
+
+  }, "code-reviewer", true));
 });
 
 it("keeps queued delivery separate from whole-section omission when a note has no recorded id", async () => {
-  const f = await fixture();
+  return cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
   try {
     f.task.notes![1]!.id = undefined;
     const first = await f.run();
@@ -259,10 +281,12 @@ it("keeps queued delivery separate from whole-section omission when a note has n
     expect(hash(packet)).toBe(unchanged.saved.context!.digest);
     for (const entry of [...oldNotes(), { text }]) expect(packet.split(entry.text)).toHaveLength(2);
   } finally { await f.dispose(); }
+
+  }));
 });
 
 it("combines managed note deltas with frozen review history without retaining unused warm copies", async () => {
-  const f = await fixture("code-reviewer");
+  return cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
   try {
     const finding = { id: "settled", text: "The earlier issue", severity: "blocking" as const, raisedBy: "sol-high", roleId: f.role.id, status: "fixed" as const, confirmedBy: [], evidence: "ORIGINAL-REVIEW-EVIDENCE ".repeat(100), answer: { fixed: true, text: "The dated Builder claim", at: 10 } };
     const card = { id: "follow-up", title: "The earlier follow-up", productIds: ["p"], problem: "ORIGINAL-FOLLOW-UP-DETAIL ".repeat(100) };
@@ -321,6 +345,8 @@ it("combines managed note deltas with frozen review history without retaining un
     for (const entry of f.task.notes!) expect(changedCard.opening.text).not.toContain(entry.text);
     completeNotes(changedCard.saved, [...oldNotes(), added]);
   } finally { await f.dispose(); }
+
+  }, "code-reviewer"));
 });
 
 for (const scenario of ["warm background", "warm waiting message", "fresh"] as const) it(`measures the five-note replay in an actual ${scenario} Builder opening`, async () => {
@@ -330,7 +356,7 @@ for (const scenario of ["warm background", "warm waiting message", "fresh"] as c
   expect(notes.map(entry => entry.text.length)).toEqual(lengths);
   const pair: { opening: number; notes: number; packet: number; snapshotJson: number; journeyJson: number }[] = [];
   for (const policy of ["complete-note control", "note-by-note"] as const) {
-    const f = await fixture("builder", false, scenario === "fresh" ? notes : notes.slice(0, 4));
+    await cases.use("petrina-note-continuation-", owner => fixture(owner, async f => {
     try {
       const previous = scenario === "fresh" ? undefined : (await f.run()).saved;
       if (previous && policy === "complete-note control") {
@@ -370,7 +396,9 @@ for (const scenario of ["warm background", "warm waiting message", "fresh"] as c
       if (policy === "complete-note control") delete snapshot.noteHashes;
       pair.push({ opening: recorded.opening.text.length, notes: body.length, packet: packet.length, snapshotJson: JSON.stringify(snapshot).length, journeyJson: JSON.stringify(recorded.input).length });
     } finally { await f.dispose(); }
-  }
+
+  }, "builder", false, scenario === "fresh" ? notes : notes.slice(0, 4)));
+}
   const before = pair[0]!, after = pair[1]!;
   expect(after.packet).toBe(before.packet);
   expect(after.snapshotJson).toBeGreaterThan(before.snapshotJson);

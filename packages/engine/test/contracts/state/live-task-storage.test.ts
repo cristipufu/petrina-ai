@@ -1,16 +1,17 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 
-import { Engine } from "../../engine.js";
-import { removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { waitFor } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 it("coalesces streamed revisions and persists the final text on completion and shutdown", async () => {
-  const root = tempDir("petrina-stream-revisions-"); roots.push(root);
+  return cases.use("petrina-stream-revisions-", async owner => {
+  const root = owner.root;
   const options = { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   };
-  let engine = new Engine(root, options);
+  let engine = owner.open(root, options);
   try {
     await engine.waitUntilReady(); await Promise.all([...engine.backgroundWork]);
     engine.s.products.push({ id: "p", name: "Product", repo: "local/p", tone: "blue" });
@@ -21,6 +22,7 @@ it("coalesces streamed revisions and persists the final text on completion and s
     expect(engine.taskDetails(task.id)!.detailsRevision).toBe(before);
     const notifications: string[] = [];
     const off = engine.subscribe(() => notifications.push(revision()!));
+    owner.onStop(() => off());
     for (let chunk = 0; chunk < 100; chunk++) { task.session[0]!.text = `Latest chunk ${chunk}`; engine.noteStream(task); }
     expect(revision()).toBe(before);
     expect(notifications).toHaveLength(0);
@@ -36,17 +38,19 @@ it("coalesces streamed revisions and persists the final text on completion and s
     task.session[0]!.text = "Completed turn"; engine.noteStream(task); engine.commitNow(task);
     expect(engine.store.load()!.tasks.find((entry) => entry.id === task.id)!.session[0]!.text).toBe("Completed turn");
     task.session[0]!.text = "Last words before shutdown"; engine.noteStream(task);
-    off(); await engine.shutdown(); engine = new Engine(root, options);
+    off(); await owner.stop(engine); engine = owner.open(root, options);
     expect(engine.taskDetails(task.id)!.session[0]!.text).toBe("Last words before shutdown");
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });
 
 
-
 it("broadcasts summaries, fetches complete details, and saves one streaming task without serializing its peers", async () => {
-  const root = tempDir("petrina-live-task-storage-"); roots.push(root);
+  return cases.use("petrina-live-task-storage-", async owner => {
+  const root = owner.root;
   const options = { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   };
-  let engine = new Engine(root, options);
+  let engine = owner.open(root, options);
   try {
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "p", name: "Product", repo: "local/p", path: join(root, "product"), tone: "blue" });
@@ -81,8 +85,10 @@ it("broadcasts summaries, fetches complete details, and saves one streaming task
     } finally { Reflect.deleteProperty(archived.session, "toJSON"); }
     const metadata = engine.store.database.query<{ value: string }, []>("SELECT value FROM kv WHERE key='state'").get()!.value;
     expect(metadata).not.toContain("LARGE-PRIVATE-HISTORY");
-    await engine.shutdown(); engine = new Engine(root, options);
+    await owner.stop(engine); engine = owner.open(root, options);
     expect(engine.taskDetails(one.id)!.session.at(-1)!.text).toBe("Progress beside an open archive");
     expect(engine.taskDetails(two.id)!.session[0]!.text).toBe(two.session[0]!.text);
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

@@ -1,16 +1,17 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { SourceRefreshRequired } from "../../../src/kernel.js";
-import { makeProduct, removeDir, tempDir } from "../../fixtures.js";
+import { makeProduct } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 for (const roleId of ["check-finder", "guide-keeper"]) it(`returns ${roleId} to source catch-up without accepting fallback work`, async () => {
-  const root = tempDir("petrina-side-source-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined });
+  return cases.use("petrina-side-source-", async owner => {
+  const root = owner.root;
+  const engine = owner.open(join(root, "data"), { agentCommand: () => undefined });
   engine.schedule = () => {};
   try {
     const path = await makeProduct(join(root, "product"));
@@ -38,5 +39,7 @@ for (const roleId of ["check-finder", "guide-keeper"]) it(`returns ${roleId} to 
     expect(product.checksSeen).toBeUndefined();
     expect(engine.tracking.log.moments({ taskId: task.id, kinds: ["failure"] })).toEqual([]);
     expect(task.timeline.some(entry => entry.text.includes("could not finish"))).toBe(false);
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

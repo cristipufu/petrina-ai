@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,17 +9,16 @@ import { git } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 
 
-import { ExtraFixtures } from "../../extra-fixtures.js";
+import { extraFixture } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const {  } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const route of ["no version change", "working edits"] as const) it(`pins the restored saved work after ${route}`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const scope = executionFor(f.task), path = scope.work.worktree!, shipping = f.engine["shipping"];
     scope.work.branch = await git(path, "branch", "--show-current");
     scope.work.delivery = "release";
@@ -50,11 +50,17 @@ for (const route of ["no version change", "working edits"] as const) it(`pins th
     expect(record.commit).toBe(saved.commit); expect(record.tree).toBe(saved.tree);
     expect(record.workingEdits).toBe(route === "working edits");
     expect(reply.message!.includes("The working copy currently has changes that are excluded")).toBe(route === "working edits");
-    await f.engine.shutdown();
+    await owner.stop(f.engine);
+
   });
 
+  });
+});
+
 it("keeps an already queued release snapshot when restoring the saved work", async () => {
-    const f = await fixture(), scope = executionFor(f.task), path = scope.work.worktree!;
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {const scope = executionFor(f.task), path = scope.work.worktree!;
+
     scope.work.branch = await git(path, "branch", "--show-current");
     writeFileSync(join(path, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
     await git(path, "add", "."); await git(path, "commit", "-qm", "Declare the release version");
@@ -77,6 +83,10 @@ it("keeps an already queued release snapshot when restoring the saved work", asy
     expect(result.result).toBe("passed");
     expect(result.commit).toBe(queued.commit); expect(result.tree).toBe(queued.tree);
     expect(result.commit).not.toBe(saved.commit);
-    await f.engine.shutdown();
+    await owner.stop(f.engine);
+
   });
+
+  });
+});
 });

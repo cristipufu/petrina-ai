@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,17 +9,16 @@ import { git, waitFor } from "../../fixtures.js";
 import { executionFor } from "@petrina/orchestrator";
 
 
-import { ExtraFixtures } from "../../extra-fixtures.js";
+import { extraFixture } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const {  } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const checkRuns of [1, 2]) it(`reserves the final place atomically and keeps FIFO between product and extra runs (limit ${checkRuns})`, async () => {
-    const f = await fixture({ checkRuns });
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const { engine } = f;
     engine.setPoolPaused(false);
     const acquire = () => engine["checks"]["turnToRun"](executionFor(f.task), new AbortController().signal);
@@ -50,10 +50,15 @@ for (const checkRuns of [1, 2]) it(`reserves the final place atomically and keep
     expect(existsSync(join(f.service, "started", next.id))).toBe(false);
     releaseOlder(); await f.finished(next);
     for (const release of held) release();
+
+  }, { checkRuns });
+
   });
+});
 
 for (const checkRuns of [1, 2]) it(`admits two extra requests in order without starvation or double execution (limit ${checkRuns})`, async () => {
-    const f = await fixture({ checkRuns });
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const secondTask = await f.add();
     const first = await f.submit("first");
     const second = await f.submit("second", ["probe", "hold"], secondTask.id);
@@ -67,11 +72,17 @@ for (const checkRuns of [1, 2]) it(`admits two extra requests in order without s
     f.release(second); await f.finished(second);
     expect(readdirSync(join(f.service, "started")).length).toBe(2);
     expect(f.engine.checkQueue.running).toBe(0);
+
+  }, { checkRuns });
+
   });
+});
 
 it("caller cancellation ends only its wait; retries return the same saved run and original log", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     const waiting = f.coordination.call("validation.run", { ...f.request("lost-reply"), wait: true, timeoutMs: 60_000 }, controller.signal);
     await waitFor(() => f.engine.s.extraValidations?.length === 1, "durable queued request");
     controller.abort();
@@ -83,6 +94,7 @@ it("caller cancellation ends only its wait; retries return the same saved run an
     const retry = await f.coordination.call("validation.run", { ...f.request("lost-reply"), timeoutMs: 0 });
     expect((retry.validation as ExtraValidation).id).toBe(first.id);
     const runningCaller = new AbortController();
+    owner.onStop(() => runningCaller.abort());
     const runningWait = f.coordination.call("validation.run", { ...f.request("lost-reply"), wait: true }, runningCaller.signal);
     await f.coordination.call("pool.inspect", {});
     runningCaller.abort();
@@ -98,10 +110,15 @@ it("caller cancellation ends only its wait; retries return the same saved run an
     expect(log.text).toContain("Original complete diagnostic");
     writeFileSync(record.run!.logPath!, "replacement");
     expect((await f.coordination.call("validation.log", { requestId: "lost-reply" })).completeness).toBe("missing-file");
+
   });
 
+  });
+});
+
 it("holds capacity after the client dies while its container remains, survives cancellation and refuses removal until confirmed", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     f.engine.setPoolPaused(false);
     const record = await f.submit("held"); await f.started(record);
     expect(await git(record.snapshot, "rev-parse", "HEAD")).toBe(record.commit);
@@ -119,6 +136,7 @@ it("holds capacity after the client dies while its container remains, survives c
     const status = await f.coordination.call("engine.status", {});
     expect(status.checkBlockers).toEqual([f.engine.extraValidations.blocker]);
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     const pending = f.engine.checkQueue.acquire(controller.signal);
     expect(f.engine.checkQueue.waiting).toBe(1);
     rmSync(join(f.service, "cleanup-off"));
@@ -131,10 +149,15 @@ it("holds capacity after the client dies while its container remains, survives c
     expect(f.engine.extraValidations.outstanding(f.productId)).toBeUndefined();
     f.engine.removeProduct(f.productId);
     expect(f.engine.s.products).toEqual([]);
+
   });
 
+  });
+});
+
 it("keeps the remaining cleanup blocker on waiting checks after one of two held runs finishes", async () => {
-    const f = await fixture({ checkRuns: 3 });
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
     const first = await f.submit("first-held");
     const second = (await f.coordination.call("validation.run", { ...f.request("second-held", undefined, (await f.add()).id), name: "Second required suite" })).validation as ExtraValidation;
@@ -143,8 +166,10 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
     const ordinary = { name: "Ordinary check", argv: [process.execPath, "-e", "process.exit(0)"] };
     f.engine.setProductChecks(f.productId, [{ name: ordinary.name, command: commandInputText(ordinary.argv) }]);
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     let productRun: Promise<unknown> | undefined;
     let confirmSecond = false;
+    owner.onStop(() => { confirmSecond = true; });
     const container = f.engine.extraValidations["container"];
     const cleanup = container.cleanup.bind(container);
     container.cleanup = record => record.id === second.id && !confirmSecond ? Promise.resolve(false) : cleanup(record);
@@ -182,7 +207,11 @@ it("keeps the remaining cleanup blocker on waiting checks after one of two held 
       confirmSecond = true; controller.abort();
       rmSync(join(f.service, "cleanup-off"), { force: true });
       await f.engine.extraValidations.retryCleanup(); await productRun;
-      await f.engine.shutdown();
+      await owner.stop(f.engine);
     }
+
+  }, { checkRuns: 3 });
+
   });
+});
 });

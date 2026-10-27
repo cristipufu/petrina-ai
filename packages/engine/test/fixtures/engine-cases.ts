@@ -24,6 +24,8 @@ export interface EngineCaseOwner {
   run<T>(engine: Engine, start: () => Promise<T>): Promise<T>;
   prepare<T>(start: () => Promise<T>): Promise<T>;
   stop(engine: Engine): Promise<void>;
+  /** Request every generation's stop before independent actor cleanup; no replacement may open afterward. */
+  stopAll(): Promise<void>;
   restart(engine: Engine, dataDir: string, options: EngineOptions): Promise<Engine>;
   /** Release gates and stop HTTP peers before requesting Engine shutdown. */
   onStop(effect: Effect): () => Promise<void>;
@@ -85,6 +87,7 @@ export function engineCaseFixtures() {
       run: (engine, start) => { check(); return lifetime.run(engine, start); },
       prepare: start => { check(); return lifetime.prepare(start); },
       stop: engine => lifetime.stop(engine),
+      stopAll: lifetime.stopAll,
       restart: (engine, dataDir, options) => lifetime.prepare(async () => { check(); await lifetime.stop(engine); return open(dataDir, options); }),
       onStop: effect => register(releases, effect),
       afterBody: effect => register(finalizers, effect),

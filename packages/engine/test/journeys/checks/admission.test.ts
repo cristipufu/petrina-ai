@@ -1,23 +1,21 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckId } from "@petrina/core";
-import type { Engine } from "../../engine.js";
+
 import { checkAdmissionFixture } from "../../fixtures/check-admission.js";
 import { checksFingerprint } from "../../../src/checks.js";
-import { git, removeDir, waitFor, waitForFile } from "../../fixtures.js";
+import { git, waitFor, waitForFile } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-const engines: Engine[] = [];
-afterAll(async () => { for (const engine of engines) await engine.shutdown(); roots.forEach(removeDir); });
-
-// Shared real check/Git boundary; the caller retains the same shutdown/root ownership.
-const fixture = () => checkAdmissionFixture(roots, engines);
 
 for (const paused of [false, true]) it(`prepares queued review checks on current main exactly once${paused ? " after a pool pause" : ""}`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), second = await f.add("second", true);
   const updates = spyOn(f.engine["updates"], "upToDate");
+    owner.onStop(() => updates.mockRestore());
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
   try {
@@ -50,11 +48,13 @@ for (const paused of [false, true]) it(`prepares queued review checks on current
     expect(updates.mock.calls.filter(call => call[0].task.id === first.task.id)).toHaveLength(1);
     expect(updates.mock.calls.filter(call => call[0].task.id === second.task.id)).toHaveLength(2);
     expect(f.engine.checkQueue.running).toBe(0); expect(f.engine.checkQueue.waiting).toBe(0);
-  } finally { f.release(); await firstReview; if (secondReview) await secondReview; updates.mockRestore(); await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (secondReview) await secondReview; updates.mockRestore(); await owner.stop(f.engine); }
+
+  }));
 });
 
 it("returns a queued conflict to the Builder without commands and hands the place to the next review", async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), conflict = await f.add("conflict", false, true), next = await f.add("next");
   conflict.scope.work.approvedSha = await git(conflict.copy, "rev-parse", "HEAD");
   conflict.scope.work.approvedPatch = await f.engine["updates"].patch(conflict.scope);
@@ -79,11 +79,13 @@ it("returns a queued conflict to the Builder without commands and hands the plac
     expect(skipped).toHaveLength(1); expect(skipped[0]!.result).toBe("skipped");
     expect(skipped[0]!.detail).toContain("conflict");
     expect(f.engine.checkQueue.running).toBe(0); expect(f.engine.checkQueue.waiting).toBe(0);
-  } finally { f.release(); await firstReview; if (conflictReview) await conflictReview; if (nextReview) await nextReview; await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (conflictReview) await conflictReview; if (nextReview) await nextReview; await owner.stop(f.engine); }
+
+  }));
 });
 
 it("captures changed check definitions at admission and preserves the earlier run's evidence", async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), second = await f.add("second");
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
@@ -99,15 +101,20 @@ it("captures changed check definitions at admission and preserves the earlier ru
     expect(firstAttempt.passed).toBe(false); expect(secondAttempt.passed).toBe(true);
     expect(first.task.journey!.flatMap(step => step.checkAttempts ?? [])).toHaveLength(2);
     expect(first.scope.work.checks?.current).toBe(true); expect(second.scope.work.checks?.current).toBe(true);
-  } finally { f.release(); await firstReview; if (secondReview) await secondReview; await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (secondReview) await secondReview; await owner.stop(f.engine); }
+
+  }));
 });
 
 it("gives up check capacity while new check inputs need discovery, then rejoins at its original order", async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), second = await f.add("second", true);
   const entered = Promise.withResolvers<void>(), releaseDiscovery = Promise.withResolvers<void>();
+    owner.onStop(() => releaseDiscovery.resolve());
   const checks = f.engine["checks"], ensure = checks.ensureChecks.bind(checks);
-  const discovery = spyOn(checks, "ensureChecks").mockImplementation(async (scope, signal) => {
+  const discovery = spyOn(checks, "ensureChecks");
+    owner.onStop(() => discovery.mockRestore());
+    discovery.mockImplementation(async (scope, signal) => {
     if (scope.task.id === second.task.id && f.engine.productOf(scope)!.checksBy === "finder") {
       entered.resolve(); await releaseDiscovery.promise;
       f.define("rediscovered-command");
@@ -117,9 +124,12 @@ it("gives up check capacity while new check inputs need discovery, then rejoins 
   });
   const firstReview = f.review(first);
   const controller = new AbortController();
+    owner.onStop(() => controller.abort());
   let secondReview: ReturnType<typeof f.review> | undefined;
   let follower: Promise<() => void> | undefined, late: Promise<() => void> | undefined;
   let followerPlace: (() => void) | undefined, latePlace: (() => void) | undefined;
+    owner.onStop(() => followerPlace?.());
+    owner.onStop(() => latePlace?.());
   try {
     await waitForFile(join(f.root, "first.started"), { during: firstReview });
     secondReview = f.review(second); await waitFor(() => f.engine.checkQueue.waiting === 1, "second review to queue before discovery");
@@ -148,12 +158,14 @@ it("gives up check capacity while new check inputs need discovery, then rejoins 
     if (follower) await follower.then(place => place(), () => {});
     if (late) await late.then(place => place(), () => {});
     await firstReview; if (secondReview) await secondReview;
-    discovery.mockRestore(); await f.engine.shutdown();
+    discovery.mockRestore(); await owner.stop(f.engine);
   }
+
+  }));
 });
 
 it("captures a newly configured commit hook before a queued review starts", async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), second = await f.add("second");
   const firstReview = f.review(first);
   let secondReview: ReturnType<typeof f.review> | undefined;
@@ -173,11 +185,13 @@ it("captures a newly configured commit hook before a queued review starts", asyn
     expect(original.definition).not.toBe(current.definition);
     expect(original.passed).toBe(false); expect(current.passed).toBe(true);
     expect(f.evidence().filter(run => run.name === "second")).toHaveLength(1);
-  } finally { f.release(); await firstReview; if (secondReview) await secondReview; await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (secondReview) await secondReview; await owner.stop(f.engine); }
+
+  }));
 });
 
 for (const savedTester of [false, true]) it(`acceptance ${savedTester ? "finishes its saved Tester version without updating or rerunning checks" : "updates queued checks before a fresh Tester starts"}`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), acceptance = await f.add("acceptance", !savedTester);
   acceptance.task.plan!.stages[1] = { id: "accept", title: "Try the product", kind: "do", roleId: "tester", profileIds: ["sol-high"] };
   f.engine.s.setup!.checks = f.engine.s.tools.map(tool => ({ id: tool.id as CheckId, status: "ready", at: Date.now() }));
@@ -185,8 +199,11 @@ for (const savedTester of [false, true]) it(`acceptance ${savedTester ? "finishe
   const before = await git(acceptance.copy, "rev-parse", "HEAD");
   if (savedTester) acceptance.scope.work.conversation = { step: "accept:1:0", roleId: "tester", profileId: "sol-high", toolId: "codex", model: "stand-in", sessionId: "saved-tester", startedAt: 1, head: before, briefed: true };
   const began = Promise.withResolvers<string>();
-  const work = spyOn(f.engine["work"], "runDo").mockImplementation(async scope => { began.resolve(await git(scope.work.worktree!, "rev-parse", "HEAD")); return "stop"; });
+  const work = spyOn(f.engine["work"], "runDo");
+    owner.onStop(() => work.mockRestore());
+    work.mockImplementation(async scope => { began.resolve(await git(scope.work.worktree!, "rev-parse", "HEAD")); return "stop"; });
   const updates = spyOn(f.engine["updates"], "upToDate");
+    owner.onStop(() => updates.mockRestore());
   const firstReview = f.review(first);
   let driving: Promise<void> | undefined;
   try {
@@ -210,11 +227,13 @@ for (const savedTester of [false, true]) it(`acceptance ${savedTester ? "finishe
     f.release(); expect(await firstReview).toBe("continue"); await driving;
     expect(f.evidence().map(run => run.name)).toEqual(savedTester ? ["first"] : ["first", "acceptance"]);
     expect(work).toHaveBeenCalledTimes(1);
-  } finally { f.release(); await firstReview; if (driving) await driving; updates.mockRestore(); work.mockRestore(); await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (driving) await driving; updates.mockRestore(); work.mockRestore(); await owner.stop(f.engine); }
+
+  }));
 });
 
 for (const admission of ["queued", "immediate", "conflict"] as const) it(`updates acceptance after a saved Check finder finishes (${admission})`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = admission === "immediate" ? undefined : await f.add("first");
   const acceptance = await f.add("acceptance", admission !== "conflict", admission === "conflict");
   acceptance.task.plan!.stages[1] = { id: "accept", title: "Try the product", kind: "do", roleId: "tester", profileIds: ["sol-high"] };
@@ -223,17 +242,23 @@ for (const admission of ["queued", "immediate", "conflict"] as const) it(`update
   const before = await git(acceptance.copy, "rev-parse", "HEAD");
   acceptance.scope.work.conversation = { step: "accept:1:0", roleId: "check-finder", profileId: "sol-high", toolId: "codex", model: "stand-in", sessionId: "saved-finder", startedAt: 1, head: before, briefed: true };
   const entered = Promise.withResolvers<void>(), releaseDiscovery = Promise.withResolvers<void>();
-  const finder = spyOn(f.engine["turns"], "turn").mockImplementation(async (scope, roleId, _profile, _given, schema) => {
+    owner.onStop(() => releaseDiscovery.resolve());
+  const finder = spyOn(f.engine["turns"], "turn");
+    owner.onStop(() => finder.mockRestore());
+    finder.mockImplementation(async (scope, roleId, _profile, _given, schema) => {
     expect(scope.task.id).toBe(acceptance.task.id); expect(roleId).toBe("check-finder");
     entered.resolve(); await releaseDiscovery.promise;
     return schema.parse({ summary: "Continue the saved discovery", checks: f.engine.productOf(scope)!.checks!.map(check => ({ ...check, why: "Required product verification" })) });
   });
   let tested: string | undefined;
-  const work = spyOn(f.engine["work"], "runDo").mockImplementation(async (scope, stage) => {
+  const work = spyOn(f.engine["work"], "runDo");
+    owner.onStop(() => work.mockRestore());
+    work.mockImplementation(async (scope, stage) => {
     if (f.engine.role(stage.roleId, scope.task)?.result === "checks") tested = await git(scope.work.worktree!, "rev-parse", "HEAD");
     return "stop";
   });
   const updates = spyOn(f.engine["updates"], "upToDate");
+    owner.onStop(() => updates.mockRestore());
   const firstReview = first ? f.review(first) : undefined;
   let driving: Promise<void> | undefined;
   try {
@@ -265,12 +290,14 @@ for (const admission of ["queued", "immediate", "conflict"] as const) it(`update
   } finally {
     releaseDiscovery.resolve(); f.release();
     try { if (firstReview) await firstReview; if (driving) await driving; }
-    finally { finder.mockRestore(); work.mockRestore(); updates.mockRestore(); await f.engine.shutdown(); }
+    finally { finder.mockRestore(); work.mockRestore(); updates.mockRestore(); await owner.stop(f.engine); }
   }
+
+  }));
 });
 
 it("updates a queued delivery check before capturing the change the coordinator will approve", async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), delivery = await f.add("delivery-check", true);
   delivery.task.plan!.stages[1] = { id: "approval", title: "Delivery check", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] };
   const firstReview = f.review(first);
@@ -288,11 +315,13 @@ it("updates a queued delivery check before capturing the change the coordinator 
     expect(delivery.task.state).toBe("needs-you");
     expect(f.engine.s.inbox.find(item => item.taskId === delivery.task.id && item.kind === "delivery")).toBeDefined();
     expect(delivery.scope.work.approvedSha).toBeUndefined();
-  } finally { f.release(); await firstReview; if (driving) await driving; await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (driving) await driving; await owner.stop(f.engine); }
+
+  }));
 });
 
 it("retains an earlier failure and its return allowance until the combined current tree really passes", async () => {
-  const f = await fixture();
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   const first = await f.add("first"), second = await f.add("second", true);
   const checks = f.engine["checks"];
   expect((await checks.failing(second.scope, new AbortController().signal)).kind).toBe("product-failed");
@@ -320,5 +349,7 @@ it("retains an earlier failure and its return allowance until the combined curre
     const attempts = second.task.journey!.flatMap(step => step.checkAttempts ?? []);
     expect(attempts).toHaveLength(2); expect(attempts[0]).toEqual(original); expect(attempts[1]!.passed).toBe(true);
     expect(attempts[0]!.tree).not.toBe(attempts[1]!.tree);
-  } finally { f.release(); await firstReview; if (secondReview) await secondReview; await f.engine.shutdown(); }
+  } finally { f.release(); await firstReview; if (secondReview) await secondReview; await owner.stop(f.engine); }
+
+  }));
 });

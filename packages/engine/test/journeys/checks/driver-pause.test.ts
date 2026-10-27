@@ -1,18 +1,22 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import type { Engine } from "../../engine.js";
-import { removeDir, waitFor } from "../../fixtures.js";
+
+import { waitFor } from "../../fixtures.js";
 import { checkAdmissionFixture } from "../../fixtures/check-admission.js";
 import { EngineLifecycle } from "../../../src/lifecycle.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [], engines: Engine[] = [];
-afterAll(async () => { for (const engine of engines) await engine.shutdown(); roots.forEach(removeDir); });
 
 it("completes a real pool pause with a quiet task driver waiting for checks, then resumes that same pending run", async () => {
-  const f = await checkAdmissionFixture(roots, engines);
+  return cases.use("petrina-check-admission-", owner => checkAdmissionFixture(owner, async f => {
   let driving: Promise<void> | undefined, releasePlace: (() => void) | undefined;
+    owner.onStop(() => releasePlace?.());
   let store: LifecycleStore | undefined, lifecycle: EngineLifecycle | undefined;
+    const closeStore = owner.afterBody(() => store?.close());
+    owner.onStop(() => lifecycle?.close());
   try {
     const entry = await f.add("paused-driver");
     entry.task.plan!.stages[1] = { id: "approval", title: "Delivery check", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] };
@@ -26,7 +30,8 @@ it("completes a real pool pause with a quiet task driver waiting for checks, the
     expect(f.engine.inFlight()).toBe(1);
     expect(f.engine.backgroundWork.size).toBe(0);
     expect(f.evidence()).toEqual([]);
-    store = new LifecycleStore(join(f.root, "pool-lifecycle"));
+    owner.check();
+        store = new LifecycleStore(join(f.root, "pool-lifecycle"));
     lifecycle = new EngineLifecycle(f.engine, store, async () => { throw new Error("A pool pause must not stop its engine"); });
     const paused = await lifecycle.request("pause", { requestId: "quiet-driver-pause" });
     expect(paused.outcome).toBe("completed");
@@ -51,7 +56,9 @@ it("completes a real pool pause with a quiet task driver waiting for checks, the
     expect(f.engine.waitingChecks.size).toBe(0); expect(f.engine.settling.has(entry.task.id)).toBe(false);
     expect(f.engine.inFlight()).toBe(0);
   } finally {
-    lifecycle?.close(); store?.close(); releasePlace?.();
-    try { await f.engine.shutdown(); } finally { await driving; }
+    lifecycle?.close(); await closeStore(); releasePlace?.();
+    try { await owner.stop(f.engine); } finally { await driving; }
   }
+
+  }));
 });

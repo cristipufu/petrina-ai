@@ -1,3 +1,6 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { afterAll } from "bun:test";
+import { completeAll } from "@petrina/core";
 import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -8,16 +11,21 @@ import { routeMessages } from "@petrina/core";
 import { MESSAGE_RECOVERY_OPTIONS } from "../../../src/messages.js";
 import { EARLIER_ATTEMPT } from "../../../src/prompts.js";
 import { makeProduct, waitFor } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-async function fixture() {
-  const { root, fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-queued-continuation-", "Keep queued instructions", { builder: "plain", reopen: "resume", controlled: true });
+
+async function prepareFixture(owner: EngineCaseOwner) {
+  return nativeCoordinatorTask(owner, async ({ root, fakes, engine, task, scope, dispose: close }) => {
   try {
     task.plan = { rationale: "Build only", plannerProfileId: "sol-high", stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] }] };
     task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
     task.brief = { summary: "UNCHANGED-BACKGROUND", forUsers: [], areas: [], acceptance: [], risks: [] };
     const controllers: AbortController[] = [];
     const pending: Promise<unknown>[] = [];
+    owner.onStop(async () => { await completeAll([...controllers.map(async controller => { controller.abort(); }), Promise.allSettled(pending).then(() => undefined)]); });
     const start = (resume?: ConversationNote, given = () => engine["context"].sectionsFor(scope, "builder")) => {
+      owner.check();
       const controller = new AbortController(); controllers.push(controller);
       task.state = "running"; task.holdsSlot = true;
       task.agent = { roleId: "builder", profileId: "sol-high", since: Date.now(), step: 0 };
@@ -43,10 +51,16 @@ async function fixture() {
     };
     return { engine, task, scope, fakes, start, first, dispose, root, controllers, pending };
   } catch (error) { await close(); throw error; }
+
+  }, "Keep queued instructions", { builder: "plain", reopen: "resume", controlled: true });
+}
+
+function fixture<T>(owner: EngineCaseOwner, body: (value: Awaited<ReturnType<typeof prepareFixture>>) => Promise<T>): Promise<T> {
+  return owner.prepare(async () => { const fixture = await prepareFixture(owner); owner.check(); return body(fixture); });
 }
 
 for (const path of ["fresh start", "earlier conversation"] as const) it(`shows opening instructions in the recorded input (${path})`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   try {
     const saved = path === "earlier conversation" ? await f.first() : undefined;
     if (saved) f.engine.finishStep(f.scope);
@@ -70,11 +84,14 @@ for (const path of ["fresh start", "earlier conversation"] as const) it(`shows o
     expect(input.instructions).not.toContain(text);
     expect(input.updates ?? []).toEqual([]);
   } finally { await f.dispose(); }
+
+  }));
 });
 
 for (const path of ["earlier conversation", "fresh fallback", "same step", "during preparation"] as const) it(`hands paused guidance to the actual prompt exactly once (${path})`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   const prepared = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  owner.onStop(() => release.resolve());
   try {
     const saved = await f.first();
     if (path !== "same step") {
@@ -134,11 +151,14 @@ for (const path of ["earlier conversation", "fresh fallback", "same step", "duri
     const again = f.fakes.received("builder")[2]!.text;
     for (const text of texts) expect(again).not.toContain(text);
   } finally { release.resolve(); await f.dispose(); }
+
+  }));
 });
 
 it("removes withdrawn guidance from the actual opening and its complete context packet", async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   const captured = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  owner.onStop(() => release.resolve());
   try {
     const saved = await f.first();
     f.engine.pause(f.task.id);
@@ -166,11 +186,14 @@ it("removes withdrawn guidance from the actual opening and its complete context 
     expect(f.task.session.some(line => line.coordinatorMessageId === id)).toBe(false);
     expect(f.task.queued).toEqual([]);
   } finally { release.resolve(); await f.dispose(); }
+
+  }));
 });
 
 for (const mode of ["queue", "interrupt"] as const) it(`records guidance arriving after opening reservation in the input actually sent (${mode})`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   const reserved = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  owner.onStop(() => release.resolve());
   const turns = f.engine["turns"], prepare = turns["prepareTurnPrompt"].bind(turns);
   try {
     const saved = await f.first();
@@ -209,16 +232,19 @@ for (const mode of ["queue", "interrupt"] as const) it(`records guidance arrivin
     expect(late.deliveries?.main?.state).toBe("applied");
     expect(f.task.queued).toEqual([]);
   } finally { turns["prepareTurnPrompt"] = prepare; release.resolve(); await f.dispose(); }
+
+  }));
 });
 
 for (const attempts of [0, 2]) it(`keeps broadcast receipts per seat and retains heard guidance for a fresh replacement (step attempts=${attempts})`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   try {
     f.fakes.scenario({ builder: "plain", reopen: "resume" });
     const copies = [f.scope.work.worktree!, await makeProduct(join(f.root, "peer"))];
     const saved: ConversationNote[] = [];
     f.task.hunt = { stageId: "build", round: 1, reported: {}, profiles: { "0": "sol-high", "1": "astra-xhigh" } };
     const run = (seat: number, resume?: ConversationNote) => {
+      owner.check();
       const member = `review-${seat}`, profile = seat ? "astra-xhigh" : "sol-high";
       const controller = new AbortController(); f.controllers.push(controller);
       const result = f.engine["turns"].parallel(f.scope, "builder", profile, copies[seat]!,
@@ -276,10 +302,12 @@ for (const attempts of [0, 2]) it(`keeps broadcast receipts per seat and retains
       expect(prompt).toBeDefined();
     }
   } finally { await f.dispose(); }
+
+  }));
 });
 
 it("says heard guidance once when a single conversation starts the step again fresh", async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   try {
     await f.first();
     // The step's saved conversation cannot be reopened, so its second start is a fresh one.
@@ -297,10 +325,12 @@ it("says heard guidance once when a single conversation starts the step again fr
     expect(readFileSync(input.exact!.file, "utf8")).toBe(opening.text);
     expect(input.sections.find(section => section.title.startsWith("The coordinator's notes"))?.body ?? "").not.toContain("ALREADY-HEARD");
   } finally { await f.dispose(); }
+
+  }));
 });
 
 it("delivers a new instruction even when its words match an already heard instruction", async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   try {
     const saved = await f.first();
     f.engine.pause(f.task.id);
@@ -313,10 +343,12 @@ it("delivers a new instruction even when its words match an already heard instru
     expect(receipt.deliveries?.main?.state).toBe("applied");
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
+
+  }));
 });
 
 for (const [peerWaiting, attempts] of [[true, 0], [false, 0], [true, 2]] as const) it(`keeps guidance after declining a resend in a fresh reviewer conversation (peer waiting=${peerWaiting}, step attempts=${attempts})`, async () => {
-  const f = await fixture();
+  return cases.use("petrina-queued-continuation-", owner => fixture(owner, async f => {
   try {
     f.fakes.scenario({ reopen: "resume" });
     f.task.plan!.stages = [{ id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["sol-high", "astra-xhigh"] }];
@@ -324,6 +356,7 @@ for (const [peerWaiting, attempts] of [[true, 0], [false, 0], [true, 2]] as cons
     const copies = [f.scope.work.worktree!, await makeProduct(join(f.root, "peer"))];
     let saved: ConversationNote | undefined;
     const run = (seat: number, resume?: ConversationNote) => {
+      owner.check();
       const member = `review-${seat}`, profile = seat ? "astra-xhigh" : "sol-high";
       const controller = new AbortController(); f.controllers.push(controller);
       const result = f.engine["turns"].parallel(f.scope, "code-reviewer", profile, copies[seat]!,
@@ -379,4 +412,6 @@ for (const [peerWaiting, attempts] of [[true, 0], [false, 0], [true, 2]] as cons
       expect(f.task.queued).toEqual([]);
     }
   } finally { await f.dispose(); }
+
+  }));
 });

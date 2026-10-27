@@ -1,21 +1,23 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slotUses, type CheckId } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { executionFor } from "@petrina/orchestrator";
-import { FAKE_AGENT, Fakes, git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+import { executionFor } from "@petrina/orchestrator";
+import { FAKE_AGENT, Fakes, git, makeProduct, waitFor } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 /** A real saved Builder, native readiness handshake and driver; no unrelated planning or review. */
-async function fixture(inTurn = false) {
-  const root = tempDir("petrina-wait-readiness-"); roots.push(root);
+async function prepareFixture(owner: EngineCaseOwner, inTurn = false) {
+  const root = owner.root;
   const fakes = new Fakes(join(root, "fake")); fakes.scenario({ builder: "plain", reopen: "resume" });
   const gate = join(root, "readiness-held");
+  owner.onStop(() => rmSync(gate, { force: true }));
   let checking = false;
-  const engine = new Engine(join(root, "data"), {
+  const engine = owner.open(join(root, "data"), {
     agentCommand: profile => [process.execPath, FAKE_AGENT, fakes.dir, `--record-tool=${profile.toolId}`, ...(checking && profile.toolId === "codex" ? [`--hold-open-in-checks=${gate}`] : [])],
     toolPath: () => process.execPath,
   });
@@ -38,7 +40,9 @@ async function fixture(inTurn = false) {
     { id: "review", title: "Review", kind: "review-chain", roleId: "code-reviewer", profileIds: ["opus-high"] },
   ] };
   task.startedAt = 1; task.state = "running"; task.stageIndex = 0;
-  await engine["work"].runDo(scope, build, new AbortController().signal);
+  const initial = new AbortController();
+  owner.onStop(() => initial.abort());
+  await owner.run(engine, () => engine["work"].runDo(scope, build, initial.signal));
   const saved = scope.work.builderSession!.sessionId;
   task.stageIndex = 0; task.fixing = true; task.holdsSlot = true;
   task.agent = { roleId: "code-reviewer", profileId: "opus-high", since: Date.now(), step: 0 };
@@ -55,8 +59,8 @@ async function fixture(inTurn = false) {
     return attach(...args);
   };
   return { engine, task, scope, prerequisite, admitted, saved, fakes, base,
-    drive: () => engine["driver"].workflow["drive"](id),
-    reached: () => waitFor(() => existsSync(`${gate}.reached`), "the saved Builder's readiness handshake"),
+    drive: () => owner.run(engine, () => engine["driver"].workflow["drive"](id)),
+    reached: (during: Promise<unknown>) => waitFor(() => existsSync(`${gate}.reached`), "the saved Builder's readiness handshake", undefined, { during }),
     unblock: () => rmSync(gate, { force: true }),
     hold() { engine.setRuntimeWait(id, [prerequisite], "This Builder needs the source fix", "readiness-hold"); engine["driver"].syncRuntimeWaits(); },
     async land() { writeFileSync(join(path, "required-fix.txt"), "The required source fix\n"); await git(path, "add", "."); await git(path, "commit", "-qm", "Land the required source fix"); return git(path, "rev-parse", "HEAD"); },
@@ -69,12 +73,16 @@ async function fixture(inTurn = false) {
   };
 }
 
+function fixture<T>(owner: EngineCaseOwner, body: (fixture: Awaited<ReturnType<typeof prepareFixture>>) => Promise<T>, inTurn = false): Promise<T> {
+  return owner.prepare(async () => { const value = await prepareFixture(owner, inTurn); owner.check(); return body(value); });
+}
+
 describe.concurrent("a wait released during Builder readiness", () => {
   for (const [how, inTurn] of [["clear", false], ["landed", false], ["held", false], ["none", false], ["clear", true]] as const) it(`revalidates source before Builder input (${how}, inside turn: ${inTurn})`, async () => {
-    const f = await fixture(inTurn);
+    return cases.use("petrina-wait-readiness-", owner => fixture(owner, async (f) => {
     let drive: Promise<void> | undefined;
     try {
-      drive = f.drive(); await f.reached();
+      drive = f.drive(); await f.reached(drive);
       expect(f.admitted).toEqual([]);
       let latest = f.base;
       if (how !== "none") { f.hold(); latest = await f.land(); }
@@ -92,16 +100,18 @@ describe.concurrent("a wait released during Builder readiness", () => {
       expect(f.fakes.received("builder")).toHaveLength(2);
       expect(f.task.journey!.flatMap(step => step.agentResults ?? []).filter(result => result.roleId === "builder")).toHaveLength(2);
       if (how !== "none") expect(f.task.runtimeWait?.refreshPending).toBeUndefined();
-    } finally { f.unblock(); await f.engine.shutdown(); await drive; }
-  });
+    } finally { f.unblock(); await owner.stop(f.engine); await drive; }
+
+  }, inTurn));
+});
 
   for (const how of ["held", "clear", "landed"] as const) it(`frees an unused readiness reservation for queued work before the tool replies (${how})`, async () => {
-    const f = await fixture();
+    return cases.use("petrina-wait-readiness-", owner => fixture(owner, async (f) => {
     let drive: Promise<void> | undefined;
     try {
       f.engine.s.pool.paused = false;
       f.engine.s.pool.limit = 1;
-      drive = f.drive(); await f.reached();
+      drive = f.drive(); await f.reached(drive);
       expect(f.task.holdsSlot).toBe(true);
       expect(f.admitted).toEqual([]);
       f.fakes.scenario({ controlled: true, builder: "plain", reopen: "resume" });
@@ -141,6 +151,8 @@ describe.concurrent("a wait released during Builder readiness", () => {
       expect(f.fakes.received("builder")).toHaveLength(2);
       expect(f.task.journey!.flatMap(step => step.agentResults ?? []).filter(result => result.roleId === "builder")).toHaveLength(2);
       expect(f.checks()).toHaveLength(1);
-    } finally { f.unblock(); await f.engine.shutdown(); await drive; }
-  });
+    } finally { f.unblock(); await owner.stop(f.engine); await drive; }
+
+  }));
+});
 });

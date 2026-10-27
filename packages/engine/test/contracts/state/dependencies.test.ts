@@ -1,27 +1,21 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { heldPlanning } from "../../fixtures/state-admission.js";
-import { tempDir } from "../../fixtures.js";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 
 
 import { join } from "node:path";
 import { journeyProblems } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { removeDir, waitFor } from "../../fixtures.js";
+import { waitFor } from "../../fixtures.js";
 
-const temp = tempDir("petrina-after-");
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 describe("Tasks that start after others land", () => {
-  const engine = new Engine(join(temp, "data"), heldPlanning());
-  engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
-
-  beforeAll(() => engine.waitUntilReady());
-
-  afterAll(async () => {
-    await engine.shutdown();
-    removeDir(temp);
-  });
-
   it("waits quietly until the tasks it waits for land, and refuses loops", async () => {
+    return cases.use("petrina-after-", async owner => {
+      const engine = owner.open(join(owner.root, "data"), heldPlanning());
+      engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
+      await engine.waitUntilReady();
     const productId = "product";
     engine.setPoolPaused(true);
     const first = engine.addTask({ productId, title: "Lay the groundwork", description: "First.", kind: "feature" });
@@ -54,9 +48,15 @@ describe("Tasks that start after others land", () => {
     expect(task.journey![0]).toMatchObject({ kind: "wait", end: "done", reason: "“Lay the groundwork” did not land: cancelled" });
     expect(task.journey![1]).toMatchObject({ kind: "agent", roleId: "planner" });
     expect(journeyProblems(task)).toEqual([]);
+
+    });
   });
 
-  it("ends the wait when it is removed", () => {
+  it("ends the wait when it is removed", async () => {
+    return cases.use("petrina-after-", async owner => {
+      const engine = owner.open(join(owner.root, "data"), heldPlanning());
+      engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
+      await engine.waitUntilReady();
     engine.setPoolPaused(true);
     const productId = engine.getState().products[0]!.id;
     const first = engine.addTask({ productId, title: "First again" });
@@ -66,9 +66,15 @@ describe("Tasks that start after others land", () => {
     const task = engine.getState().tasks.find((entry) => entry.id === second)!;
     expect(task.journey).toEqual([expect.objectContaining({ kind: "wait", end: "done", reason: "no longer waits" })]);
     expect(task.statusLine).toBe("In the queue");
+
+    });
   });
 
-  it("on hold, ends the wait when the other task does", () => {
+  it("on hold, ends the wait when the other task does", async () => {
+    return cases.use("petrina-after-", async owner => {
+      const engine = owner.open(join(owner.root, "data"), heldPlanning());
+      engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
+      await engine.waitUntilReady();
     engine.setPoolPaused(true);
     const productId = engine.getState().products[0]!.id;
     const first = engine.addTask({ productId, title: "Groundwork" });
@@ -80,5 +86,7 @@ describe("Tasks that start after others land", () => {
     expect(task).toMatchObject({ state: "queued", held: true });
     expect(task.journey).toEqual([expect.objectContaining({ kind: "wait", end: "done", reason: "“Groundwork” did not land: cancelled" })]);
     expect(task.statusLine).not.toMatch(/^Waiting for/);
+
+    });
   });
 });

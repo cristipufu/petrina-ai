@@ -1,17 +1,14 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { Simulator, type NewTaskInput, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [], engines: Engine[] = [];
-afterAll(async () => {
-  await Promise.all(engines.map((engine) => engine.shutdown()));
-  roots.forEach(removeDir);
-});
-function pair() {
-  const home = tempDir("petrina-parity-"); roots.push(home);
-  const engine = new Engine(home, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
-  engines.push(engine); engine.schedule = () => {}; engine.setPoolPaused(true);
+
+function pair(owner: EngineCaseOwner) {
+  const home = owner.root;
+  const engine = owner.open(home, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null }, terminals: () => [] });
+  engine.schedule = () => {}; engine.setPoolPaused(true);
   engine.s.products.push(
     { id: "a", name: "Shop", repo: "local/shop", tone: "blue", delivery: "local", approveDelivery: false },
     { id: "b", name: "Notes", repo: "local/notes", tone: "green", delivery: "pull-request", approveDelivery: true },
@@ -28,8 +25,9 @@ function requestView(task: Task) {
   };
 }
 
-it("keeps queue, backlog and multi-product request rules identical in the engine and demo", () => {
-  const { engine, sim } = pair();
+it("keeps queue, backlog and multi-product request rules identical in the engine and demo", async () => {
+  return cases.use("petrina-parity-", async owner => {
+  const { engine, sim } = pair(owner);
   for (const input of [
     { productId: "a", title: "  One product  ", backlog: true },
     { productId: "a", title: "Two products", worksOn: ["a", "b"].map((productId) => ({ productId, startFrom: { kind: "default" }, delivery: "local" })), backlog: true, approvePlan: false },
@@ -51,10 +49,13 @@ it("keeps queue, backlog and multi-product request rules identical in the engine
     expect(() => target.addTask({ productId: "a", title: "  " })).toThrow("title");
     expect(target.getState().tasks).toHaveLength(before);
   }
+
+  });
 });
 
-it("keeps partial reviewer-role assignments aligned when both front ends add a reviewer", () => {
-  const { engine, sim } = pair();
+it("keeps partial reviewer-role assignments aligned when both front ends add a reviewer", async () => {
+  return cases.use("petrina-parity-", async owner => {
+  const { engine, sim } = pair(owner);
   const input = { productId: "a", title: "A review", backlog: true };
   const realId = engine.addTask(input), demoId = sim.addTask(input);
   const plan = {
@@ -70,4 +71,6 @@ it("keeps partial reviewer-role assignments aligned when both front ends add a r
   engine.addReviewer(realId, "review", "sol-xhigh"); demo.addReviewer(demoId, "review", "sol-xhigh");
   expect(engine.task(realId)!.plan!.stages[0]!.roleIds).toEqual(["security-reviewer", "code-reviewer", "code-reviewer"]);
   expect(JSON.stringify(engine.task(realId)!.plan)).toBe(JSON.stringify(demo.getState().tasks.find((task) => task.id === demoId)!.plan));
+
+  });
 });

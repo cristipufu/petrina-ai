@@ -1,18 +1,22 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { commandInputText, type State } from "@petrina/core";
-import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { executionFor } from "@petrina/orchestrator";
-import { Engine } from "../../engine.js";
+
 import { serve } from "../../../src/server.js";
 import { Store } from "@petrina/storage/store";
-import { makeProduct, removeDir, tempDir } from "../../fixtures.js";
+import { makeProduct } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 describe("product settings in the engine", () => {
   it("enforces names and atomic saves through the API, preserves repository identity, and keeps old task choices", async () => {
-    const root = tempDir("petrina-products-");
+  return cases.use("petrina-products-", async owner => {
+    const root = owner.root;
     const initial = await makeProduct(root);
     const repo = join(root, "petrina-ai");
     renameSync(initial, repo);
@@ -20,8 +24,10 @@ describe("product settings in the engine", () => {
     mkdirSync(secondRoot);
     const second = await makeProduct(secondRoot);
     const data = join(root, "data");
-    let engine = new Engine(data);
+    let engine = owner.open(data, {});
+    owner.check();
     const server = serve(engine, { port: 0, token: "product-settings-test-key" });
+    owner.onStop(() => server.stop(true));
     const act = async (name: string, ...args: unknown[]) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/action`, { method: "POST", headers: { authorization: "Bearer product-settings-test-key", "content-type": "application/json" }, body: JSON.stringify({ name, args }) });
       return await response.json() as { ok: boolean; result?: string; error?: string };
@@ -55,71 +61,74 @@ describe("product settings in the engine", () => {
       expect(engine.getState().products[0]!.name).toBe("Petrina HQ");
       expect((await act("removeProduct", id)).error).toBe("2 tasks must finish or be cancelled before this product can be removed.");
       server.stop(true);
-      await engine.shutdown();
-      engine = new Engine(data);
+      await owner.stop(engine);
+      engine = owner.open(data, {});
       expect(engine.getState().products[0]!.name).toBe("Petrina HQ");
-    } finally { server.stop(true); await engine.shutdown(); removeDir(root); }
+    } finally { server.stop(true); await owner.stop(engine); }
+
   });
+});
 
   it("refuses every unfinished state, then removes all finished and cancelled history and inbox entries durably", async () => {
-    const root = tempDir("petrina-remove-");
+  return cases.use("petrina-remove-", async owner => {
+    const root = owner.root;
     const data = join(root, "data");
-    let engine = new Engine(data);
+    let engine = owner.open(data, {});
     engine.setPoolPaused(true);
     const id = "product"; engine.s.products.push({ id, name: "Product", repo: "local/product", tone: "blue" });
     const first = engine.addTask({ productId: id, title: "Finished" });
     const seed = JSON.parse(JSON.stringify(engine.getState())) as State;
-    await engine.shutdown();
+    await owner.stop(engine);
     const write = (state: State) => {
+      owner.check();
       const store = new Store(join(data, "petrina.db"));
-      store.save(state);
-      store.close();
+      let closed = false;
+      const closeStore = () => { if (!closed) { store.close(); closed = true; } };
+      owner.afterBody(closeStore);
+      try { store.save(state); } finally { closeStore(); }
     };
     try {
       for (const state of ["queued", "waiting", "running", "needs-you", "paused", "failed", "pr-open"] as const) {
         write({ ...seed, tasks: [{ ...seed.tasks[0]!, state }] });
-        engine = new Engine(data);
+        engine = owner.open(data, {});
         expect(() => engine.removeProduct(id)).toThrow("1 task must finish or be cancelled");
-        await engine.shutdown();
+        await owner.stop(engine);
       }
       write({ ...seed, tasks: [
         { ...seed.tasks[0]!, state: "done", column: "done" },
         { ...seed.tasks[0]!, id: "cancelled", state: "cancelled", column: "done" },
       ], inbox: [{ id: "old-question", taskId: first, title: "Old question", kind: "question", blocking: false, at: 0 }] });
-      engine = new Engine(data);
+      engine = owner.open(data, {});
       engine.removeProduct(id);
       expect(engine.getState().products).toEqual([]);
       expect(engine.getState().tasks).toEqual([]);
       expect(engine.getState().inbox).toEqual([]);
-      await engine.shutdown();
-      engine = new Engine(data);
+      await owner.stop(engine);
+      engine = owner.open(data, {});
       expect(engine.getState().tasks).toEqual([]);
       expect(engine.getState().products).toEqual([]);
-    } finally { await engine.shutdown(); removeDir(root); }
+    } finally { await owner.stop(engine); }
+
   });
+});
 
 
 });
 
 it("saves literal check input through the real API and restart without executing it", async () => {
-  const root = tempDir("petrina-check-input-"), owners = directDrivers(root), data = join(root, "data");
+  return cases.use("petrina-records-", async owner => {
+  const root = owner.root, data = join(root, "data");
   let server: ReturnType<typeof serve> | undefined;
-  const close = async () => {
-    // Register stop before closing admission, so an uncertain server retains its private root.
-    const stopped = owners.prepare(async () => { await server?.stop(true); server = undefined; });
-    const settled = await Promise.allSettled([stopped, owners.close()]);
-    const failed = settled.filter(result => result.status === "rejected");
-    if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Check-input API fixture cleanup was not confirmed");
-  };
-  await setupWithCleanup(() => owners.prepare(async () => {
+  owner.onStop(async () => { await server?.stop(true); server = undefined; });
     const options = { agentCommand: () => undefined, terminals: () => [] };
-    const engine = owners.open(data, options); await engine.waitUntilReady(); engine.setPoolPaused(true);
+    const engine = owner.open(data, options); await engine.waitUntilReady(); engine.setPoolPaused(true);
     engine.s.products.push({ id: "product", name: "Product", repo: "local/product", tone: "blue" });
     const taskId = engine.addTask({ productId: "product", title: "Preserve the saved record", backlog: true });
     const work = executionFor(engine.task(taskId)!).work;
     // Deliberate legacy data: the saved current flag is not setup/native pass evidence.
     work.checks = { at: 1, current: true, results: [] }; work.checkReturns = 2;
     const beforeProduct = structuredClone(engine.s.products[0]), beforeWork = structuredClone(work);
+    owner.check();
     server = serve(engine, { port: 0, token: "literal-command-input-test-key" });
     const rejected = await fetch(`http://127.0.0.1:${server.port}/api/action`, { method: "POST", headers: {
       authorization: "Bearer literal-command-input-test-key", "content-type": "application/json",
@@ -143,11 +152,12 @@ it("saves literal check input through the real API and restart without executing
     expect(work.checks!.current).toBe(false); expect(work.checkReturns).toBe(2);
     expect(existsSync(marker)).toBe(false);
     await server.stop(true); server = undefined;
-    await owners.stop(engine);
-    const reopened = owners.open(data, options); await reopened.waitUntilReady(); reopened.setPoolPaused(true);
+    await owner.stop(engine);
+    const reopened = owner.open(data, options); await reopened.waitUntilReady(); reopened.setPoolPaused(true);
     expect(reopened.getState().products[0]!.checks).toEqual([{ name, argv }]);
     expect(reopened.getState().products[0]!.checkSetup).toBeUndefined();
     expect(existsSync(marker)).toBe(false);
-  }), close);
-  await close();
+
+
+  });
 });

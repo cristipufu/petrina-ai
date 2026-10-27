@@ -1,3 +1,6 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { afterAll } from "bun:test";
+import { completeAll } from "@petrina/core";
 import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { createHash } from "node:crypto";
@@ -6,16 +9,21 @@ import { join } from "node:path";
 import type { ConversationNote } from "@petrina/core";
 import { BuildResult } from "../../../src/roles.js";
 import { waitFor } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 it("records an older conversation's retry without resupplying guidance actually delivered after its saved snapshot", async () => {
-  const { fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-earlier-note-managed-", "Keep earlier-attempt guidance", { builder: "plain", reopen: "resume", controlled: true });
+  return cases.use("petrina-earlier-note-managed-", owner => nativeCoordinatorTask(owner, async ({ fakes, engine, task, scope, dispose: close }) => {
   const controllers: AbortController[] = [];
   const pending: Promise<unknown>[] = [];
+    owner.onStop(async () => { await completeAll([...controllers.map(async controller => { controller.abort(); }), Promise.allSettled(pending).then(() => undefined)]); });
   try {
     task.plan = { rationale: "Build only", plannerProfileId: "sol-high", stages: [{ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] }] };
     task.stageIndex = 0;
     task.notes = [{ id: "old", at: 1, text: "ORIGINAL DECISION SAVED BEFORE THE MESSAGE", origin: { stageTitle: "Original decision", roleName: "Coordinator" } }];
     const run = async (resume?: ConversationNote) => {
+      owner.check();
       const index = fakes.received("builder").length;
       const controller = new AbortController(); controllers.push(controller);
       task.state = "running"; task.holdsSlot = true;
@@ -64,4 +72,6 @@ it("records an older conversation's retry without resupplying guidance actually 
     await Promise.allSettled(pending);
     await close();
   }
+
+  }, "Keep earlier-attempt guidance", { builder: "plain", reopen: "resume", controlled: true }));
 });

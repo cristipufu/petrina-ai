@@ -1,29 +1,30 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { afterAll } from "bun:test";
 import { restoreRepositoryState } from "@petrina/orchestrator";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { type State } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { type MState, renameRoles } from "../../../src/kernel.js";
 
 
 import { Store } from "@petrina/storage/store";
-import { makeProduct, removeDir, tempDir } from "../../fixtures.js";
-
-
-
+import { makeProduct } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe("a role renamed after the state was saved", () => {
   it("moves every stored “shipper” to the Release Manager once, as Petrina loads its state", async () => {
-    const root = tempDir("petrina-renamed-role-");
+  return cases.use("petrina-renamed-role-", async owner => {
+    const root = owner.root;
     const data = join(root, "data");
-    let engine = new Engine(data);
+    let engine = owner.open(data, {});
     try {
       engine.setPoolPaused(true);
       const productId = await engine.addProduct(await makeProduct(root));
       const taskId = engine.addTask({ productId, title: "Old work" });
       const saved = JSON.parse(JSON.stringify(engine.getState())) as State;
-      await engine.shutdown();
+      await owner.stop(engine);
       // Saved by the Petrina from before the rename, with the old id everywhere a role id is kept.
       const by = { roleId: "shipper", profileId: "opus-high" };
       Object.assign(saved.tasks[0]!, {
@@ -47,11 +48,13 @@ describe("a role renamed after the state was saved", () => {
         session: [{ id: "old-2", at: 1, from: "agent", ...by, text: "Writing the notes" }],
       });
       saved.inbox = [{ id: "old-question", taskId, kind: "question", title: "Which tag?", ...by, at: 1, blocking: false }];
+      owner.check();
       const store = new Store(join(data, "petrina.db"));
+      const closeStore = owner.afterBody(() => store.close());
       store.save(saved);
-      store.close();
+      await closeStore();
 
-      engine = new Engine(data);
+      engine = owner.open(data, {});
       const task = engine.getState().tasks[0]!;
       expect(task.plan!.stages.map((stage) => stage.roleId)).toEqual(["builder", "release-manager", "release-manager"]);
       expect(task.timeline.find((entry) => entry.id === "old-1")?.roleId).toBe("release-manager");
@@ -66,14 +69,17 @@ describe("a role renamed after the state was saved", () => {
       expect([moved.agent?.roleId, moved.helpers?.[0]?.roleId, moved.repository?.conversation?.roleId]).toEqual(["release-manager", "release-manager", "release-manager"]);
       expect(JSON.stringify(engine.getState())).not.toContain('"shipper"');
       // Saved under the new id: the next load has nothing to move.
-      await engine.shutdown();
+      await owner.stop(engine);
+      owner.check();
       const again = new Store(join(data, "petrina.db"));
+      const closeAgain = owner.afterBody(() => again.close());
       expect(JSON.stringify(again.load())).not.toContain('"shipper"');
-      again.close();
-      engine = new Engine(data);
+      await closeAgain();
+      engine = owner.open(data, {});
     } finally {
-      await engine.shutdown();
-      removeDir(root);
+      await owner.stop(engine);
     }
+
   });
+});
 });

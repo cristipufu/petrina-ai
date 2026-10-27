@@ -1,16 +1,16 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { executionFor } from "@petrina/orchestrator";
 import { checkContext } from "../../fixtures/check-context.js";
-import { git, removeDir, tempDir } from "../../fixtures.js";
+import { git } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 it("tells acceptance testing whether saved checks really cover the code and required commands", async () => {
-  const root = tempDir("check-evidence-context-"); roots.push(root);
-  const f = await checkContext(root);
+  return cases.use("check-evidence-context-", owner => checkContext(owner, async f => {
   try {
     f.setCheck("--pass");
     await f.check();
@@ -47,5 +47,7 @@ it("tells acceptance testing whether saved checks really cover the code and requ
     expect((await evidence())?.title).toBe("Historical product checks, run by Petrina itself");
     // Building context reads evidence; it never runs checks to make the evidence current.
     expect(f.runs()).toEqual(["passed"]);
-  } finally { await f.engine.shutdown(); }
+  } finally { await owner.stop(f.engine); }
+
+  }));
 });

@@ -1,22 +1,20 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
-import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { commandInputText } from "../../../src/checks.js";
-import { git, makeProduct, removeDir, tempDir, waitForFile } from "../../fixtures.js";
+import { git, makeProduct, waitForFile } from "../../fixtures.js";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { checkContext } from "../../fixtures/check-context.js";
 import { writeGitProgram } from "@petrina/test-support/git-program";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 it("requires a fresh execution when a saved complete pass has no recorded check definition", async () => {
-  const root = tempDir("petrina-check-definition-");
-  let f: Awaited<ReturnType<typeof checkContext>> | undefined;
+  return engineCases.use("petrina-check-definition-", owner => checkContext(owner, async f => {
   try {
-    f = await checkContext(root);
     f.setCheck("--sequence=PF");
     expect((await f.check()).kind).toBe("passed");
     const checks = f.engine["checks"], saved = f.scope.work.checks!;
@@ -36,15 +34,16 @@ it("requires a fresh execution when a saved complete pass has no recorded check 
     expect(saved.definition).toBeUndefined();
     expect(f.task.journey!.flatMap(step => step.reuses ?? []).some(reuse => reuse.passed)).toBe(false);
   } finally {
-    if (f) { await f.engine.shutdown(); removeDir(root); }
+    if (f) { await owner.stop(f.engine); }
   }
+
+  }));
 });
 
 it("does not reuse an unbound product pass when a previously failing hook now passes", async () => {
-  const root = tempDir("petrina-hook-definition-");
-  let f: Awaited<ReturnType<typeof checkContext>> | undefined;
+  return engineCases.use("petrina-hook-definition-", owner => checkContext(owner, async f => {
+  const root = owner.root;
   try {
-    f = await checkContext(root);
     f.setCheck("--sequence=PF");
     const hooks = join(root, "product-hooks"), hook = join(hooks, "pre-commit");
     writeGitProgram(hook, "exit 7");
@@ -63,13 +62,16 @@ it("does not reuse an unbound product pass when a previously failing hook now pa
     expect(f.scope.work.checks!.definition).toMatch(/^[a-f0-9]{64}$/);
     expect(saved.definition).toBeUndefined();
   } finally {
-    if (f) { await f.engine.shutdown(); removeDir(root); }
+    if (f) { await owner.stop(f.engine); }
   }
+
+  }));
 });
 
 it("does not mistake a configured hook command for an automatically appended hook result", async () => {
-  const root = tempDir("petrina-explicit-hook-check-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+  return engineCases.use("petrina-explicit-hook-check-", async owner => {
+  const root = owner.root;
+  const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
   engine.schedule = () => {};
   try {
     const productId = await engine.addProduct(await makeProduct(root));
@@ -77,17 +79,22 @@ it("does not mistake a configured hook command for an automatically appended hoo
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;
     engine.setProductChecks(productId, [{ name: "Repository check", command: "git hook run --ignore-missing pre-commit" }]);
-    expect((await engine["checks"].failing(scope, new AbortController().signal)).kind).toBe("passed");
+    const controller = new AbortController(); owner.onStop(() => controller.abort());
+    expect((await owner.run(engine, () => engine["checks"].failing(scope, controller.signal))).kind).toBe("passed");
     expect(scope.work.checks!.results.map(run => run.command)).toEqual(["git hook run --ignore-missing pre-commit"]);
     expect(task.journey!.flatMap(step => step.checkAttempts ?? [])).toHaveLength(1);
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });
 
 it("cannot use an old passing command when required checks change during execution", async () => {
-  const root = tempDir("petrina-changing-check-inputs-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+  return engineCases.use("petrina-changing-check-inputs-", async owner => {
+  const root = owner.root;
+  const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
   engine.schedule = () => {};
   const release = join(root, "release"), started = join(root, "started"), log = join(root, "runs");
+  owner.onStop(() => writeFileSync(release, "go"));
   const script = join(root, "check.ts");
   writeFileSync(script, `import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 const [mode, started, release, log] = process.argv.slice(2);
@@ -101,9 +108,13 @@ process.exit(mode === "new-fail" ? 1 : 0);`);
     scope.work.worktree = engine.productOf(task)!.path;
     const definitions = (mode: string) => [{ name: "Tests", command: commandInputText([process.execPath, script, mode, started, release, log]) }];
     engine.setProductChecks(productId, definitions("old-pass"));
-    const running = engine["checks"].failing(scope, new AbortController().signal);
+    const controller = new AbortController();
+    owner.onStop(() => controller.abort());
+    let pending: Promise<unknown> | undefined;
+    owner.onStop(async () => { await Promise.allSettled(pending ? [pending] : []); });
+    const running = pending = engine["checks"].failing(scope, controller.signal);
     try {
-      await waitForFile(started);
+      await waitForFile(started, { during: running });
       engine.setProductChecks(productId, definitions("new-fail"));
     } finally { writeFileSync(release, "go"); }
     expect((await running).kind).toBe("product-failed");
@@ -114,12 +125,15 @@ process.exit(mode === "new-fail" ? 1 : 0);`);
     expect(attempts[0]!.passed).toBe(false);
     expect(attempts[1]!.definition).not.toBe(attempts[0]!.definition);
     expect(scope.work.approvedSha).toBeUndefined();
-  } finally { writeFileSync(release, "go"); await engine.shutdown(); }
+  } finally { writeFileSync(release, "go"); await owner.stop(engine); }
+
+  });
 });
 
 it("bounds changing-input revalidation and never reports an obsolete pass as current", async () => {
-  const root = tempDir("petrina-unstable-check-inputs-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
+  return engineCases.use("petrina-unstable-check-inputs-", async owner => {
+  const root = owner.root;
+  const engine = owner.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [] });
   engine.schedule = () => {};
   const script = join(root, "check.ts");
   writeFileSync(script, `import { existsSync, writeFileSync } from "node:fs";
@@ -131,12 +145,17 @@ writeFileSync(started, "ready"); while (!existsSync(release)) await Bun.sleep(10
     const scope = executionFor(task);
     scope.work.worktree = engine.productOf(task)!.path;
     const define = (index: number) => engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, join(root, `started-${index}`), join(root, `release-${index}`)]) }]);
+    owner.onStop(() => { for (let index = 0; index < 4; index += 1) writeFileSync(join(root, `release-${index}`), "go"); });
     define(0);
-    const running = engine["checks"].failing(scope, new AbortController().signal);
+    const controller = new AbortController();
+    owner.onStop(() => controller.abort());
+    let pending: Promise<unknown> | undefined;
+    owner.onStop(async () => { await Promise.allSettled(pending ? [pending] : []); });
+    const running = pending = engine["checks"].failing(scope, controller.signal);
     // Attach the rejection handler before deliberately releasing the last invalidated pass.
     const rejected = expectRejection(running, "check inputs kept changing");
     for (let index = 0; index < 3; index += 1) {
-      await waitForFile(join(root, `started-${index}`));
+      await waitForFile(join(root, `started-${index}`), { during: running });
       define(index + 1);
       writeFileSync(join(root, `release-${index}`), "go");
     }
@@ -146,6 +165,8 @@ writeFileSync(started, "ready"); while (!existsSync(release)) await Bun.sleep(10
     expect(scope.work.approvedSha).toBeUndefined();
   } finally {
     for (let index = 0; index < 4; index += 1) writeFileSync(join(root, `release-${index}`), "go");
-    await engine.shutdown();
+    await owner.stop(engine);
   }
+
+  });
 });

@@ -1,19 +1,19 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { executionFor } from "@petrina/orchestrator";
 import { afterAll, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Cleanup } from "../../../src/cleanup.js";
-import { Engine } from "../../engine.js";
-import { removeDir, tempDir, waitFor } from "../../support.js";
+import { waitFor } from "../../support.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 it("removes finished and orphaned picture storage without depending on worktree cleanup or loading archive bodies", async () => {
-  const dir = tempDir("petrina-report-picture-lifetime-");
-  roots.push(dir);
+  return cases.use("petrina-report-picture-lifetime-", async owner => {
+  const dir = owner.root;
   const data = join(dir, "data");
-  const world = { dir, data, start: () => new Engine(data, { terminals: () => [] }) };
+  const world = { dir, data, start: () => owner.open(data, { terminals: () => [] }) };
   let engine = world.start();
   try {
     engine.setPoolPaused(true);
@@ -38,6 +38,7 @@ it("removes finished and orphaned picture storage without depending on worktree 
     }
     expect(await engine.reportImage(finishedId, imageId)).toBeUndefined();
     const archived = spyOn(engine.store.history, "get");
+    owner.onStop(() => archived.mockRestore());
     try {
       await new Cleanup(engine).sweep();
       expect(archived).not.toHaveBeenCalled();
@@ -45,7 +46,7 @@ it("removes finished and orphaned picture storage without depending on worktree 
     expect(existsSync(join(world.data, "captures", finishedId))).toBe(false);
     expect(existsSync(join(world.data, "captures", "deleted-task"))).toBe(false);
     expect((await engine.reportImage(activeId, imageId))?.size).toBeGreaterThan(0);
-    await engine.shutdown();
+    await owner.stop(engine);
     engine = world.start();
     await engine.waitUntilReady();
     expect((await engine.reportImage(activeId, imageId))?.size).toBeGreaterThan(0);
@@ -56,9 +57,11 @@ it("removes finished and orphaned picture storage without depending on worktree 
     // Bytes left by an older version are removed by startup, including cancelled history.
     mkdirSync(join(world.data, "captures", activeId), { recursive: true });
     writeFileSync(join(world.data, "captures", activeId, `${imageId}.png`), "leftover");
-    await engine.shutdown();
+    await owner.stop(engine);
     engine = world.start();
     await engine.waitUntilReady();
     await waitFor(() => !existsSync(join(world.data, "captures", activeId)), "old terminal pictures to be swept after restart");
-  } finally { await engine.shutdown(); removeDir(world.dir); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

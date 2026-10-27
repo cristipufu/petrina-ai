@@ -1,29 +1,30 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { fixtureFiles } from "@petrina/test-support/fixture-files";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { executionFor } from "@petrina/orchestrator";
-import { afterEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 
-import { Engine } from "../../engine.js";
-import { removeDir, tempDir } from "../../fixtures.js";
 import { dispatch } from "../../../src/server.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const folders: string[] = [];
+
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
-async function folder() { const path = tempDir("petrina-image-preview-"); folders.push(path); return path; }
-afterEach(async () => { await Promise.all(folders.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 
-function previewRecords(name: string) {
- const dir = tempDir(name), data = join(dir, "data"), productId = "product";
- return { dir, data, productId, start: () => { const engine = new Engine(data, { admissionsClosed: true });
+function previewRecords(owner: EngineCaseOwner) {
+ const dir = owner.root, data = join(dir, "data"), productId = "product";
+ return { dir, data, productId, start: () => { const engine = owner.open(data, { admissionsClosed: true });
    engine.s.products.push({ id: productId, name: "Product", repo: "local/product", path: dir, tone: "blue" }); return engine; } };
 }
 describe("screenshots read directly from a task's working copy", () => {
 it("previews absolute screenshots from this task's reviewer snapshot without widening relative links", async () => {
-    const world = previewRecords("reviewer-image-roots");
+  return cases.use("petrina-image-preview-", async owner => {
+    const world = previewRecords(owner);
     const engine = world.start();
     try {
       engine.setPoolPaused(true);
@@ -58,11 +59,16 @@ it("previews absolute screenshots from this task's reviewer snapshot without wid
         task.state = state;
         await expectRejection(engine.previewImage(id, image), "while the task's working copy exists");
       }
-    } finally { await engine.shutdown(); removeDir(world.dir); }
+    } finally { await owner.stop(engine); }
+
   });
+});
 
 it("reads a shared task's named product copy rather than whichever product is active", async () => {
-    const world = previewRecords("shared-images");
+  return cases.use("petrina-image-preview-", async owner => {
+    let folders = 0;
+    const folder = async () => { owner.check(); const path = join(owner.root, "image-" + folders++); await mkdir(path); return path; };
+    const world = previewRecords(owner);
     const engine = world.start();
     try {
       engine.setPoolPaused(true);
@@ -97,11 +103,16 @@ it("reads a shared task's named product copy rather than whichever product is ac
       await writeFile(join(first, "checked.png"), png);
       delete task.repositories[1]!.worktree;
       await expectRejection(engine.previewImage(id, "checked.png", "api"), "no working copy");
-    } finally { await engine.shutdown(); removeDir(world.dir); }
+    } finally { await owner.stop(engine); }
+
   });
+});
 
 it("keeps explicit product roots after switching the active repository and refuses missing or removed owners", async () => {
-    const world = previewRecords("switched-image-roots");
+  return cases.use("petrina-image-preview-", async owner => {
+    let folders = 0;
+    const folder = async () => { owner.check(); const path = join(owner.root, "image-" + folders++); await mkdir(path); return path; };
+    const world = previewRecords(owner);
     const engine = world.start();
     try {
       engine.setPoolPaused(true);
@@ -131,6 +142,8 @@ it("keeps explicit product roots after switching the active repository and refus
       task.repositories[1]!.worktree = second;
       task.repositories[1]!.removed = true;
       await expectRejection(engine.previewImage(id, "checked.png", "api"), "outside the task");
-    } finally { await engine.shutdown(); removeDir(world.dir); }
+    } finally { await owner.stop(engine); }
+
   });
+});
 });

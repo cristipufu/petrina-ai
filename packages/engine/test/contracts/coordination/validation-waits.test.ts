@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -8,17 +9,16 @@ import { executionFor } from "@petrina/orchestrator";
 import { McpPending, mcpRequest } from "../../../src/mcp.js";
 
 
-import { ExtraFixtures, connection } from "../../extra-fixtures.js";
+import { extraFixture, connection } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const {  } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 it("keeps a validation wait open past the ordinary connection cutoff and returns still pending", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const { server, client } = connection(f);
     const baseline = f.engine.listeners.size;
     try {
@@ -40,17 +40,25 @@ it("keeps a validation wait open past the ordinary connection cutoff and returns
       expect((await client.call("validation.run", f.request("connection-deadline"))).validation).toEqual(record);
       expect(existsSync(join(f.service, "started"))).toBe(false);
     } finally { server.stop(true); }
+
   });
 
+  });
+});
+
 it("cancels validation waits through the client and MCP without cancelling or duplicating queued work", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const record = await f.submit("connection-cancel");
     const { server, client } = connection(f);
     const baseline = f.engine.listeners.size;
     const deadline = spyOn(AbortSignal, "timeout");
+    owner.onStop(() => deadline.mockRestore());
     const mcp = new McpPending();
+    owner.onStop(() => mcp.cancelAll());
     try {
       const controller = new AbortController();
+    owner.onStop(() => controller.abort());
       const wait = client.call("validation.run", { ...f.request("connection-cancel"), wait: true }, { signal: controller.signal });
       await waitFor(() => f.engine.listeners.size === baseline + 1, "the default thirty-second wait");
       expect(deadline).toHaveBeenCalledWith(35_000);
@@ -58,7 +66,8 @@ it("cancels validation waits through the client and MCP without cancelling or du
       expect(await wait).toMatchObject({ outcome: "disconnected", cancelled: true });
       await waitFor(() => f.engine.listeners.size === baseline, "the cancelled subscription to release", 2_000);
       expect(Date.now() - from).toBeLessThan(2_000 * currentSlow());
-      const alreadyCancelled = new AbortController(); alreadyCancelled.abort();
+      const alreadyCancelled = new AbortController();
+    owner.onStop(() => alreadyCancelled.abort()); alreadyCancelled.abort();
       const before = Date.now();
       expect(await client.call("validation.run", { ...f.request("connection-cancel"), wait: true, timeoutMs: 6_000 }, { signal: alreadyCancelled.signal })).toMatchObject({ outcome: "disconnected", cancelled: true });
       expect(Date.now() - before).toBeLessThan(2_000 * currentSlow());
@@ -73,6 +82,7 @@ it("cancels validation waits through the client and MCP without cancelling or du
       f.engine.setPoolPaused(false); await f.started(record);
       const runningBaseline = f.engine.listeners.size; // The queue owner's subscription ends at handoff.
       const runningCaller = new AbortController();
+    owner.onStop(() => runningCaller.abort());
       const runningWait = client.call("validation.run", { ...f.request("connection-cancel"), wait: true, timeoutMs: 6_000 }, { signal: runningCaller.signal });
       await waitFor(() => f.engine.listeners.size === runningBaseline + 1, "the running validation wait");
       runningCaller.abort();
@@ -86,5 +96,9 @@ it("cancels validation waits through the client and MCP without cancelling or du
       expect(f.engine.listeners.size).toBe(runningBaseline);
       expect(readdirSync(join(f.service, "started"))).toEqual([record.id]);
     } finally { deadline.mockRestore(); mcp.cancelAll(); server.stop(true); }
+
   });
+
+  });
+});
 });

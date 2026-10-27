@@ -1,42 +1,57 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { afterAll } from "bun:test";
+import { completeAll } from "@petrina/core";
 import { ENGINE_TEST_ROOT } from "../../fixtures/runtime-paths.js";
 import { nativeCoordinatorTask } from "../../fixtures/coordinator-native.js";
 import { expect, it } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { BuildResult } from "../../../src/roles.js";
 import { executionFor } from "@petrina/orchestrator";
 import { waitFor } from "../../fixtures.js";
 import type { Scenario } from "../../fake-agent.js";
 import { holdUnconfirmed, MESSAGE_RECOVERY_OPTIONS } from "../../../src/messages.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 const rows = (path: string): Record<string, any>[] => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 
-async function fixture(live: Scenario["live"], toolId = "codex", ackHeld = false, extra: Partial<Scenario> = {}, startingMessage?: string) {
-  const { root, fakes, engine, task, scope, dispose: close } = await nativeCoordinatorTask("petrina-live-messages-", "Add a greeting", { builder: "plain", controlled: true, live, liveAckHeld: ackHeld, ...extra });
+async function prepareFixture(owner: EngineCaseOwner, live: Scenario["live"], toolId = "codex", ackHeld = false, extra: Partial<Scenario> = {}, startingMessage?: string) {
+  return nativeCoordinatorTask(owner, async ({ root, fakes, engine, task, scope, dispose: close }) => {
   const controller = new AbortController();
   let pending: Promise<unknown> | undefined;
+  const allTurns: Promise<unknown>[] = [];
+  let releaseStop: (() => void) | undefined, acknowledgeStop: (() => void) | undefined;
+  owner.onStop(async () => { await completeAll([Promise.resolve().then(() => controller.abort()), Promise.resolve().then(() => releaseStop?.()), Promise.resolve().then(() => acknowledgeStop?.()), Promise.allSettled(allTurns).then(() => undefined)]); });
   try {
     const profile = engine.s.profiles.find(profile => profile.toolId === toolId)!;
     task.plan = { rationale: "Build only", plannerProfileId: profile.id, stages: [{ id: "build", kind: "do", title: "Build", roleId: "builder", profileIds: [profile.id] }] };
     task.stageIndex = 0; task.state = "running"; task.holdsSlot = true;
     task.agent = { roleId: "builder", profileId: profile.id, since: Date.now(), step: 0 };
-    const start = (signal = controller.signal, profileId = profile.id) => engine["turns"].turn(scope, "builder", profileId, () => [], BuildResult, signal, { ...(startingMessage ? { started: () => { engine.sendMessage(task.id, startingMessage); } } : {}) });
+    const start = (signal = controller.signal, profileId = profile.id) => { owner.check(); const result = engine["turns"].turn(scope, "builder", profileId, () => [], BuildResult, signal, { ...(startingMessage ? { started: () => {
+      owner.check(); engine.sendMessage(task.id, startingMessage); } } : {}) }); allTurns.push(result); void result.catch(() => undefined); return result; };
     const running = start(); pending = running; running.catch(() => {});
     await waitFor(() => fakes.received("builder")[0], "the focused Builder prompt to start", undefined, { during: running });
     const session = fakes.received("builder")[0]!.session;
-    const release = () => writeFileSync(join(fakes.dir, "release-" + session), "go");
-    const acknowledge = () => writeFileSync(join(fakes.dir, "ack-" + session), "go");
+    const release = releaseStop = () => writeFileSync(join(fakes.dir, "release-" + session), "go");
+    const acknowledge = acknowledgeStop = () => writeFileSync(join(fakes.dir, "ack-" + session), "go");
     const liveRows = () => rows(join(fakes.dir, "live.jsonl"));
     const dispose = async () => { controller.abort(); release(); acknowledge(); await running.catch(() => {}); await close(); };
     return { engine, task, scope, fakes, pending: running, release, acknowledge, liveRows, controller, dispose, start, root, session };
   } catch (error) {
     controller.abort(); await pending?.catch(() => {}); await close(); throw error;
   }
+
+  }, "Add a greeting", { builder: "plain", controlled: true, live, liveAckHeld: ackHeld, ...extra });
+}
+
+function fixture<T>(owner: EngineCaseOwner, body: (value: Awaited<ReturnType<typeof prepareFixture>>) => Promise<T>, live: Scenario["live"], toolId = "codex", ackHeld = false, extra: Partial<Scenario> = {}, startingMessage?: string): Promise<T> {
+  return owner.prepare(async () => { const fixture = await prepareFixture(owner, live, toolId, ackHeld, extra, startingMessage); owner.check(); return body(fixture); });
 }
 
 for (const tool of ["codex", "claude-code"]) it(`delivers ordered guidance inside the ${tool} prompt without another turn or Builder return`, async () => {
-  const f = await fixture("injected", tool);
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     const step = f.task.journey!.at(-1)!.id;
     const first = f.engine.sendMessage(f.task.id, "Keep the guest view");
@@ -55,10 +70,12 @@ for (const tool of ["codex", "claude-code"]) it(`delivers ordered guidance insid
     expect(f.task.journey!.at(-1)!.agentInputs![0]!.updates!.map(update => update.delivery)).toEqual(["applied", "applied"]);
     expect(f.task.timeline.some(line => line.text.includes("Keep the guest view"))).toBe(false);
   } finally { await f.dispose(); }
+
+  }, "injected", tool));
 });
 
 for (const result of ["refused", "failed", "null", "promptRequired"] as const) it(`keeps ${result} live input waiting, then sends it through one tracked prompt`, async () => {
-  const f = await fixture(result, result === "promptRequired" ? "claude-code" : "codex", result === "promptRequired");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Check the guest view too");
     await waitFor(() => f.liveRows().length === 1, "the live attempt", undefined, { during: f.pending });
@@ -77,10 +94,12 @@ for (const result of ["refused", "failed", "null", "promptRequired"] as const) i
     expect(f.task.journey!.at(-1)!.agentInputs![0]!.updates!.find(update => update.messageId)?.delivery).toBe("applied");
     expect(f.scope.work.stepAttempts).toBe(1);
   } finally { await f.dispose(); }
+
+  }, result, result === "promptRequired" ? "claude-code" : "codex", result === "promptRequired"));
 });
 
 for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance without resending or accepting the original result`, async () => {
-  const f = await fixture(tool === "grok" ? "queued" : "startedNewTurn", tool, tool === "codex");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     const messageId = f.engine.sendMessage(f.task.id, "Check the guest view too")!;
     await waitFor(() => f.liveRows().length === 1, "a live attempt", undefined, { during: f.pending });
@@ -96,8 +115,8 @@ for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance
     // A saved receipt blocks a replacement before it opens or receives the same notes.
     f.controller.abort(); await f.pending.catch(() => {});
     f.engine.commitNow(f.scope);
-    await f.engine.shutdown();
-    const replacement = new Engine(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
+    await owner.stop(f.engine);
+    const replacement = owner.open(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
     replacement.setPoolPaused(true);
     try {
       const saved = replacement.task(f.task.id)!;
@@ -110,12 +129,14 @@ for (const tool of ["codex", "grok"]) it(`offers recovery for ${tool} acceptance
       await holdUnconfirmed(replacement, executionFor(saved), undefined, new AbortController().signal);
       expect(saved.queued).toEqual([]);
       expect(f.liveRows()).toHaveLength(1);
-    } finally { await replacement.shutdown(); }
+    } finally { await owner.stop(replacement); }
   } finally { await f.dispose(); }
+
+  }, tool === "grok" ? "queued" : "startedNewTurn", tool, tool === "codex"));
 });
 
 it("keeps an explicit wait ahead of later live guidance and allows removal before acceptance", async () => {
-  const f = await fixture("injected");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     const removed = f.engine.sendMessage(f.task.id, "Take this back", "queue")!;
     f.engine.removeQueued(f.task.id, removed);
@@ -130,10 +151,12 @@ it("keeps an explicit wait ahead of later live guidance and allows removal befor
     expect(readFileSync(update.exact!.file, "utf8")).toBe(text);
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
+
+  }, "injected"));
 });
 
 for (const tool of ["codex", "antigravity", "grok"]) it(`waits when ${tool} cannot take live guidance`, async () => {
-  const f = await fixture(tool === "antigravity" ? "injected" : undefined, tool, false, tool === "grok" ? { liveProbe: "null" } : {});
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Check the guest view too");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.reason === "unsupported", "the capability fallback", undefined, { during: f.pending });
@@ -141,11 +164,14 @@ for (const tool of ["codex", "antigravity", "grok"]) it(`waits when ${tool} cann
     f.release(); await f.pending;
     expect(f.fakes.received("builder").filter(row => row.text.includes("Check the guest view too"))).toHaveLength(1);
   } finally { await f.dispose(); }
+
+  }, tool === "antigravity" ? "injected" : undefined, tool, false, tool === "grok" ? { liveProbe: "null" } : {}));
 });
 
 it("retains possibly accepted input when a different tool takes over", async () => {
-  const f = await fixture("startedNewTurn");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   const replacement = new AbortController();
+  owner.onStop(() => replacement.abort());
   try {
     f.engine.sendMessage(f.task.id, "Check the guest view too");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance before failover", undefined, { during: f.pending });
@@ -160,10 +186,12 @@ it("retains possibly accepted input when a different tool takes over", async () 
     expect(f.task.queued[0]?.deliveries?.main?.toolId).toBe("codex");
     replacement.abort(); await next.catch(() => {});
   } finally { replacement.abort(); await f.dispose(); }
+
+  }, "startedNewTurn"));
 });
 
 it("includes guidance arriving during startup in the exact opening before applying its receipt", async () => {
-  const f = await fixture("injected", "codex", false, {}, "Keep the starting guidance");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("applied");
     expect(f.liveRows()).toEqual([]);
@@ -174,10 +202,12 @@ it("includes guidance arriving during startup in the exact opening before applyi
     expect(f.fakes.received("builder")).toHaveLength(1);
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
+
+  }, "injected", "codex", false, {}, "Keep the starting guidance"));
 });
 
 it("delivers during a permission wait without cancelling or replacing the request", async () => {
-  const f = await fixture("injected", "claude-code", false, { livePermission: true });
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.release();
     const permission = await waitFor(() => f.engine.s.inbox.find(item => item.taskId === f.task.id && item.kind === "permission"), "the live permission request", undefined, { during: f.pending });
@@ -189,10 +219,12 @@ it("delivers during a permission wait without cancelling or replacing the reques
     expect(f.task.queued).toEqual([]);
     expect(f.fakes.received("builder")).toHaveLength(1);
   } finally { await f.dispose(); }
+
+  }, "injected", "claude-code", false, { livePermission: true }));
 });
 
 it("keeps screen-wait guidance for one ordinary continuation of the saved conversation", async () => {
-  const f = await fixture("injected", "codex", false, { screen: "ask", reopen: "resume" });
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.release(); await f.pending.catch(() => {});
     expect(f.task.screen?.granted).not.toBe(true);
@@ -212,10 +244,12 @@ it("keeps screen-wait guidance for one ordinary continuation of the saved conver
     expect(f.task.journey!.at(-1)!.id).toBe(step);
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
+
+  }, "injected", "codex", false, { screen: "ask", reopen: "resume" }));
 });
 
 it("preserves a screen request even when Grok has not confirmed hearing live guidance", async () => {
-  const f = await fixture("queued", "grok", false, { screen: "ask" });
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok to accept guidance", undefined, { during: f.pending });
@@ -225,10 +259,12 @@ it("preserves a screen request even when Grok has not confirmed hearing live gui
     expect(f.fakes.received("builder")).toHaveLength(1);
     expect(f.task.journey!.at(-1)!.agentResults).toBeUndefined();
   } finally { await f.dispose(); }
+
+  }, "queued", "grok", false, { screen: "ask" }));
 });
 
 it("hears a message that joined the turn when that turn is stopped, and still delivers later notes", async () => {
-  const f = await fixture("injected", "codex", false, { cancelHeld: true });
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "the live message to join the turn", undefined, { during: f.pending });
@@ -243,10 +279,12 @@ it("hears a message that joined the turn when that turn is stopped, and still de
     expect(follow).toContain("Mention the signed-in view");
     expect(follow!.indexOf("Use the shorter greeting")).toBeLessThan(follow!.indexOf("Mention the signed-in view"));
   } finally { await f.dispose(); }
+
+  }, "injected", "codex", false, { cancelHeld: true }));
 });
 
 it("hears a joined message when the turn is paused before it reports back", async () => {
-  const f = await fixture("injected");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "the tool to accept it", undefined, { during: f.pending });
@@ -258,10 +296,12 @@ it("hears a joined message when the turn is paused before it reports back", asyn
     expect(result.summary).toBe("Added a greeting.");
     expect(f.task.statusLine ?? "").not.toContain("Waiting for the tool to confirm");
   } finally { await f.dispose(); }
+
+  }, "injected"));
 });
 
 it("does not send a live message taken back while an earlier one is still being acknowledged", async () => {
-  const f = await fixture("injected", "codex", true);
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "First guidance");
     await waitFor(() => f.liveRows().length === 1, "the first acknowledgement to be in flight", undefined, { during: f.pending });
@@ -277,17 +317,19 @@ it("does not send a live message taken back while an earlier one is still being 
     f.release();
     await f.pending;
   } finally { await f.dispose(); }
+
+  }, "injected", "codex", true));
 });
 
 it("recovers a lost acknowledgement as unconfirmed instead of sending it again", async () => {
-  const f = await fixture("injected", "codex", true);
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
     await waitFor(() => f.liveRows().length === 1, "the in-flight request before the connection is lost", undefined, { during: f.pending });
     expect(f.task.queued[0]?.deliveries?.main?.state).toBe("sending");
     f.controller.abort(); f.release(); await f.pending.catch(() => {});
-    f.engine.commitNow(f.scope); await f.engine.shutdown();
-    const recovered = new Engine(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
+    f.engine.commitNow(f.scope); await owner.stop(f.engine);
+    const recovered = owner.open(join(f.root, "data"), { agentCommand: () => [process.execPath, join(ENGINE_TEST_ROOT, "fake-agent.ts"), f.fakes.dir], usageCommands: { codex: null, grok: null, antigravity: null } });
     recovered.setPoolPaused(true);
     try {
       const message = recovered.task(f.task.id)!.queued[0]!;
@@ -296,12 +338,14 @@ it("recovers a lost acknowledgement as unconfirmed instead of sending it again",
       recovered.removeQueued(f.task.id, message.id);
       expect(recovered.task(f.task.id)!.queued).toHaveLength(1);
       expect(f.liveRows()).toHaveLength(1);
-    } finally { await recovered.shutdown(); }
+    } finally { await owner.stop(recovered); }
   } finally { await f.dispose(); }
+
+  }, "injected", "codex", true));
 });
 
 for (const choice of MESSAGE_RECOVERY_OPTIONS) it(`recovers Grok's accepted message with ${choice}`, async () => {
-  const f = await fixture("queued", "grok");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "Keep the guest view");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "Grok acceptance", undefined, { during: f.pending });
@@ -318,10 +362,12 @@ for (const choice of MESSAGE_RECOVERY_OPTIONS) it(`recovers Grok's accepted mess
     const update = f.task.journey!.at(-1)!.agentInputs![0]!.updates!.find(update => update.messageId);
     expect(update?.delivery).toBe(choice === MESSAGE_RECOVERY_OPTIONS[1] ? "applied" : "skipped");
   } finally { await f.dispose(); }
+
+  }, "queued", "grok"));
 });
 
 it("requires an explicit resend choice and keeps later messages ordered", async () => {
-  const f = await fixture("queued", "grok");
+  return cases.use("petrina-live-messages-", owner => fixture(owner, async (f) => {
   try {
     f.engine.sendMessage(f.task.id, "First guidance");
     await waitFor(() => f.task.queued[0]?.deliveries?.main?.state === "accepted", "acceptance", undefined, { during: f.pending });
@@ -337,4 +383,6 @@ it("requires an explicit resend choice and keeps later messages ordered", async 
     expect(follow.indexOf("First guidance")).toBeLessThan(follow.indexOf("Later guidance"));
     expect(f.task.queued).toEqual([]);
   } finally { await f.dispose(); }
+
+  }, "queued", "grok"));
 });

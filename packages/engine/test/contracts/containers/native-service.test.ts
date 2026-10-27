@@ -1,27 +1,32 @@
-import { resolve as testFixturePath } from "node:path";
-const TEST_FIXTURE_ROOT = testFixturePath(import.meta.dir, "../..");
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
+import { extraActors } from "../../extra-fixtures.js";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beginAgentStep, type ExtraValidation } from "@petrina/core";
 import { Engine, writeFixtureEngineOptions, type EngineOptions } from "../../engine.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { git, makeProduct, waitFor } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
 import { executionFor } from "@petrina/orchestrator";
 import { containerCommand, OWNER_LABEL, RUN_LABEL } from "../../../src/extra-container.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+
 const image = process.env.PETRINA_CONTAINER_IMAGE;
 
-async function fixture(timeoutMs = 20_000) {
+async function prepareFixture(owner: EngineCaseOwner, timeoutMs = 20_000) {
   if (!image) throw new Error("Set PETRINA_CONTAINER_IMAGE to a prepared local Linux image with Git and sh (and su for the ownership control).");
-  const root = tempDir("petrina-native-extra-"); roots.push(root);
+  const root = owner.root;
+  const actors = await extraActors(owner);
+  owner.check();
   const data = join(root, "data");
   const settings: EngineOptions = { agentCommand: () => { throw new Error("Extra-validation controls must not start agents"); }, awakeObserver: () => {}, checkTimeoutMs: timeoutMs, extraCleanupEveryMs: 60_000 };
-  const engine = new Engine(data, settings); engine.setPoolPaused(true);
-  const productId = await engine.addProduct(await makeProduct(root));
+  const engine = owner.open(data, settings); engine.setPoolPaused(true);
+  const product = await makeProduct(root);
+  owner.check();
+  const productId = await engine.addProduct(product);
   const task = engine.task(engine.addTask({ productId, title: "Tiny local container control", backlog: true }))!;
   task.held = true;
   const work = executionFor(task).work;
@@ -35,10 +40,11 @@ async function fixture(timeoutMs = 20_000) {
       clientPid: run.clientPid, platform: run.container && `${run.container.os}/${run.container.arch}`, image: run.container?.imageId })),
     places: current.checkQueue.running, waiting: current.checkQueue.waiting, active: current.extraValidations.active }));
   let last = "";
-  engine.subscribe(() => {
+  const unsubscribe = engine.subscribe(() => {
     const state = JSON.stringify(engine.s.extraValidations?.map(run => [run.state, run.result, run.cleanupDetail]));
     if (state !== last) { last = state; trace("ownership changed"); }
   });
+  owner.onStop(unsubscribe);
   const container = engine.extraValidations["container"];
   const inspect = container["labelled"].bind(container);
   container["labelled"] = async (record, timeout) => {
@@ -75,14 +81,20 @@ async function fixture(timeoutMs = 20_000) {
     expect(current.s.extraValidations?.some(run => run.id === record.id && run.state === "held")).toBe(false);
     expect(current.events.log.collect({}, 0, 100).events.some(event => event.kind === "extra.held")).toBe(false);
   };
-  return { root, data, settings, engine, work, task, coordination, submit, finished, labelled, running, trace, stoppedWithoutHold };
+  return { root, data, settings, engine, actors, work, task, coordination, submit, finished, labelled, running, trace, stoppedWithoutHold };
+}
+
+function fixture<T>(owner: EngineCaseOwner, body: (fixture: Awaited<ReturnType<typeof prepareFixture>>) => Promise<T>, timeoutMs = 20_000): Promise<T> {
+  return owner.prepare(async () => { const value = await prepareFixture(owner, timeoutMs); owner.check(); return body(value); });
 }
 
 describe.skipIf(!process.env.PETRINA_CONTAINER_CHECK || process.platform === "win32")("opt-in local Linux container controls", () => {
   const execute = childProcess.execFile;
   let restoreCommands = () => {};
   beforeAll(() => {
-    const commands = spyOn(childProcess, "execFile").mockImplementation(((...args: unknown[]) => {
+    const commands = spyOn(childProcess, "execFile");
+    restoreCommands = () => commands.mockRestore();
+    commands.mockImplementation(((...args: unknown[]) => {
       const argv = args[1];
       const callback = args.at(-1);
       if (Array.isArray(argv) && (argv.includes("stop") || argv.includes("rm")) && typeof callback === "function") {
@@ -94,12 +106,11 @@ describe.skipIf(!process.env.PETRINA_CONTAINER_CHECK || process.platform === "wi
       }
       return Reflect.apply(execute, childProcess, args);
     }) as typeof childProcess.execFile);
-    restoreCommands = () => commands.mockRestore();
   });
   afterAll(() => restoreCommands());
 
   it("reads the exact standalone Git copy, refuses writes and clones it under a different user", async () => {
-    const f = await fixture();
+    return cases.use("petrina-native-extra-", owner => fixture(owner, async f => {
     try {
       const { commit, tree } = f.work.savedVersion!;
       const script = `test "$(git rev-parse HEAD)" = '${commit}'
@@ -122,11 +133,13 @@ echo snapshot-control-passed`;
       expect(result.run!.output).toContain(tree);
       expect(existsSync(record.snapshot)).toBe(false);
       expect(await containerCommand(["docker", "--host", result.container!.endpoint, "ps", "--all", "--filter", `label=${RUN_LABEL}=${record.id}`, "--format", "{{.Names}}"], 4_000)).toBe("");
-    } finally { await f.engine.shutdown(); }
-  });
+    } finally { await owner.stop(f.engine); }
+
+  }));
+});
 
   for (const timeout of [false, true]) it(`${timeout ? "a short deadline" : "cancelling"} removes the actual workload before handing off capacity`, async () => {
-    const f = await fixture(timeout ? 2_000 : 20_000);
+    return cases.use("petrina-native-extra-", owner => fixture(owner, async f => {
     let releasePlace: (() => void) | undefined;
     try {
       const record = await f.submit(timeout ? "real-timeout" : "real-cancel", ["sh", "-ec", "echo workload-started; exec sleep 300"]);
@@ -148,28 +161,32 @@ echo snapshot-control-passed`;
       expect(existsSync(record.snapshot)).toBe(false);
       expect(await containerCommand(["docker", "--host", result.container!.endpoint, "ps", "--all", "--filter", `label=${RUN_LABEL}=${record.id}`, "--format", "{{.Names}}"], 4_000)).toBe("");
       handoff.release();
-    } finally { releasePlace?.(); await f.engine.shutdown(); }
-  });
+    } finally { releasePlace?.(); await owner.stop(f.engine); }
+
+  }, timeout ? 2_000 : 20_000));
+});
 
   it("recovers an actual container after an abrupt engine stop, without forwarding configured proxy credentials", async () => {
-    const f = await fixture();
-    let child: ReturnType<typeof Bun.spawn> | undefined;
+    return cases.use("petrina-native-extra-", owner => fixture(owner, async f => {
+    let child: ReturnType<typeof f.actors.capture>["process"] | undefined;
+    let captured: ReturnType<typeof f.actors.capture> | undefined;
     let replacement: Engine | undefined;
     let releasePlace: (() => void) | undefined;
     try {
       const record = await f.submit("real-crash", ["sh", "-ec", "test -z \"${HTTP_PROXY:-}${http_proxy:-}${HTTPS_PROXY:-}${https_proxy:-}\"; echo workload-started; exec sleep 300"]);
-      await f.engine.shutdown();
+      await owner.stop(f.engine);
       const settings = join(f.root, "settings.json"); writeFixtureEngineOptions(settings, f.settings);
       const config = join(f.root, "client-config"); mkdirSync(config);
       writeFileSync(join(config, "config.json"), JSON.stringify({ proxies: { default: { httpProxy: "http://fake-user:fixture-only@invalid.example:9", httpsProxy: "http://fake-user:fixture-only@invalid.example:9" } } }));
       const contexts = JSON.parse(await containerCommand(["docker", "context", "inspect"], 4_000, true));
       const endpoint = contexts[0].Endpoints.docker.Host;
-      child = Bun.spawn([process.execPath, join(TEST_FIXTURE_ROOT, "extra-crash-engine.ts"), f.data, settings],
-        { env: { ...process.env, DOCKER_CONFIG: config, DOCKER_HOST: endpoint, DOCKER_CONTEXT: "" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-      await waitFor(async () => (await containerCommand(["docker", "--host", endpoint, "ps", "--filter", `label=${RUN_LABEL}=${record.id}`, "--format", "{{.Names}}"], 4_000)).includes(record.containerName), "real workload after private proxy control", 15_000);
-      child.kill("SIGKILL"); await child.exited;
+      captured = f.actors.capture(() => Bun.spawn([process.execPath, f.actors.actor("extra-crash-engine.ts"), f.data, settings],
+        { env: { ...process.env, DOCKER_CONFIG: config, DOCKER_HOST: endpoint, DOCKER_CONTEXT: "" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" }));
+      child = captured.process;
+      await waitFor(async () => (await containerCommand(["docker", "--host", endpoint, "ps", "--filter", `label=${RUN_LABEL}=${record.id}`, "--format", "{{.Names}}"], 4_000)).includes(record.containerName), "real workload after private proxy control", 15_000, { during: captured.drained });
+      child.kill("SIGKILL"); await child.exited; await captured!.drained;
       f.trace("crashed engine ended; starting recovery");
-      replacement = new Engine(f.data, f.settings);
+      replacement = owner.open(f.data, f.settings);
       const current = replacement;
       const pending = current.checkQueue.acquire(new AbortController().signal, true).then(async release => {
         releasePlace = release;
@@ -192,8 +209,10 @@ echo snapshot-control-passed`;
       handoff.release();
     } finally {
       releasePlace?.();
-      child?.kill("SIGKILL"); if (child) await child.exited;
-      await replacement?.shutdown(); await f.engine.shutdown();
+      child?.kill("SIGKILL"); if (child) { await child.exited; await captured!.drained; }
+      await (replacement ? owner.stop(replacement) : undefined); await owner.stop(f.engine);
     }
-  });
+
+  }));
+});
 });

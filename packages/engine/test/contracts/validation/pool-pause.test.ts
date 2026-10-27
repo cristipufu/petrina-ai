@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
@@ -11,25 +12,27 @@ import { executionFor } from "@petrina/orchestrator";
 import { EngineLifecycle } from "../../../src/lifecycle.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { WaitingForUsage } from "../../../src/usage.js";
-import { ExtraFixtures } from "../../extra-fixtures.js";
+import { extraFixture } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const {  } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const extra of [false, true]) for (const timing of ["before release", "during pause", "during handoff"] as const) it(`keeps product check evidence pending when pausing ${timing}${extra ? " ahead of a later extra run" : " without any extra run"}`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const productTask = await f.add();
     productTask.state = "running";
     // Exercise check admission and evidence without starting unrelated agent workflows.
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
     f.engine.setPoolPaused(false);
     const busy = await f.engine.checkQueue.acquire(new AbortController().signal);
+    owner.onStop(() => busy?.());
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "console.log('ordinary check passed')"] }], controller.signal).then(result => ({ failures: nonpassingChecks(result) }), error => ({ error }));
+    owner.onStop(async () => { await Promise.allSettled([productRun]); });
     try {
       await waitFor(() => f.engine.checkQueue.waiting === 1 && productTask.journey?.at(-1)?.productChecks?.[0]?.result === "pending", "the product check to join the line with its pending evidence");
       const step = productTask.journey!.at(-1)!;
@@ -64,17 +67,24 @@ for (const extra of [false, true]) for (const timing of ["before release", "duri
         expect(productStart).toBeLessThan(events.findIndex(event => event.kind === "extra.started"));
       }
     } finally { controller.abort(); busy(); await productRun; }
+
   });
 
+  });
+});
+
 for (const phase of ["preparation", "another run", "handoff preparation"] as const) it(`shows a quiet paused check as waiting and lets the Mac sleep after ${phase}`, async () => {
+  return cases.use("petrina-extra-", async owner => {
     const awake: boolean[] = [];
-    const f = await fixture({ awakeObserver: active => awake.push(active) });
+    return await extraFixture(owner, async f => {
     const productTask = await f.add(); productTask.state = "running";
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
     f.engine.setPoolPaused(false);
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     f.engine.drivers.set(productTask.id, controller);
     let releasePreparation = () => {};
+    owner.onStop(() => releasePreparation());
     let entered!: () => void;
     const preparing = new Promise<void>(resolve => { entered = resolve; });
     const released = new Promise<void>(resolve => { releasePreparation = resolve; });
@@ -88,8 +98,10 @@ for (const phase of ["preparation", "another run", "handoff preparation"] as con
       return state;
     };
     const busy = phase !== "preparation" ? await f.engine.checkQueue.acquire(new AbortController().signal) : undefined;
+    owner.onStop(() => busy?.());
     if (busy) f.engine.settling.set(f.task.id, new Promise<void>(() => {}));
     const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Ordinary check", argv: [process.execPath, "-e", "console.log('ordinary check passed')"] }], controller.signal).then(result => ({ failures: nonpassingChecks(result) }), error => ({ error })).finally(() => { ended = true; });
+    owner.onStop(async () => { await Promise.allSettled([productRun]); });
     f.engine.settling.set(productTask.id, productRun.then(() => undefined));
     try {
       if (phase === "handoff preparation") {
@@ -135,27 +147,39 @@ for (const phase of ["preparation", "another run", "handoff preparation"] as con
       f.engine.syncIdleSleep();
     }
     expect(awake.at(-1)).toBe(false);
+
+  }, { awakeObserver: active => awake.push(active) });
+
   });
+});
 
 it("completes a coordinator pool pause while preserving queued check work for resume", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const productTask = await f.add();
     productTask.state = "running";
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
     f.engine.setPoolPaused(false);
     const busy = await f.engine.checkQueue.acquire(new AbortController().signal);
+    owner.onStop(() => busy?.());
     let endBusy!: () => void;
+    owner.onStop(() => endBusy?.());
     const busyWork = new Promise<void>(resolve => { endBusy = resolve; });
     f.engine.settling.set(f.task.id, busyWork);
     void busyWork.then(() => f.engine.settling.delete(f.task.id));
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     const productRun = f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Queued check", argv: [process.execPath, "-e", "process.exit(0)"] }], controller.signal).then(result => ({ failures: nonpassingChecks(result) }), error => ({ error }));
+    owner.onStop(async () => { await Promise.allSettled([productRun]); });
     // The real task driver owns this promise until checks and their file handling end.
     const productWork = productRun.then(() => undefined);
     f.engine.settling.set(productTask.id, productWork);
     void productWork.then(() => f.engine.settling.delete(productTask.id));
+    owner.check();
     const store = new LifecycleStore(join(f.root, "lifecycle"));
+    const closeStore = owner.afterBody(() => store.close());
     const lifecycle = new EngineLifecycle(f.engine, store, async () => { throw new Error("Pool pause must not stop the engine"); });
+    owner.onStop(() => lifecycle.close());
     try {
       await waitFor(() => f.engine.checkQueue.waiting === 1 && productTask.journey?.at(-1)?.productChecks?.[0]?.result === "pending", "the ordinary check to wait for capacity");
       const extra = await f.submit("pause-completion", ["probe", "pass"]);
@@ -170,19 +194,29 @@ it("completes a coordinator pool pause while preserving queued check work for re
       await lifecycle.request("resume", { requestId: "resume-completion" });
       expect(await productRun).toEqual({ failures: 0 });
       await f.finished(extra);
-    } finally { lifecycle.close(); store.close(); controller.abort(); busy(); endBusy(); await productRun; }
+    } finally { lifecycle.close(); await closeStore(); controller.abort(); busy(); endBusy(); await productRun; }
+
   });
 
+  });
+});
+
 for (const entry of ["direct drain", "coordinator restart"] as const) it(`drains a paused product waiter when capacity is already free through ${entry}`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const productTask = await f.add();
     productTask.state = "running";
     f.engine.schedule = () => { f.engine.extraValidations.pump(); f.engine.checkQueue.pump(); };
     f.engine.setPoolPaused(false);
     const busy = await f.engine.checkQueue.acquire(new AbortController().signal);
+    owner.onStop(() => busy?.());
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     const productRun = f.engine.trackWork(f.engine["checks"].runProductChecks(executionFor(productTask), [{ name: "Queued check", argv: [process.execPath, "-e", "process.exit(0)"] }], controller.signal).then(() => undefined, error => error));
+    owner.onStop(async () => { await Promise.allSettled([productRun]); });
     let lifecycle: EngineLifecycle | undefined, store: LifecycleStore | undefined;
+    const closeStore = owner.afterBody(() => store?.close());
+    owner.onStop(() => lifecycle?.close());
     try {
       await waitFor(() => f.engine.checkQueue.waiting === 1 && productTask.journey?.at(-1)?.productChecks?.[0]?.result === "pending", "the product check to wait with pending evidence");
       const extra = await f.submit("drain-paused-waiter", ["probe", "pass"]);
@@ -193,6 +227,7 @@ for (const entry of ["direct drain", "coordinator restart"] as const) it(`drains
       let handedOff = false;
       if (entry === "direct drain") await f.engine.drain(0);
       else {
+        owner.check();
         store = new LifecycleStore(join(f.root, "lifecycle"));
         lifecycle = new EngineLifecycle(f.engine, store, async () => { handedOff = true; });
         await lifecycle.request("restart", { requestId: "drain-paused-check" });
@@ -206,6 +241,10 @@ for (const entry of ["direct drain", "coordinator restart"] as const) it(`drains
       expect(existsSync(join(f.service, "started"))).toBe(false);
       if (entry === "direct drain") expect(await f.engine.drain(0)).toBe(0);
       else await waitFor(() => handedOff, "the coordinator restart to finish draining");
-    } finally { lifecycle?.close(); store?.close(); controller.abort(); busy(); await productRun; }
+    } finally { lifecycle?.close(); await closeStore(); controller.abort(); busy(); await productRun; }
+
   });
+
+  });
+});
 });

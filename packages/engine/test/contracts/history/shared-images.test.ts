@@ -1,18 +1,19 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { Engine } from "../../engine.js";
-import { tempDir } from "../../fixtures.js";
+
 import { afterAll, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Cleanup } from "../../../src/cleanup.js";
-import { removeDir } from "../../support.js";
 
-const worlds: { dir: string }[] = [];
-afterAll(() => worlds.forEach((world) => removeDir(world.dir)));
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 for (const archived of [false, true]) for (const first of ["one", "two"] as const) it(`preserves shared report metadata while removing ${first} first (${archived ? "archived" : "live"} task)`, async () => {
-  const dir = tempDir(`shared-image-history-${archived}-${first}`), data = join(dir, "data");
-  const world = { dir, data, start: (options: ConstructorParameters<typeof Engine>[1]) => new Engine(data, options) };
-  worlds.push(world);
+  return cases.use("petrina-records-", async owner => {
+  const dir = owner.root, data = join(dir, "data");
+  const world = { dir, data, start: (options: ConstructorParameters<typeof Engine>[1]) => owner.open(data, options ?? {}) };
   const options = { agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] };
   let engine = world.start(options);
   try {
@@ -33,7 +34,7 @@ for (const archived of [false, true]) for (const first of ["one", "two"] as cons
     writeFileSync(join(captures, `${image.id}.png`), "shared picture");
     if (archived) {
       engine.save();
-      await engine.shutdown();
+      await owner.stop(engine);
       engine = world.start(options);
       await engine.waitUntilReady();
       expect(engine.activeState().tasks).toEqual([]);
@@ -51,7 +52,7 @@ for (const archived of [false, true]) for (const first of ["one", "two"] as cons
     expect(engine.historyPage({ productId: remaining }).items.map((item) => item.id)).toContain(taskId);
     expect(await engine.reportImage(taskId, image.id)).toBeUndefined();
     engine.save();
-    await engine.shutdown();
+    await owner.stop(engine);
     engine = world.start(options);
     await engine.waitUntilReady();
     expect(engine.taskDetails(taskId)?.session).toEqual(shared.session);
@@ -62,5 +63,7 @@ for (const archived of [false, true]) for (const first of ["one", "two"] as cons
     expect(engine.taskDetails(taskId)).toBeUndefined();
     expect(engine.historyPage({ productId: remaining }).items.map((item) => item.id)).not.toContain(taskId);
     expect(existsSync(captures)).toBe(false);
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

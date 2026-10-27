@@ -1,15 +1,19 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
+import { afterAll } from "bun:test";
 import { expectRejection } from "@petrina/test-support/rejections";
 import { expect, it } from "bun:test";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Cleanup } from "../../../src/cleanup.js";
-import { removeDir, tempDir } from "../../support.js";
-import { Engine } from "../../engine.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
 
 it("removes terminal and orphaned context packets while retaining an unfinished task's fallback", async () => {
-  const dir = tempDir("petrina-builder-context-cleanup-");
+  return cases.use("petrina-builder-context-cleanup-", async owner => {
+  const dir = owner.root;
   const world = { dir, data: join(dir, "data") };
-  const engine = new Engine(world.data, { admissionsClosed: true });
+  const engine = owner.open(world.data, { admissionsClosed: true });
   try {
     engine.setPoolPaused(true);
     const productId = "product";
@@ -26,5 +30,7 @@ it("removes terminal and orphaned context packets while retaining an unfinished 
     expect(await readFile(join(world.data, "contexts", active, "context.md"), "utf8")).toBe("Authoritative context");
     await expectRejection(access(join(world.data, "contexts", finished)));
     await expectRejection(access(join(world.data, "contexts", "orphaned-context")));
-  } finally { await engine.shutdown(); removeDir(world.dir); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

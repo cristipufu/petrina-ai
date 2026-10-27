@@ -1,3 +1,4 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,21 +12,23 @@ import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import * as processTree from "@petrina/platform/process-tree";
 import { ExtraContainer } from "../../../src/extra-container.js";
 import { CheckQueue } from "../../../src/check-queue.js";
-import { ExtraFixtures } from "../../extra-fixtures.js";
+import { extraFixture } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const { engines } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const action of ["stop", "restart"] as const) it(`keeps a genuinely started extra run in the ${action} drain`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const record = await f.submit("started-drain");
+    owner.check();
     const store = new LifecycleStore(join(f.root, "running-lifecycle"));
+    const closeStore = owner.afterBody(() => store.close());
     const handoffs: boolean[] = [];
     const lifecycle = new EngineLifecycle(f.engine, store, async restart => { handoffs.push(restart); });
+    owner.onStop(() => lifecycle.close());
     try {
       f.engine.setPoolPaused(false); await f.started(record);
       await lifecycle.request(action, { requestId: `started-${action}` });
@@ -35,12 +38,17 @@ for (const action of ["stop", "restart"] as const) it(`keeps a genuinely started
       f.release(record); expect((await f.finished(record)).result).toBe("passed");
       await waitFor(() => f.engine.extraValidations.active === 0, "started work to settle");
       await lifecycle["settle"](); expect(handoffs).toEqual([action === "restart"]);
-    } finally { lifecycle.close(); store.close(); await f.engine.shutdown(); }
+    } finally { lifecycle.close(); await closeStore(); await owner.stop(f.engine); }
+
   });
 
+  });
+});
+
 for (const limit of [1, 2]) for (const mode of ["preparation", "passed"] as const) it(`serializes slow startup recovery and cleanup retries for ${mode} records (limit ${limit})`, async () => {
+  return cases.use("petrina-extra-", async owner => {
     const reverseStarts = mode === "preparation" && limit === 2;
-    const f = await fixture({ checkRuns: 2, extraCleanupEveryMs: 23_457 });
+    return await extraFixture(owner, async f => {
     const first = await f.submit("recover-first", ["probe", "pass"]);
     const second = await f.submit("recover-second", ["probe", reverseStarts ? "hold" : "pass"], (await f.add()).id);
     if (mode === "passed") {
@@ -55,33 +63,44 @@ for (const limit of [1, 2]) for (const mode of ["preparation", "passed"] as cons
       records[1]!.state = "held"; records[1]!.resumeQueued = true;
       records.forEach(record => { mkdirSync(record.snapshot, { recursive: true }); });
     }
-    f.engine.commitNow(); await f.engine.shutdown();
+    f.engine.commitNow(); await owner.stop(f.engine);
     rmSync(join(f.service, "cleanup-off"), { force: true });
     const entered = Promise.withResolvers<void>(), released = Promise.withResolvers<void>();
+    owner.onStop(() => released.resolve());
     const preparingFirst = Promise.withResolvers<void>(), releaseFirst = Promise.withResolvers<void>();
+    owner.onStop(() => releaseFirst.resolve());
     const grants: number[] = [];
     const acquire = CheckQueue.prototype.acquire;
-    const admission = spyOn(CheckQueue.prototype, "acquire").mockImplementation(function(this: CheckQueue, ...args: Parameters<CheckQueue["acquire"]>) {
+    const admission = spyOn(CheckQueue.prototype, "acquire");
+    owner.onStop(() => admission.mockRestore());
+    admission.mockImplementation(function(this: CheckQueue, ...args: Parameters<CheckQueue["acquire"]>) {
       return acquire.apply(this, args).then(place => {
         if (args[2] === first.queueOrder || args[2] === second.queueOrder) grants.push(args[2]);
         return place;
       });
     });
     const prepare = ExtraContainer.prototype.prepare;
-    const preparation = spyOn(ExtraContainer.prototype, "prepare").mockImplementation(async function(this: ExtraContainer, record) {
+    const preparation = spyOn(ExtraContainer.prototype, "prepare");
+    owner.onStop(() => preparation.mockRestore());
+    preparation.mockImplementation(async function(this: ExtraContainer, record) {
       const result = await prepare.call(this, record);
       if (reverseStarts && record.id === first.id) { preparingFirst.resolve(); await releaseFirst.promise; }
       return result;
     });
     const clean = ExtraContainer.prototype.cleanup, interval = globalThis.setInterval;
     let active = 0, maximum = 0, calls = 0, available = false;
+    owner.onStop(() => { available = true; });
     let tick: (() => void) | undefined;
-    const timer = spyOn(globalThis, "setInterval").mockImplementation(((...parameters: Parameters<typeof globalThis.setInterval>) => {
+    const timer = spyOn(globalThis, "setInterval");
+    owner.onStop(() => timer.mockRestore());
+    timer.mockImplementation(((...parameters: Parameters<typeof globalThis.setInterval>) => {
       const [callback, ms, ...args] = parameters;
       if (ms === 23_457) { tick = () => { (callback as () => void)(); }; return interval(callback, 60_000, ...args); }
       return interval(callback, ms, ...args);
     }) as typeof globalThis.setInterval);
-    const cleanup = spyOn(ExtraContainer.prototype, "cleanup").mockImplementation(async function(this: ExtraContainer, record) {
+    const cleanup = spyOn(ExtraContainer.prototype, "cleanup");
+    owner.onStop(() => cleanup.mockRestore());
+    cleanup.mockImplementation(async function(this: ExtraContainer, record) {
       active++; maximum = Math.max(maximum, active);
       try {
         if (++calls === 1) { entered.resolve(); await released.promise; }
@@ -92,7 +111,7 @@ for (const limit of [1, 2]) for (const mode of ["preparation", "passed"] as cons
     let replacement: Engine | undefined;
     const retries: Promise<void>[] = [];
     try {
-      replacement = new Engine(f.data, { ...f.settings, checkRuns: limit }); engines.push(replacement);
+      replacement = owner.open(f.data, { ...f.settings, checkRuns: limit });
       const current = replacement;
       await entered.promise;
       retries.push(current.extraValidations.retryCleanup(), current.extraValidations.retryCleanup());
@@ -135,23 +154,30 @@ for (const limit of [1, 2]) for (const mode of ["preparation", "passed"] as cons
       released.resolve(); releaseFirst.resolve(); available = true;
       await Promise.allSettled(retries);
       await replacement?.extraValidations.ready.catch(() => undefined);
-      await replacement?.shutdown(); admission.mockRestore(); preparation.mockRestore(); cleanup.mockRestore(); timer.mockRestore();
+      await (replacement ? owner.stop(replacement) : undefined); admission.mockRestore(); preparation.mockRestore(); cleanup.mockRestore(); timer.mockRestore();
     }
+
+  }, { checkRuns: 2, extraCleanupEveryMs: 23_457 });
+
   });
+});
 
 it("holds an unverified saved process number across restart without claiming or signalling an unrelated program", async () => {
-    const f = await fixture();
-    const unrelated = Bun.spawn([process.execPath, "-e", "console.log('ready'); setInterval(() => {}, 1000)"], { detached: true, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
+    const unrelatedCapture = f.actors.capture(() => Bun.spawn([process.execPath, f.actors.unrelated], { detached: true, stdin: "ignore", stdout: "pipe", stderr: "ignore" }));
+    const unrelated = unrelatedCapture.process;
     const signals = spyOn(process, "kill");
+    owner.onStop(() => signals.mockRestore());
     let replacement: Engine | undefined;
     try {
-      const reader = unrelated.stdout.getReader(); await reader.read(); reader.releaseLock();
+      const reader = unrelatedCapture.stdout!.getReader(); await reader.read(); reader.releaseLock();
       const queued = await f.submit("uncertain-client");
       const record = f.engine.s.extraValidations![0]!;
       record.container = await f.engine.extraValidations["container"].prepare(record);
       record.state = "held"; record.startedAt = Date.now(); record.clientPid = unrelated.pid;
-      f.engine.commitNow(); await f.engine.shutdown();
-      replacement = new Engine(f.data, f.settings); engines.push(replacement);
+      f.engine.commitNow(); await owner.stop(f.engine);
+      replacement = owner.open(f.data, f.settings);
       await replacement.extraValidations.ready;
       expect(replacement.checkQueue.running).toBe(1);
       const detail = replacement.extraValidations.blocker!;
@@ -161,20 +187,29 @@ it("holds an unverified saved process number across restart without claiming or 
       expect(JSON.stringify(status.checkBlockers)).toContain("may be unrelated");
       expect(process.kill(unrelated.pid, 0)).toBe(true);
       expect(signals.mock.calls.filter(([pid, signal]) => Math.abs(pid) === unrelated.pid && signal !== 0)).toEqual([]);
-      const unavailable = spyOn(processTree, "processList").mockResolvedValueOnce(undefined);
+      const unavailable = spyOn(processTree, "processList");
+    owner.onStop(() => unavailable.mockRestore());
+    unavailable.mockResolvedValueOnce(undefined);
       try { await replacement.extraValidations.retryCleanup(); } finally { unavailable.mockRestore(); }
       expect(replacement.checkQueue.running).toBe(1);
-      unrelated.kill("SIGKILL"); await unrelated.exited;
+      unrelated.kill("SIGKILL"); await unrelated.exited; await unrelatedCapture.drained;
       await replacement.extraValidations.retryCleanup();
       expect(replacement.extraValidations.get(queued.requestId)!.outcome).toBe("completed");
       expect(replacement.checkQueue.running).toBe(0);
-    } finally { unrelated.kill("SIGKILL"); await unrelated.exited; signals.mockRestore(); await replacement?.extraValidations.retryCleanup(); await replacement?.shutdown(); }
+    } finally { unrelated.kill("SIGKILL"); await unrelated.exited; await unrelatedCapture.drained; signals.mockRestore(); await replacement?.extraValidations.retryCleanup(); await (replacement ? owner.stop(replacement) : undefined); }
+
   });
 
+  });
+});
+
 it("keeps added extra-only tasks out of agent admission while their saved version is read", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const admitted: string[] = [];
-    const start = spyOn(f.engine["driver"].workflow, "startDriver").mockImplementation(id => { admitted.push(id); });
+    const start = spyOn(f.engine["driver"].workflow, "startDriver");
+    owner.onStop(() => start.mockRestore());
+    start.mockImplementation(id => { admitted.push(id); });
     let adding: ReturnType<typeof f.add> | undefined;
     try {
       f.engine.s.tools.forEach(tool => { tool.status = "ready"; });
@@ -187,16 +222,23 @@ it("keeps added extra-only tasks out of agent admission while their saved versio
       expect(f.engine.s.inbox.some(item => item.taskId === task.id && item.kind === "delivery")).toBe(true);
     } finally {
       f.engine.setPoolPaused(true); await adding;
-      start.mockRestore(); await f.engine.shutdown();
+      start.mockRestore(); await owner.stop(f.engine);
     }
+
   });
 
+  });
+});
+
 it("keeps extra-only tasks at a coordinator checkpoint through resume and restart", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     let replacement: Engine | undefined;
     const noAgentAdmission = (engine: Engine) => {
       const admitted: string[] = [];
-      const start = spyOn(engine["driver"].workflow, "startDriver").mockImplementation(id => { admitted.push(id); });
+      const start = spyOn(engine["driver"].workflow, "startDriver");
+    owner.onStop(() => start.mockRestore());
+    start.mockImplementation(id => { admitted.push(id); });
       try {
         // Ready tools must not turn an extra-only control into a real agent workflow.
         engine.s.tools.forEach(tool => { tool.status = "ready"; });
@@ -212,16 +254,21 @@ it("keeps extra-only tasks at a coordinator checkpoint through resume and restar
       const record = await f.submit("isolated-extra-control", ["probe", "pass"]);
       f.engine.setPoolPaused(false);
       expect((await f.finished(record)).result).toBe("passed");
-      f.engine.setPoolPaused(true); await f.engine.shutdown();
-      replacement = new Engine(f.data, f.settings); engines.push(replacement);
+      f.engine.setPoolPaused(true); await owner.stop(f.engine);
+      replacement = owner.open(f.data, f.settings);
       await replacement.extraValidations.ready;
       noAgentAdmission(replacement);
       expect(readdirSync(join(f.service, "started"))).toEqual([record.id]);
-    } finally { await replacement?.shutdown(); await f.engine.shutdown(); }
+    } finally { await (replacement ? owner.stop(replacement) : undefined); await owner.stop(f.engine); }
+
   });
 
+  });
+});
+
 it("reports live extra evidence as pending rather than restarted", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const queued = await f.submit("live-evidence");
     f.engine.setPoolPaused(false); await f.started(queued);
     const live = await f.coordination.call("validation.inspect", { requestId: queued.requestId });
@@ -237,20 +284,25 @@ it("reports live extra evidence as pending rather than restarted", async () => {
     const finished = await f.finished(queued);
     expect(finished.result).toBe("passed"); expect(finished.run!.logComplete).toBe(true);
     expect(finished.run!.output).toContain(`Original complete diagnostic for ${queued.id}`);
-    await f.engine.shutdown();
+    await owner.stop(f.engine);
+
   });
 
+  });
+});
+
 it("recovers ownership saved before a command log exists without inventing an outcome", async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const queued = await f.submit("crash-before-log");
     const record = f.engine.s.extraValidations![0]!, container = f.engine.extraValidations["container"];
     record.container = await container.prepare(record);
     await container.snapshot(record);
     // This saved boundary precedes log creation and client startup. Recovery still owns it.
     record.state = "running"; record.startedAt = Date.now();
-    f.engine.commitNow(); await f.engine.shutdown();
+    f.engine.commitNow(); await owner.stop(f.engine);
     writeFileSync(join(f.service, "cleanup-off"), "service unavailable");
-    const replacement = new Engine(f.data, f.settings); engines.push(replacement);
+    const replacement = owner.open(f.data, f.settings);
     await replacement.extraValidations.ready;
     expect(replacement.s.extraValidations![0]!.state).toBe("held");
     expect(replacement.checkQueue.running).toBe(1);
@@ -262,6 +314,10 @@ it("recovers ownership saved before a command log exists without inventing an ou
     expect((await new Coordination(replacement).call("validation.log", { requestId: queued.requestId })).outcome).toBe("unavailable");
     expect(readdirSync(join(f.service, "started"))).toEqual([]);
     expect(existsSync(queued.snapshot)).toBe(false); expect(replacement.checkQueue.running).toBe(0);
-    await replacement.shutdown();
+    await owner.stop(replacement);
+
   });
+
+  });
+});
 });

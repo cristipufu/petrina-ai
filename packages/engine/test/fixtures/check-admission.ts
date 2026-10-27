@@ -1,15 +1,14 @@
+import type { EngineCaseOwner } from "./engine-cases.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../engine.js";
 import { commandInputText } from "../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
-import { git, makeProduct, tempDir } from "../fixtures.js";
+import { git, makeProduct } from "../fixtures.js";
 
 /** Only review preparation is exercised: no planning, building or reviewer process is needed. */
-export async function checkAdmissionFixture(roots: string[], engines: Engine[]) {
-  const root = tempDir("petrina-check-admission-"); roots.push(root);
-  const engine = new Engine(join(root, "data"), { agentCommand: () => { throw new Error("Review preparation must not start an agent"); }, terminals: () => [] });
-  engines.push(engine);
+async function prepareCheckAdmission(owner: EngineCaseOwner) {
+  const root = owner.root;
+  const engine = owner.open(join(root, "data"), { agentCommand: () => { throw new Error("Review preparation must not start an agent"); }, terminals: () => [] });
   engine.schedule = () => engine.checkQueue.pump();
   await engine.waitUntilReady();
   const clone = await makeProduct(root), productId = await engine.addProduct(clone);
@@ -28,7 +27,7 @@ if (name === "first") while (!existsSync(root + "/release-first")) await Bun.sle
 process.exit(existsSync("needs-main-fix.txt") && !fix ? 1 : 0);`);
   const define = (command: string) => engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, root, command]) }]);
   define("original");
-  const add = async (name: string, needsFix = false, conflict = false) => {
+  const add = (name: string, needsFix = false, conflict = false) => owner.prepare(async () => {
     const task = engine.task(engine.addTask({ productId, title: name, delivery: "local", backlog: true }))!;
     task.state = "running"; task.startedAt = 1; task.stageIndex = 1; task.rounds = { review: 1 };
     task.plan = { rationale: "Check review admission", plannerProfileId: "sol-high", stages: [
@@ -43,8 +42,10 @@ process.exit(existsSync("needs-main-fix.txt") && !fix ? 1 : 0);`);
     if (conflict) writeFileSync(join(copy, "README.md"), "The task rewrites this file\n");
     await git(copy, "add", "."); await git(copy, "commit", "-qm", `Improve ${name}`);
     return { task, scope, copy };
-  };
-  const review = (entry: Awaited<ReturnType<typeof add>>) => engine["reviews"].runReview(entry.task, entry.task.plan!.stages[1]!, new AbortController().signal);
+  });
+  const controller = new AbortController();
+  owner.onStop(() => controller.abort());
+  const review = (entry: Awaited<ReturnType<typeof add>>) => owner.run(engine, () => engine["reviews"].runReview(entry.task, entry.task.plan!.stages[1]!, controller.signal));
   const evidence = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line) as { name: string; sha: string; tree: string; fix: boolean; command: string }) : [];
   const land = async (conflict = false, discovery = false) => {
     writeFileSync(join(clone, conflict ? "README.md" : "main-fix.txt"), conflict ? "Main rewrites this file differently\n" : "The previously landed fix\n");
@@ -53,5 +54,10 @@ process.exit(existsSync("needs-main-fix.txt") && !fix ? 1 : 0);`);
     return git(clone, "rev-parse", "HEAD");
   };
   const release = () => writeFileSync(join(root, "release-first"), "continue");
+  owner.onStop(release);
   return { root, engine, clone, add, review, evidence, land, release, define };
+}
+
+export function checkAdmissionFixture<T>(owner: EngineCaseOwner, body: (fixture: Awaited<ReturnType<typeof prepareCheckAdmission>>) => Promise<T>): Promise<T> {
+  return owner.prepare(async () => { const fixture = await prepareCheckAdmission(owner); owner.check(); return body(fixture); });
 }

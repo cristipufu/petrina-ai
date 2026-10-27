@@ -6,6 +6,7 @@ import { RUN_LABEL } from "../src/extra-container.js";
 const [root, ...raw] = process.argv.slice(2);
 if (!root) throw new Error("A private service folder is required");
 for (const directory of ["containers", "creating", "started", "release"]) mkdirSync(join(root, directory), { recursive: true });
+const childProgram = raw[0]?.startsWith("--fixture-child=") ? raw.shift()!.slice("--fixture-child=".length) : undefined;
 let args = raw;
 while (args[0] === "--host" || args[0] === "--config") args = args.slice(2);
 const [command] = args;
@@ -36,7 +37,8 @@ else if (command === "image") {
   }
   renameSync(temporary, path);
   if (mode === "hold-child") {
-    const child = Bun.spawn([process.execPath, "-e", "process.once('SIGUSR1', () => process.exit(0)); console.log('child-ready'); setInterval(() => {}, 1000)"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    if (!childProgram) throw new Error("The hold-child control requires its independently owned private child program");
+    const child = Bun.spawn([process.execPath, childProgram], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
     const reader = child.stdout.getReader();
     await reader.read(); reader.releaseLock();
     record.childPid = child.pid;

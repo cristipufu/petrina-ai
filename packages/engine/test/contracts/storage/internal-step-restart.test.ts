@@ -1,17 +1,17 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { executionFor } from "@petrina/orchestrator";
 import { beginSideStep } from "../../../src/side-step.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
 
 for (const roleId of ["check-finder", "guide-keeper"]) it(`retains the main conversation across a restart inside ${roleId}`, async () => {
-  const root = tempDir("petrina-side-step-"); roots.push(root);
+  return cases.use("petrina-side-step-", async owner => {
+  const root = owner.root;
   const options = { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null, antigravity: null },   };
-  let engine = new Engine(root, options);
+  let engine = owner.open(root, options);
   try {
     engine.setPoolPaused(true);
     engine.s.products.push({ id: "p", name: "Product", repo: "local/p", path: join(root, "product"), tone: "blue" });
@@ -23,8 +23,8 @@ for (const roleId of ["check-finder", "guide-keeper"]) it(`retains the main conv
     scope.work.conversation = { ...scope.work.sideStep!.conversation!, roleId, sessionId: "internal-errand" };
     scope.work.stepAttempts = 1; task.todo = "Internal work";
     engine.commitNow();
-    await engine.shutdown();
-    engine = new Engine(root, options);
+    await owner.stop(engine);
+    engine = owner.open(root, options);
     const reopened = engine.task(id)!, restored = executionFor(reopened);
     expect(restored.work.conversation!.sessionId).toBe("internal-errand");
     expect(restored.work.sideStep!.conversation!.sessionId).toBe("original-builder");
@@ -33,5 +33,7 @@ for (const roleId of ["check-finder", "guide-keeper"]) it(`retains the main conv
     expect(restored.work.stepAttempts).toBe(3);
     expect(reopened.todo).toBe("Finish the original change");
     expect(restored.work.sideStep).toBeUndefined();
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

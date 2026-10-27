@@ -1,18 +1,20 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { heldPlanning } from "../../fixtures/state-admission.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { queueOf } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { dispatch } from "../../../src/server.js";
-import { removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { waitFor } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const root = tempDir("petrina-backlog-");
-afterAll(() => removeDir(root));
 
 it("keeps reviewed requests out of agent work through a restart and queues them exactly once", async () => {
+  return cases.use("petrina-backlog-", async owner => {
+  const root = owner.root;
   const data = join(root, "data");
   const options = heldPlanning();
-  let engine = new Engine(data, options);
+  let engine = owner.open(data, options);
   try {
     const productId = "product"; engine.s.products.push({ id: productId, name: "Product", repo: "local/product", tone: "blue" });
     const id = engine.addTask({ productId, title: "Draft request", description: "Check scope", backlog: true });
@@ -21,8 +23,8 @@ it("keeps reviewed requests out of agent work through a restart and queues them 
     expect(engine.task(id)!.state).toBe("backlog");
     expect(engine.task(id)!.startedAt).toBeUndefined();
     expect(engine.drivers.size).toBe(0);
-    await engine.shutdown();
-    engine = new Engine(data, options);
+    await owner.stop(engine);
+    engine = owner.open(data, options);
     expect(engine.task(id)!.state).toBe("backlog");
     expect(engine.task(id)!.startedAt).toBeUndefined();
     await dispatch(engine, { name: "updateBacklog", args: [id, { title: "Reviewed request", description: "Clear requirements" }] });
@@ -39,5 +41,7 @@ it("keeps reviewed requests out of agent work through a restart and queues them 
     engine.moveToBacklog(id);
     expect(engine.task(id)!.state).not.toBe("backlog");
     expect(() => engine.updateBacklog(id, { title: "Too late", description: "" })).toThrow("Only backlog requests");
-  } finally { await engine.shutdown(); }
+  } finally { await owner.stop(engine); }
+
+  });
 });

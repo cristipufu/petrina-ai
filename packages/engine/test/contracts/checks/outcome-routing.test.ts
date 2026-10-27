@@ -1,10 +1,14 @@
+import { afterAll } from "bun:test";
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { nonpassingChecks } from "../../fixtures/check-verification.js";
 import { expect, it } from "bun:test";
 import { checkOutcome, checkProblem, type CheckRun } from "@petrina/core";
 import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { checksFingerprint } from "@petrina/repositories/check-discovery";
 import { checkContext } from "../../fixtures/check-context.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+const engineCases = engineCaseFixtures();
+afterAll(() => engineCases.close());
+
 
 const cases = ["legacy-pass", "legacy-failure", "start-failed", "timed-out", "cancelled", "read-failed", "output-incomplete", "exit-unreported", "cleanup-unconfirmed"] as const;
 
@@ -32,11 +36,8 @@ function incomplete(original: CheckRun, kind: typeof cases[number]): CheckRun {
 }
 
 it.each([...cases])("records %s as blocking evidence without a code finding or an automatic rerun", async kind => {
-  const root = tempDir("check-outcome-routing-");
-  let f: Awaited<ReturnType<typeof checkContext>> | undefined;
-  let stopped = false;
+  return engineCases.use("check-outcome-routing-", owner => checkContext(owner, async f => {
   try {
-    f = await checkContext(root);
     f.setCheck(kind === "legacy-pass" ? "--sequence=PF" : "--pass");
     expect((await f.check()).kind).toBe("passed");
     const { task, scope } = f;
@@ -88,18 +89,15 @@ it.each([...cases])("records %s as blocking evidence without a code finding or a
       expect(scope.work.approvedSha).toBeUndefined();
     }
   } finally {
-    if (f) { await f.engine.shutdown(); stopped = true; }
-    // If setup never handed ownership back, retain the folder rather than assume its cleanup was confirmed.
-    if (stopped) removeDir(root);
+    if (f) { await owner.stop(f.engine); }
   }
+
+  }));
 });
 
 it("keeps a real completed code failure beside an incomplete check and never changes the repair allowance while recording", async () => {
-  const root = tempDir("check-outcome-mixed-");
-  let f: Awaited<ReturnType<typeof checkContext>> | undefined;
-  let stopped = false;
+  return engineCases.use("check-outcome-mixed-", owner => checkContext(owner, async f => {
   try {
-    f = await checkContext(root);
     f.engine.setProductChecks(f.productId, [
       { name: "Welcome", command: f.command("--pass") },
       { name: "Build", command: f.command("--pass", "--build") },
@@ -118,7 +116,8 @@ it("keeps a real completed code failure beside an incomplete check and never cha
     expect(f.task.journey!.at(-1)!.outcome).toBe("Checks: 1 still failing, 1 unverified");
     expect(f.runs()).toEqual(["passed", "passed"]);
   } finally {
-    if (f) { await f.engine.shutdown(); stopped = true; }
-    if (stopped) removeDir(root);
+    if (f) { await owner.stop(f.engine); }
   }
+
+  }));
 });

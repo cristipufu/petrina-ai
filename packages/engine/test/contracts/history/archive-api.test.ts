@@ -1,16 +1,18 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { reviewStats, withoutProduct, type State } from "@petrina/core";
 import { dispatch, serve } from "../../../src/server.js";
 import { Engine } from "../../engine.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+
 import { historyTask as task, historyState as state, reviewedHistoryTask as reviewedTask } from "../../../../core/test/fixtures/history-records.js";
-const worlds: { dir: string }[] = [];
-afterAll(() => worlds.forEach(world => removeDir(world.dir)));
-function recordWorld(name: string) {
- const dir = tempDir(name), data = join(dir, "data");
- return { dir, data, start: (options = {}) => new Engine(data, { admissionsClosed: true, ...options }) };
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
+
+function recordWorld(owner: EngineCaseOwner) {
+ const dir = owner.root, data = join(dir, "data");
+ return { dir, data, start: (options = {}) => owner.open(data, { admissionsClosed: true, ...options }) };
 }
 function recordProduct(engine: Engine) {
  const id = "product"; if (!engine.s.products.some(product => product.id === id)) engine.s.products.push({ id, name: "Product", repo: "local/product", tone: "blue" });
@@ -20,8 +22,8 @@ function recordProduct(engine: Engine) {
 
 describe.concurrent("Finished work is indexed outside the live snapshot", () => {
 it("keeps archived task details and dependencies available without sending bodies to the window", async () => {
-    const world = recordWorld("history-runtime");
-    worlds.push(world);
+  return cases.use("petrina-history-", async owner => {
+    const world = recordWorld(owner);
     let engine = world.start();
     try {
       engine.setPoolPaused(true);
@@ -50,14 +52,16 @@ it("keeps archived task details and dependencies available without sending bodie
       archived.statusLine = "Updated archived details"; engine.commitNow(archived);
       expect(engine.windowState().history!.dependencies).not.toBe(dependencies);
       expect(engine.windowState().history!.dependencies!.find(entry => entry.id === archived.id)!.statusLine).toBe("Updated archived details");
+      owner.check();
       const server = serve(engine, { port: 0, token: "history-fixture" });
+      owner.onStop(() => server.stop(true));
       try {
         const raw = await (await fetch(`http://127.0.0.1:${server.port}/api/state`, { headers: { authorization: "Bearer history-fixture" } })).json() as State;
         expect(raw.tasks.map((entry) => entry.id)).toEqual([following]);
         expect(raw.history?.total).toBe(5);
         expect(raw.history?.dependencies?.some((entry) => "session" in entry)).toBe(false);
       } finally { server.stop(true); }
-      await engine.shutdown();
+      await owner.stop(engine);
       expect(() => engine.getState()).not.toThrow();
       expect(() => engine.windowState()).not.toThrow();
       expect(() => engine.historyPage({})).toThrow("The engine has stopped");
@@ -70,14 +74,17 @@ it("keeps archived task details and dependencies available without sending bodie
       engine.removeProduct(productId);
       expect(engine.historyPage({}).total).toBe(0);
       expect(engine.taskDetails(ids[0]!)).toBeUndefined();
-    } finally { await engine.shutdown(); }
+    } finally { await owner.stop(engine); }
+
   });
+});
 
 it("leaves a product and its history unchanged when its removal cannot be saved", async () => {
-    const world = recordWorld("history-removal-rollback");
-    worlds.push(world);
+  return cases.use("petrina-history-", async owner => {
+    const world = recordWorld(owner);
     const engine = world.start();
     let release = () => {};
+    owner.onStop(() => release());
     try {
       engine.setPoolPaused(true);
       const productId = recordProduct(engine);
@@ -108,12 +115,14 @@ it("leaves a product and its history unchanged when its removal cannot be saved"
       expect(engine.store.history.info().total).toBe(0);
       expect(engine.taskDetails(id)).toBeUndefined();
       expect(engine.tracking.log.products().find((product) => product.id === productId)?.removedAt).toEqual(expect.any(Number));
-    } finally { release(); await engine.shutdown(); }
+    } finally { release(); await owner.stop(engine); }
+
   });
+});
 
 it("removes product pictures from actual storage without listing all history, preserving shared membership and rollback", async () => {
-    const world = recordWorld("history-capture-removal");
-    worlds.push(world);
+  return cases.use("petrina-history-", async owner => {
+    const world = recordWorld(owner);
     const engine = world.start({ agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     try {
       engine.setPoolPaused(true);
@@ -172,6 +181,8 @@ it("removes product pictures from actual storage without listing all history, pr
         expect(new Set(summaries)).toEqual(allowed);
         expect(bodies).toEqual([shared.id, shared.id]);
       } finally { engine.store.history.item = item; engine.store.history.get = get; }
-    } finally { await engine.shutdown(); }
+    } finally { await owner.stop(engine); }
+
   });
+});
 });

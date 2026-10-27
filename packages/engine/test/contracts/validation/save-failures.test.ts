@@ -1,28 +1,28 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtraValidation } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { waitFor } from "../../fixtures.js";
 import { Coordination } from "../../../src/coordination.js";
 
 import * as processTree from "@petrina/platform/process-tree";
 import { expectRejection } from "@petrina/test-support/rejections";
-import { ExtraFixtures, failPrelaunchSave } from "../../extra-fixtures.js";
+import { extraFixture, failPrelaunchSave, type ExtraFixture } from "../../extra-fixtures.js";
 
-const owned = new ExtraFixtures();
-const { engines } = owned;
-const fixture = (...args: Parameters<ExtraFixtures["fixture"]>) => owned.fixture(...args);
-afterAll(() => owned.close());
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
 
 describe.skipIf(process.platform === "win32")("required extra validation shares the host check queue", () => {
 for (const phase of ["admission", "start evidence", "log registration"] as const) it(`settles a pre-launch ${phase} save failure without false start evidence or a pending diagnostic`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     await f.engine.waitUntilReady();
     const record = await f.submit("admission-save", ["probe", "pass"]), extra = f.engine.extraValidations;
     const prepare = spyOn(extra["container"], "prepare");
-    const fault = failPrelaunchSave(f.engine, record.id, phase, 1);
+    owner.onStop(() => prepare.mockRestore());
+    const fault = failPrelaunchSave(owner, f.engine, record.id, phase, 1);
     try {
       f.engine.setPoolPaused(false);
       await waitFor(() => fault.injected && extra.active === 0, "the failed registration to settle");
@@ -42,8 +42,12 @@ for (const phase of ["admission", "start evidence", "log registration"] as const
       expect(await f.coordination.call("validation.run", f.request(record.requestId, ["probe", "pass"]))).toEqual(reply);
       await extra.retryCleanup();
       expect(extra.get(record.requestId)).toEqual(reply);
-    } finally { fault.restore(); prepare.mockRestore(); await f.engine.shutdown(); }
+    } finally { fault.restore(); prepare.mockRestore(); await owner.stop(f.engine); }
+
   });
+
+  });
+});
 
 for (const [phase, failures, recovery] of [
     ["admission", 0, "cleanup retry"], ["admission", 0, "restart"],
@@ -52,14 +56,16 @@ for (const [phase, failures, recovery] of [
     ["start evidence", 1, "cleanup retry"], ["start evidence", 1, "restart"], ["start evidence", 2, "cleanup retry"],
     ["log registration", 1, "cleanup retry"], ["log registration", 1, "restart"], ["log registration", 2, "restart"],
   ] as const) it(`preserves pre-launch ${phase} outcomes through ${recovery} (${failures} failed saves)`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     await f.engine.waitUntilReady();
     const extra = f.engine.extraValidations, container = extra["container"], cleanup = container.cleanup.bind(container);
     let confirm = false;
+    owner.onStop(() => { confirm = true; });
     container.cleanup = record => confirm ? cleanup(record) : Promise.resolve(false);
     const record = await f.submit("admission-recovery", ["probe", "pass"]);
     const following = await f.submit("after-admission-recovery", ["probe", "pass"], (await f.add()).id);
-    const fault = failPrelaunchSave(f.engine, record.id, phase, failures);
+    const fault = failPrelaunchSave(owner, f.engine, record.id, phase, failures);
     let current = f.engine;
     try {
       f.engine.setPoolPaused(false);
@@ -83,8 +89,8 @@ for (const [phase, failures, recovery] of [
       fault.restore();
       confirm = true;
       if (recovery === "restart") {
-        f.engine.setPoolPaused(true); await f.engine.shutdown();
-        current = new Engine(f.data, f.settings); engines.push(current); await current.waitUntilReady();
+        f.engine.setPoolPaused(true); await owner.stop(f.engine);
+        current = owner.open(f.data, f.settings);  await current.waitUntilReady();
       } else await extra.retryCleanup();
       const reply = current.extraValidations.get(record.requestId)!;
       expect(reply.outcome).toBe("completed");
@@ -103,20 +109,28 @@ for (const [phase, failures, recovery] of [
       expect(current.checkQueue.running).toBe(0); expect(current.checkQueue.waiting).toBe(0);
       expect(current.s.extraValidations).toEqual([]); expect(existsSync(record.snapshot)).toBe(false);
       expect(readdirSync(join(f.service, "containers"))).toEqual([]);
-    } finally { fault.restore(); confirm = true; await current.shutdown(); await f.engine.shutdown(); }
+    } finally { fault.restore(); confirm = true; await owner.stop(current); await owner.stop(f.engine); }
+
   });
 
+  });
+});
+
 for (const failures of [0, 1, 2]) for (const recovery of ["cleanup retry", "restart"] as const) it(`keeps launched-client save errors unfinished through ${recovery} (${failures} failed saves)`, async () => {
-    const f = await fixture();
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     await f.engine.waitUntilReady();
     const extra = f.engine.extraValidations, container = extra["container"], cleanup = container.cleanup.bind(container);
     let confirm = false;
+    owner.onStop(() => { confirm = true; });
     container.cleanup = record => confirm ? cleanup(record) : Promise.resolve(false);
     const record = await f.submit("launched-client-save", ["probe", "pass"]);
     const following = await f.submit("after-client-save", ["probe", "pass"], (await f.add()).id);
     const commit = f.engine.commitNow.bind(f.engine), failure = new Error("Launched client save unavailable");
     let remaining = failures;
-    const save = spyOn(f.engine, "commitNow").mockImplementation((...args) => {
+    const save = spyOn(f.engine, "commitNow");
+    owner.onStop(() => save.mockRestore());
+    save.mockImplementation((...args) => {
       if (remaining && f.engine.s.extraValidations?.find(entry => entry.id === record.id)?.clientPid !== undefined) { remaining--; throw failure; }
       return commit(...args);
     });
@@ -143,8 +157,8 @@ for (const failures of [0, 1, 2]) for (const recovery of ["cleanup retry", "rest
       expect(f.engine.checkQueue.running).toBe(1); expect(f.engine.checkQueue.waiting).toBe(1);
       save.mockRestore(); confirm = true;
       if (recovery === "restart") {
-        f.engine.setPoolPaused(true); await f.engine.shutdown();
-        current = new Engine(f.data, f.settings); engines.push(current); await current.waitUntilReady();
+        f.engine.setPoolPaused(true); await owner.stop(f.engine);
+        current = owner.open(f.data, f.settings);  await current.waitUntilReady();
       } else await extra.retryCleanup();
       const reply = current.extraValidations.get(record.requestId)!;
       expect(reply.outcome).toBe("completed");
@@ -162,26 +176,37 @@ for (const failures of [0, 1, 2]) for (const recovery of ["cleanup retry", "rest
       expect(runs.filter(args => args.includes(following.containerName))).toHaveLength(1);
       expect(current.checkQueue.running).toBe(0); expect(current.checkQueue.waiting).toBe(0); expect(current.s.extraValidations).toEqual([]);
       expect(existsSync(record.snapshot)).toBe(false); expect(readdirSync(join(f.service, "containers"))).toEqual([]);
-    } finally { save.mockRestore(); confirm = true; await current.extraValidations.retryCleanup(); await current.shutdown(); await f.engine.shutdown(); }
+    } finally { save.mockRestore(); confirm = true; await current.extraValidations.retryCleanup(); await owner.stop(current); await owner.stop(f.engine); }
+
   });
 
+  });
+});
+
 it("reports a periodic cleanup save failure, retains ownership and drains the next retry on shutdown", async () => {
+  return cases.use("petrina-extra-", async owner => {
     const interval = globalThis.setInterval;
     let tick: (() => void) | undefined;
-    const timer = spyOn(globalThis, "setInterval").mockImplementation(((...parameters: Parameters<typeof globalThis.setInterval>) => {
+    const timer = spyOn(globalThis, "setInterval");
+    owner.onStop(() => timer.mockRestore());
+    timer.mockImplementation(((...parameters: Parameters<typeof globalThis.setInterval>) => {
       const [callback, ms, ...args] = parameters;
       if (ms === 23_459) { tick = () => { (callback as () => void)(); }; return interval(callback, 60_000, ...args); }
       return interval(callback, ms, ...args);
     }) as typeof globalThis.setInterval);
-    const log = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "error");
+    owner.onStop(() => log.mockRestore());
+    log.mockImplementation(() => {});
     const released = Promise.withResolvers<void>();
+    owner.onStop(() => released.resolve());
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     let restoreSave = () => {}, restoreCleanup = () => {};
-    let f: Awaited<ReturnType<typeof fixture>> | undefined;
+    let f: ExtraFixture | undefined;
     let waiting: Promise<boolean> | undefined;
     let stopping: Promise<void> | undefined;
     try {
-      f = await fixture({ checkRuns: 2, extraCleanupEveryMs: 23_459 });
+      return await extraFixture(owner, async actualFixture => {f = actualFixture;
       await f.engine.waitUntilReady();
       expect(tick).toBeDefined();
       const record = await f.submit("periodic-save-failure");
@@ -191,10 +216,14 @@ it("reports a periodic cleanup save failure, retains ownership and drains the ne
       const extra = f.engine.extraValidations;
       await waitFor(() => extra.active === 0 && f!.engine.s.extraValidations![0]?.state === "held", "unconfirmed cleanup to hold capacity");
       const container = extra["container"], cleanup = container.cleanup.bind(container);
-      const probe = spyOn(container, "cleanup").mockRejectedValueOnce(new Error("Cleanup probe failed"));
+      const probe = spyOn(container, "cleanup");
+    owner.onStop(() => probe.mockRestore());
+    probe.mockRejectedValueOnce(new Error("Cleanup probe failed"));
       restoreCleanup = () => probe.mockRestore();
       const failure = new Error("Saved state unavailable");
-      const save = spyOn(f.engine, "commitNow").mockImplementationOnce(() => { throw failure; });
+      const save = spyOn(f.engine, "commitNow");
+    owner.onStop(() => save.mockRestore());
+    save.mockImplementationOnce(() => { throw failure; });
       restoreSave = () => save.mockRestore();
       tick!();
       // Observe the operation too: explicit callers still receive its error, while the
@@ -216,12 +245,14 @@ it("reports a periodic cleanup save failure, retains ownership and drains the ne
       expect(f.engine.checkQueue.running).toBe(1);
       expect(extra.get(record.requestId)!.outcome).toBe("pending");
       const entered = Promise.withResolvers<void>();
-      const confirming = spyOn(container, "cleanup").mockImplementation(async record => { entered.resolve(); await released.promise; return cleanup(record); });
+      const confirming = spyOn(container, "cleanup");
+    owner.onStop(() => confirming.mockRestore());
+    confirming.mockImplementation(async record => { entered.resolve(); await released.promise; return cleanup(record); });
       restoreCleanup = () => confirming.mockRestore();
       rmSync(join(f.service, "cleanup-off"));
       tick!(); await entered.promise;
       let stopped = false;
-      stopping = f.engine.shutdown().then(() => { stopped = true; });
+      stopping = owner.stop(f.engine).then(() => { stopped = true; });
       await Promise.resolve();
       expect(stopped).toBe(false);
       expect(f.engine.checkQueue.running).toBe(1);
@@ -231,32 +262,39 @@ it("reports a periodic cleanup save failure, retains ownership and drains the ne
       expect(admitted).toBe(false);
       expect(existsSync(record.snapshot)).toBe(false);
       expect(readdirSync(join(f.service, "containers"))).toEqual([]);
-      const replacement = new Engine(f.data, f.settings); engines.push(replacement);
+      const replacement = owner.open(f.data, f.settings);
       await replacement.waitUntilReady();
       expect((replacement.extraValidations.get(record.requestId)!.validation as ExtraValidation).result).toBe("did not finish");
       expect(readdirSync(join(f.service, "started"))).toEqual([record.id]);
-    } finally {
+
+  }, { checkRuns: 2, extraCleanupEveryMs: 23_459 });
+} finally {
       released.resolve(); restoreSave(); restoreCleanup();
       controller.abort(); await waiting;
       if (f) {
         rmSync(join(f.service, "cleanup-off"), { force: true });
         await f.engine.extraValidations.retryCleanup();
-        await f.engine.shutdown();
+        await owner.stop(f.engine);
       }
       await stopping;
       log.mockRestore(); timer.mockRestore();
     }
+
   });
+});
 
 for (const mode of ["completion", "preparation", "cancelled preparation"] as const) it(`retains cleanup ownership when saving ${mode} settlement fails`, async () => {
-    const f = await fixture({ checkRuns: 2 });
+  return cases.use("petrina-extra-", async owner => {
+    return await extraFixture(owner, async f => {
     const extra = f.engine.extraValidations, container = extra["container"];
     const cleanup = container.cleanup.bind(container), snapshot = container.snapshot.bind(container);
     let confirm = false;
+    owner.onStop(() => { confirm = true; });
     container.cleanup = record => confirm ? cleanup(record) : Promise.resolve(false);
     if (mode !== "completion") container.snapshot = async record => { await snapshot(record); f.engine.setPoolPaused(true); };
     const record = await f.submit("settlement-save", ["probe", "pass"]);
     const controller = new AbortController();
+    owner.onStop(() => controller.abort());
     let waiting: Promise<boolean> | undefined;
     let restoreSave = () => {};
     try {
@@ -266,7 +304,9 @@ for (const mode of ["completion", "preparation", "cancelled preparation"] as con
       expect(f.engine.s.extraValidations![0]!.resumeQueued).toBe(mode === "completion" ? undefined : true);
       const following = await f.submit("after-settlement-save", ["probe", "pass"], (await f.add()).id);
       const failure = new Error("Settlement save unavailable");
-      const save = spyOn(f.engine, "commitNow").mockImplementationOnce(() => { throw failure; });
+      const save = spyOn(f.engine, "commitNow");
+    owner.onStop(() => save.mockRestore());
+    save.mockImplementationOnce(() => { throw failure; });
       restoreSave = () => save.mockRestore();
       confirm = true;
       await extra.retryCleanup(); // The ordinary hold save succeeds after the settlement save fails.
@@ -299,7 +339,11 @@ for (const mode of ["completion", "preparation", "cancelled preparation"] as con
     } finally {
       restoreSave(); confirm = true; container.snapshot = snapshot;
       controller.abort(); await waiting;
-      await f.engine.shutdown();
+      await owner.stop(f.engine);
     }
+
+  }, { checkRuns: 2 });
+
   });
+});
 });
