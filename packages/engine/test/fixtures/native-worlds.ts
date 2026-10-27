@@ -5,6 +5,7 @@ import { completeAll } from "@petrina/core";
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
 import { makeWorld, tempDir, testBrowserRoot, type World } from "../support.js";
 import { directDrivers, removeFixtureRoot } from "./direct-drivers.js";
+import { nativeWorldLifetime } from "./native-world-lifetime.js";
 
 type WorldOptions = Omit<Parameters<typeof makeWorld>[1], "owner"> & { allowOverlap?: true };
 export type NativeWorld = Omit<World, "start">;
@@ -15,9 +16,7 @@ export interface NativeWorldFixture {
 }
 interface Entry {
   root: string;
-  lifetime: ReturnType<typeof directDrivers>;
-  resources?: { stopPeers(): void | Promise<void> };
-  closed: boolean;
+  shutdown: ReturnType<typeof nativeWorldLifetime>;
   closing?: Promise<void>;
 }
 const unavailable = () => new Error("Native world fixture is closing; no setup, Engine or callback may start");
@@ -26,16 +25,10 @@ const unavailable = () => new Error("Native world fixture is closing; no setup, 
 export function nativeWorldFixtures() {
   const active = new Set<Entry>(), retained = new Set<string>();
   let accepting = true, closing: Promise<void> | undefined;
-  const available = (entry: Entry) => { if (!accepting || entry.closed) throw unavailable(); };
+  const available = (entry: Entry) => { if (!accepting || entry.shutdown.closed) throw unavailable(); };
   const closeEntry = (entry: Entry): Promise<void> => {
     if (entry.closing) return entry.closing;
-    entry.closed = true;
-    let done!: () => void, failed!: (error: unknown) => void;
-    entry.closing = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
-    // Register stop work before closing its root; stop callbacks can release operations being joined.
-    const peers = entry.resources ? entry.lifetime.prepare(async () => entry.resources!.stopPeers()) : Promise.resolve();
-    const stopped = entry.lifetime.close();
-    void completeAll([peers, stopped]).then(done, failed);
+    entry.closing = entry.shutdown.close();
     void entry.closing.then(() => active.delete(entry), () => { active.delete(entry); retained.add(entry.root); });
     return entry.closing;
   };
@@ -45,12 +38,11 @@ export function nativeWorldFixtures() {
     let done!: () => void, failed!: (error: unknown) => void;
     closing = new Promise<void>((resolve, reject) => { done = resolve; failed = reject; });
     const entries = [...active];
-    for (const entry of entries) entry.closed = true;
     void completeAll(entries.map(closeEntry)).then(done, failed);
     return closing;
   };
   async function world<T>(name: string, body: (fixture: NativeWorldFixture) => Promise<T>, options: WorldOptions = {},
-    resources?: Entry["resources"]): Promise<T> {
+    resources?: { stopPeers(): void | Promise<void> }): Promise<T> {
     if (!accepting) throw unavailable();
     const root = tempDir(`petrina-${name}-`);
     let browsers: string | undefined;
@@ -61,7 +53,7 @@ export function nativeWorldFixtures() {
         removeFixtureRoot(browsers);
       },
     });
-    const entry: Entry = { root, lifetime, resources, closed: false };
+    const entry: Entry = { root, shutdown: nativeWorldLifetime(lifetime, resources ? () => resources.stopPeers() : undefined) };
     active.add(entry);
     const result = await setupWithCleanup(() => lifetime.prepare(async () => {
       const { allowOverlap: _overlap, ...recipe } = options;
@@ -77,8 +69,7 @@ export function nativeWorldFixtures() {
           return lifetime.run(current, () => run(current));
         }, async () => {
           // Failed callbacks may leave a scripted native peer held; request that release before joining its Engine.
-          const peers = resources ? lifetime.prepare(async () => resources.stopPeers()) : Promise.resolve();
-          await completeAll([peers, lifetime.stop(current)]);
+          await entry.shutdown.stop();
         });
         await lifetime.stop(current);
         return value;

@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { rejectionOf } from "../../../src/rejections.js";
-import { fixtureOperationControl, flushOperations } from "../../fixtures/fixture-operations.js";
+import { fixtureOperationControl, flushOperations } from "../../../src/fixture-operation-control.js";
 
 it("publishes real operation ownership before a starter synchronously requests close", async () => {
   const f = fixtureOperationControl(), work = Promise.withResolvers<number>();

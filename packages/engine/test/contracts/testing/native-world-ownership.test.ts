@@ -8,12 +8,48 @@ import { existsSync, writeFileSync } from "node:fs";
 import { Engine } from "../../engine.js";
 import { nativeWorldFixtures } from "../../fixtures/native-worlds.js";
 import { removeFixtureRoot } from "../../fixtures/direct-drivers.js";
+import { nativeWorldLifetime } from "../../fixtures/native-world-lifetime.js";
+import { fixtureOperationControl, flushOperations } from "@petrina/test-support/fixture-operation-control";
 
 const finalizers = new Set<() => Promise<void>>();
 afterEach(async () => {
   const results = await Promise.allSettled([...finalizers].map(finish => finish()));
   const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
   if (errors.length) throw new AggregateError(errors, "Native world controls could not confirm cleanup");
+});
+
+it("keeps pending peer release inside the root deadline across stop and reentrant close", async () => {
+  const f = fixtureOperationControl(), peer = Promise.withResolvers<void>(), stopped = Promise.withResolvers<void>();
+  let stops = 0, peers = 0, beganStop = false, canonical: Promise<void> | undefined, reentered: typeof canonical;
+  const stopAll = () => { if (!beganStop) { beganStop = true; stops++; } return stopped.promise; };
+  f.effects.stopEffect = stopAll;
+  const lifetime = nativeWorldLifetime({ prepare: start => f.owner.run(start), stopAll,
+    close() { return canonical = f.owner.close(); },
+  }, () => { peers++; reentered = lifetime.close(); return peer.promise; });
+  const stopping = lifetime.stop();
+  const closing = lifetime.close();
+  let stopResult: { done: true } | undefined, closeResult: { error: unknown } | undefined;
+  const observedStop = stopping.then(() => { stopResult = { done: true }; });
+  const observedClose = closing.catch(error => { closeResult = { error }; });
+  try {
+    expect(lifetime.closed).toBe(true);
+    expect(reentered).toBe(closing); expect(lifetime.close()).toBe(closing);
+    expect(peers).toBe(1); expect(stops).toBe(1);
+    stopped.resolve();
+    await flushOperations();
+    expect(stopResult).toEqual({ done: true });
+    expect(closeResult).toBeUndefined();
+    f.expire();
+    const error = await rejectionOf(canonical!);
+    await flushOperations();
+    expect(closeResult).toEqual({ error });
+    expect((error as Error).message).toContain("cleanup could not be confirmed");
+    expect(f.effects.events).toEqual(["stop"]);
+    expect(f.effects.timers.size).toBe(0);
+  } finally {
+    peer.resolve(); stopped.resolve();
+    await Promise.allSettled([observedStop, observedClose]);
+  }
 });
 
 it("refuses a callback after the actual Engine constructor reenters fixture close", async () => {

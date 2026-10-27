@@ -5,7 +5,7 @@ import { removeFixtureRoot } from "../../../src/fixture-roots.js";
 import { tempDir } from "../../../src/fixtures.js";
 import { rejectionOf } from "../../../src/rejections.js";
 import { setupWithCleanup } from "../../../src/setup-with-cleanup.js";
-import { fixtureOperationControl } from "../../fixtures/fixture-operations.js";
+import { fixtureOperationControl } from "../../../src/fixture-operation-control.js";
 
 async function withRoot(body: (root: string, restore: (effect: () => void) => void) => void | Promise<void>): Promise<void> {
   const root = tempDir("petrina-fixture-roots-"), restores: (() => void)[] = [];

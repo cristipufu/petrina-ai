@@ -1,4 +1,4 @@
-import { FixtureOperations, type FixtureOperationEffects } from "../../src/fixture-operations.js";
+import { FixtureOperations, type FixtureOperationEffects } from "./fixture-operations.js";
 
 export async function flushOperations(): Promise<void> { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 
