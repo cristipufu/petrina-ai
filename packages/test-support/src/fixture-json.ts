@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+
+/** Read completed fixture records while a child may still be appending the last line. */
+export function readFixtureJsonLines<T = unknown>(path: string): T[] {
+  let body: string;
+  try { body = readFileSync(path, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return []; throw error; }
+  const end = body.lastIndexOf("\n");
+  if (end < 0) return [];
+  // A complete malformed record must fail; only the not-yet-terminated tail is pending.
+  return body.slice(0, end).split("\n").map(line => JSON.parse(line) as T);
+}
 
 /** Publish complete fixture configuration to live child readers, preserving the old file on failure. */
 export function writeFixtureJson(path: string, value: unknown, spaces?: number): void {

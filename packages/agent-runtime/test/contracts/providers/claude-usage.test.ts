@@ -7,6 +7,7 @@ import { claudeAccountReports } from "../../../src/claude-account-report.js";
 import { readClaudeUsage } from "../../../src/claude-usage.js";
 import { tempDir, waitFor } from "@petrina/test-support/fixtures";
 import { testGitEnv } from "@petrina/test-support/test-git-env";
+import { readFixtureJsonLines } from "@petrina/test-support/fixture-json";
 import { account } from "../../fixtures/claude-account.js";
 
 import { usageActors } from "../../fixtures/usage-actors.js";
@@ -58,10 +59,8 @@ it("cancels a held account report after a lost exit notification and joins actua
         };
       } }), async raw => {
         try {
-          await waitFor(() => {
-            try { return readFileSync(log, "utf8").split("\n").some(line => line.includes('"get_usage"')); }
-            catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
-          }, "the actual held account request", 5_000, { during: raw });
+          await waitFor(() => readFixtureJsonLines<{ request: { subtype: string } }>(log)
+            .some(record => record.request.subtype === "get_usage"), "the actual held account request", 5_000, { during: raw });
           const cancelled = Date.now(); controller.abort();
           await expectRejection(raw, "The account usage read was stopped");
           // Native stop's 2s + 2s + 2s bound remains separate from the unchanged 30s report timeout.
