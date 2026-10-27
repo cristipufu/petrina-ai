@@ -1,60 +1,53 @@
 import { setupWithCleanup } from "@petrina/test-support/setup-with-cleanup";
-import { afterAll, expect, it, spyOn } from "bun:test";
+import { afterEach, expect, it, spyOn } from "bun:test";
+import { completeAll } from "@petrina/core";
+import { readFixtureJsonLines } from "@petrina/test-support/fixture-json";
+import { directDrivers } from "../../fixtures/direct-drivers.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Engine } from "../../engine.js";
 import { commandInputText } from "../../../src/checks.js";
 import { executionFor } from "@petrina/orchestrator";
 import { destination } from "../../../src/shipping.js";
 import { Coordination } from "../../../src/coordination.js";
-import { git, makeProduct, removeDir, tempDir, waitFor } from "../../fixtures.js";
+import { git, makeProduct, tempDir, waitFor } from "../../fixtures.js";
 
-const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+const owners = new Set<{ close(): Promise<void> }>();
+afterEach(() => completeAll([...owners].map(owner => owner.close())));
 
 /** Planning, building, review and approval have settled; exercise real scheduling, checks and local placement. */
-async function approvedDeliveries(firstFails = false, names = ["first", "second"]) {
-  const root = tempDir("petrina-local-admission-"); roots.push(root);
+async function prepareApprovedDeliveries(root: string, lifetime: ReturnType<typeof directDrivers>, onClose: (stop: () => void) => void, firstFails: boolean, names: string[]) {
   const service = join(root, "service"); mkdirSync(service);
   const repo = await makeProduct(root);
   await git(repo, "remote", "remove", "origin");
-  const engine = new Engine(join(root, "data"), { agentCommand: () => undefined, terminals: () => [], checkRuns: 2,
+  const engine = lifetime.open(join(root, "data"), { agentCommand: () => undefined, terminals: () => [], checkRuns: 2,
     containerTool: [process.execPath, join(import.meta.dir, "../../fake-extra-container.ts"), service], extraCleanupEveryMs: 60_000 });
-  let closing: Promise<void> | undefined;
-  const dispose = () => closing ??= (async () => {
-    const at = roots.indexOf(root); if (at >= 0) roots.splice(at, 1);
-    writeFileSync(join(root, "release-first"), "Continue");
-    await engine.shutdown();
-    removeDir(root);
-  })();
-  return setupWithCleanup(async () => {
-    engine.schedule = () => {};
-    await engine.waitUntilReady();
-    engine.setPoolPaused(false);
-    const productId = await engine.addProduct(repo);
-    const signal = new AbortController().signal;
-    const tasks = [];
-    for (const name of names) {
-      const task = engine.task(engine.addTask({ productId, title: `Deliver ${name}`, delivery: "local", backlog: true }))!;
-      task.state = "waiting"; task.startedAt = name === "first" ? 1 : 2; task.stageIndex = 1;
-      task.plan = { rationale: "Approved local deliveries", plannerProfileId: "sol-high", stages: [
-        { id: "approval", title: "Delivery check", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] },
-        { id: "ship", title: "Ship", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
-      ] };
-      const scope = executionFor(task);
-      scope.work.source = { ...await engine["sources"].resolve(task, { productId, delivery: "local", startFrom: { kind: "default" } }), confirmed: true };
-      await engine["driver"]["prepare"](scope, signal);
-      writeFileSync(join(scope.work.worktree!, `feature-${name}`), `${name}\n`);
-      if (firstFails && name === "first") writeFileSync(join(scope.work.worktree!, "fail-check"), "A genuine check failure\n");
-      await git(scope.work.worktree!, "add", ".");
-      await git(scope.work.worktree!, "commit", "-qm", task.title);
-      scope.work.approvedSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
-      scope.work.approvedPatch = await engine["updates"].patch(scope);
-      scope.work.approvedFor = { by: "coordinator", mode: "local", destination: destination(scope.work, engine.repositoryOf(scope)) };
-      tasks.push(task);
-    }
-    const log = join(root, "checks.jsonl"), release = join(root, "release-first"), script = join(root, "check.ts");
-    writeFileSync(script, `import { appendFileSync, existsSync } from "node:fs";
+  engine.schedule = () => {};
+  await engine.waitUntilReady();
+  engine.setPoolPaused(false);
+  const productId = await engine.addProduct(repo);
+  const signal = new AbortController().signal;
+  const tasks = [];
+  for (const name of names) {
+    const task = engine.task(engine.addTask({ productId, title: `Deliver ${name}`, delivery: "local", backlog: true }))!;
+    task.state = "waiting"; task.startedAt = name === "first" ? 1 : 2; task.stageIndex = 1;
+    task.plan = { rationale: "Approved local deliveries", plannerProfileId: "sol-high", stages: [
+      { id: "approval", title: "Delivery check", kind: "gate", gate: "delivery", roleId: "coordinator", profileIds: [] },
+      { id: "ship", title: "Ship", kind: "do", roleId: "release-manager", profileIds: ["sol-high"] },
+    ] };
+    const scope = executionFor(task);
+    scope.work.source = { ...await engine["sources"].resolve(task, { productId, delivery: "local", startFrom: { kind: "default" } }), confirmed: true };
+    await engine["driver"]["prepare"](scope, signal);
+    writeFileSync(join(scope.work.worktree!, `feature-${name}`), `${name}\n`);
+    if (firstFails && name === "first") writeFileSync(join(scope.work.worktree!, "fail-check"), "A genuine check failure\n");
+    await git(scope.work.worktree!, "add", ".");
+    await git(scope.work.worktree!, "commit", "-qm", task.title);
+    scope.work.approvedSha = await git(scope.work.worktree!, "rev-parse", "HEAD");
+    scope.work.approvedPatch = await engine["updates"].patch(scope);
+    scope.work.approvedFor = { by: "coordinator", mode: "local", destination: destination(scope.work, engine.repositoryOf(scope)) };
+    tasks.push(task);
+  }
+  const log = join(root, "checks.jsonl"), release = join(root, "release-first"), script = join(root, "check.ts");
+  writeFileSync(script, `import { appendFileSync, existsSync } from "node:fs";
 const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"], { stdout: "pipe" }).stdout.toString().trim();
 const tree = Bun.spawnSync(["git", "rev-parse", "HEAD^{tree}"], { stdout: "pipe" }).stdout.toString().trim();
 const files = ["feature-first", "feature-second"].filter(file => existsSync(file));
@@ -62,20 +55,46 @@ const ok = !existsSync("fail-check");
 appendFileSync(process.argv[2], JSON.stringify({ sha, tree, files, outside: existsSync("outside-change"), ok }) + "\\n");
 if (!existsSync("feature-second")) while (!existsSync(process.argv[3])) await Bun.sleep(10);
 process.exit(ok ? 0 : 1);`);
-    engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, release]) }]);
-    const evidence = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { sha: string; tree: string; files: string[]; outside: boolean; ok: boolean }) : [];
-    return { root, service, productId, engine, repo, tasks, evidence, dispose, release: () => writeFileSync(release, "Continue"), schedule: () => engine["driver"].schedule() };
+  engine.setProductChecks(productId, [{ name: "Tests", command: commandInputText([process.execPath, script, log, release]) }]);
+  const evidence = () => readFixtureJsonLines<{ sha: string; tree: string; files: string[]; outside: boolean; ok: boolean }>(log);
+  return { root, service, productId, engine, repo, tasks, evidence, onClose,
+    run: <T>(start: () => Promise<T>) => lifetime.run(engine, start),
+    hold: () => { const release = engine.checkQueue.hold(); onClose(release); return release; },
+    release: () => writeFileSync(release, "Continue"), schedule: () => engine["driver"].schedule() };
 
-  }, dispose);
+}
+
+async function approvedDeliveries<T>(body: (fixture: Awaited<ReturnType<typeof prepareApprovedDeliveries>>) => Promise<T>, firstFails = false, names = ["first", "second"]): Promise<T> {
+  const root = tempDir("petrina-local-admission-"), lifetime = directDrivers(root);
+  const releases: (() => void)[] = [() => writeFileSync(join(root, "release-first"), "Continue")];
+  let closing: Promise<void> | undefined;
+  const close = () => {
+    if (closing) return closing;
+    const settled = Promise.withResolvers<void>(); closing = settled.promise;
+    // Register every release before closing admission; one failed release must not skip another stop.
+    const released = lifetime.prepare(() => completeAll(releases.map(release => {
+      try { return Promise.resolve(release()); } catch (error) { return Promise.reject(error); }
+    })).then(() => undefined));
+    const stopped = lifetime.close();
+    void completeAll([released, stopped]).then(() => settled.resolve(), settled.reject);
+    void closing.then(() => owners.delete(entry), () => owners.delete(entry));
+    return closing;
+  };
+  const entry = { close }; owners.add(entry);
+  const onClose = (release: () => void) => { if (closing) throw new Error("Local delivery fixture is closing"); releases.push(release); };
+  const result = await setupWithCleanup(() => lifetime.prepare(async () => {
+    const fixture = await prepareApprovedDeliveries(root, lifetime, onClose, firstFails, names);
+    return lifetime.run(fixture.engine, () => body(fixture));
+  }), close);
+  await close(); return result;
 }
 
 it("checks two approved local deliveries once each on their exact successive integrated trees", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
     try {
       f.schedule();
-      await waitFor(() => f.evidence().length === 1, "the first final check to start");
+      await waitFor(() => f.evidence().length === 1, "the first final check to start", undefined, { during: f.engine.settling.get(first!.id) });
       expect(first!.state).toBe("running");
       expect(second!.state).toBe("waiting");
       expect(second!.statusLine).toBe("Waiting for “Deliver first” to finish delivering to main");
@@ -86,11 +105,11 @@ it("checks two approved local deliveries once each on their exact successive int
       expect(f.engine.checkQueue.waiting).toBe(0);
       expect(f.evidence()[0]!.files).toEqual(["feature-first"]);
       f.release();
-      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the first delivery to finish");
+      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the first delivery to finish", undefined, { during: f.engine.settling.get(first!.id) });
       const firstTip = await git(f.repo, "rev-parse", "main");
       expect(firstTip).toBe(f.evidence()[0]!.sha);
       f.schedule();
-      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the second delivery to finish");
+      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the second delivery to finish", undefined, { during: f.engine.settling.get(second!.id) });
       const runs = f.evidence();
       expect(runs).toHaveLength(2);
       expect(runs.map(run => run.files)).toEqual([["feature-first"], ["feature-first", "feature-second"]]);
@@ -102,16 +121,17 @@ it("checks two approved local deliveries once each on their exact successive int
         expect(executionFor(task).work.checks).toMatchObject({ sha: runs[index]!.sha, tree: runs[index]!.tree, current: true });
         expect(runs[index]!.ok).toBe(true);
       }
-    } finally { f.release(); await f.dispose(); }
+    } finally { f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 it.skipIf(process.platform === "win32")("runs another review and its saved extra validation while a local delivery waits for its branch", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
     const started = join(f.root, "review-started"), released = join(f.root, "release-review");
+    f.onClose(() => writeFileSync(released, "Continue"));
     let reviewing: Promise<"continue" | "stop"> | undefined;
     try {
       const other = join(f.root, "other"); mkdirSync(other);
@@ -137,9 +157,9 @@ while (!existsSync(process.argv[3])) await Bun.sleep(10);`);
       // Keep the independent review outside the scheduler until its explicit check request below.
       task.state = "needs-you";
       f.schedule();
-      await waitFor(() => f.evidence().length === 1, "the first local delivery's final run");
+      await waitFor(() => f.evidence().length === 1, "the first local delivery's final run", undefined, { during: f.engine.settling.get(first!.id) });
       task.state = "running";
-      reviewing = f.engine["reviews"].runReview(task, task.plan.stages[1]!, signal);
+      reviewing = f.run(() => f.engine["reviews"].runReview(task, task.plan!.stages[1]!, signal));
       await Promise.race([waitFor(() => existsSync(started), "the independent review checks"), reviewing.then(() => {
         throw new Error(`Review ended before its check barrier: ${task.statusLine}; ${JSON.stringify(scope.work.checks)}`);
       })]);
@@ -162,52 +182,51 @@ while (!existsSync(process.argv[3])) await Bun.sleep(10);`);
       expect(invocations).toHaveLength(1);
     } finally {
       writeFileSync(released, "Continue"); f.release();
-      try { if (reviewing) await reviewing; }
-      finally { await f.dispose(); }
+      if (reviewing) await reviewing;
     }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 for (const outcome of ["failed", "cancelled"] as const) it(`releases a ${outcome} delivery's turn so the next task checks and lands`, async () => {
-  const f = await approvedDeliveries(outcome === "failed");
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
     try {
       f.schedule();
-      await waitFor(() => f.evidence().length === 1, "the held final check");
+      await waitFor(() => f.evidence().length === 1, "the held final check", undefined, { during: f.engine.settling.get(first!.id) });
       if (outcome === "cancelled") f.engine.cancel(first!.id);
       f.release();
-      await waitFor(() => !f.engine.settling.has(first!.id), "the stopped holder to release its turn");
+      await waitFor(() => !f.engine.settling.has(first!.id), "the stopped holder to release its turn", undefined, { during: f.engine.settling.get(first!.id) });
       expect(first!.state).toBe(outcome === "cancelled" ? "cancelled" : "needs-you");
       f.schedule();
-      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next local delivery");
+      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next local delivery", undefined, { during: f.engine.settling.get(second!.id) });
       const runs = f.evidence();
       expect(runs).toHaveLength(2);
       expect(runs[1]!.files).toEqual(["feature-second"]);
       expect(await git(f.repo, "rev-parse", "main")).toBe(runs[1]!.sha);
       if (outcome === "failed") expect(runs[0]!.ok).toBe(false);
       expect(f.engine.checkQueue.running).toBe(0);
-    } finally { f.release(); await f.dispose(); }
+    } finally { f.release(); }
 
-  } finally { await f.dispose(); }
+
+  }, outcome === "failed");
 });
 
 for (const when of ["queued", "running"] as const) it(`keeps an outside main advance while final checks are ${when} and verifies the resulting exact tree`, async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
-    const occupied = when === "queued" ? [f.engine.checkQueue.hold(), f.engine.checkQueue.hold()] : [];
+    const occupied = when === "queued" ? [f.hold(), f.hold()] : [];
     try {
       f.schedule();
-      if (when === "queued") await waitFor(() => f.engine.waitingChecks.has(first!.id), "the first final run to join the check line");
-      else await waitFor(() => f.evidence().length === 1, "the first final command to start");
+      if (when === "queued") await waitFor(() => f.engine.waitingChecks.has(first!.id), "the first final run to join the check line", undefined, { during: f.engine.settling.get(first!.id) });
+      else await waitFor(() => f.evidence().length === 1, "the first final command to start", undefined, { during: f.engine.settling.get(first!.id) });
       writeFileSync(join(f.repo, "outside-change"), "An outside writer's change\n");
       await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Outside change");
       const outside = await git(f.repo, "rev-parse", "HEAD");
       occupied.forEach(release => release());
       f.release();
-      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the first delivery to revalidate and land");
+      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the first delivery to revalidate and land", undefined, { during: f.engine.settling.get(first!.id) });
       const firstRuns = f.evidence();
       expect(firstRuns).toHaveLength(when === "queued" ? 1 : 2);
       expect(firstRuns.map(run => run.outside)).toEqual(when === "queued" ? [true] : [false, true]);
@@ -215,7 +234,7 @@ for (const when of ["queued", "running"] as const) it(`keeps an outside main adv
       expect(firstTip).toBe(firstRuns.at(-1)!.sha);
       expect(await git(f.repo, "rev-parse", `${firstTip}^`)).toBe(outside);
       f.schedule();
-      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next delivery after the outside change");
+      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next delivery after the outside change", undefined, { during: f.engine.settling.get(second!.id) });
       const runs = f.evidence();
       expect(runs).toHaveLength(when === "queued" ? 2 : 3);
       expect(runs.at(-1)!.files).toEqual(["feature-first", "feature-second"]);
@@ -223,20 +242,20 @@ for (const when of ["queued", "running"] as const) it(`keeps an outside main adv
       expect(await git(f.repo, "rev-parse", "main")).toBe(runs.at(-1)!.sha);
       expect(executionFor(first!).work.checks?.tree).toBe(firstRuns.at(-1)!.tree);
       expect(executionFor(second!).work.checks?.tree).toBe(runs.at(-1)!.tree);
-    } finally { occupied.forEach(release => release()); f.release(); await f.dispose(); }
+    } finally { occupied.forEach(release => release()); f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 it("returns changed final approval before any final command starts after a check-line wait", async () => {
-  const f = await approvedDeliveries(false, ["first"]);
-  try {
+  return approvedDeliveries(async f => {
     const [first] = f.tasks;
     const signal = new AbortController().signal;
-    const occupied = [f.engine.checkQueue.hold(), f.engine.checkQueue.hold()];
+    const occupied = [f.hold(), f.hold()];
     try {
-      const delivery = f.engine["shipping"].deliver(first!, first!.plan!.stages[1]!, signal);
-      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the approved final run to wait");
+      const delivery = f.run(() => f.engine["shipping"].deliver(first!, first!.plan!.stages[1]!, signal));
+      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the approved final run to wait", undefined, { during: delivery });
       // The task's whole addition is now already present on main; applying it no longer reads as the approved change.
       writeFileSync(join(f.repo, "feature-first"), "first\n");
       await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Outside writer adds the same change");
@@ -248,23 +267,23 @@ it("returns changed final approval before any final command starts after a check
       expect(f.engine.checkQueue.running).toBe(0);
       const pending = first!.journey?.flatMap(step => step.productChecks ?? []);
       expect(pending?.some(check => check.result === "skipped" && check.detail?.includes("approval"))).toBe(true);
-    } finally { occupied.forEach(release => release()); f.release(); await f.dispose(); }
+    } finally { occupied.forEach(release => release()); f.release(); }
 
-  } finally { await f.dispose(); }
+
+  }, false, ["first"]);
 });
 
 it("returns a queued final conflict to the Builder and releases its destination without spending a failed-check return", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
     const signal = new AbortController().signal;
-    const occupied = [f.engine.checkQueue.hold(), f.engine.checkQueue.hold()];
+    const occupied = [f.hold(), f.hold()];
     first!.plan!.stages.unshift({ id: "build", title: "Build", kind: "do", roleId: "builder", profileIds: ["sol-high"] });
     first!.stageIndex = 2;
     const work = executionFor(first!).work;
     try {
-      const delivery = f.engine["shipping"].deliver(first!, first!.plan!.stages[2]!, signal);
-      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the final check to wait on its old source");
+      const delivery = f.run(() => f.engine["shipping"].deliver(first!, first!.plan!.stages[2]!, signal));
+      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the final check to wait on its old source", undefined, { during: delivery });
       expect(f.engine["shipping"].waitingForTurn(second!)).toContain("Deliver first");
       writeFileSync(join(f.repo, "feature-first"), "An incompatible outside version\n");
       await git(f.repo, "add", "."); await git(f.repo, "commit", "-qm", "Outside conflicting change");
@@ -278,19 +297,19 @@ it("returns a queued final conflict to the Builder and releases its destination 
       expect(f.engine.checkQueue.running).toBe(0);
       expect(f.engine["checks"].deliveryOrders.has(first!.id)).toBe(false);
       expect(f.engine["shipping"].waitingForTurn(second!)).toBeUndefined();
-    } finally { occupied.forEach(release => release()); f.release(); await f.dispose(); }
+    } finally { occupied.forEach(release => release()); f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 it("keeps the holder's queued check over a pool pause while a cancelled turn waiter leaves without a command", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
-    const occupied = [f.engine.checkQueue.hold(), f.engine.checkQueue.hold()];
+    const occupied = [f.hold(), f.hold()];
     try {
       f.schedule();
-      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the holder to queue its checks");
+      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the holder to queue its checks", undefined, { during: f.engine.settling.get(first!.id) });
       const order = f.engine["checks"].deliveryOrders.get(first!.id);
       expect(f.engine["checks"].deliveryOrders.has(second!.id)).toBe(true);
       f.engine.setPoolPaused(true); f.schedule();
@@ -301,25 +320,28 @@ it("keeps the holder's queued check over a pool pause while a cancelled turn wai
       occupied.forEach(release => release());
       expect(f.evidence()).toEqual([]);
       f.engine.setPoolPaused(false); f.engine.checkQueue.pump(); f.schedule(); f.release();
-      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the queued holder to deliver after resume");
+      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the queued holder to deliver after resume", undefined, { during: f.engine.settling.get(first!.id) });
       expect(f.evidence()).toHaveLength(1);
       expect(second!.state).toBe("cancelled");
       expect(f.engine.drivers.has(second!.id)).toBe(false);
       expect(f.engine.checkQueue.running).toBe(0);
-    } finally { occupied.forEach(release => release()); f.release(); await f.dispose(); }
+    } finally { occupied.forEach(release => release()); f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 it("rejoins the same final-check place when the pool pauses during the admitted source update", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
-    const occupied = [f.engine.checkQueue.hold(), f.engine.checkQueue.hold()];
+    const occupied = [f.hold(), f.hold()];
     const admitted = Promise.withResolvers<void>(), continueUpdate = Promise.withResolvers<void>();
+    f.onClose(() => continueUpdate.resolve());
     const updates = f.engine["updates"].upToDate.bind(f.engine["updates"]);
     let firstUpdates = 0;
-    const update = spyOn(f.engine["updates"], "upToDate").mockImplementation(async (...args) => {
+    const update = spyOn(f.engine["updates"], "upToDate");
+    f.onClose(() => update.mockRestore());
+    update.mockImplementation(async (...args) => {
       if (args[0].task.id === first!.id && ++firstUpdates === 2) {
         admitted.resolve(); await continueUpdate.promise;
       }
@@ -327,67 +349,71 @@ it("rejoins the same final-check place when the pool pauses during the admitted 
     });
     try {
       f.schedule();
-      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the final check to queue");
+      await waitFor(() => f.engine.waitingChecks.has(first!.id), "the final check to queue", undefined, { during: f.engine.settling.get(first!.id) });
       const order = f.engine["checks"].deliveryOrders.get(first!.id);
       occupied.forEach(release => release());
-      await admitted.promise;
+      const driving = f.engine.settling.get(first!.id);
+      if (!driving) throw new Error("The actual delivery driver ended before source-update admission");
+      await Promise.race([admitted.promise, driving.then(() => { throw new Error("The actual delivery driver ended before source-update admission"); })]);
       f.engine.setPoolPaused(true); f.schedule();
       continueUpdate.resolve();
-      await waitFor(() => f.engine.waitingChecks.has(first!.id) && f.engine.checkQueue.waiting === 1, "the same final attempt to rejoin while paused");
+      await waitFor(() => f.engine.waitingChecks.has(first!.id) && f.engine.checkQueue.waiting === 1, "the same final attempt to rejoin while paused", undefined, { during: f.engine.settling.get(first!.id) });
       expect(f.engine["checks"].deliveryOrders.get(first!.id)).toBe(order);
       expect(f.engine.drivers.has(first!.id)).toBe(true);
       expect(f.engine.checkQueue.running).toBe(0);
       expect(f.evidence()).toEqual([]);
       f.engine.setPoolPaused(false); f.engine.checkQueue.pump(); f.schedule(); f.release();
-      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the resumed final attempt to deliver");
+      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the resumed final attempt to deliver", undefined, { during: f.engine.settling.get(first!.id) });
       f.schedule();
-      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next delivery after the resumed attempt");
+      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next delivery after the resumed attempt", undefined, { during: f.engine.settling.get(second!.id) });
       expect(f.evidence()).toHaveLength(2);
       expect(firstUpdates).toBe(3);
-    } finally { continueUpdate.resolve(); update.mockRestore(); occupied.forEach(release => release()); f.release(); await f.dispose(); }
+    } finally { continueUpdate.resolve(); update.mockRestore(); occupied.forEach(release => release()); f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 it("yields a held delivery after its admitted check settles and checks it afresh when the prerequisite is cleared", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
     try {
       const prerequisite = f.engine.addTask({ productId: f.productId, title: "Required prerequisite", backlog: true });
       f.schedule();
-      await waitFor(() => f.evidence().length === 1, "the holder's final check");
+      await waitFor(() => f.evidence().length === 1, "the holder's final check", undefined, { during: f.engine.settling.get(first!.id) });
       f.engine.setRuntimeWait(first!.id, [prerequisite], "Wait for the prerequisite", "hold-final-delivery");
       f.schedule(); f.release();
-      await waitFor(() => !f.engine.settling.has(first!.id), "the held delivery to leave its turn");
+      await waitFor(() => !f.engine.settling.has(first!.id), "the held delivery to leave its turn", undefined, { during: f.engine.settling.get(first!.id) });
       f.schedule();
-      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next delivery to land");
+      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next delivery to land", undefined, { during: f.engine.settling.get(second!.id) });
       expect(f.evidence()).toHaveLength(2);
       expect(f.evidence()[1]!.files).toEqual(["feature-second"]);
       f.engine.setRuntimeWait(first!.id, [], "The prerequisite is available", "clear-final-delivery");
       f.schedule();
-      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the released delivery to check the integrated tree");
+      await waitFor(() => first!.state === "done" && !f.engine.settling.has(first!.id), "the released delivery to check the integrated tree", undefined, { during: f.engine.settling.get(first!.id) });
       expect(f.evidence()).toHaveLength(3);
       expect(f.evidence()[2]!.files).toEqual(["feature-first", "feature-second"]);
       expect(await git(f.repo, "rev-parse", "main")).toBe(f.evidence()[2]!.sha);
-    } finally { f.release(); await f.dispose(); }
+    } finally { f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
 
 it("preserves a failed push and releases the destination for the next verified local delivery", async () => {
-  const f = await approvedDeliveries();
-  try {
+  return approvedDeliveries(async f => {
     const [first, second] = f.tasks;
     const work = executionFor(first!).work;
     // Exercise the delivery state machine's saved push boundary without contacting any account.
     work.localUpdate = { branch: "main", sha: work.approvedSha!, pushed: false };
-    const push = spyOn(f.engine["shipping"] as unknown as { pushMain: () => Promise<boolean> }, "pushMain").mockResolvedValue(false);
+    const push = spyOn(f.engine["shipping"] as unknown as { pushMain: () => Promise<boolean> }, "pushMain");
+    f.onClose(() => push.mockRestore());
+    push.mockResolvedValue(false);
     try {
       f.schedule();
-      await waitFor(() => f.evidence().length === 1, "the first final check");
+      await waitFor(() => f.evidence().length === 1, "the first final check", undefined, { during: f.engine.settling.get(first!.id) });
       f.release();
-      await waitFor(() => first!.state === "failed" && !f.engine.settling.has(first!.id), "the push failure to settle");
+      await waitFor(() => first!.state === "failed" && !f.engine.settling.has(first!.id), "the push failure to settle", undefined, { during: f.engine.settling.get(first!.id) });
       expect(push).toHaveBeenCalledTimes(1);
       expect(work.localUpdate).toMatchObject({ branch: "main", sha: f.evidence()[0]!.sha, pushed: false });
       expect(work.shipping?.prepared?.tested).toBe(f.evidence()[0]!.sha);
@@ -395,12 +421,13 @@ it("preserves a failed push and releases the destination for the next verified l
       expect(f.engine["checks"].deliveryOrders.has(first!.id)).toBe(false);
       push.mockRestore();
       f.schedule();
-      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next local delivery after the failed push");
+      await waitFor(() => second!.state === "done" && !f.engine.settling.has(second!.id), "the next local delivery after the failed push", undefined, { during: f.engine.settling.get(second!.id) });
       expect(f.evidence()).toHaveLength(2);
       expect(f.evidence()[1]!.files).toEqual(["feature-first", "feature-second"]);
       expect(await git(f.repo, "rev-parse", "main")).toBe(f.evidence()[1]!.sha);
       expect(work.localUpdate?.pushed).toBe(false);
-    } finally { push.mockRestore(); f.release(); await f.dispose(); }
+    } finally { push.mockRestore(); f.release(); }
 
-  } finally { await f.dispose(); }
+
+  });
 });
