@@ -251,33 +251,50 @@ describe("one engine per Petrina folder", () => {
   it("stops by itself within 10 seconds when the app crashes or is force-quit", async () => {
     return instanceCase(async ({ newHome, leasedStandin, nativeCommand }) => {
     const home = newHome();
-    const { standin } = await leasedStandin(home);
+    const { standin, identity } = await leasedStandin(home);
     const shell = nativeCommand(home, standin, engineEnv(home), { input: "ignore", output: "pipe", errors: "ignore" });
-    expect(JSON.parse(await shell.line())).toMatchObject({ type: "ready" });
+    const hello = await shell.line();
+    expect(JSON.parse(hello)).toMatchObject({ type: "ready" });
     const connection = readConnection(home)!;
+    expect(Number.isSafeInteger(connection.pid)).toBe(true); expect(connection.pid).toBeGreaterThan(0);
+    expect(Number(readFileSync(identity, "utf8"))).toBe(connection.pid);
     expect(await answers(connection)).toBe(true);
 
     const killedAt = Date.now();
     shell.kill("SIGKILL");
-    await waitFor(() => !existsSync(connectionPath(home)), "the engine to stop", 10_000);
+    await waitFor(async () => !existsSync(connectionPath(home)) && await childState(connection.pid) === "ended", "the engine to stop", 10_000);
     expect(await answers(connection, 500)).toBe(false);
     expect(Date.now() - killedAt).toBeLessThan(10_000);
+    await shell.settle();
+    const completed = await shell.completion;
+    expect(completed.stdout).toBe(hello + "\n");
+    expect(await childState(shell.pid)).toBe("ended");
 
     });
   });
   it("independently cleans its engine while the native desktop parent remains alive", async () => {
     return instanceCase(async ({ newHome, leasedStandin, nativeCommand }) => {
     const home = newHome();
-    const { lease, standin } = await leasedStandin(home);
+    const { lease, standin, identity } = await leasedStandin(home);
     const shell = nativeCommand(home, standin, engineEnv(home), { input: "ignore", output: "pipe", errors: "ignore" });
-    expect(JSON.parse(await shell.line())).toMatchObject({ type: "ready" });
+    const hello = await shell.line();
+    expect(JSON.parse(hello)).toMatchObject({ type: "ready" });
     const connection = readConnection(home)!;
+    expect(Number.isSafeInteger(connection.pid)).toBe(true); expect(connection.pid).toBeGreaterThan(0);
+    expect(Number(readFileSync(identity, "utf8"))).toBe(connection.pid);
     expect(await answers(connection)).toBe(true);
     expect(shell.exitCode).toBeNull();
     await lease.close();
-    await waitFor(async () => !await answers(connection, 500), "the leased engine to end independently", 10_000);
+    await waitFor(async () => !await answers(connection, 500) && await childState(connection.pid) === "ended", "the leased engine to end independently", 10_000);
     expect(await answers(connection, 500)).toBe(false);
     expect(shell.exitCode).toBeNull();
+    // Its independent Engine stop was the subject. Only now stop the deliberately live parent,
+    // observing its original command/output completion before generic case teardown can abort it.
+    shell.kill("SIGKILL");
+    await shell.settle();
+    const completed = await shell.completion;
+    expect(completed.stdout).toBe(hello + "\n");
+    expect(await childState(shell.pid)).toBe("ended");
 
     });
   });
