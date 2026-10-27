@@ -17,16 +17,15 @@ export async function stopOwnedProcess(child: OwnedProcess, budgets: { graceMs: 
     if (!(ms > 0 && ms <= 2_147_483_647)) throw new RangeError("Owned-process cleanup needs bounded positive deadlines.");
   }
   let reported = false;
+  const nativeEnded = () => Number.isInteger(child.exitCode)
+    || (typeof child.signalCode === "string" && child.signalCode.length > 0);
   // A rejected/lost completion is unavailable evidence; a native end record can still confirm it.
   const unavailable = () => new Promise<void>(() => {});
   const exited = child.exited.then(code => {
     if (Number.isInteger(code)) reported = true;
-    else return unavailable();
-  }, unavailable);
-  const ended = () => {
-    const code = child.exitCode, signal = child.signalCode;
-    return reported || Number.isInteger(code) || (typeof signal === "string" && signal.length > 0);
-  };
+    else if (!nativeEnded()) return unavailable();
+  }, () => nativeEnded() ? undefined : unavailable());
+  const ended = () => reported || nativeEnded();
   const wait = async (ms: number): Promise<boolean> => {
     if (ended()) return true;
     let cancel = () => {};

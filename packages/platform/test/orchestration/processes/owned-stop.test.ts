@@ -41,6 +41,27 @@ describe("stopping an owned process handle", () => {
     expect(f.timers.size).toBe(0);
   });
 
+  for (const forced of [false, true]) for (const failure of [new Error("Exit notification unavailable"), undefined])
+    it(`confirms a late native ${forced ? "forced" : "graceful"} signal record when completion rejects with ${failure === undefined ? "undefined" : "Error"}, without spending the remaining deadline`, async () => {
+      const f = fixture();
+      let result: string | undefined;
+      const stopped = stopOwnedProcess(f.child, budgets, f.arm).then(value => { result = value; });
+      try {
+        if (forced) await f.expire();
+        f.record(null, forced ? "SIGKILL" : "SIGTERM");
+        f.completion.reject(failure);
+        await flush();
+        expect(result).toBe("confirmed");
+        expect(f.signals).toEqual(forced ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"]);
+        expect(f.timers.size).toBe(0);
+      } finally {
+        // Settle the old implementation too, so a failed regression cannot leave its
+        // controlled deadline or operation pending. No real wait is needed here.
+        while (f.timers.size) await f.expire();
+        await stopped;
+      }
+    });
+
   it("uses a late native end record when its exit notification never arrives", async () => {
     const f = fixture(), stopped = stopOwnedProcess(f.child, budgets, f.arm);
     f.record(0); await f.expire();
