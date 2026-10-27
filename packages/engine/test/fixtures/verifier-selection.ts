@@ -1,13 +1,13 @@
+import { type EngineCaseOwner } from "./engine-cases.js";
 import { reviewRecords } from "./review-records.js";
 import { scriptedToolProbe } from "../scripted-probes.js";
 import { createVerifierBallots } from "../../src/verifier-host.js";
-
 /** Actual native selection/recording composition, with no repository or agent prerequisite. */
-export async function verifierSelection(root: string, utilization: number) {
-  const f = await reviewRecords(root, { toolProbe: scriptedToolProbe({
-    "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out" },
-    gh: { status: "unknown" }, git: { status: "ready" }, node: { status: "ready" },
-  }) }, false);
+export async function verifierSelection(owner: EngineCaseOwner, root: string, utilization: number) {
+  const f = await reviewRecords(owner, root, { toolProbe: scriptedToolProbe({
+      "claude-code": { status: "ready" }, codex: { status: "ready" }, grok: { status: "ready" }, antigravity: { status: "logged-out" },
+      gh: { status: "unknown" }, git: { status: "ready" }, node: { status: "ready" },
+    }) }, false);
   try {
     f.engine.schedule = () => {};
     await f.engine.checkTools();
@@ -19,5 +19,5 @@ export async function verifierSelection(root: string, utilization: number) {
     f.engine.s.pool.usage = [{ toolId: "grok", kind: "five_hour", status: "allowed", utilization, resetsAt: Date.now() + 3_600_000, at: Date.now() }];
     f.engine.setPoolPaused(false);
     return { ...f, ballots: createVerifierBallots(f.engine) };
-  } catch (error) { await f.engine.shutdown(); throw error; }
+  } catch (error) { await owner.stop(f.engine); throw error; }
 }

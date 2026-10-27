@@ -1,15 +1,14 @@
+import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
 import { queueOf } from "@petrina/core";
-import { Engine } from "../../engine.js";
 import { dispatch } from "../../../src/server.js";
-import { removeDir, tempDir } from "../../fixtures.js";
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-const dir = tempDir("petrina-keyboard-queue-");
-const engine = new Engine(join(dir, "data"));
-afterAll(async () => { await engine.shutdown(); removeDir(dir); });
-
-it("places filtered cards beside their neighbours and applies quick keyboard requests to the latest real queue", async () => {
+it("places filtered cards beside their neighbours and applies quick keyboard requests to the latest real queue", async () => cases.use("petrina-keyboard-queue-", async owner => {
+  const dir = owner.root;
+  const engine = owner.open(join(dir, "data"), {});
   engine.setPoolPaused(true);
   const productId = "product"; engine.s.products.push({ id: productId, name: "Product", repo: "local/product", tone: "blue" });
   const make = (title: string) => engine.addTask({ productId, title, kind: "chore" });
@@ -27,4 +26,4 @@ it("places filtered cards beside their neighbours and applies quick keyboard req
   expect(ids()).toEqual([a4, a1, a2, b1, b2, a3]);
   expect(queueOf(engine.getState().tasks).map((task) => task.priority)).toEqual([0, 1, 2, 3, 4, 5]);
   expect(engine.task(a4)!.after).toEqual([b2]);
-});
+}));

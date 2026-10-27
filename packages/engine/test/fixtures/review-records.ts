@@ -1,8 +1,8 @@
-import { Engine, type EngineOptions } from "../engine.js";
-
+import { type EngineCaseOwner } from "./engine-cases.js";
+import { type EngineOptions } from "../engine.js";
 /** Real schema/recording/restart composition. The caller owns this private root and engine lifetime. */
-export async function reviewRecords(root: string, options: Pick<EngineOptions, "toolProbe"> = {}, shared = true) {
-  const start = () => new Engine(root, options);
+export async function reviewRecords(owner: EngineCaseOwner, root: string, options: Pick<EngineOptions, "toolProbe"> = {}, shared = true) {
+  const start = () => owner.open(root, options);
   const engine = start(); engine.setPoolPaused(true);
   try {
     await engine.waitUntilReady();
@@ -15,5 +15,5 @@ export async function reviewRecords(root: string, options: Pick<EngineOptions, "
     task.plan = { rationale: "Only review recording is under test", plannerProfileId: "sonnet-medium", stages: [stage] };
     task.stageIndex = 0;
     return { engine, start, first, second, task, stage };
-  } catch (error) { await engine.shutdown(); throw error; }
+  } catch (error) { await owner.stop(engine); throw error; }
 }

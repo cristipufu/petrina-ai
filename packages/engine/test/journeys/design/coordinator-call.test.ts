@@ -1,34 +1,36 @@
+import { engineCaseFixtures, type EngineCaseOwner } from "../../fixtures/engine-cases.js";
 import { FAKE_AGENT } from "../../fixtures.js";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterAll, describe, expect, it } from "bun:test";
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CALL_WORDS, type InboxKind, type State, type Task } from "@petrina/core";
-import { Engine } from "../../engine.js";
-import { git, removeDir, SLOW } from "../../fixtures.js";
+import type { Engine } from "../../engine.js";
+import { repositorySeed, SLOW } from "../../fixtures.js";
 
 const fake = FAKE_AGENT;
-const temp = mkdtempSync(join(tmpdir(), "petrina-engine-"));
+const cases = engineCaseFixtures();
+afterAll(() => cases.close());
 
-async function makeRepo(name = "repo"): Promise<string> {
-  const repo = join(temp, name);
-  mkdirSync(repo, { recursive: true });
-  await git(repo, "init", "-q", "-b", "main");
-  await git(repo, "config", "user.email", "test@example.com");
-  await git(repo, "config", "user.name", "Test");
-  writeFileSync(join(repo, "README.md"), "# Demo\n");
-  await git(repo, "add", ".");
-  await git(repo, "commit", "-q", "-m", "init");
-  return repo;
+/** A private writable copy of the immutable README-only recipe, never another case's repository. */
+async function designCase(owner: EngineCaseOwner) {
+  const data = join(owner.root, "call-data");
+  // While this file exists, the architect stops halfway through following a call.
+  const hold = join(owner.root, "hold-call");
+  owner.onStop(() => rmSync(hold, { force: true }));
+  const start = () => owner.open(data, { agentCommand: () => [process.execPath, fake, `--hold=${hold}`] });
+  const engine = start();
+  const seed = await owner.prepare(() => repositorySeed(undefined, false, undefined, "none"));
+  owner.check();
+  const repo = join(owner.root, "call-repo");
+  cpSync(seed.clone, repo, { recursive: true });
+  return { engine, start, repo, hold };
 }
 
-let retainFiles = false;
-afterAll(() => { if (!retainFiles) removeDir(temp); });
-
-/** Wait for a condition on the engine's state, answering the inbox like a coordinator would. */
-async function until(engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void, ms = 60_000): Promise<State> {
+/** Wait on this case's actual engine, retaining the original deadline and coordinator behavior. */
+async function until(owner: EngineCaseOwner, engine: Engine, done: (state: State) => boolean, respond: (engine: Engine, state: State) => void, ms = 60_000): Promise<State> {
   const started = Date.now();
   for (;;) {
+    owner.check();
     const state = engine.getState();
     if (done(state)) return state;
     if (Date.now() - started > ms * SLOW) throw new Error(`Timed out. Tasks: ${JSON.stringify(state.tasks.map((task) => [task.state, task.statusLine, task.error]))} Inbox: ${JSON.stringify(state.inbox.map((item) => item.kind))}`);
@@ -37,40 +39,32 @@ async function until(engine: Engine, done: (state: State) => boolean, respond: (
   }
 }
 
+/** Answer questions and permissions; leave checkpoints to the test. */
+const coordinator = (current: Engine, state: State) => {
+  for (const item of state.inbox) {
+    if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
+    else if (item.kind === "permission") current.allow(item.id, "once");
+  }
+};
+const itemOf = (state: State, taskId: string, kind: InboxKind) => state.inbox.find((item) => item.taskId === taskId && item.kind === kind);
+const taskOf = (state: State, taskId: string) => state.tasks.find((task) => task.id === taskId)!;
+const reviewerRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "design-reviewer" && entry.tone === "milestone").length;
+const architectRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "architect" && entry.tone === "milestone").length;
+/** What the first Builder was actually sent, once it is on the journey. */
+const builderInput = (state: State, taskId: string) => taskOf(state, taskId).journey?.find((step) => step.roleId === "builder")?.agentInputs?.[0];
+const designNotes = (state: State, taskId: string) => builderInput(state, taskId)!.sections.find((section) => section.title === "Final design-review notes (advice only)");
+
 describe("The coordinator's call on a design disagreement", () => {
   const CALL = "Show the greeting to everyone, in English only.";
-  let repo = "";
-  beforeAll(async () => { repo = await makeRepo("call-repo"); });
-  const data = join(temp, "call-data");
-  // While this file exists, the architect stops halfway through following a call.
-  const hold = join(temp, "hold-call");
-  const start = () => new Engine(data, { agentCommand: () => [process.execPath, fake, `--hold=${hold}`] });
-  let engine = start();
 
-  afterAll(async () => {
-    try { await engine.shutdown(); }
-    catch (error) { retainFiles = true; throw error; }
-  });
+  it("settles the design: the architect follows the call once, then a design check, with no review round", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    const engine = prepared.engine;
+    const { repo } = prepared;
+    let productId = "";
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
 
-  /** Answer questions and permissions; leave checkpoints to the test. */
-  const coordinator = (current: Engine, state: State) => {
-    for (const item of state.inbox) {
-      if (item.kind === "question") current.answer(item.id, item.options?.[0] ?? "Yes");
-      else if (item.kind === "permission") current.allow(item.id, "once");
-    }
-  };
-  const itemOf = (state: State, taskId: string, kind: InboxKind) => state.inbox.find((item) => item.taskId === taskId && item.kind === kind);
-  const taskOf = (state: State, taskId: string) => state.tasks.find((task) => task.id === taskId)!;
-  const waitFor = (taskId: string, kind: InboxKind) => until(engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
-  const reviewerRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "design-reviewer" && entry.tone === "milestone").length;
-  const architectRuns = (task: Task) => task.timeline.filter((entry) => entry.roleId === "architect" && entry.tone === "milestone").length;
-  /** What the first Builder was actually sent, once it is on the journey. */
-  const builderInput = (state: State, taskId: string) => taskOf(state, taskId).journey?.find((step) => step.roleId === "builder")?.agentInputs?.[0];
-  const designNotes = (state: State, taskId: string) => builderInput(state, taskId)!.sections.find((section) => section.title === "Final design-review notes (advice only)");
-  let productId = "";
-
-  it("settles the design: the architect follows the call once, then a design check, with no review round", async () => {
-    productId = await engine.addProduct(repo);
+    productId = await owner.run(engine, () => engine.addProduct(repo));
     const taskId = engine.addTask({ productId, title: "Pick a greeting", description: "A greeting file. [disagree]" });
     let state = await waitFor(taskId, "disagreement");
     const before = taskOf(state, taskId);
@@ -119,7 +113,7 @@ describe("The coordinator's call on a design disagreement", () => {
     engine.requestChanges(check.id, "Say where the greeting shows.");
     const instruction = engine.task(taskId)!.queued.find(message => message.text === "Say where the greeting shows.")!;
     expect(instruction).toBeDefined();
-    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
+    state = await until(owner, engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
     const revised = taskOf(state, taskId);
     expect(revised.stageIndex).toBe(checkIndex);
     expect(architectRuns(revised)).toBe(architects + 2);
@@ -143,15 +137,23 @@ describe("The coordinator's call on a design disagreement", () => {
 
     // Approving moves on to the build. The call stays, so nothing later can reopen the design it settled.
     engine.approve(itemOf(state, taskId, "design")!.id);
-    state = await until(engine, (current) => !!builderInput(current, taskId), coordinator);
+    state = await until(owner, engine, (current) => !!builderInput(current, taskId), coordinator);
     expect(taskOf(state, taskId).call?.text).toBe(CALL);
     // The Builder gets the brief that follows the call and the call among the coordinator's notes, and no review's points.
     expect(builderInput(state, taskId)!.sections.find((section) => section.title.startsWith("The coordinator's notes"))!.body).toContain(CALL);
     expect(designNotes(state, taskId)).toBeUndefined();
     engine.cancel(taskId);
-  });
 
-  it("answers the plan's own design check after Screens: no second check, and approving it keeps the call", async () => {
+
+  }));
+
+  it("answers the plan's own design check after Screens: no second check, and approving it keeps the call", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    const engine = prepared.engine;
+    const { repo } = prepared;
+    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+
     const taskId = engine.addTask({ productId, title: "Pick a slogan", description: "A slogan file. [disagree] [screens]" });
     let state = await waitFor(taskId, "disagreement");
     const before = taskOf(state, taskId);
@@ -175,7 +177,7 @@ describe("The coordinator's call on a design disagreement", () => {
 
     // Changes there go to the architect alone and come back, through Screens, to the same check.
     engine.requestChanges(check.id, "Say where the slogan shows.");
-    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
+    state = await until(owner, engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
     const after = taskOf(state, taskId);
     expect(after.stageIndex).toBe(at.stageIndex);
     expect(after.plan!.stages.map((stage) => stage.id)).toEqual(stages);
@@ -187,12 +189,20 @@ describe("The coordinator's call on a design disagreement", () => {
 
     // Approving it moves on to the build, and the call stays.
     engine.approve(itemOf(state, taskId, "design")!.id);
-    state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
+    state = await until(owner, engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
     expect(taskOf(state, taskId).call?.text).toBe(CALL);
     engine.cancel(taskId);
-  });
 
-  it("never lets a later design check reopen the design the call settled", async () => {
+
+  }));
+
+  it("never lets a later design check reopen the design the call settled", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    const engine = prepared.engine;
+    const { repo } = prepared;
+    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+
     const taskId = engine.addTask({ productId, title: "Pick a tagline", description: "A tagline file. [disagree] [two-checks]" });
     let state = await waitFor(taskId, "disagreement");
     // The engine's state is live: keep what it was before the call.
@@ -208,7 +218,7 @@ describe("The coordinator's call on a design disagreement", () => {
     const first = itemOf(state, taskId, "design")!;
     expect(taskOf(state, taskId).stageIndex).toBe(designIndex + 1);
     engine.approve(first.id);
-    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== first.id, coordinator);
+    state = await until(owner, engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== first.id, coordinator);
     const at = taskOf(state, taskId);
     expect(at.stageIndex).toBe(designIndex + 3);
     expect(at.call?.text).toBe(CALL);
@@ -218,7 +228,7 @@ describe("The coordinator's call on a design disagreement", () => {
 
     // Changes at the later check go to the architect alone: no review round, no new disagreement.
     engine.requestChanges(later.id, "Say where the tagline shows.");
-    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== later.id, coordinator);
+    state = await until(owner, engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== later.id, coordinator);
     const after = taskOf(state, taskId);
     expect(after.error).toBeUndefined();
     // Back at the later check, not the earlier one already approved.
@@ -231,9 +241,17 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(itemOf(state, taskId, "design")?.body).toContain("Your call settled");
     expect(after.objections.some((objection) => objection.status === "open")).toBe(false);
     engine.cancel(taskId);
-  });
 
-  it("keeps a non-blocking point raised as the design settles as an undecided follow-up, never rejected, and hands it to the first Builder as advice", async () => {
+
+  }));
+
+  it("keeps a non-blocking point raised as the design settles as an undecided follow-up, never rejected, and hands it to the first Builder as advice", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    const engine = prepared.engine;
+    const { repo } = prepared;
+    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+
     const taskId = engine.addTask({ productId, title: "Pick a colour", description: "A colour file. [follow-up]" });
     let state = await waitFor(taskId, "design");
     // The engine's state is live: keep what it was when the design settled.
@@ -244,7 +262,7 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(objections[0]!.answer).toBeUndefined();
 
     engine.approve(itemOf(state, taskId, "design")!.id);
-    state = await until(engine, (current) => !!builderInput(current, taskId), coordinator);
+    state = await until(owner, engine, (current) => !!builderInput(current, taskId), coordinator);
     const after = taskOf(state, taskId);
     // No extra design round, and the point, the brief and its acceptance list stay as they were.
     expect([architectRuns(after), reviewerRuns(after)]).toEqual([architectRuns(settled), reviewerRuns(settled)]);
@@ -260,9 +278,17 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(input.manifest).toContainEqual(expect.objectContaining({ name: notes.title, kind: "text", size: notes.body.length }));
     expect(readFileSync(input.exact!.file, "utf8")).toContain(`## ${notes.title}\n${notes.body}`);
     engine.cancel(taskId);
-  });
 
-  it("leaves siding with the architect as it was", async () => {
+
+  }));
+
+  it("leaves siding with the architect as it was", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    const engine = prepared.engine;
+    const { repo } = prepared;
+    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+
     const taskId = engine.addTask({ productId, title: "Pick a welcome", description: "A welcome file. [disagree]" });
     let state = await waitFor(taskId, "disagreement");
     const before = taskOf(state, taskId);
@@ -279,9 +305,17 @@ describe("The coordinator's call on a design disagreement", () => {
     expect(after.plan!.stages).toHaveLength(stages);
     expect(itemOf(state, taskId, "design")?.body).toBeUndefined();
     engine.cancel(taskId);
-  });
 
-  it("sends the design back for a full round when changes are asked for at a check with no call", async () => {
+
+  }));
+
+  it("sends the design back for a full round when changes are asked for at a check with no call", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    const engine = prepared.engine;
+    const { repo } = prepared;
+    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+
     const taskId = engine.addTask({ productId, title: "Pick a motto", description: "A motto file. [follow-up]" });
     let state = await waitFor(taskId, "design");
     const check = itemOf(state, taskId, "design")!;
@@ -292,7 +326,7 @@ describe("The coordinator's call on a design disagreement", () => {
     const rounds = before.rounds[design.id] ?? 1;
 
     engine.requestChanges(check.id, "Make it shorter.");
-    state = await until(engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
+    state = await until(owner, engine, (current) => !!itemOf(current, taskId, "design") && itemOf(current, taskId, "design")!.id !== check.id, coordinator);
     const after = taskOf(state, taskId);
     expect(reviewerRuns(after)).toBe(reviews + 1);
     expect(after.rounds[design.id]).toBe(rounds + 1);
@@ -302,14 +336,22 @@ describe("The coordinator's call on a design disagreement", () => {
     const [stale, current] = after.objections;
     expect([stale, current].map((objection) => [objection!.round, objection!.status])).toEqual([[rounds, "noted"], [rounds + 1, "noted"]]);
     engine.approve(itemOf(state, taskId, "design")!.id);
-    state = await until(engine, (current) => !!builderInput(current, taskId), coordinator);
+    state = await until(owner, engine, (current) => !!builderInput(current, taskId), coordinator);
     const notes = designNotes(state, taskId)!.body;
     expect(notes).toStartWith(`From “Design”, round ${rounds + 1}, by Design reviewer:`);
     expect(notes.split("\n").filter((line) => line.startsWith("- "))).toEqual([`- ${current!.text}`]);
     engine.cancel(taskId);
-  });
 
-  it("follows the call after a restart halfway through and a pause, adding the design check the plan did not have", async () => {
+
+  }));
+
+  it("follows the call after a restart halfway through and a pause, adding the design check the plan did not have", async () => cases.use("petrina-engine-", async owner => {
+    const prepared = await designCase(owner);
+    let engine = prepared.engine;
+    const { repo, hold, start } = prepared;
+    const productId = await owner.run(engine, () => engine.addProduct(repo));
+    const waitFor = (taskId: string, kind: InboxKind) => until(owner, engine, (state) => !!itemOf(state, taskId, kind) || taskOf(state, taskId).state === "failed", coordinator);
+
     const taskId = engine.addTask({ productId, title: "Pick a farewell", description: "A farewell file. [disagree] [no-check]" });
     let state = await waitFor(taskId, "disagreement");
     const before = taskOf(state, taskId);
@@ -320,13 +362,13 @@ describe("The coordinator's call on a design disagreement", () => {
     // Petrina restarts while the architect is halfway through following the call, then the task is paused and resumed.
     writeFileSync(hold, "");
     engine.requestChanges(itemOf(state, taskId, "disagreement")!.id, CALL);
-    state = await until(engine, (current) => taskOf(current, taskId).timeline.some((entry) => entry.roleId === "architect" && entry.text === "Reading your call"), coordinator);
+    state = await until(owner, engine, (current) => taskOf(current, taskId).timeline.some((entry) => entry.roleId === "architect" && entry.text === "Reading your call"), coordinator);
     const halfway = taskOf(state, taskId);
     expect(halfway.state).toBe("running");
     expect(halfway.statusLine).toBe(CALL_WORDS.following);
     const architects = architectRuns(halfway);
     engine.setPoolPaused(true);
-    await engine.shutdown();
+    await owner.stop(engine);
     rmSync(hold);
     engine = start();
     expect(taskOf(engine.getState(), taskId).call?.text).toBe(CALL);
@@ -346,8 +388,10 @@ describe("The coordinator's call on a design disagreement", () => {
 
     // Approving the added check moves on to the next stage of the plan.
     engine.approve(itemOf(state, taskId, "design")!.id);
-    state = await until(engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
+    state = await until(owner, engine, (current) => taskOf(current, taskId).agent?.roleId === "builder", coordinator);
     expect(taskOf(state, taskId).plan!.stages[taskOf(state, taskId).stageIndex]!.roleId).toBe("builder");
     engine.cancel(taskId);
-  });
+
+
+  }));
 });
