@@ -1,4 +1,4 @@
-import { expectRejection } from "@petrina/test-support/rejections";
+import { expectRejection, rejectionOf } from "@petrina/test-support/rejections";
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -12,8 +12,11 @@ import { SLOW } from "@petrina/test-support/slow";
 import { writeFixtureJson } from "@petrina/test-support/fixture-json";
 import { antigravitySession } from "../../fixtures/antigravity-session.js";
 import { quota } from "../../fixtures/antigravity-quota.js";
+import { usageActors } from "../../fixtures/usage-actors.js";
+const actors = usageActors();
+afterAll(() => actors.close());
 const roots: string[] = [];
-afterAll(() => roots.forEach(removeDir));
+afterAll(() => roots.filter(root => !actors.owns(root)).forEach(removeDir));
 const folder = () => { const path = tempDir("petrina-antigravity-"); roots.push(path); return path; };
 const profile = ENGINE_PROFILES.find(p => p.id === "flash-medium")!;
 const callbacks = { onActivity() {}, onPlanStep() {}, onPermission: async () => "deny" as const };
@@ -22,12 +25,17 @@ const work = 'NATIVE-STEPS {"steps":[],"reply":"Native work completed."}';
 describe("Antigravity native accounting", () => {
   it("asks only the built-in command for an account reading and stops its harness", async () => {
     const dir = folder(); const fakes = antigravitySession(dir);
-    let pid: number | undefined;
-    const reports = await readAntigravityUsage({ command: fakes.command, cwd: dir, env: process.env, onProcess: child => { pid = child.pid; } });
-    expect(reports).toHaveLength(3);
-    expect(fakes.workRequests()).toEqual([]);
-    expect(fakes.accountRequests()).toHaveLength(1);
-    await waitFor(() => { try { process.kill(pid!, 0); return false; } catch { return true; } }, "the Antigravity account process to exit", 5000);
+    await actors.use(dir, async f => {
+      let pid: number | undefined, child: import("node:child_process").ChildProcess | undefined;
+      const command = await f.command(fakes.command);
+      const reports = await f.run(() => readAntigravityUsage({ command, cwd: dir, env: process.env, signal: f.signal, onProcess: actual => { f.observe(actual); child = actual; pid = actual.pid; } }));
+      expect(reports).toHaveLength(3);
+      expect(fakes.workRequests()).toEqual([]);
+      expect(fakes.accountRequests()).toHaveLength(1);
+      expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+      expect(child!.stdout!.closed && child!.stderr!.closed).toBe(true);
+      await waitFor(() => { try { process.kill(pid!, 0); return false; } catch { return true; } }, "the Antigravity account process to exit", 5000);
+    });
   });
 });
 
@@ -147,9 +155,29 @@ describe("Antigravity agent sessions", () => {
 
   it("stops a native account command that never answers", async () => {
     const dir = folder(); const fakes = antigravitySession(dir, { hang: true });
-    let pid: number | undefined;
-    await readAntigravityUsage({ command: fakes.command, cwd: dir, env: process.env, timeoutMs: 1500 * SLOW, onProcess: child => { pid = child.pid; } }).catch(() => []);
-    expect(pid).toBeGreaterThan(0);
-    await waitFor(() => { try { process.kill(pid!, 0); return false; } catch { return true; } }, "the unanswered account command to stop", 5000);
+    await actors.use(dir, async f => {
+      let pid: number | undefined, child: import("node:child_process").ChildProcess | undefined;
+      const command = await f.command(fakes.command);
+      await f.inspect(() => readAntigravityUsage({ command, cwd: dir, env: process.env, timeoutMs: 1500 * SLOW, signal: f.signal, onProcess: actual => { f.observe(actual); child = actual; pid = actual.pid; } }), raw => raw.catch(() => []));
+      expect(pid).toBeGreaterThan(0);
+      expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+      await waitFor(() => { try { process.kill(pid!, 0); return false; } catch { return true; } }, "the unanswered account command to stop", 5000);
+    });
+  });
+});
+
+
+for (const failure of [new Error("Captured probe observer failed"), undefined]) it(`joins an Antigravity startup observer failure ${String(failure)} before returning`, async () => {
+  const dir = folder(), fakes = antigravitySession(dir);
+  await actors.use(dir, async f => {
+    const command = await f.command(fakes.command);
+    let child: import("node:child_process").ChildProcess | undefined;
+    await f.inspect(() => readAntigravityUsage({ command, cwd: dir, env: process.env, onProcess(actual) {
+      f.observe(actual); child = actual; throw failure;
+    } }), async raw => { expect(await rejectionOf(raw)).toBe(failure); });
+    expect(child).toBeDefined();
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+    expect(child!.stdout!.closed && child!.stderr!.closed).toBe(true);
+    expect(fakes.workRequests()).toEqual([]); expect(fakes.accountRequests()).toEqual([]);
   });
 });

@@ -18,6 +18,7 @@ type UsageHost = Pick<Kernel, "s" | "profile" | "role" | "tracking" | "activeSta
 /** A choice, or why nobody works the step yet: `readiness` when only a saved participant's uncertain tool stands in the way. */
 export type Selection = ProfileSelectionResult;
 export class UsageCoordinator {
+  private closing: Promise<void> | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly selection: ProfileSelection;
   readonly readers = new Map<Id, UsageReader>();
@@ -61,7 +62,21 @@ export class UsageCoordinator {
       return status ? [[id, status]] : [];
     }));
   }
-  stop(): void { clearTimeout(this.timer); for (const reader of this.readers.values()) reader.stop(); }
+  stop(): Promise<void> {
+    if (this.closing) return this.closing;
+    const done = Promise.withResolvers<void>(); this.closing = done.promise;
+    void done.promise.catch(() => undefined);
+    clearTimeout(this.timer);
+    const stops = [...this.readers.values()].map(reader => {
+      try { return reader.stop(); } catch (error) { return Promise.reject(error); }
+    });
+    void Promise.allSettled(stops).then(results => {
+      const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, "Account reader cleanup was not confirmed");
+    }).then(done.resolve, done.reject);
+    return done.promise;
+  }
   private toolName(toolId: Id | undefined): string {
     return this.k.s.tools.find((tool) => tool.id === toolId)?.name ?? ADAPTERS[toolId ?? ""]?.name ?? toolId ?? "the tool";
   }
@@ -113,6 +128,7 @@ export class UsageCoordinator {
    * usage that the installed tool can report. The read runs on its own; nothing waits for it.
    */
   readUsage(toolId?: Id, gap?: number): void {
+    if (this.closing) return;
     for (const [id, reader] of this.readers) {
       if (toolId !== undefined && id !== toolId) continue;
       if (this.k.s.tools.some(tool => tool.id === id && tool.status === "ready")) void reader.refresh(gap ?? ADAPTERS[id]?.usageReader?.startGapMs ?? 5 * 60_000);

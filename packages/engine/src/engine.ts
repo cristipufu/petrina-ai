@@ -340,17 +340,17 @@ export class Engine extends Kernel implements Commands {
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     for (const timer of this.timers) clearInterval(timer);
-    request(() => this.usageCoordinator.stop());
-    request(() => this.readiness.stop());
-    request(() => this.screens.stop());
-    const runs = [...this.runs.entries(), ...[...this.helperRuns.entries()].flatMap(([taskId, runs]) => [...runs].map(run => [taskId, run] as const))];
-    for (const controller of this.drivers.values()) request(() => controller.abort());
     const observe = <T>(start: () => Promise<T>): Promise<T> => {
       try { return start(); }
       catch (error) { return Promise.reject(error); }
     };
+    const usageStopped = observe(() => this.usageCoordinator.stop());
+    request(() => this.readiness.stop());
+    request(() => this.screens.stop());
+    const runs = [...this.runs.entries(), ...[...this.helperRuns.entries()].flatMap(([taskId, runs]) => [...runs].map(run => [taskId, run] as const))];
+    for (const controller of this.drivers.values()) request(() => controller.abort());
     // Keep request order and method receivers, even when one entered stop throws synchronously.
-    const owners = [this.startupReady, observe(() => this.extraValidations.shutdown()),
+    const owners = [this.startupReady, usageStopped, observe(() => this.extraValidations.shutdown()),
       observe(() => this.tools.shutdown()), observe(() => this.profileReader.stop()),
       observe(() => this.followUps.stop())];
     const agentStops = runs.map(([taskId, run]) => observe(() => this.stopAgent(taskId, run)));

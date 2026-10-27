@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { codexReports } from "./codex-report.js";
 import type { UsageInfo } from "./failures.js";
 import { UsageReader } from "./usage-reader.js";
+import { withUsageProcess, type UsageProcessOptions } from "./usage-process.js";
 
 /** How often Codex's usage is read while agents run. */
 export const CODEX_USAGE_EVERY_MS = 10 * 60_000;
@@ -25,7 +26,7 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 /** Who is asking, in the shape the adapter sends. */
 const CLIENT_INFO = { name: "petrina", title: "Petrina", version };
 
-export interface ReadOptions {
+export interface ReadOptions extends UsageProcessOptions {
   /** The app-server to run; tests hand in a fake. */
   command?: readonly string[];
   env: NodeJS.ProcessEnv;
@@ -41,74 +42,75 @@ export interface ReadOptions {
 export async function readCodexUsage(options: ReadOptions): Promise<UsageInfo[]> {
   const [program, ...args] = options.command ?? CODEX_USAGE_COMMAND;
   const timeoutMs = options.timeoutMs ?? CODEX_USAGE_TIMEOUT_MS;
-  const child = spawn(program!, args, { stdio: ["pipe", "pipe", "pipe"], env: options.env, windowsHide: true });
-  options.onProcess?.(child);
-  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  const failAll = (error: Error) => {
-    for (const waiter of pending.values()) waiter.reject(error);
-    pending.clear();
-  };
-  let buffer = "";
-  child.stdout!.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString();
-    for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
-      const line = buffer.slice(0, at).trim();
-      buffer = buffer.slice(at + 1);
-      if (!line) continue;
-      let message: { id?: unknown; result?: unknown; error?: { message?: unknown } | null };
-      try {
-        message = JSON.parse(line) as typeof message;
-      } catch {
-        // A line that is not JSON (a log) is dropped, as the adapter drops it.
-        continue;
+  return withUsageProcess(options, () => spawn(program!, args, { stdio: ["pipe", "pipe", "pipe"], env: options.env, windowsHide: true }), async (child, signal) => {
+    const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+    const failAll = (error: Error) => {
+      for (const waiter of pending.values()) waiter.reject(error);
+      pending.clear();
+    };
+    let buffer = "";
+    child.stdout!.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString();
+      for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, at).trim();
+        buffer = buffer.slice(at + 1);
+        if (!line) continue;
+        let message: { id?: unknown; result?: unknown; error?: { message?: unknown } | null };
+        try {
+          message = JSON.parse(line) as typeof message;
+        } catch {
+          // A line that is not JSON (a log) is dropped, as the adapter drops it.
+          continue;
+        }
+        // Notifications (account/updated and the like) carry no id and are not answers.
+        const waiter = typeof message.id === "number" ? pending.get(message.id) : undefined;
+        if (!waiter) continue;
+        pending.delete(message.id as number);
+        if (message.error) waiter.reject(new Error(typeof message.error.message === "string" ? message.error.message : "Codex refused the request"));
+        else waiter.resolve(message.result);
       }
-      // Notifications (account/updated and the like) carry no id and are not answers.
-      const waiter = typeof message.id === "number" ? pending.get(message.id) : undefined;
-      if (!waiter) continue;
-      pending.delete(message.id as number);
-      if (message.error) waiter.reject(new Error(typeof message.error.message === "string" ? message.error.message : "Codex refused the request"));
-      else waiter.resolve(message.result);
-    }
-  });
-  let stderr = "";
-  child.stderr!.on("data", (chunk: Buffer) => {
-    stderr = `${stderr}${chunk.toString()}`.slice(-2000);
-  });
-  child.stdin!.on("error", () => undefined);
-  child.on("error", (error: NodeJS.ErrnoException) => failAll(error.code === "ENOENT" ? new Error(`Codex is not installed: no \`${program}\` on PATH`) : error));
-  child.on("exit", (code) => {
-    const last = stderr.trim().split("\n").at(-1);
-    failAll(new Error(`Codex's app-server stopped (exit ${code ?? "signal"})${last ? `: ${last}` : ""}`));
-  });
-  let next = 1;
-  const request = (method: string, params?: unknown) =>
-    new Promise<unknown>((resolve, reject) => {
-      const id = next++;
-      pending.set(id, { resolve, reject });
-      // JSON lines without the jsonrpc field, as the adapter writes them; the app-server answers the same way.
-      child.stdin!.write(`${JSON.stringify(params === undefined ? { id, method } : { id, method, params })}\n`);
     });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Codex did not answer within ${Math.round(timeoutMs / 1000)} seconds`)), timeoutMs);
-  });
-  late.catch(() => undefined);
-  const read = (async () => {
-    await request("initialize", { capabilities: { experimentalApi: true, requestAttestation: false }, clientInfo: CLIENT_INFO });
-    child.stdin!.write(`${JSON.stringify({ method: "initialized" })}\n`);
-    return codexReports(await request("account/rateLimits/read"));
-  })();
-  read.catch(() => undefined);
-  try {
-    return await Promise.race([read, late]);
-  } finally {
-    clearTimeout(timer);
-    if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-      child.kill();
-      const force = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 2000);
-      child.once("exit", () => clearTimeout(force));
+    let stderr = "";
+    child.stderr!.on("data", (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString()}`.slice(-2000);
+    });
+    child.stdin!.on("error", () => undefined);
+    child.on("error", (error: NodeJS.ErrnoException) => failAll(error.code === "ENOENT" ? new Error(`Codex is not installed: no \`${program}\` on PATH`) : error));
+    const stopped = (code: number | null) => {
+      const last = stderr.trim().split("\n").at(-1);
+      failAll(new Error(`Codex's app-server stopped (exit ${code ?? "signal"})${last ? `: ${last}` : ""}`));
+    };
+    child.on("exit", stopped); child.on("close", stopped);
+    const abort = () => failAll(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    let next = 1;
+    const request = (method: string, params?: unknown) =>
+      new Promise<unknown>((resolve, reject) => {
+        if (signal.aborted) { reject(signal.reason); return; }
+        const id = next++;
+        pending.set(id, { resolve, reject });
+        // JSON lines without the jsonrpc field, as the adapter writes them; the app-server answers the same way.
+        child.stdin!.write(`${JSON.stringify(params === undefined ? { id, method } : { id, method, params })}\n`);
+      });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Codex did not answer within ${Math.round(timeoutMs / 1000)} seconds`)), timeoutMs);
+    });
+    late.catch(() => undefined);
+    const read = (async () => {
+      await request("initialize", { capabilities: { experimentalApi: true, requestAttestation: false }, clientInfo: CLIENT_INFO });
+      if (signal.aborted) throw signal.reason;
+      child.stdin!.write(`${JSON.stringify({ method: "initialized" })}\n`);
+      return codexReports(await request("account/rateLimits/read"));
+    })();
+    read.catch(() => undefined);
+    try {
+      return await Promise.race([read, late]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
     }
-  }
+  });
 }
 
 export interface CodexUsageOptions {
@@ -126,6 +128,6 @@ export interface CodexUsageOptions {
 /** Reads Codex's usage for the engine, one read at a time, and says once per reason when it cannot. */
 export class CodexUsage extends UsageReader {
   constructor(options: CodexUsageOptions) {
-    super({ name: "Codex", record: options.record, log: options.log, ...(options.changed ? { changed: options.changed } : {}), read: (onProcess) => readCodexUsage({ command: options.command, env: options.env(), onProcess, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
+    super({ name: "Codex", record: options.record, log: options.log, ...(options.changed ? { changed: options.changed } : {}), read: context => readCodexUsage({ command: options.command, env: options.env(), ...context, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
   }
 }
