@@ -45,7 +45,7 @@ it("preserves original long diagnostics after later checks and a restart, and re
     const next = page.next;
     e.commitNow();
     await e.shutdown();
-    const restarted = await lifetime.restart(e, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+    const restarted = await lifetime.restart(e, lifetime.root, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     const focused = new Coordination(restarted);
     while (page.next) {
       page = await focused.call("journey.check", { taskId, nodeId: "checks", index: 0, cursor: page.next });

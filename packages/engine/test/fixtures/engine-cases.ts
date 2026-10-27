@@ -10,38 +10,38 @@ async function settle(work: readonly Promise<unknown>[]): Promise<void> {
   const results = await Promise.allSettled(work);
   const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
   if (errors.length === 1) throw errors[0];
-  if (errors.length) throw new AggregateError(errors, "Coordinator fixture peers did not all settle");
+  if (errors.length) throw new AggregateError(errors, "Engine case peers did not all settle");
 }
 const invoke = (effect: Effect): Promise<void> => {
   try { return Promise.resolve(effect()); } catch (error) { return Promise.reject(error); }
 };
 
-export interface CoordinatorOwner {
+export interface EngineCaseOwner {
   readonly root: string;
   readonly signal: AbortSignal;
   check(): void;
-  open(options: EngineOptions): Engine;
+  open(dataDir: string, options: EngineOptions): Engine;
   run<T>(engine: Engine, start: () => Promise<T>): Promise<T>;
   prepare<T>(start: () => Promise<T>): Promise<T>;
   stop(engine: Engine): Promise<void>;
-  restart(engine: Engine, options: EngineOptions): Promise<Engine>;
+  restart(engine: Engine, dataDir: string, options: EngineOptions): Promise<Engine>;
   /** Release gates and stop HTTP peers before requesting Engine shutdown. */
   onStop(effect: Effect): () => Promise<void>;
   /** Close extra records only after the body and all Engine stops have settled. */
   afterBody(effect: Effect): () => Promise<void>;
 }
 
-/** Only the two focused coordinator recipes share this canonical direct-driver lifetime. */
-export function coordinatorOwnedFixtures() {
+/** One private case lifetime; recipes add only the setup needed by their actual boundary. */
+export function engineCaseFixtures() {
   const active = new Set<{ close(): Promise<void> }>(), retained = new Set<string>();
   let accepting = true, closing: Promise<void> | undefined;
-  const use = async <T>(prefix: string, body: (owner: CoordinatorOwner) => Promise<T>): Promise<T> => {
-    if (!accepting) throw new Error("Coordinator fixtures are closing; no case may start");
-    const root = tempDir(prefix), lifetime = directDrivers(root), controller = new AbortController();
+  const use = async <T>(prefix: string, body: (owner: EngineCaseOwner) => Promise<T>, policy: { allowOverlap?: true } = {}): Promise<T> => {
+    if (!accepting) throw new Error("Engine cases are closing; no case may start");
+    const root = tempDir(prefix), lifetime = directDrivers(root, policy), controller = new AbortController();
     const releases: Effect[] = [], finalizers: Effect[] = [];
     const finished = Promise.withResolvers<void>();
     let closed = false, stopped: Promise<void> | undefined;
-    const check = () => { if (closed || !accepting) throw new Error("Coordinator fixture is closing; no setup or Engine may start"); };
+    const check = () => { if (closed || !accepting) throw new Error("Engine case is closing; no setup or Engine may start"); };
     const entry = { close(): Promise<void> {
       if (stopped) return stopped;
       const result = Promise.withResolvers<void>(); stopped = result.promise;
@@ -64,9 +64,9 @@ export function coordinatorOwnedFixtures() {
       return stopped;
     } };
     active.add(entry);
-    const open = (options: EngineOptions): Engine => {
+    const open = (dataDir: string, options: EngineOptions): Engine => {
       check();
-      const engine = lifetime.open(root, options);
+      const engine = lifetime.open(dataDir, options);
       return engine;
     };
     const register = (effects: Effect[], effect: Effect) => {
@@ -81,11 +81,11 @@ export function coordinatorOwnedFixtures() {
       effects.push(request);
       return request;
     };
-    const owner: CoordinatorOwner = { root, signal: controller.signal, check, open,
+    const owner: EngineCaseOwner = { root, signal: controller.signal, check, open,
       run: (engine, start) => { check(); return lifetime.run(engine, start); },
       prepare: start => { check(); return lifetime.prepare(start); },
       stop: engine => lifetime.stop(engine),
-      restart: (engine, options) => lifetime.prepare(async () => { check(); await lifetime.stop(engine); return open(options); }),
+      restart: (engine, dataDir, options) => lifetime.prepare(async () => { check(); await lifetime.stop(engine); return open(dataDir, options); }),
       onStop: effect => register(releases, effect),
       afterBody: effect => register(finalizers, effect),
     };

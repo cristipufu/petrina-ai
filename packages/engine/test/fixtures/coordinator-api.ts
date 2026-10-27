@@ -1,17 +1,17 @@
 import { completeAll, type InboxKind } from "@petrina/core";
 import type { Engine, EngineOptions } from "../engine.js";
 import { Coordination } from "../../src/coordination.js";
-import { coordinatorOwnedFixtures, type CoordinatorOwner } from "./coordinator-owned.js";
+import { engineCaseFixtures, type EngineCaseOwner } from "./engine-cases.js";
 
 type Request = { prefix?: string; title?: string };
-interface OwnedEngine { e: Engine; engine: Engine; home: string; owner: CoordinatorOwner }
+interface OwnedEngine { e: Engine; engine: Engine; home: string; owner: EngineCaseOwner }
 
 /** The actual app/SQLite facade, with no repository, agent, demo or running workflow. */
 export function coordinatorApiFixtures(options: Request = {}) {
-  const owners = coordinatorOwnedFixtures();
+  const owners = engineCaseFixtures();
   const useEngine = <T>(body: (fixture: OwnedEngine) => Promise<T>, request: { prefix: string; options: EngineOptions }): Promise<T> =>
     owners.use(request.prefix, owner => {
-      const e = owner.open(request.options);
+      const e = owner.open(owner.root, request.options);
       return body({ e, engine: e, home: owner.root, owner });
     });
   const use = <T>(body: (fixture: OwnedEngine & {

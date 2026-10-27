@@ -55,7 +55,7 @@ it("reconnects a focused watch and reports lost continuity after engine replacem
       await waitFor(() => e.listeners.size > listeners, "the focused watch connection", undefined, { during: watching });
       await first.stop(true);
       await e.shutdown();
-      const next = await lifetime.restart(e, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+      const next = await lifetime.restart(e, lifetime.root, { admissionsClosed: true, usageCommands: { codex: null, grok: null }, terminals: () => [] });
       lifetime.check();
       replacement = serve(next, { port: 0, token });
       connect(replacement);

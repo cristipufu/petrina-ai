@@ -20,7 +20,7 @@ it("saves creation and message outcomes, rejects conflicting references and keep
     const sent = await c.call("task.message", { taskId: created.taskId, text: "Only once", requestId: "message-once" });
     expect(sent.messageId).toBeString();
     await e.shutdown();
-    const restarted = await lifetime.restart(e, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+    const restarted = await lifetime.restart(e, lifetime.root, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     const again = new Coordination(restarted);
     expect(await again.call("task.add", args)).toEqual(created);
     expect(await again.call("task.message", { taskId: created.taskId, text: "Only once", requestId: "message-once" })).toEqual(sent);
@@ -43,7 +43,7 @@ it("keeps task and message receipts after archival and replacement without resto
     e.save();
     expect(e.activeState().tasks.some((task) => task.id === created.taskId)).toBe(false);
     await e.shutdown();
-    const restarted = await lifetime.restart(e, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
+    const restarted = await lifetime.restart(e, lifetime.root, { admissionsClosed: true, agentCommand: () => undefined, usageCommands: { codex: null, grok: null }, terminals: () => [] });
     restarted.getState = () => { throw new Error("Do not reconstruct the archive"); };
     const again = new Coordination(restarted);
     expect(await again.call("task.add", args)).toEqual(created);

@@ -60,7 +60,7 @@ it(`${kind} reads saved startup failures beside real process output, including h
       task.state = "paused";
       await server.stop(true);
       await engine.shutdown();
-      const restarted = await lifetime.restart(engine, { ...options, admissionsClosed: true });
+      const restarted = await lifetime.restart(engine, lifetime.root, { ...options, admissionsClosed: true });
       lifetime.check();
       server = serve(restarted, { port: 0, token });
       connect();
