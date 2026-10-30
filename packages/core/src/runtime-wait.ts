@@ -53,14 +53,25 @@ export function runtimePrerequisite(id: Id, task: RuntimeWaitTask | undefined, s
   if (task.maintenance?.noProductChanges || works.length && !publishing.length) return task.state === "done"
     ? { ...base, state: "finished with no product changes", decisionNeeded: true }
     : { ...base, state: "still in progress" };
-  if (!works.length) return task.state === "done" ? { ...base, state: "marked done without a confirmed delivery", decisionNeeded: true } : { ...base, state: "still in progress" };
+  if (!works.length) return task.state === "done" ? {
+    ...base,
+    state: "marked done without a confirmed delivery",
+    decisionNeeded: true
+  } : {
+    ...base,
+    state: "still in progress"
+  };
   const results = publishing.map(work => work.shipping?.step || work.companion && work.companion.state !== "done"
     ? { kind: "publishing" as const, landed: false as const, step: work.shipping?.step ?? "companion links" }
     : publishingResult(task, work, false));
   if (results.every(result => result.landed === true)) return { ...base, state: "landed", landed: true };
   if (results.some(result => result.kind === "pull-request-closed")) return { ...base, state: "closed without merging", decisionNeeded: true };
   if (results.some(result => result.kind === "unconfirmed")) return { ...base, state: "marked done without a confirmed delivery", decisionNeeded: true };
-  if (task.state === "done" && results.some(result => result.kind === "unknown" || result.kind === "interrupted")) return { ...base, state: "delivery could not be confirmed", decisionNeeded: true };
+  if (task.state === "done" && results.some(result => result.kind === "unknown" || result.kind === "interrupted")) return {
+    ...base,
+    state: "delivery could not be confirmed",
+    decisionNeeded: true
+  };
   if (results.some(result => result.kind === "no-changes")) return { ...base, state: "finished with no product changes", decisionNeeded: true };
   if (results.some(result => result.kind === "local-unpushed")) return { ...base, state: "delivery has not been pushed" };
   if (results.some(result => result.kind === "publishing")) return { ...base, state: "still publishing" };
@@ -104,7 +115,10 @@ export function runtimeWaitWords(view: NonNullable<ReturnType<typeof runtimeWait
 }
 
 /** Validate all inputs before mutating either task or receipt. Empty lists explicitly clear the hold. */
-export function validateRuntimeWait(task: Pick<TaskState, "id" | "state" | "startedAt" | "runtimeWait"> | undefined, after: readonly Id[], reason: string, find: (id: Id) => (DependencyNode & Partial<Pick<TaskState, "title">>) | undefined): { after: Id[]; reason: string } {
+export function validateRuntimeWait(task: Pick<TaskState, "id" | "state" | "startedAt" | "runtimeWait"> | undefined, after: readonly Id[], reason: string, find: (id: Id) => (DependencyNode & Partial<Pick<TaskState, "title">>) | undefined): {
+  after: Id[];
+  reason: string
+} {
   if (!task) throw new Error("This task is unavailable. Choose another task.");
   if (task.startedAt === undefined) throw new Error("This task has not started. Use its Start after other tasks land prerequisites instead.");
   if (task.state === "done" || task.state === "cancelled" || task.state === "pr-open") throw new Error("This task has finished or is already awaiting merge. Only started, unfinished tasks can wait.");
@@ -113,7 +127,10 @@ export function validateRuntimeWait(task: Pick<TaskState, "id" | "state" | "star
   if (after.length > 20) throw new Error("Choose up to 20 prerequisites. Remove a task before adding another.");
   const saved = task.runtimeWait;
   const requested = [...new Set(after)];
-  if (saved?.reason === text && saved.after.length === requested.length && saved.after.every(id => requested.includes(id))) return { after: requested, reason: text };
+  if (saved?.reason === text && saved.after.length === requested.length && saved.after.every(id => requested.includes(id))) return {
+    after: requested,
+    reason: text
+  };
   const ids = validateTaskDependencies(task.id, after, find);
   for (const id of ids) {
     const other = find(id)!;
@@ -123,18 +140,32 @@ export function validateRuntimeWait(task: Pick<TaskState, "id" | "state" | "star
 }
 
 /** The caller saves this mutation and its request receipt atomically. */
-export function changeRuntimeWait(task: DeepMutable<Pick<TaskState, "runtimeWait">>, input: { after: readonly Id[]; reason: string; requestId?: Id }, now: number): boolean {
+export function changeRuntimeWait(task: DeepMutable<Pick<TaskState, "runtimeWait">>, input: {
+  after: readonly Id[];
+  reason: string;
+  requestId?: Id
+}, now: number): boolean {
   const before = task.runtimeWait?.after ?? [];
   if (!input.after.length && (!before.length || task.runtimeWait?.releasedAt !== undefined)) return false;
   if (task.runtimeWait?.reason === input.reason && before.length === input.after.length && before.every(id => input.after.includes(id))) return false;
   const previous = task.runtimeWait;
   task.runtimeWait = {
     ...previous, after: [...input.after], reason: input.reason,
-    changes: [...(previous?.changes ?? []), { at: now, before: [...before], after: [...input.after], reason: input.reason, ...(input.requestId ? { requestId: input.requestId } : {}) }],
+    changes: [
+      ...(previous?.changes ?? []),
+      {
+      at: now,
+      before: [...before],
+      after: [...input.after],
+      reason: input.reason,
+      ...(input.requestId ? { requestId: input.requestId } : {})
+    }
+    ],
   };
   delete task.runtimeWait.refreshProducts;
   if (input.after.length) {
-    delete task.runtimeWait.releasedAt; delete task.runtimeWait.releaseReason;
+    delete task.runtimeWait.releasedAt;
+    delete task.runtimeWait.releaseReason;
   } else {
     task.runtimeWait.releasedAt = now;
     task.runtimeWait.releaseReason = `You cleared the wait: ${input.reason}`;
@@ -158,7 +189,9 @@ function finishRuntimeWait(task: DeepMutable<Pick<TaskState, "runtimeWait">>, no
     changed = true;
   }
   if (wait.refreshPending !== undefined || wait.refreshAfterStep !== undefined || wait.refreshProducts !== undefined) changed = true;
-  delete wait.refreshPending; delete wait.refreshAfterStep; delete wait.refreshProducts;
+  delete wait.refreshPending;
+  delete wait.refreshAfterStep;
+  delete wait.refreshProducts;
   return changed;
 }
 
@@ -174,7 +207,9 @@ export function syncRuntimeWait(task: DeepMutable<TaskState>, find: RuntimeWaitL
   }
   if (!runtimeWaitHolds(task) && !openStep(task)?.runtimeWait) return changed;
   if (runtimeWaitHolds(task) && wait.after.every(id => runtimePrerequisite(id, find(id)).landed)) {
-    wait.releasedAt = now; wait.releaseReason = "All required tasks landed"; wait.refreshPending = true;
+    wait.releasedAt = now;
+    wait.releaseReason = "All required tasks landed";
+    wait.refreshPending = true;
     delete wait.refreshProducts;
     changed = true;
   }

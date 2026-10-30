@@ -2,7 +2,10 @@ import { readOwnedProcessOutput, type OutputProcess } from "@petrina/platform/pr
 import type { ProcessDeadline } from "@petrina/platform/process-capabilities";
 import { terminalEnv } from "./terminal-plan.js";
 
-const arm: ProcessDeadline = (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
+const arm: ProcessDeadline = (expired, ms) => {
+  const timer = setTimeout(expired, ms);
+  return () => clearTimeout(timer);
+};
 export interface TerminalOutputOptions {
   /** Private native composition effects; ownership transfers to the shared output owner. */
   start?: (command: readonly string[], env: NodeJS.ProcessEnv) => OutputProcess;

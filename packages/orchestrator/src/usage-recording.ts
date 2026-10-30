@@ -1,4 +1,16 @@
-import { claudeWindow, currentReport, kindWords, UNKNOWN_LIMIT_MS, withLimit, withReport, type DeepMutable, type Id, type Pool, type UsageInfo, type UsageReport } from "@petrina/core";
+import {
+  claudeWindow,
+  currentReport,
+  kindWords,
+  UNKNOWN_LIMIT_MS,
+  withLimit,
+  withReport,
+  type DeepMutable,
+  type Id,
+  type Pool,
+  type UsageInfo,
+  type UsageReport
+} from "@petrina/core";
 
 /** Own reconciliation of observed allowances; native readers, timers and persistence stay with the host. */
 export interface UsageRecordingHost {
@@ -55,7 +67,11 @@ export class UsageRecording {
     // This exact reason came only from that obsolete mapping, including its former migration.
     pool.limited = (pool.limited ?? []).filter(limit => limit.toolId !== "claude-code" || limit.reason !== "Claude Code's extra usage limit")
       .filter(limit => limit.toolId !== "claude-code" || limit.source === "refusal" || limit.retry || !(limit.source === "report" || previous.some(report =>
-      report.status === "rejected" && !report.overage && report.at === limit.at && (report.model ?? "") === (limit.model ?? "") && limit.reason === `Claude Code's ${kindWords(report.kind, report.windowMinutes, report.name)} limit`)))
+      report.status === "rejected" && !report.overage && report.at === limit.at && (report.model ?? "") === (limit.model ?? "") && limit.reason === `Claude Code's ${kindWords(
+        report.kind,
+        report.windowMinutes,
+        report.name
+      )} limit`)))
       .map(limit => limit.toolId === "claude-code" && limit.source === undefined ? { ...limit, source: "refusal" as const } : limit);
     pool.usage = (pool.usage ?? []).filter(report => report.toolId !== "claude-code" || !complete && report.kind !== "overage")
       .reduce<UsageReport[]>((reports, report) => withReport(reports, report.toolId === "claude-code" ? claudeWindow(report) : report), []);
@@ -74,7 +90,8 @@ export class UsageRecording {
       const older = previousWindows.findLast(report => report.kind === info.kind && (report.model ?? "") === (info.model ?? "") && currentReport(report, now));
       // Account resets include milliseconds; live notices can truncate them to whole seconds.
       // Match that precision difference only: two distinct precise resets still start a new reading.
-      const priorReset = older?.resetsAt, reset = info.resetsAt;
+      const priorReset = older?.resetsAt;
+      const reset = info.resetsAt;
       const sameReset = reset === undefined || priorReset === reset || priorReset !== undefined
         && Number.isFinite(priorReset) && Number.isFinite(reset)
         && (priorReset % 1000 === 0 || reset % 1000 === 0) && Math.floor(priorReset / 1000) === Math.floor(reset / 1000);
@@ -96,7 +113,21 @@ export class UsageRecording {
     // the balancer prefers tools with room, but the agents keep working.
     if (info.status === "rejected" && !info.overage) {
       const until = info.resetsAt && info.resetsAt > now ? info.resetsAt : (info.toolId === "claude-code" ? info.at : now) + UNKNOWN_LIMIT_MS;
-      this.host.pool().limited = withLimit(this.host.pool().limited, { toolId: info.toolId, source: "report", ...(info.model ? { model: info.model } : {}), until, reason: `${this.host.toolName(info.toolId)}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, at: info.at }) as DeepMutable<Pool>["limited"];
+      this.host.pool().limited = withLimit(
+        this.host.pool().limited,
+        {
+        toolId: info.toolId,
+        source: "report",
+        ...(info.model ? { model: info.model } : {}),
+        until,
+        reason: `${this.host.toolName(info.toolId)}'s ${kindWords(
+        info.kind,
+        info.windowMinutes,
+        info.name
+      )} limit`,
+        at: info.at
+      }
+      ) as DeepMutable<Pool>["limited"];
     }
   }
 }

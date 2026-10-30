@@ -10,7 +10,10 @@ class RotatingLog {
   constructor(private readonly path: string, private readonly maxBytes: number, private readonly files: number) {
     this.fd = openSync(path, "a", 0o600);
     try { this.size = fstatSync(this.fd).size; }
-    catch (error) { closeSync(this.fd); throw error; }
+    catch (error) {
+      closeSync(this.fd);
+      throw error;
+    }
   }
 
   write(record: object): void {
@@ -54,16 +57,21 @@ export class SqlExecutionLog {
   private transactionDepth = 0;
 
   constructor(folder: string, options: { maxBytes?: number; files?: number } = {}) {
-    const maxBytes = options.maxBytes ?? 10 * 1024 * 1024, files = options.files ?? 5;
+    const maxBytes = options.maxBytes ?? 10 * 1024 * 1024;
+    const files = options.files ?? 5;
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(files) || files < 1) throw new Error("SQL log rotation needs positive byte and file limits.");
     this.queries = new RotatingLog(join(folder, "sql-executions.jsonl"), maxBytes, files);
     try { this.transactions = new RotatingLog(join(folder, "sql-transactions.jsonl"), maxBytes, files); }
-    catch (error) { this.queries.close(); throw error; }
+    catch (error) {
+      this.queries.close();
+      throw error;
+    }
   }
 
   execution<T>(sql: string, call: () => T): T {
     if (!this.enabled) return call();
-    const at = new Date().toISOString(), start = performance.now();
+    const at = new Date().toISOString();
+    const start = performance.now();
     try { return call(); }
     finally { this.record(this.queries, { sql, ms: performance.now() - start, at }); }
   }
@@ -94,7 +102,9 @@ export class SqlExecutionLog {
 
   transaction<T>(mode: string, call: () => T): T {
     if (!this.enabled) return call();
-    const outer = this.transactionDepth++ === 0, at = new Date().toISOString(), start = performance.now();
+    const outer = this.transactionDepth++ === 0;
+    const at = new Date().toISOString();
+    const start = performance.now();
     try { return call(); }
     finally {
       this.transactionDepth--;
@@ -133,7 +143,17 @@ export function logSqlExecutions(db: Database, log: SqlExecutionLog): void {
           statement[method] = function(this: object, ...params: unknown[]) { return log.execution(sql, () => Reflect.apply(execute, this, params)); };
         }
         const iterate = statement.iterate;
-        statement.iterate = function(this: object, ...params: unknown[]) { return log.iterate(sql, () => Reflect.apply(iterate, this, params) as IterableIterator<unknown>); };
+        statement.iterate = function(
+          this: object,
+          ...params: unknown[]
+        ) { return log.iterate(
+          sql,
+          () => Reflect.apply(
+          iterate,
+          this,
+          params
+        ) as IterableIterator<unknown>
+        ); };
         const iterator = statement[Symbol.iterator];
         statement[Symbol.iterator] = function(this: object) { return log.iterate(sql, () => Reflect.apply(iterator, this, []) as IterableIterator<unknown>); };
       }

@@ -26,7 +26,10 @@ export function exhaustedAcceptanceFailure(task: Pick<Task, "repositories" | "ac
  * this one list.
  */
 export function builderFindings<F extends Finding>(task: Pick<Task, "repositories" | "acceptanceBlocked"> & { findings: readonly F[] }, productId: Id): F[] {
-  return task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || !!finding.productIds?.includes(productId)) && !exhaustedAcceptanceFailure(task, finding));
+  return task.findings.filter((finding) => finding.status === "open" && finding.severity !== "pre-existing" && (!task.repositories || !!finding.productIds?.includes(productId)) && !exhaustedAcceptanceFailure(
+    task,
+    finding
+  ));
 }
 
 /**
@@ -36,14 +39,20 @@ export function builderFindings<F extends Finding>(task: Pick<Task, "repositorie
  * delivery check. A delivery check Petrina added never skips planned steps that have not run yet, such as the reviews a
  * task saved before repairs recorded their route still owes: that testing goes on through the rest of the plan.
  */
-export function owedAcceptanceTest(task: Pick<Task, "repair" | "retest" | "repairCheck" | "stageIndex" | "plan" | "journey" | "proofDeliveryGate">): { stage: number; final: boolean } | undefined {
+export function owedAcceptanceTest(task: Pick<Task, "repair" | "retest" | "repairCheck" | "stageIndex" | "plan" | "journey" | "proofDeliveryGate">): {
+  stage: number;
+  final: boolean
+} | undefined {
   if (task.repair?.kind === "acceptance") return { stage: task.repair.returnStage, final: task.repair.final === true };
   if (!task.retest && !task.repairCheck) return undefined;
   const stage = task.repair?.returnStage ?? task.stageIndex;
   if (!task.retest) return { stage, final: false };
   const stages = task.plan?.stages ?? [];
   const gate = stages.findIndex((entry) => entry.kind === "gate" && entry.gate === "delivery");
-  const skips = gate >= 0 && stages[gate]!.id === task.proofDeliveryGate && stages.slice(stage + 1, gate).some((entry) => !task.journey?.some((step) => step.stageId === entry.id && step.endedAt !== undefined));
+  const skips = gate >= 0 && stages[gate]!.id === task.proofDeliveryGate && stages.slice(
+    stage + 1,
+    gate
+  ).some((entry) => !task.journey?.some((step) => step.stageId === entry.id && step.endedAt !== undefined));
   return { stage, final: !skips };
 }
 
@@ -73,7 +82,8 @@ export function requiredUnverified(task: Pick<Task, "brief" | "journey" | "accep
  * verify, or that Petrina invalidated that run. Undefined when every saved requirement has a result. Requested proof keeps its own decision.
  */
 export function acceptanceGap(task: Pick<Task, "brief" | "journey" | "acceptanceUnverified">): AcceptanceGap | undefined {
-  const items = unverifiedRequirements(task), restored = restoredAcceptance(task);
+  const items = unverifiedRequirements(task);
+  const restored = restoredAcceptance(task);
   if (!items.length && !restored) return undefined;
   const run = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && step.acceptanceChecks !== undefined);
   const reportIndex = run?.agentResults?.findLastIndex((report) => report.roleId === run.roleId) ?? -1;
@@ -82,7 +92,12 @@ export function acceptanceGap(task: Pick<Task, "brief" | "journey" | "acceptance
     ...(reportIndex >= 0 ? { reportIndex } : {}),
     items: items.map((item) => {
       const evidence = run?.acceptanceChecks?.find((check) => check.text === item.text)?.evidence;
-      return { text: item.text, ...(item.reason ? { reason: item.reason } : {}), ...(evidence ? { evidence } : {}), ...(item.productIds ? { productIds: [...item.productIds] } : {}) };
+      return {
+        text: item.text,
+        ...(item.reason ? { reason: item.reason } : {}),
+        ...(evidence ? { evidence } : {}),
+        ...(item.productIds ? { productIds: [...item.productIds] } : {})
+      };
     }),
     ...(restored ? { restored: true as const } : {}),
   };
@@ -90,7 +105,10 @@ export function acceptanceGap(task: Pick<Task, "brief" | "journey" | "acceptance
 
 /** A decision covers a gap only when it was about that same run and the same unverified items. */
 export function sameAcceptanceGap(decided: AcceptanceGap | undefined, gap: AcceptanceGap): boolean {
-  return !!decided && decided.stepId === gap.stepId && !!decided.restored === !!gap.restored && decided.items.length === gap.items.length && decided.items.every((item, index) => item.text === gap.items[index]!.text);
+  return !!decided && decided.stepId === gap.stepId && !!decided.restored === !!gap.restored && decided.items.length === gap.items.length && decided.items.every((
+    item,
+    index
+  ) => item.text === gap.items[index]!.text);
 }
 
 /** A required acceptance gap without the coordinator's explicit decision about it: nothing is published while it lasts. */
@@ -141,7 +159,14 @@ export function acceptanceSummary(task: Task, roleFor: (id?: string) => Role | u
     }));
     return { text: item.text, check, current };
   });
-  return { items, current: items.length > 0 && items.every((item) => item.current), partlyCurrent: items.some((item) => item.current) && items.some((item) => !item.current), started: testers.length > 0, notStarted: task.journey !== undefined && testers.length === 0, running };
+  return {
+    items,
+    current: items.length > 0 && items.every((item) => item.current),
+    partlyCurrent: items.some((item) => item.current) && items.some((item) => !item.current),
+    started: testers.length > 0,
+    notStarted: task.journey !== undefined && testers.length === 0,
+    running
+  };
 }
 
 export function acceptanceResultWords(check: JourneyAcceptanceCheck | undefined): string {

@@ -63,7 +63,16 @@ export interface JourneyStep {
     findings?: readonly Finding[];
     findingsSettled?: true;
     /** Recorded transitions; a settled reviewers' step covers the whole examination across retries. */
-    findingChanges?: { raised: readonly Id[]; fixed: readonly Id[]; dismissed: readonly Id[]; reopened?: readonly { id: Id; evidence: boolean }[]; claimedFixed?: readonly Id[] };
+    findingChanges?: {
+      raised: readonly Id[];
+      fixed: readonly Id[];
+      dismissed: readonly Id[];
+      reopened?: readonly {
+      id: Id;
+      evidence: boolean
+    }[];
+      claimedFixed?: readonly Id[]
+    };
   };
   /** Whether the builder continued its saved conversation or began a fresh one for this step. */
   builderConversation?: "resumed" | "new";
@@ -91,7 +100,17 @@ export interface JourneyStep {
   /** The role-specific context given to each agent in this step. Older saved steps have no snapshot. */
   agentInputs?: readonly JourneyAgentInput[];
   /** The original accepted response, plus any pictures saved with that response. `findings`: the finding records exactly as this seat's result left them; later peers and rounds never rewrite them. */
-  agentResults?: readonly { roleId: Id; profileId: Id; at: number; value: unknown; inputIndex?: number; images?: readonly ReportImage[]; productId?: Id; versions?: Readonly<Record<Id, string>>; findings?: readonly Finding[] }[];
+  agentResults?: readonly {
+    roleId: Id;
+    profileId: Id;
+    at: number;
+    value: unknown;
+    inputIndex?: number;
+    images?: readonly ReportImage[];
+    productId?: Id;
+    versions?: Readonly<Record<Id, string>>;
+    findings?: readonly Finding[]
+  }[];
   /** Later steps that reused this step's run instead of running the checks again, with the basis for each reuse. */
   reuses?: readonly JourneyCheckReuse[];
   /** The product checks Petrina ran during this checks step. */
@@ -277,7 +296,20 @@ export interface JourneyAgentInput {
   /** The bound repository and its recorded versions at this handoff; absent on older records. */
   productId?: Id;
   stepAttempts?: number;
-  versions?: { base?: string; reviewed?: string; reviewedTree?: string; checks?: { at: number; sha?: string; tree?: string; definition?: string; passed: boolean; count: number; node?: Id } };
+  versions?: {
+    base?: string;
+    reviewed?: string;
+    reviewedTree?: string;
+    checks?: {
+    at: number;
+    sha?: string;
+    tree?: string;
+    definition?: string;
+    passed: boolean;
+    count: number;
+    node?: Id
+  }
+  };
   reviewInput?: NonNullable<Hunt["input"]>;
   at?: number;
   roleId: Id;

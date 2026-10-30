@@ -32,9 +32,19 @@ export class MaintenanceSettings {
     } else maintenance.pendingResult = { stageId, value: result };
     maintenance.settingsDecision = { requested, actual, at: this.host.now() };
     this.host.pauseStep(task);
-    task.state = "needs-you"; task.holdsSlot = false; delete task.agent;
+    task.state = "needs-you";
+    task.holdsSlot = false;
+    delete task.agent;
     task.statusLine = "The tool reported different settings. Choose whether to keep or stop this run.";
-    this.host.addDecision({ id: `maintenance-settings-${task.id}`, taskId: task.id, kind: "maintenance-settings", title: "Unexpected maintenance agent settings", body: `Requested: ${requested}\nReported: ${actual}\nKeeping this run accepts the work as produced. Delivery still needs its usual checks and approval. The routine keeps its saved profile.`, at: this.host.now(), blocking: true });
+    this.host.addDecision({
+      id: `maintenance-settings-${task.id}`,
+      taskId: task.id,
+      kind: "maintenance-settings",
+      title: "Unexpected maintenance agent settings",
+      body: `Requested: ${requested}\nReported: ${actual}\nKeeping this run accepts the work as produced. Delivery still needs its usual checks and approval. The routine keeps its saved profile.`,
+      at: this.host.now(),
+      blocking: true
+    });
     this.host.checkpoint(task);
     throw this.host.aborted();
   }
@@ -45,10 +55,18 @@ export function resolveMaintenanceSettings(host: MaintenanceDecisionHost, task: 
   const decision = task?.maintenance?.settingsDecision;
   if (!task || !decision || decision.choice) return;
   decision.choice = choice;
-  host.note(task, choice === "keep" ? `You kept this maintenance turn with its reported settings: ${decision.actual}. Future turns still request ${decision.requested}.` : "You stopped this maintenance run after its tool reported different settings");
+  host.note(
+    task,
+    choice === "keep" ? `You kept this maintenance turn with its reported settings: ${decision.actual}. Future turns still request ${decision.requested}.` : "You stopped this maintenance run after its tool reported different settings"
+  );
   host.removeDecision(task.id);
-  if (choice === "stop") { host.cancel(task.id); host.checkpoint(task); return; }
+  if (choice === "stop") {
+    host.cancel(task.id);
+    host.checkpoint(task);
+    return;
+  }
   task.state = "waiting";
   task.statusLine = "Continuing with the reported settings you accepted";
-  host.checkpoint(task); host.schedule();
+  host.checkpoint(task);
+  host.schedule();
 }

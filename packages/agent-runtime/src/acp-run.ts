@@ -4,19 +4,25 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { processHost } from "@petrina/platform/process-host";
-import { ReopenFailed, type AgentSession, type AgentSessionOptions, type AgentInputReceipt, type SessionSettings, type TurnNotes, type TurnResult } from "@petrina/orchestrator";
+import {
+  ReopenFailed,
+  type AgentSession,
+  type AgentSessionOptions,
+  type AgentInputReceipt,
+  type SessionSettings,
+  type TurnNotes,
+  type TurnResult
+} from "@petrina/orchestrator";
 import * as acp from "@agentclientprotocol/sdk";
-import { inFamily, type ProfileChoices, type AgentProfile } from "@petrina/core";
+import type { ProfileChoices, AgentProfile } from "@petrina/core";
 import type { ClaudeSandbox } from "./sandbox.js";
 import { SandboxUnavailable, sandboxFailure } from "./sandbox-failures.js";
 import { ADAPTERS } from "./tool-catalog.js";
 import { adapterEntry } from "./tool-entry.js";
-import { AgentBrowser, cleanupNote } from "./browser.js";
-import { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
+import { AgentBrowser } from "./browser.js";
 export { AGENT_CLEANUP_NOTE } from "./browser-cleanup.js";
-import { CLEANUP_INCOMPLETE, readProcessList, readProcessGroups, type ProcessListRead } from "@petrina/platform/process-tree";
-import { stopAgentPrograms, type StopDiagnostic } from "@petrina/platform/agent-stop";
-import { limitFromFailure, limitFromReport, ModelAtCapacity, type UsageLimited } from "./usage.js";
+import { CLEANUP_INCOMPLETE } from "@petrina/platform/process-tree";
+import type { ModelAtCapacity, UsageLimited } from "./usage.js";
 import { AgentMessages } from "./agent-messages.js";
 import { messageClock } from "./message-clock.js";
 import type { AccountReading } from "./tool-adapter.js";
@@ -37,39 +43,16 @@ import {
   type RunCallbacks,
   type RunState,
 } from "./acp-protocol.js";
+import {
+  acpCapacityOf,
+  acpLimitOf,
+  acpRejectedUsage,
+  isChildRunning,
+  readAcpAccountUsage,
+  stopAll,
+} from "./acp-turn-limits.js";
 
-export { reportOf, reroutedTo, settingsOf, type RunCallbacks };
-
-const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
-
-/**
- * Stop the tool and every program it started (a build, a test run, a server), which could otherwise keep
- * writing in the working copy after the tool is gone. Pause known owners before collecting their
- * descendants: an owner running during a delayed snapshot could fork a detached worker it misses.
- * Resolves when they have all exited; forced after a few seconds. When that cannot be confirmed, `note` gets
- * one private line saying why: which process lists could not be read, and what stayed present.
- */
-export async function stopAll(child: ChildProcess, graceMs: number, collectPrograms: boolean, note?: (line: string) => void, read: ProcessListRead = readProcessGroups): Promise<boolean> {
-  if (child.pid === undefined) return true;
-  if (processHost.stopTree) {
-    if (!running(child)) return true;
-    return processHost.stopTree(child.pid, 3000);
-  }
-  return stopAgentPrograms({ pid: child.pid, running: () => running(child) }, graceMs, collectPrograms, {
-    now: () => Date.now(), sleep: ms => Bun.sleep(ms), selfPid: process.pid,
-    alive(target) {
-      try { process.kill(target, 0); return true; }
-      catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-    },
-    possiblyPresent(target) {
-      try { process.kill(target, 0); return true; }
-      catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
-    },
-    signal: (target, signal) => { process.kill(target, signal); },
-    readParents: timeout => readProcessList(timeout), readGroups: timeout => read(timeout),
-    ...(note ? { incomplete: (facts: StopDiagnostic) => note(cleanupNote(AGENT_CLEANUP_NOTE, [["stage", facts.stage], ["elapsed", `${facts.elapsedMs}ms`], ["lists", facts.lists.join(",") || "none"]], facts.processes)) } : {}),
-  });
-}
+export { reportOf, reroutedTo, settingsOf, stopAll, type RunCallbacks };
 
 export class AgentRun implements AgentSession {
   private notes: TurnNotes | undefined;
@@ -90,7 +73,7 @@ export class AgentRun implements AgentSession {
     const gone = new Promise<never>((_, reject) => {
       onExit = () => reject(new Error("The tool stopped before confirming live input"));
       this.child.once("exit", onExit);
-      if (!running(this.child)) onExit();
+      if (!isChildRunning(this.child)) onExit();
     });
     try {
       const response = await Promise.race([
@@ -102,7 +85,10 @@ export class AgentRun implements AgentSession {
     } catch (error) {
       const code = (error as { code?: number } | null)?.code;
       return code !== undefined && [-32600, -32601, -32602].includes(code) ? "rejected" : "unknown";
-    } finally { clearTimeout(timer); this.child.removeListener("exit", onExit); }
+    } finally {
+      clearTimeout(timer);
+      this.child.removeListener("exit", onExit);
+    }
   }
 
   /** Read native configuration without sending work to a model. Set when the session opens. */
@@ -180,12 +166,17 @@ export class AgentRun implements AgentSession {
     let stopping: Promise<boolean> | undefined;
     let cleanupNoticeSent = false;
     let disposableSession: string | undefined;
-    let confirmedGone!: () => void, unconfirmedGone!: (error: unknown) => void;
-    const processGone = new Promise<void>((resolve, reject) => { confirmedGone = resolve; unconfirmedGone = reject; });
+    let confirmedGone!: () => void;
+    let unconfirmedGone!: (error: unknown) => void;
+    const processGone = new Promise<void>((resolve, reject) => {
+      confirmedGone = resolve;
+      unconfirmedGone = reject;
+    });
     void processGone.catch(() => undefined);
     const stop = (graceMs = FORCE_AFTER_MS) => (stopping ??= Promise.all([
       // A cleanup that cannot be confirmed leaves its reason in the task's log, as the browser's does.
-      stopAll(child, graceMs, !options.probe, (line) => { if (callbacks.onLog) callbacks.onLog(`\n${line}\n`); else console.error(line); }),
+      stopAll(child, graceMs, !options.probe, (line) => { if (callbacks.onLog) callbacks.onLog(`\n${line}\n`);
+      else console.error(line); }),
       browserReady.then((browser) => browser?.close()).then(() => true, () => false),
     ]).then(async (results) => {
       signal.removeEventListener("abort", abort);
@@ -205,7 +196,10 @@ export class AgentRun implements AgentSession {
       if (complete) confirmedGone();
       else unconfirmedGone(new Error(CLEANUP_INCOMPLETE));
       return complete;
-    }, error => { unconfirmedGone(error); throw error; }));
+    }, error => {
+      unconfirmedGone(error);
+      throw error;
+    }));
     const finishAfterExit = () => { void stop().catch(() => undefined); };
     child.once("exit", finishAfterExit);
     child.once("error", finishAfterExit);
@@ -218,11 +212,23 @@ export class AgentRun implements AgentSession {
       signal.addEventListener("abort", openingAborted, { once: true });
     });
     stopped.catch(() => undefined);
-    if (signal.aborted) { abort(); openingAborted(); }
+    if (signal.aborted) {
+      abort();
+      openingAborted();
+    }
 
     // A reopened conversation stays quiet until Petrina's first message: what load replays is history,
     // already in the session view and timeline.
-    const state: RunState = { text: "", messages: new AgentMessages(messageClock, callbacks.onMessage), lastActivity: "", quiet: options.reopen !== undefined, settings: {} };
+    const state: RunState = {
+      text: "",
+      messages: new AgentMessages(
+      messageClock,
+      callbacks.onMessage
+    ),
+      lastActivity: "",
+      quiet: options.reopen !== undefined,
+      settings: {}
+    };
     // The session's options as the tool last sent them, while the model, effort and mode are set.
     let sessionOptions: ConfigOption[] = [];
     const optionIds = { model: adapter.options.model, effort: adapter.options.effort };
@@ -253,7 +259,18 @@ export class AgentRun implements AgentSession {
       if (signal.aborted) throw new Error("Stopped before the agent started");
       // Notices let Codex announce a reroute as a typed update instead of text in the reply.
       const [init, browser] = await Promise.all([
-        connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} }, ...(adapter.clientMeta ? { _meta: adapter.clientMeta } : {}) } }),
+        connection.initialize({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {
+          fs: {
+          readTextFile: false,
+          writeTextFile: false
+        },
+          terminal: false,
+          session: { notices: {} },
+          ...(adapter.clientMeta ? { _meta: adapter.clientMeta } : {})
+        }
+        }),
         browserReady,
       ]);
       const sessionId = options.reopen;
@@ -266,7 +283,10 @@ export class AgentRun implements AgentSession {
       if (options.authenticate) await connection.authenticate({ methodId: options.authenticate });
       // Keep the tool's session mode (Grok's auto mode) and add sandbox settings only for Claude Code.
       // The same metadata goes to new, resumed and loaded conversations.
-      const baseMeta: Record<string, unknown> = { ...adapter.sessionMeta, ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {}) };
+      const baseMeta: Record<string, unknown> = {
+        ...adapter.sessionMeta,
+        ...(options.sandbox && adapter.sandboxMeta ? adapter.sandboxMeta(options.sandbox) : {})
+      };
       const sessionMeta = adapter.prepareSessionMeta ? await adapter.prepareSessionMeta(baseMeta, { cwd, browser: !!browser }) : baseMeta;
       const meta = Object.keys(sessionMeta).length ? { _meta: sessionMeta } : {};
       const mcpServers = browser ? [browser.mcp] : [];
@@ -279,7 +299,13 @@ export class AgentRun implements AgentSession {
       if (!how) throw new ReopenFailed(`${adapter.name} cannot reopen conversations`);
       const limit = options.reopenTimeoutMs ?? REOPEN_TIMEOUT_MS;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(limit)}`)), limit)));
+      const late = new Promise<never>((
+        _,
+        reject
+      ) => (timer = setTimeout(
+        () => reject(new ReopenFailed(`${adapter.name} did not reopen the conversation within ${duration(limit)}`)),
+        limit
+      )));
       const params = { sessionId, cwd, mcpServers, ...meta };
       try {
         const opened = await Promise.race([how === "resume" ? connection.resumeSession(params) : connection.loadSession(params), late]);
@@ -415,9 +441,17 @@ export class AgentRun implements AgentSession {
     this.state.activeToolCall = undefined;
     this.state.tools?.startTurn();
     this.notes = undefined;
-    const notes = (): TurnNotes => ({ changed: { ...turn.changed }, rerouted: turn.rerouted, helpers: turn.helpers.size, ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {}) });
+    const notes = (): TurnNotes => ({
+      changed: { ...turn.changed },
+      rerouted: turn.rerouted,
+      helpers: turn.helpers.size,
+      ...(turn.modelSeen ? { modelSeen: turn.modelSeen } : {})
+    });
     let toolsEnded = false;
-    const endTools = () => { if (!toolsEnded) { toolsEnded = true; this.state.tools?.endTurn(); } };
+    const endTools = () => { if (!toolsEnded) {
+      toolsEnded = true;
+      this.state.tools?.endTurn();
+    } };
     let onExit!: (code: number | null) => void;
     const exited = new Promise<never>((_, reject) => {
       onExit = code => reject(new Error(`The agent stopped (exit ${code ?? "signal"})`));
@@ -425,7 +459,10 @@ export class AgentRun implements AgentSession {
     });
     exited.catch(() => undefined);
     try {
-      if (ADAPTERS[this.profile.toolId]?.accountUsage) { const out = this.rejected(); if (out) throw out; }
+      if (ADAPTERS[this.profile.toolId]?.accountUsage) {
+        const out = this.rejected();
+        if (out) throw out;
+      }
       const pending = this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text }] });
       this.onPromptStarted?.();
       const response = await Promise.race([pending, exited]).catch(async (error: unknown) => {
@@ -448,7 +485,13 @@ export class AgentRun implements AgentSession {
       if (full) throw full;
       const failure = response.stopReason !== "cancelled" ? ADAPTERS[this.profile.toolId]?.interruptions?.failure?.(response) : undefined;
       if (failure) throw this.limitOf(failure, true) ?? failure;
-      return { stopReason: response.stopReason, text: this.state.text, ...(this.state.messages.streamed ? { streamed: true } : {}), ...(report ? { report } : {}), ...notes() };
+      return {
+        stopReason: response.stopReason,
+        text: this.state.text,
+        ...(this.state.messages.streamed ? { streamed: true } : {}),
+        ...(report ? { report } : {}),
+        ...notes()
+      };
     } finally {
       this.child.removeListener("exit", onExit);
       endTools();
@@ -468,42 +511,18 @@ export class AgentRun implements AgentSession {
 
   /** The adapter's native account command: no AI call or task message. */
   async readAccountUsage(): Promise<AccountReading | undefined> {
-    if (!running(this.child)) { this.accountBefore = undefined; return undefined; }
-    const adapter = ADAPTERS[this.profile.toolId];
-    const accounting = adapter?.accountUsage;
-    if (!accounting) return undefined;
-    this.state.accountText = "";
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
-    let onExit!: () => void;
-    const exited = new Promise<never>((_, reject) => {
-      onExit = () => reject(new Error(`${adapter!.name} stopped before reporting usage`));
-      this.child.once("exit", onExit);
+    return readAcpAccountUsage({
+      child: this.child,
+      connection: this.connection,
+      sessionId: this.sessionId,
+      profile: this.profile,
+      state: this.state,
+      callbacks: this.callbacks,
+      onStop: () => this.stop(),
+      setAccountBefore: (reading) => {
+        this.accountBefore = reading;
+      },
     });
-    try {
-      const response = await Promise.race([
-        this.connection.prompt({ sessionId: this.sessionId, prompt: [{ type: "text", text: accounting.command }] }),
-        exited,
-        new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error(`${adapter!.name} did not report usage in time`)); }, 20_000); }),
-      ]);
-      if (response.stopReason !== "end_turn") throw new Error(`${adapter!.name} did not finish reporting account usage`);
-      const reading = accounting.parse(this.state.accountText);
-      if (this.callbacks?.onAccountUsage) this.callbacks.onAccountUsage(reading.reports);
-      else for (const info of reading.reports) this.callbacks?.onUsage?.(info);
-      this.accountBefore = reading;
-      // The caller compares its saved baseline with this snapshot.
-      return reading;
-    } catch (error) {
-      this.accountBefore = undefined;
-      this.callbacks?.onLog?.(error instanceof Error ? error.message : `Could not read ${adapter!.name} usage`);
-      // Do not leave an unanswered command racing a later turn.
-      if (timedOut) await this.stop();
-      return undefined;
-    } finally {
-      this.child.removeListener("exit", onExit);
-      clearTimeout(timer);
-      delete this.state.accountText;
-    }
   }
 
   /**
@@ -512,37 +531,17 @@ export class AgentRun implements AgentSession {
    * only this ending counts. An account limit the tool reported during the turn keeps its own path.
    */
   private capacityOf(source: unknown): ModelAtCapacity | undefined {
-    const read = ADAPTERS[this.profile.toolId]?.interruptions?.capacity;
-    if (!read || this.rejected()) return undefined;
-    const found = read(source, this.state.text);
-    if (!found) return undefined;
-    const out = new ModelAtCapacity(this.profile.toolId, this.profile.modelId ?? this.profile.model, this.profile.id, this.sessionId);
-    if (found.retryAfterMs !== undefined) out.retryAfterMs = found.retryAfterMs;
-    if (this.state.text) out.said = this.state.text;
-    if (this.state.messages.streamed) out.streamed = true;
-    return out;
+    return acpCapacityOf(this.profile, this.sessionId, this.state, this.accountBefore, source);
   }
 
   /** The usage limit a failed turn ran into, when that is why it failed. */
   private limitOf(error: unknown, explicitOnly = false): UsageLimited | undefined {
-    const failure = limitFromFailure(this.profile, error, this.state.text, Date.now());
-    // A typed terminal connection, sign-in or context failure keeps its own cause;
-    // an earlier account report cannot relabel it as a quota refusal.
-    if (explicitOnly && !failure) return undefined;
-    // A generic rate/quota refusal inherits the live window's scope and reset. Billing and
-    // account holds remain independent even when another subscription window is exhausted.
-    const limited = failure?.independent ? failure : this.rejected(failure ? "refusal" : "report") ?? failure;
-    if (limited) {
-      limited.said ??= this.state.text;
-      if (this.state.messages.streamed) limited.streamed = true;
-    }
-    return limited;
+    return acpLimitOf(this.profile, this.state, this.accountBefore, error, explicitOnly);
   }
 
   /** Claude Code said, during this turn, that it is out. */
   private rejected(source: "report" | "refusal" = "report"): UsageLimited | undefined {
-    const info = this.state.latest ?? this.accountBefore?.reports.find(report => report.status === "rejected" && (report.resetsAt ?? 0) > Date.now() && (!report.model || inFamily(this.profile, report.model)));
-    return info?.status === "rejected" && !info.overage && (!info.model || inFamily(this.profile, info.model)) && (info.resetsAt === undefined || info.resetsAt > Date.now()) ? Object.assign(limitFromReport(this.profile, info, Date.now(), source), { said: this.state.text }) : undefined;
+    return acpRejectedUsage(this.profile, this.state, this.accountBefore, source);
   }
 
   /** Stop the current turn (the interrupt button). */

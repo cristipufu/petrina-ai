@@ -22,7 +22,10 @@ export function removeDir(path: string): void {
 const progressClock: ProgressClock = {
   now: () => Date.now(),
   slow: currentSlow,
-  arm(expired, ms) { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); },
+  arm(expired, ms) {
+    const timer = setTimeout(expired, ms);
+    return () => clearTimeout(timer);
+  },
   sleep: ms => Bun.sleep(ms),
 };
 

@@ -9,7 +9,10 @@ export class CheckDelivery<Preparation = () => Promise<boolean | void>> {
   async beforeDelivery(scope: RepositoryContext, signal: AbortSignal, prepare?: Preparation): Promise<"passed" | "returned" | "exhausted" | "blocked"> {
     let result: CheckVerification;
     try { result = await this.effects.failing(scope, signal, "delivery-check", prepare); }
-    catch (error) { if (this.effects.preparationChanged(error)) return "returned"; throw error; }
+    catch (error) {
+      if (this.effects.preparationChanged(error)) return "returned";
+      throw error;
+    }
     if (result.kind === "passed") return "passed";
     if (result.kind === "blocked") return "blocked";
     return this.effects.backToBuilder(scope, "right before your delivery check", new Set([result.productId])) ? "returned" : "exhausted";
@@ -20,12 +23,18 @@ export class CheckDelivery<Preparation = () => Promise<boolean | void>> {
     const { task, work: repository } = scope;
     let result: CheckVerification;
     try { result = await this.effects.failing(scope, signal, "publishing", prepare); }
-    catch (error) { if (this.effects.preparationChanged(error)) return "returned"; throw error; }
+    catch (error) {
+      if (this.effects.preparationChanged(error)) return "returned";
+      throw error;
+    }
     if (result.kind === "passed") return "passed";
     if (result.kind === "product-failed" && this.effects.backToBuilder(scope, "on what was about to ship", new Set([result.productId]))) return "returned";
     const check = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.gate === "delivery");
     withdrawApproval(repository);
-    if (check >= 0) { task.stageIndex = check; task.sub = 0; }
+    if (check >= 0) {
+      task.stageIndex = check;
+      task.sub = 0;
+    }
     this.effects.blocked(task);
     return "blocked";
   }
@@ -33,5 +42,7 @@ export class CheckDelivery<Preparation = () => Promise<boolean | void>> {
 }
 
 function withdrawApproval(work: { approvedSha?: string; approvedPatch?: string; approvedFor?: unknown }): void {
-  delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
+  delete work.approvedSha;
+  delete work.approvedPatch;
+  delete work.approvedFor;
 }

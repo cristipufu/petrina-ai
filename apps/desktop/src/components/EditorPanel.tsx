@@ -7,16 +7,37 @@ export function EditorPanel({ title, dialogLabel, caption, description, icon, ch
   id?: string; title: string; dialogLabel?: string; caption?: string; description?: ReactNode; icon?: ReactNode; children: ReactNode; footer: ReactNode;
   onClose: () => void; busy?: boolean; closeLabel?: string; className?: string; bodyClassName?: string; onKeyDown?: KeyboardEventHandler<HTMLElement>;
 }) {
-  const panel = useRef<HTMLElement>(null), id = useId();
+  const panel = useRef<HTMLElement>(null);
+  const id = useId();
   const close = () => { if (!busy) onClose(); };
   useFocusTrap(panel, close);
   return <>
     <div className="scrim editor-scrim" onClick={close} />
-    <section id={panelId} ref={panel} className={`sheet panel editor-panel ${className}`} role="dialog" aria-modal="true" aria-labelledby={id} aria-label={dialogLabel ?? title} aria-busy={busy || undefined} tabIndex={-1} onKeyDown={onKeyDown}>
+    <section
+      id={panelId}
+      ref={panel}
+      className={`sheet panel editor-panel ${className}`}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={id}
+      aria-label={dialogLabel ?? title}
+      aria-busy={busy || undefined}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+    >
       <header className="editor-header">
         {icon && <span className="editor-icon" aria-hidden="true">{icon}</span>}
         <div className="editor-heading">{caption && <p className="editor-caption">{caption}</p>}<h1 id={id}>{title}</h1>{description && <div className="editor-description">{description}</div>}</div>
-        <button className="btn quiet small icon" aria-label={closeLabel} title="Close (Esc)" disabled={busy} onClick={close}><X size={18} aria-hidden="true" /></button>
+        <button
+          className="btn quiet small icon"
+          aria-label={closeLabel}
+          title="Close (Esc)"
+          disabled={busy}
+          onClick={close}
+        ><X
+          size={18}
+          aria-hidden="true"
+        /></button>
       </header>
       <div className={`editor-body ${bodyClassName}`}><fieldset className="editor-fields" disabled={busy}>{children}</fieldset></div>
       <footer className="editor-footer">{footer}</footer>
@@ -27,5 +48,8 @@ export function EditorPanel({ title, dialogLabel, caption, description, icon, ch
 /** Related fields use the same heading, help text, spacing and divider in every editor. */
 export function FormSection({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   const id = useId();
-  return <section className="form-section" aria-labelledby={id}><header className="form-section-heading"><h2 id={id}>{title}</h2>{description && <p>{description}</p>}</header><div className="form-section-fields">{children}</div></section>;
+  return <section
+    className="form-section"
+    aria-labelledby={id}
+  ><header className="form-section-heading"><h2 id={id}>{title}</h2>{description && <p>{description}</p>}</header><div className="form-section-fields">{children}</div></section>;
 }

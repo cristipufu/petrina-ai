@@ -12,7 +12,10 @@ export function setSingleKeys(value: boolean): void {
   listeners.forEach((listener) => listener());
 }
 export function useSingleKeys(): boolean {
-  return useSyncExternalStore((listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => enabled);
+  return useSyncExternalStore((listener) => {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  }, () => enabled);
 }
 
 export const mac = /Mac|iPhone|iPad/.test(navigator.platform);

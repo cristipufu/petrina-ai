@@ -1,6 +1,30 @@
-import { canEditTaskDependencies, blocksDependents, sourceLabel, taskProductIds, mainLine, TAKE_OVER_WORDS, screenWait, type State, type Task } from "@petrina/core";
+import {
+  canEditTaskDependencies,
+  blocksDependents,
+  sourceLabel,
+  taskProductIds,
+  mainLine,
+  TAKE_OVER_WORDS,
+  screenWait,
+  type State,
+  type Task
+} from "@petrina/core";
 import { useCallback, useRef, useState, type DragEvent } from "react";
-import { ArrowUpToLine, Ban, Clock3, Ellipsis, GripVertical, Hand, MessageSquare, Monitor, Pause, PanelRightOpen, Play, SquareTerminal, Undo2 } from "lucide-react";
+import {
+  ArrowUpToLine,
+  Ban,
+  Clock3,
+  Ellipsis,
+  GripVertical,
+  Hand,
+  MessageSquare,
+  Monitor,
+  Pause,
+  PanelRightOpen,
+  Play,
+  SquareTerminal,
+  Undo2
+} from "lucide-react";
 import { sim } from "../engine";
 import { deliveryText, duration, stateLabel, type Lookup } from "../lib";
 import { Pipeline, ProductName, ProfileText, RoleAvatar, useDismiss } from "./bits";
@@ -76,11 +100,34 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
   };
 
   return (
-    <article className={classes.join(" ")} draggable={queued} onDragStart={(event) => onDragStart?.(event, task.id)} onDragEnd={onDragEnd} aria-label={`${task.title}, ${task.held ? "On hold" : stateLabel(task, state)}`} data-task-id={task.id} tabIndex={-1} onFocus={onFocus} onMouseDown={onFocus}>
+    <article
+      className={classes.join(" ")}
+      draggable={queued}
+      onDragStart={(event) => onDragStart?.(event, task.id)}
+      onDragEnd={onDragEnd}
+      aria-label={`${task.title}, ${task.held ? "On hold" : stateLabel(
+      task,
+      state
+    )}`}
+      data-task-id={task.id}
+      tabIndex={-1}
+      onFocus={onFocus}
+      onMouseDown={onFocus}
+    >
       <div className="card-meta">
         <span className="where">
           {queued && <GripVertical size={14} className="grip" aria-hidden="true" />}
-          {taskProductIds(task).length > 1 ? <span>{taskProductIds(task).slice(0, 2).map((id) => find.product(id)?.name ?? task.repositories?.find((work) => work.productId === id)?.source?.product.name ?? id).join(" · ")}{taskProductIds(task).length > 2 && <button className="linkish" aria-label={`Show all ${taskProductIds(task).length} products`} onClick={() => onOpen(task.id, "plan")}> +{taskProductIds(task).length - 2} products</button>}</span> : <ProductName product={find.product(task.productId)} />}
+          {taskProductIds(task).length > 1 ? <span>{taskProductIds(task).slice(
+            0,
+            2
+          ).map((id) => find.product(id)?.name ?? task.repositories?.find((work) => work.productId === id)?.source?.product.name ?? id).join(" · ")}{taskProductIds(task).length > 2 && <button
+            className="linkish"
+            aria-label={`Show all ${taskProductIds(task).length} products`}
+            onClick={() => onOpen(
+            task.id,
+            "plan"
+          )}
+          > +{taskProductIds(task).length - 2} products</button>}</span> : <ProductName product={find.product(task.productId)} />}
           {!task.repositories && task.source && <span className="source-label">{sourceLabel(task.source)}</span>}
           {queued && queuePosition !== undefined && <span className="num">#{queuePosition + 1} in queue</span>}
           {startsNext && <span className="next-up">Starts next</span>}
@@ -149,7 +196,11 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
         </div>
 
         <div className="card-actions">
-          {task.state === "backlog" && <button aria-label="Review request" title="Review request" onClick={() => onOpen(task.id)}><PanelRightOpen size={16} /></button>}
+          {task.state === "backlog" && <button
+            aria-label="Review request"
+            title="Review request"
+            onClick={() => onOpen(task.id)}
+          ><PanelRightOpen size={16} /></button>}
           {queued && queuePosition !== undefined && queuePosition > 0 && (
             <button aria-label="Move to top" title="Move to top" onClick={() => sim.moveToTop(task.id)}>
               <ArrowUpToLine size={16} />
@@ -164,7 +215,12 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
             </button>
           )}
           {canPause && (
-            <button aria-label={driving ? `Pause. ${TAKE_OVER_WORDS.handBackFirst}` : "Pause"} title={driving ? TAKE_OVER_WORDS.handBackFirst : "Pause"} disabled={driving} onClick={() => sim.pause(task.id)}>
+            <button
+              aria-label={driving ? `Pause. ${TAKE_OVER_WORDS.handBackFirst}` : "Pause"}
+              title={driving ? TAKE_OVER_WORDS.handBackFirst : "Pause"}
+              disabled={driving}
+              onClick={() => sim.pause(task.id)}
+            >
               <Pause size={16} />
             </button>
           )}
@@ -183,7 +239,10 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
                   <PanelRightOpen size={16} />
                   Open details
                 </button>
-                {canEditTaskDependencies(task) && onDependencies && <button role="menuitem" onClick={act(() => onDependencies(task))}>Start after other tasks…</button>}
+                {canEditTaskDependencies(task) && onDependencies && <button
+                  role="menuitem"
+                  onClick={act(() => onDependencies(task))}
+                >Start after other tasks…</button>}
                 {task.agent && (
                   <button role="menuitem" onClick={act(() => onOpen(task.id, "session"))}>
                     <SquareTerminal size={16} />
@@ -197,7 +256,13 @@ export function TaskCard({ task, state, find, selected, queuePosition, hasDraft,
                   </button>
                 )}
                 {!finished && (
-                  <button role="menuitem" className="danger" disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>
+                  <button
+                    role="menuitem"
+                    className="danger"
+                    disabled={driving}
+                    title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined}
+                    onClick={act(() => sim.cancel(task.id))}
+                  >
                     <Ban size={16} />
                     {driving ? `Cancel task (${TAKE_OVER_WORDS.handBackFirst.toLowerCase()})` : "Cancel task"}
                   </button>

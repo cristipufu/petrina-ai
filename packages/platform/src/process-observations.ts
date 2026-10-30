@@ -44,7 +44,10 @@ export class ProcessObservations {
     };
     if (!shared.current) return start();
     if (shared.current.startedAt >= since) return shared.current.result;
-    shared.next ??= shared.current.result.then(() => { shared.next = undefined; return shared.current?.result ?? start(); });
+    shared.next ??= shared.current.result.then(() => {
+      shared.next = undefined;
+      return shared.current?.result ?? start();
+    });
     return shared.next;
   }
 }

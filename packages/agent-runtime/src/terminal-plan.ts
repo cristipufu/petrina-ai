@@ -77,10 +77,36 @@ export function detectTerminals(probe: Probe): FoundTerminal[] {
     const found: FoundTerminal[] = [];
     for (const app of MAC_APPS) {
       // macOS paths, joined the same way whichever system works them out.
-      const path = ["/System/Applications/Utilities", "/Applications/Utilities", "/Applications", posix.join(probe.home, "Applications")].map((dir) => posix.join(dir, app.bundle)).find((candidate) => probe.exists(candidate));
+      const path = [
+        "/System/Applications/Utilities",
+        "/Applications/Utilities",
+        "/Applications",
+        posix.join(
+        probe.home,
+        "Applications"
+      )
+      ].map((dir) => posix.join(
+        dir,
+        app.bundle
+      )).find((candidate) => probe.exists(candidate));
       if (!path) continue;
       const args = app.args;
-      found.push({ id: app.id, name: app.name, open: args ? (launcher) => ["open", "-na", path, "--args", ...args(launcher)] : (launcher) => ["open", "-a", path, launcher] });
+      found.push({
+        id: app.id,
+        name: app.name,
+        open: args ? (launcher) => [
+        "open",
+        "-na",
+        path,
+        "--args",
+        ...args(launcher)
+      ] : (launcher) => [
+        "open",
+        "-a",
+        path,
+        launcher
+      ]
+      });
     }
     return found;
   }

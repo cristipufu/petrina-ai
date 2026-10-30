@@ -14,6 +14,13 @@ export function powerInterruption(startedAt: number | undefined, endedAt: number
     const seconds = event.text.match(/\b(\d+) secs\b/);
     const wake = events.slice(index + 1).find((entry) => entry.kind === "Wake" || entry.kind === "DarkWake");
     const end = seconds ? event.at + Number(seconds[1]) * 1000 : wake?.at;
-    if (end !== undefined && end > event.at && event.at < endedAt && end > startedAt) return { source: "macOS power log", at: event.at, event: event.text.slice(0, 400) };
+    if (end !== undefined && end > event.at && event.at < endedAt && end > startedAt) return {
+      source: "macOS power log",
+      at: event.at,
+      event: event.text.slice(
+      0,
+      400
+    )
+    };
   }
 }

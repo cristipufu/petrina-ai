@@ -14,7 +14,8 @@ export interface BrowserCleanupClock { now(): number; pause(ms: number): Promise
 /** The first words of a failed cleanup attempt's private note: one line in the task's log, engine.log or a test's output. */
 export const CLEANUP_NOTE = "Browser cleanup incomplete:";
 export const AGENT_CLEANUP_NOTE = "Agent cleanup incomplete:";
-const NOTE_BYTES = 4096, NOTE_PROCESSES = 16;
+const NOTE_BYTES = 4096;
+const NOTE_PROCESSES = 16;
 
 /**
  * One bounded line of private evidence: fixed words, counts and process numbers, never command text, paths,
@@ -95,7 +96,28 @@ export class BrowserCleanupAttempt {
     if (!confirmed && this.folders.includes("unavailable")) reasons.push("list-unreadable");
     else if (!confirmed && !reasons.length) reasons.push("still-listed");
     if (!reasons.length) return undefined;
-    const facts: [string, string | number][] = [["stage", this.stage], ["elapsed", `${this.clock.now() - this.started}ms`], ["helper", this.helper], ["early", this.lists.early], ["tree", this.lists.tree]];
+    const facts: [string, string | number][] = [
+      [
+      "stage",
+      this.stage
+    ],
+      [
+      "elapsed",
+      `${this.clock.now() - this.started}ms`
+    ],
+      [
+      "helper",
+      this.helper
+    ],
+      [
+      "early",
+      this.lists.early
+    ],
+      [
+      "tree",
+      this.lists.tree
+    ]
+    ];
     this.folders.forEach((scan, index) => facts.push([`folder${index + 1}`, scan]));
     facts.push(["confirmed", confirmed ? "yes" : "no"], ["reasons", reasons.join(",")]);
     return new StopUnconfirmed(reasons, cleanupNote(CLEANUP_NOTE, facts, processes));

@@ -24,7 +24,10 @@ export class FileFaults {
     if (denied.has(key)) throw new Error(`The fixture already blocks ${key}`);
     denied.add(key);
     let released = false;
-    return () => { if (!released) { released = true; denied.delete(key); } };
+    return () => { if (!released) {
+      released = true;
+      denied.delete(key);
+    } };
   }
 
   private check(denied: Set<string>, path: string): void {

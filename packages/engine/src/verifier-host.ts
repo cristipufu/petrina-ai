@@ -33,5 +33,18 @@ export function createVerifierBallots(k: VerifierHost): VerifierBallots {
     profile: id => k.profile(id), profileName: id => k.named(id),
     toolName: id => k.s.tools.find(tool => tool.id === id)?.name ?? id,
     roleResult: (id, task) => k.role(id, task)?.result,
-  }, createVerifierSelection(k), { checkpoint: task => k.commitNow(task), changed: task => k.commit(task), note: (task, tone, text) => k.log(task, tone, text), now: () => Date.now() });
+  }, createVerifierSelection(k), {
+    checkpoint: task => k.commitNow(task),
+    changed: task => k.commit(task),
+    note: (
+    task,
+    tone,
+    text
+  ) => k.log(
+    task,
+    tone,
+    text
+  ),
+    now: () => Date.now()
+  });
 }

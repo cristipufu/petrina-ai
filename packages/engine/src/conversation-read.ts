@@ -16,9 +16,20 @@ const MAY_CHANGE = { open: true, ended: false, unknown: null } as const;
  */
 function participants(step: Step): { state: readonly Attempt[]; starts: (line: Line) => readonly number[] | undefined } {
   const inputs = step.agentInputs ?? [];
-  const same = (input: (typeof inputs)[number], entry: { roleId?: string; profileId?: string }) => input.roleId === entry.roleId && input.profileId === entry.profileId;
+  const same = (
+    input: (typeof inputs)[number],
+    entry: {
+    roleId?: string;
+    profileId?: string
+  }
+  ) => input.roleId === entry.roleId && input.profileId === entry.profileId;
   // A review place or vote place survives a stand-in; any other seat is its planned profile.
-  const seats = inputs.map((input) => JSON.stringify([input.roleId, input.reviewerKey ?? null, input.place ?? null, input.reviewerKey === undefined && input.place === undefined ? input.requestedProfileId ?? input.profileId : null]));
+  const seats = inputs.map((input) => JSON.stringify([
+    input.roleId,
+    input.reviewerKey ?? null,
+    input.place ?? null,
+    input.reviewerKey === undefined && input.place === undefined ? input.requestedProfileId ?? input.profileId : null
+  ]));
   const state = seats.map((seat, index): Attempt => seats.indexOf(seat, index + 1) > index ? "ended" : "open");
   for (const result of step.agentResults ?? []) {
     if (result.inputIndex !== undefined) {
@@ -42,7 +53,14 @@ function participants(step: Step): { state: readonly Attempt[]; starts: (line: L
 }
 
 /** Read recent messages first. Stable message anchors survive appends and streaming elsewhere. */
-export function readConversation(task: Task, args: { nodeId?: string; messageId?: string; limit?: number; cursor?: string; ifRevision?: string; includeActivity?: boolean }): Result {
+export function readConversation(task: Task, args: {
+  nodeId?: string;
+  messageId?: string;
+  limit?: number;
+  cursor?: string;
+  ifRevision?: string;
+  includeActivity?: boolean
+}): Result {
   const steps = new Map(task.journey?.map((step) => [step.id, step]));
   if (args.nodeId && !steps.has(args.nodeId)) return { outcome: "unavailable", message: "That node has no recorded conversation." };
   const scope = hash([task.id, args.nodeId, args.messageId, !!args.includeActivity]);
@@ -74,7 +92,15 @@ export function readConversation(task: Task, args: { nodeId?: string; messageId?
     const by = line.from === "agent" ? written(line) : undefined;
     for (const index of by?.starts ?? []) if (by!.state[index] !== "ended") latest.set(`${line.step}:${index}`, position);
   });
-  const activeMessages = [...new Set(latest.values())].sort((a, b) => a - b).map((position) => selected[position]!).map((line) => ({ id: line.id, roleId: line.roleId, profileId: line.profileId, revision: hash(line.text) }));
+  const activeMessages = [...new Set(latest.values())].sort((
+    a,
+    b
+  ) => a - b).map((position) => selected[position]!).map((line) => ({
+    id: line.id,
+    roleId: line.roleId,
+    profileId: line.profileId,
+    revision: hash(line.text)
+  }));
   const lines = args.messageId ? selected.filter((line) => line.id === args.messageId) : selected;
   if (args.messageId && !lines.length) return { outcome: "unavailable", message: "That message is not recorded in this conversation." };
   let index = lines.length - 1;
@@ -84,9 +110,15 @@ export function readConversation(task: Task, args: { nodeId?: string; messageId?
       const saved = JSON.parse(Buffer.from(args.cursor, "base64url").toString());
       index = lines.findIndex((line) => line.id === saved.id);
       const line = lines[index];
-      if (saved.scope !== scope || !line || !Number.isSafeInteger(saved.end) || saved.end < 0 || saved.end > line.text.length || hash(line.text.slice(0, saved.end)) !== saved.prefix) throw new Error();
+      if (saved.scope !== scope || !line || !Number.isSafeInteger(saved.end) || saved.end < 0 || saved.end > line.text.length || hash(line.text.slice(
+        0,
+        saved.end
+      )) !== saved.prefix) throw new Error();
       end = saved.end;
-      if (!end) { index--; end = lines[index]?.text.length ?? 0; }
+      if (!end) {
+        index--;
+        end = lines[index]?.text.length ?? 0;
+      }
     } catch {
       return { outcome: "changed", message: "The anchored message changed or is no longer available. Read recent messages again." };
     }
@@ -99,7 +131,17 @@ export function readConversation(task: Task, args: { nodeId?: string; messageId?
     let start = Math.max(0, end - remaining);
     // Keep a Unicode character together, including when the budget is one character.
     if (start > 0 && /[\uD800-\uDBFF]/.test(line.text[start - 1]!) && /[\uDC00-\uDFFF]/.test(line.text[start]!)) start--;
-    items.unshift({ ...line, text: line.text.slice(start, end), offset: start, total: line.text.length, revision: hash(line.text), mayChange: mayChange(line) });
+    items.unshift({
+      ...line,
+      text: line.text.slice(
+      start,
+      end
+    ),
+      offset: start,
+      total: line.text.length,
+      revision: hash(line.text),
+      mayChange: mayChange(line)
+    });
     anchor = { id: line.id, end: start, prefix: hash(line.text.slice(0, start)) };
     remaining -= end - start;
     if (start > 0) break;
@@ -108,5 +150,15 @@ export function readConversation(task: Task, args: { nodeId?: string; messageId?
   }
   const next = anchor && (anchor.end > 0 || index >= 0) ? Buffer.from(JSON.stringify({ scope, ...anchor })).toString("base64url") : undefined;
   const revision = hash([scope, args.cursor, items, activeMessages]);
-  return { outcome: "completed", items: args.ifRevision === revision ? [] : items, unchanged: args.ifRevision === revision, revision, activeMessages, ...(next ? { next } : {}), order: "chronological", paging: "older", activityIncluded: !!args.includeActivity };
+  return {
+    outcome: "completed",
+    items: args.ifRevision === revision ? [] : items,
+    unchanged: args.ifRevision === revision,
+    revision,
+    activeMessages,
+    ...(next ? { next } : {}),
+    order: "chronological",
+    paging: "older",
+    activityIncluded: !!args.includeActivity
+  };
 }

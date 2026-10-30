@@ -1,4 +1,20 @@
-import { runtimeWaitHolds, syncRuntimeWait, AFTER_WORDS, balanced, lastIndexWhere, pickStarts, queueOf, screenReady, slotWait, slotUses, syncWait, stepKey, type AgentProfile, type Candidate, type Id } from "@petrina/core";
+import {
+  runtimeWaitHolds,
+  syncRuntimeWait,
+  AFTER_WORDS,
+  balanced,
+  lastIndexWhere,
+  pickStarts,
+  queueOf,
+  screenReady,
+  slotWait,
+  slotUses,
+  syncWait,
+  stepKey,
+  type AgentProfile,
+  type Candidate,
+  type Id
+} from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import { testerCheckKey } from "./tester-preparation.js";
 import { waitForAgentUsage } from "./agent-step-state.js";
@@ -33,7 +49,10 @@ export class AgentWorkflow {
   private testerNeedsChecks(task: RuntimeTask): boolean {
     const scope = executionFor(task);
     const stage = task.plan?.stages[task.stageIndex];
-    return stage?.kind === "do" && this.catalog.role(stage.roleId, task)?.result === "checks" && !task.retest && scope.work.conversation?.roleId !== stage.roleId
+    return stage?.kind === "do" && this.catalog.role(
+      stage.roleId,
+      task
+    )?.result === "checks" && !task.retest && scope.work.conversation?.roleId !== stage.roleId
       && this.preparedTesters.get(task.id) !== this.testerCheckKey(task);
   }
 
@@ -59,7 +78,10 @@ export class AgentWorkflow {
       if (runtimeWaitHolds(task) && !task.runtimeWait.refreshAfterStep && this.host.stepStarted(task)) task.runtimeWait.refreshAfterStep = stepKey(task);
       syncRuntimeWait(task, id => this.host.taskDetails(id), this.host.now());
       const yieldedReadiness = runtimeWaitHolds(task) && this.readiness.yieldHeld(task);
-      if (runtimeWaitHolds(task) && (yieldedReadiness || !this.ownership.drivers.has(task.id) && !this.ownership.settling.has(task.id) && !task.driving) && ["running", "waiting"].includes(task.state)) {
+      if (runtimeWaitHolds(task) && (yieldedReadiness || !this.ownership.drivers.has(task.id) && !this.ownership.settling.has(task.id) && !task.driving) && [
+        "running",
+        "waiting"
+      ].includes(task.state)) {
         if (yieldedReadiness) this.host.pauseStep(task);
         task.state = "waiting";
         task.holdsSlot = false;
@@ -112,7 +134,10 @@ export class AgentWorkflow {
       const group = this.ownership.groups.get(entry.id);
       return !!group && !group.running(member);
     };
-    for (const task of this.host.state().tasks.filter((entry) => entry.state === "waiting" || (entry.state === "needs-you" && entry.screen && !entry.screen.granted) || grantedResume(entry)).sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
+    for (const task of this.host.state().tasks.filter((entry) => entry.state === "waiting" || (entry.state === "needs-you" && entry.screen && !entry.screen.granted) || grantedResume(entry)).sort((
+      a,
+      b
+    ) => (a.startedAt ?? 0) - (b.startedAt ?? 0))) {
       // `settling` holds the driver's promise for the whole run, not only its cleanup. A live screen
       // group is that same driver: skipping it leaves an allowed reviewer beside a peer forever.
       const liveScreen = !!(task.screen?.member && this.ownership.groups.has(task.id));
@@ -205,14 +230,30 @@ export class AgentWorkflow {
     return this.seatOf(this.nextAgent(task), task);
   }
 
-  private seatOf(next: { roleId: Id; profileId: Id; reviewerKey?: string; requiredToolId?: Id } | undefined, task?: RuntimeTask): { agent?: { roleId: Id; profileId: Id }; toolId: Id; waiting?: string; readiness?: ReadinessNeed } {
+  private seatOf(next: {
+    roleId: Id;
+    profileId: Id;
+    reviewerKey?: string;
+    requiredToolId?: Id
+  } | undefined, task?: RuntimeTask): {
+    agent?: {
+    roleId: Id;
+    profileId: Id
+  };
+    toolId: Id;
+    waiting?: string;
+    readiness?: ReadinessNeed
+  } {
     if (!next) return { toolId: "none" };
     // This task's own slot does not count: it is the seat being filled. A stand-in whose tool is full yields.
     const room = task ? (toolId: Id, profile: AgentProfile) => !slotWait(this.host.activeState(), { ...profile, taskId: task.id, toolId }) : undefined;
     const choice = this.catalog.choose(next, task, room);
     if (!choice) return { agent: next, toolId: this.catalog.profile(next.profileId)?.toolId ?? "unknown" };
     if (choice.kind === "none") return { toolId: "none", waiting: choice.waiting, ...(choice.readiness ? { readiness: choice.readiness } : {}) };
-    if (next.requiredToolId && next.requiredToolId !== choice.profile.toolId) return { toolId: next.requiredToolId, waiting: "Waiting for the remaining independent voter" };
+    if (next.requiredToolId && next.requiredToolId !== choice.profile.toolId) return {
+      toolId: next.requiredToolId,
+      waiting: "Waiting for the remaining independent voter"
+    };
     return { agent: { roleId: next.roleId, profileId: choice.profile.id }, toolId: choice.profile.toolId };
   }
 
@@ -243,7 +284,14 @@ export class AgentWorkflow {
     const deliveryWait = !this.host.admissionsClosed(task) ? this.host.waitingForDelivery(task) : undefined;
     const { agent: next, toolId, waiting: noOne, readiness } = this.seatFor(task);
     const preparing = this.needsCheckPreparation(task);
-    let waiting = runtimeWaitHolds(task) ? this.host.admissionWait(task) : deliveryWait ?? noOne ?? (this.host.admissionsClosed(task) ? this.host.admissionWait(task) : next ? slotWait(this.host.activeState(), { ...this.catalog.profile(next.profileId), taskId: task.id, toolId }) : undefined);
+    let waiting = runtimeWaitHolds(task) ? this.host.admissionWait(task) : deliveryWait ?? noOne ?? (this.host.admissionsClosed(task) ? this.host.admissionWait(task) : next ? slotWait(
+      this.host.activeState(),
+      {
+      ...this.catalog.profile(next.profileId),
+      taskId: task.id,
+      toolId
+    }
+    ) : undefined);
     if (deliveryWait) this.checks.release(task.id);
     if (!waiting && preparing && !this.checks.claim(task.id)) waiting = "Waiting for room to prepare the product checks";
     if (!preparing) this.checks.release(task.id);
@@ -266,7 +314,10 @@ export class AgentWorkflow {
     if (next) task.agent = { ...next, since: this.host.now(), step: 0 };
     else delete task.agent;
     task.column = this.host.column(task);
-    task.statusLine = preparing ? "Preparing the product's checks" : next ? `${this.catalog.role(next.roleId, task)?.name ?? next.roleId} is starting` : "Getting ready";
+    task.statusLine = preparing ? "Preparing the product's checks" : next ? `${this.catalog.role(
+      next.roleId,
+      task
+    )?.name ?? next.roleId} is starting` : "Getting ready";
     return true;
   }
 
@@ -289,11 +340,20 @@ export class AgentWorkflow {
       case "do":
         // Petrina publishes by itself: the Release Manager's seat is needed only for a release's notes.
         if (this.catalog.role(stage.roleId, task)?.result === "delivery" && !this.phases.deliveryNeedsAgent(scope)) return undefined;
-        return { roleId: stage.roleId, profileId: (task.repositories && this.catalog.role(stage.roleId, task)?.result === "build" ? task.plan?.products?.find((work) => work.productId === scope.work.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? this.dependencies.plannerProfileId };
+        return {
+          roleId: stage.roleId,
+          profileId: (task.repositories && this.catalog.role(
+          stage.roleId,
+          task
+        )?.result === "build" ? task.plan?.products?.find((work) => work.productId === scope.work.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? this.dependencies.plannerProfileId
+        };
       case "converge":
         return task.sub === 0
           ? { roleId: stage.roleId, profileId: stage.profileIds[0] ?? this.dependencies.plannerProfileId }
-          : { roleId: stage.reviewerRoleId ?? (this.host.state().roles.find((role) => !role.removed && role.result === "objections")?.id ?? "design-reviewer"), profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh" };
+          : {
+            roleId: stage.reviewerRoleId ?? (this.host.state().roles.find((role) => !role.removed && role.result === "objections")?.id ?? "design-reviewer"),
+            profileId: stage.reviewerProfileIds?.[0] ?? "sol-xhigh"
+          };
       case "review-chain":
         return this.phases.nextReviewer(task, stage);
       case "gate":
@@ -303,8 +363,12 @@ export class AgentWorkflow {
 
   /** `resume`: the agent already has its seat (a hand back), so its step carries on whatever the pool is doing. */
   startDriver(taskId: Id, resume = false): void {
-    let resolve!: () => void, reject!: (error: unknown) => void;
-    const completed = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const completed = new Promise<void>((done, failed) => {
+      resolve = done;
+      reject = failed;
+    });
     this.ownership.settling.set(taskId, completed);
     // Observe the original result without replacing it, including if finalizer registration fails.
     void completed.then(undefined, () => undefined);
@@ -312,7 +376,10 @@ export class AgentWorkflow {
       // Live drivers stay task-keyed: a quiet paused check is deliberately excluded from a pool drain.
       // Transfer ownership before releasing that reservation or running any finalization callback.
       let tracked = false;
-      try { this.host.trackWork(completed); tracked = true; }
+      try {
+        this.host.trackWork(completed);
+        tracked = true;
+      }
       catch (error) { failures.push(error); }
       const release = () => { if (this.ownership.settling.get(taskId) === completed) this.ownership.settling.delete(taskId); };
       if (tracked) release();
@@ -321,7 +388,10 @@ export class AgentWorkflow {
         try { effect(); } catch (error) { failures.push(error); }
       }
       if (!tracked) release();
-      if (!failures.length) { resolve(); return; }
+      if (!failures.length) {
+        resolve();
+        return;
+      }
       let failure = failures.length === 1 ? failures[0] : new AggregateError(failures, `Could not finish task ${taskId}`);
       try { this.host.reportDriverError(taskId, failure); }
       catch (error) { failure = new AggregateError([...failures, error], `Could not finish task ${taskId}`); }
@@ -356,7 +426,10 @@ export class AgentWorkflow {
           this.waitForUsage(current, this.host.admissionWait(current));
           return;
         }
-        if (current.reviewDecision?.accepted === false) { this.host.gate(current, "delivery"); return; }
+        if (current.reviewDecision?.accepted === false) {
+          this.host.gate(current, "delivery");
+          return;
+        }
         const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
         if (!stage || this.catalog.role(stage.roleId, current)?.result !== "checks") this.preparedTesters.delete(taskId);
         const prepared = await this.phases.prepareWorkspace(current, stage, signal);
@@ -379,7 +452,10 @@ export class AgentWorkflow {
         }
         // Acceptance was tried on this change already. Fixes are reviewed, and the final code is tried once more
         // right before the delivery check, so a tester pass per fix round is spared.
-        if (stage?.kind === "do" && this.catalog.role(stage.roleId, current)?.result === "checks" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
+        if (stage?.kind === "do" && this.catalog.role(
+          stage.roleId,
+          current
+        )?.result === "checks" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
           this.host.note(current, "milestone", "Acceptance will be tried once more on the final code, right before your delivery check");
           current.stageIndex += 1;
           current.sub = 0;
@@ -420,7 +496,10 @@ export class AgentWorkflow {
         else {
           const admission = await this.admitNext(current, signal);
           if (admission === "refresh" || this.host.sourceRefreshDue(current)) continue;
-          if (!admission) { this.host.changed(); return; }
+          if (!admission) {
+            this.host.changed();
+            return;
+          }
         }
         this.host.changed();
         // The stage (or planning) is under way from here: a slot is held for it, or it needs none.
@@ -506,7 +585,14 @@ export class AgentWorkflow {
     if (this.host.admissionsClosed(task)) throw this.errors.usage(this.host.admissionWait(task));
     if (this.host.sourceRefreshDue(task)) throw this.errors.sourceRefresh();
     if (!task.holdsSlot || this.catalog.profile(task.agent?.profileId ?? "")?.toolId !== profile.toolId) {
-      const waiting = this.host.admissionsClosed(task) ? this.host.admissionWait(task) : slotWait(this.host.activeState(), { ...profile, taskId: task.id, toolId: profile.toolId });
+      const waiting = this.host.admissionsClosed(task) ? this.host.admissionWait(task) : slotWait(
+        this.host.activeState(),
+        {
+        ...profile,
+        taskId: task.id,
+        toolId: profile.toolId
+      }
+      );
       if (waiting) {
         this.ownership.pendingAdmissions.set(task.id, { step, roleId, profileId: profile.id });
         throw this.errors.usage(waiting);

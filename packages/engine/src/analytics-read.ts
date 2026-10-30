@@ -43,7 +43,11 @@ export function readAnalytics(e: Engine, a: { taskId?: string; productId?: strin
   if (ref === null) return { outcome: "invalid", message: `This analytics continuation is malformed or unsupported. ${AGAIN}` };
   const asOf = ref ? { asOf: ref.asOf } : {};
   if (a.taskId && !e.taskDetails(a.taskId)) return { outcome: "missing", message: "That task does not exist.", ...asOf };
-  if (a.productId && !e.s.products.some((product) => product.id === a.productId)) return { outcome: "missing", message: "That product does not exist.", ...asOf };
+  if (a.productId && !e.s.products.some((product) => product.id === a.productId)) return {
+    outcome: "missing",
+    message: "That product does not exist.",
+    ...asOf
+  };
   return ref ? next(e, scope, ref, a.limit) : first(e, scope, a.limit);
 }
 
@@ -58,7 +62,13 @@ function first(e: Engine, scope: Scope, limit: number): Result {
   const hold: AnalyticsHold = { id: randomBytes(9).toString("base64url"), scope, asOf, live, key, total: source.length, bytes: 0 };
   hold.bytes = Buffer.byteLength(JSON.stringify(hold));
   if (!analyticsHolds(e).keep(hold, asOf))
-    return { outcome: "unavailable", reason: "too-large", message: "The live allowance readings behind this report are too large to hold between pages, so it cannot be read in pages. Nothing was shortened or substituted.", asOf, total: source.length };
+    return {
+      outcome: "unavailable",
+      reason: "too-large",
+      message: "The live allowance readings behind this report are too large to hold between pages, so it cannot be read in pages. Nothing was shortened or substituted.",
+      asOf,
+      total: source.length
+    };
   return page(source, 0, limit, asOf, { key, hold: hold.id, run: e.boot });
 }
 
@@ -68,11 +78,26 @@ function next(e: Engine, scope: Scope, ref: Reference, limit: number): Result {
   let key = ref.key;
   if (scope.taskId ? ref.hold : !ref.hold) return { outcome: "invalid", message: OTHER_READ, ...asOf };
   if (ref.hold) {
-    if (ref.run !== e.boot) return { outcome: "unavailable", reason: "engine-restarted", message: `The engine restarted after this read began, so the allowance readings it used are gone. No current data is substituted. ${AGAIN}`, ...asOf };
+    if (ref.run !== e.boot) return {
+      outcome: "unavailable",
+      reason: "engine-restarted",
+      message: `The engine restarted after this read began, so the allowance readings it used are gone. No current data is substituted. ${AGAIN}`,
+      ...asOf
+    };
     const now = Date.now();
-    if (now >= ref.asOf + ANALYTICS_HOLD_MS) return { outcome: "unavailable", reason: "expired", message: `This paged read expired ten minutes after its first page. No current data is substituted. ${AGAIN}`, ...asOf };
+    if (now >= ref.asOf + ANALYTICS_HOLD_MS) return {
+      outcome: "unavailable",
+      reason: "expired",
+      message: `This paged read expired ten minutes after its first page. No current data is substituted. ${AGAIN}`,
+      ...asOf
+    };
     const hold = analyticsHolds(e).get(ref.hold, now);
-    if (!hold) return { outcome: "unavailable", reason: "evicted", message: `This read's held allowance readings were released early to keep holds within their limits. No current data is substituted. ${AGAIN}`, ...asOf };
+    if (!hold) return {
+      outcome: "unavailable",
+      reason: "evicted",
+      message: `This read's held allowance readings were released early to keep holds within their limits. No current data is substituted. ${AGAIN}`,
+      ...asOf
+    };
     // The reference contradicts the read it names: its time is not trusted.
     if (hold.asOf !== ref.asOf || hold.key !== ref.key) return { outcome: "invalid", message: `This continuation does not match the read it names. ${AGAIN}` };
     if (hold.scope.taskId !== scope.taskId || hold.scope.productId !== scope.productId || hold.scope.period !== scope.period)
@@ -83,13 +108,28 @@ function next(e: Engine, scope: Scope, ref: Reference, limit: number): Result {
   }
   const source = report(e, scope, ref.asOf, live);
   if (identity(scope, ref.asOf, source) !== key)
-    return { outcome: "changed", message: `This analytics evidence changed after its first page: recorded usage, saved allowance readings or task details differ. No text from a different report is returned. ${AGAIN}`, ...asOf };
+    return {
+      outcome: "changed",
+      message: `This analytics evidence changed after its first page: recorded usage, saved allowance readings or task details differ. No text from a different report is returned. ${AGAIN}`,
+      ...asOf
+    };
   if (ref.at >= source.length) return { outcome: "invalid", message: "This continuation position is outside the report.", ...asOf };
   return page(source, ref.at, limit, ref.asOf, { key, ...(ref.hold ? { hold: ref.hold, run: ref.run } : {}) });
 }
 
 function report(e: Engine, scope: Scope, asOf: number, live: readonly UsageReport[] | undefined): string {
-  const view = e.tracking.usageAt(scope.taskId ? { view: "task", taskId: scope.taskId } : { view: "analytics", period: scope.period, ...(scope.productId ? { productId: scope.productId } : {}) }, asOf, live);
+  const view = e.tracking.usageAt(
+    scope.taskId ? {
+    view: "task",
+    taskId: scope.taskId
+  } : {
+    view: "analytics",
+    period: scope.period,
+    ...(scope.productId ? { productId: scope.productId } : {})
+  },
+    asOf,
+    live
+  );
   return JSON.stringify(view, null, 2);
 }
 
@@ -113,7 +153,14 @@ function page(source: string, at: number, limit: number, asOf: number, ref: Omit
 function decode(raw: string): Reference | null {
   try {
     const data = JSON.parse(Buffer.from(raw, "base64url").toString());
-    if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).some((name) => !["v", "asOf", "key", "at", "hold", "run"].includes(name))) return null;
+    if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).some((name) => ![
+      "v",
+      "asOf",
+      "key",
+      "at",
+      "hold",
+      "run"
+    ].includes(name))) return null;
     const { v, asOf, key, at, hold, run } = data;
     if (v !== 1 || !Number.isSafeInteger(asOf) || asOf <= 0 || asOf > Date.now() || typeof key !== "string" || !/^[0-9a-f]{24}$/.test(key) || !Number.isSafeInteger(at) || at < 1) return null;
     if ((hold === undefined) !== (run === undefined)) return null;

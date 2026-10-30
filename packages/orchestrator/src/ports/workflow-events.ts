@@ -17,7 +17,18 @@ export interface WorkflowEventCodec<Read extends WorkflowEventReadReply> {
   fingerprint(value: unknown): string;
   encodeCursor(value: unknown): string;
   decodeCursor(cursor: string): unknown;
-  readDetails(value: WorkflowEvent, query: { cursor?: string; limit?: number }, scope: readonly string[], extra: { eventId: string; evidence: "recorded" }): Read;
+  readDetails(
+    value: WorkflowEvent,
+    query: {
+    cursor?: string;
+    limit?: number
+  },
+    scope: readonly string[],
+    extra: {
+    eventId: string;
+    evidence: "recorded"
+  }
+  ): Read;
 }
 
 export interface WorkflowEventClock {

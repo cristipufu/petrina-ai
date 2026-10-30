@@ -58,7 +58,12 @@ export class AcceptedPoints {
             const found = current.filter((line) => hasPoint(file, line.text));
             if (found.length) {
               product.learnings = current.filter((line) => !found.includes(line));
-              const receipts = found.map((line) => ({ text: line.text, fromTask: line.fromTask, ...(line.writtenOn ? { writtenOn: line.writtenOn } : {}), foundOn: sha }));
+              const receipts = found.map((line) => ({
+                text: line.text,
+                fromTask: line.fromTask,
+                ...(line.writtenOn ? { writtenOn: line.writtenOn } : {}),
+                foundOn: sha
+              }));
               product.learningReceipts = [...(product.learningReceipts ?? []), ...receipts].slice(-RECEIPTS);
               changed = true;
             }

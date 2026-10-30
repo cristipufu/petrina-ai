@@ -2,7 +2,32 @@
 // history uses an index for its next page and reads a conversation only when it is opened.
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { EVIDENCE_STEP_LIMIT, EVIDENCE_TASK_LIMIT, type CheckEvidenceTask } from "@petrina/core";
-import { blocksDependents, combineReviewStats, productHistory, taskProductIds, withoutProduct, finishedTask, historyStatus, historyAt, historyCursor, historyItem, markedDoneUnconfirmed, readHistoryCursor, reviewStats, subtractReviewStats, HISTORY, type HistoryDependency, type HistoryItem, type HistoryMetadata, type HistoryPage, type HistoryQuery, type Id, type ReviewStats, type StepRecord, type Task } from "@petrina/core";
+import {
+  blocksDependents,
+  combineReviewStats,
+  productHistory,
+  taskProductIds,
+  withoutProduct,
+  finishedTask,
+  historyStatus,
+  historyAt,
+  historyCursor,
+  historyItem,
+  markedDoneUnconfirmed,
+  readHistoryCursor,
+  reviewStats,
+  subtractReviewStats,
+  HISTORY,
+  type HistoryDependency,
+  type HistoryItem,
+  type HistoryMetadata,
+  type HistoryPage,
+  type HistoryQuery,
+  type Id,
+  type ReviewStats,
+  type StepRecord,
+  type Task
+} from "@petrina/core";
 
 interface Rollup { total: number; done: number; cancelled: number; shared?: number; blocked?: number; reviews: ReviewStats }
 const emptyRollup = (): Rollup => ({ total: 0, done: 0, cancelled: 0, reviews: reviewStats([]) });
@@ -97,7 +122,16 @@ export class TaskHistory {
       if (!finishedTask(task)) continue;
       const body = JSON.stringify(task);
       const item = historyItem(task);
-      const old = this.db.query<{ rowid: number; product_id: string; state: string; title: string; body: string; reviews: string; steps: string; roles: string }, [string]>("SELECT rowid, product_id, state, title, body, reviews, steps, roles FROM task_history WHERE id = ?").get(task.id);
+      const old = this.db.query<{
+        rowid: number;
+        product_id: string;
+        state: string;
+        title: string;
+        body: string;
+        reviews: string;
+        steps: string;
+        roles: string
+      }, [string]>("SELECT rowid, product_id, state, title, body, reviews, steps, roles FROM task_history WHERE id = ?").get(task.id);
       this.rememberShape(task);
       if (old?.body === body) continue;
       const priorTask = old ? JSON.parse(old.body) as Task : undefined;
@@ -105,7 +139,11 @@ export class TaskHistory {
       const products = taskProductIds(task);
       const reviews = reviewStats([task]);
       const steps = JSON.stringify(task.steps ?? []);
-      const roles = JSON.stringify([...new Set((task.plan?.stages ?? []).flatMap((stage) => [stage.roleId, stage.reviewerRoleId, ...(stage.roleIds ?? [])]).filter((id): id is string => !!id))]);
+      const roles = JSON.stringify([...new Set((task.plan?.stages ?? []).flatMap((stage) => [
+        stage.roleId,
+        stage.reviewerRoleId,
+        ...(stage.roleIds ?? [])
+      ]).filter((id): id is string => !!id))]);
       this.db.query(`INSERT INTO task_history(id, product_id, title, finished_at, state, client_id, item, body, reviews, steps, roles, final_status)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
         product_id=excluded.product_id, title=excluded.title, finished_at=excluded.finished_at, state=excluded.state,
@@ -117,13 +155,18 @@ export class TaskHistory {
         this.db.query("INSERT INTO task_history_search(rowid, title) VALUES(?, ?)").run(rowid, task.title);
       }
       this.db.query("DELETE FROM task_history_products WHERE task_id = ?").run(task.id);
-      for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(task.id, productId, historyAt(task));
+      for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(
+        task.id,
+        productId,
+        historyAt(task)
+      );
       if (old) for (const scope of new Set(["", ...priorProducts])) {
         const rollup = this.rollups.get(scope) ?? emptyRollup();
         rollup.total -= 1;
         rollup.shared = (rollup.shared ?? 0) - Number(priorProducts.length > 1);
         if (scope) rollup.blocked = (rollup.blocked ?? 0) - productHistory([priorTask!], scope).unfinished;
-        if (old.state === "done") rollup.done -= 1; else rollup.cancelled -= 1;
+        if (old.state === "done") rollup.done -= 1;
+        else rollup.cancelled -= 1;
         rollup.reviews = subtractReviewStats(rollup.reviews, JSON.parse(old.reviews) as ReviewStats);
         this.rollups.set(scope, rollup);
         changedScopes.add(scope);
@@ -133,7 +176,8 @@ export class TaskHistory {
         rollup.total += 1;
         rollup.shared = (rollup.shared ?? 0) + Number(products.length > 1);
         if (scope) rollup.blocked = (rollup.blocked ?? 0) + productHistory([task], scope).unfinished;
-        if (task.state === "done") rollup.done += 1; else rollup.cancelled += 1;
+        if (task.state === "done") rollup.done += 1;
+        else rollup.cancelled += 1;
         rollup.reviews = combineReviewStats(rollup.reviews, reviews);
         this.rollups.set(scope, rollup);
         changedScopes.add(scope);
@@ -141,7 +185,14 @@ export class TaskHistory {
       if (!old || old.steps !== steps) {
         this.db.query("DELETE FROM task_history_steps WHERE task_id = ?").run(task.id);
         for (const [index, record] of (task.steps ?? []).entries()) {
-          this.db.query("INSERT INTO task_history_steps(task_id, position, role_id, repeat, worked, at) VALUES(?, ?, ?, ?, ?, ?)").run(task.id, index, record.roleId, Number(record.repeat), record.worked, record.at);
+          this.db.query("INSERT INTO task_history_steps(task_id, position, role_id, repeat, worked, at) VALUES(?, ?, ?, ?, ?, ?)").run(
+            task.id,
+            index,
+            record.roleId,
+            Number(record.repeat),
+            record.worked,
+            record.at
+          );
           this.db.query("INSERT OR IGNORE INTO task_history_step_kinds(role_id, repeat) VALUES(?, ?)").run(record.roleId, Number(record.repeat));
         }
         timingChanged = true;
@@ -153,7 +204,10 @@ export class TaskHistory {
       changed = true;
     }
     if (changed) {
-      for (const scope of changedScopes) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?) ON CONFLICT(scope) DO UPDATE SET body=excluded.body").run(scope, JSON.stringify(this.rollups.get(scope)!));
+      for (const scope of changedScopes) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?) ON CONFLICT(scope) DO UPDATE SET body=excluded.body").run(
+        scope,
+        JSON.stringify(this.rollups.get(scope)!)
+      );
       this.db.run("UPDATE task_history_revision SET revision = revision + 1 WHERE one = 1");
       this.revision += 1;
       if (timingChanged) this.readSteps();
@@ -222,7 +276,13 @@ export class TaskHistory {
 
   /** Only the first start of tracking needs this old-work marker, streamed without task bodies. */
   *earlierWork(): Generator<{ id: Id; productId: Id }> {
-    for (const row of this.db.query<{ id: string; product_id: string }, []>("SELECT id, product_id FROM task_history WHERE json_extract(body, '$.startedAt') IS NOT NULL").iterate()) yield { id: row.id, productId: row.product_id };
+    for (const row of this.db.query<{
+      id: string;
+      product_id: string
+    }, []>("SELECT id, product_id FROM task_history WHERE json_extract(body, '$.startedAt') IS NOT NULL").iterate()) yield {
+      id: row.id,
+      productId: row.product_id
+    };
   }
 
   /** Only the fields affecting visible totals/cards: conversations and output need no repeated scan. */
@@ -283,7 +343,8 @@ export class TaskHistory {
         for (const scope of ["", productId]) {
           const rollup = this.rollups.get(scope)!;
           rollup.total -= 1;
-          if (row.state === "done") rollup.done -= 1; else rollup.cancelled -= 1;
+          if (row.state === "done") rollup.done -= 1;
+          else rollup.cancelled -= 1;
           rollup.reviews = subtractReviewStats(rollup.reviews, reviews);
         }
         exclusive.push(row.task_id);
@@ -292,14 +353,21 @@ export class TaskHistory {
       if (exclusive.length) {
         const parameters = exclusive.map(() => "?").join(", ");
         this.db.query(`DELETE FROM task_history_search WHERE rowid IN (SELECT rowid FROM task_history WHERE id IN (${parameters}))`).run(...exclusive);
-        for (const table of ["task_history_roles", "task_history_steps", "task_history_products"]) this.db.query(`DELETE FROM ${table} WHERE task_id IN (${parameters})`).run(...exclusive);
+        for (const table of [
+          "task_history_roles",
+          "task_history_steps",
+          "task_history_products"
+        ]) this.db.query(`DELETE FROM ${table} WHERE task_id IN (${parameters})`).run(...exclusive);
         this.db.query(`DELETE FROM task_history WHERE id IN (${parameters})`).run(...exclusive);
       }
       changed = true;
     }
     if (!changed) return;
     this.rollups.set(productId, emptyRollup());
-    for (const [scope, rollup] of this.rollups) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?) ON CONFLICT(scope) DO UPDATE SET body=excluded.body").run(scope, JSON.stringify(rollup));
+    for (const [scope, rollup] of this.rollups) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?) ON CONFLICT(scope) DO UPDATE SET body=excluded.body").run(
+      scope,
+      JSON.stringify(rollup)
+    );
     this.db.run("UPDATE task_history_revision SET revision = revision + 1 WHERE one = 1");
     this.revision += 1;
     this.readSteps();
@@ -313,16 +381,37 @@ export class TaskHistory {
     const membership = request.productId && !request.routineId && !request.status;
     const from = membership ? "task_history_products p JOIN task_history h ON h.id = p.task_id" : "task_history h";
     const order = membership ? "p.finished_at, p.task_id" : "h.finished_at, h.id";
-    if (request.productId) { where.push(membership ? "p.product_id = ?" : "EXISTS (SELECT 1 FROM task_history_products p WHERE p.task_id = h.id AND p.product_id = ?)"); args.push(request.productId); }
-    if (request.routineId) { where.push("json_extract(h.body, '$.maintenance.routineId') = ?"); args.push(request.routineId); }
-    if (request.status) { where.push("h.final_status = ?"); args.push(request.status); }
-    if (request.taskId) { where.push("h.id = ?"); args.push(request.taskId); }
-    if (request.states) { where.push(`h.state IN (${request.states.map(() => "?").join(",")})`); args.push(...request.states); }
-    if (request.held !== undefined) { where.push("json_extract(h.body, '$.held') = ?"); args.push(Number(request.held)); }
+    if (request.productId) {
+      where.push(membership ? "p.product_id = ?" : "EXISTS (SELECT 1 FROM task_history_products p WHERE p.task_id = h.id AND p.product_id = ?)");
+      args.push(request.productId);
+    }
+    if (request.routineId) {
+      where.push("json_extract(h.body, '$.maintenance.routineId') = ?");
+      args.push(request.routineId);
+    }
+    if (request.status) {
+      where.push("h.final_status = ?");
+      args.push(request.status);
+    }
+    if (request.taskId) {
+      where.push("h.id = ?");
+      args.push(request.taskId);
+    }
+    if (request.states) {
+      where.push(`h.state IN (${request.states.map(() => "?").join(",")})`);
+      args.push(...request.states);
+    }
+    if (request.held !== undefined) {
+      where.push("json_extract(h.body, '$.held') = ?");
+      args.push(Number(request.held));
+    }
     // Quoted prefix terms keep punctuation from becoming FTS syntax and use its inverted index.
     const terms = (request.query ?? "").match(/[\p{L}\p{N}]+/gu) ?? [];
     const search = terms.map((term) => `"${term.replace(/"/g, '""')}"*`).join(" AND ");
-    if (search) { where.push("h.rowid IN (SELECT rowid FROM task_history_search WHERE task_history_search MATCH ?)"); args.push(search); }
+    if (search) {
+      where.push("h.rowid IN (SELECT rowid FROM task_history_search WHERE task_history_search MATCH ?)");
+      args.push(search);
+    }
     const filter = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const total = search || request.status || request.routineId || request.taskId || request.states || request.held !== undefined
       ? this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM ${from} ${filter}`).get(...args)!.total
@@ -348,7 +437,13 @@ export class TaskHistory {
     const products = [...this.rollups].filter(([scope, row]) => !!scope && row.total > 0);
     this.metadata = {
       revision: this.revision, total: total.total,
-      products: products.map(([productId, row]) => ({ productId, done: row.done, cancelled: row.cancelled, shared: row.shared ?? 0, blocked: row.blocked ?? 0 })),
+      products: products.map(([productId, row]) => ({
+        productId,
+        done: row.done,
+        cancelled: row.cancelled,
+        shared: row.shared ?? 0,
+        blocked: row.blocked ?? 0
+      })),
       reviews: total.reviews, reviewsByProduct: Object.fromEntries(products.map(([productId, row]) => [productId, row.reviews])),
       steps: this.recentSteps,
     };
@@ -359,7 +454,13 @@ export class TaskHistory {
   reloadMetadata(): void {
     this.shapes.clear();
     this.rollups.clear();
-    for (const row of this.db.query<{ scope: string; body: string }, []>("SELECT scope, body FROM task_history_rollups").all()) this.rollups.set(row.scope, JSON.parse(row.body) as Rollup);
+    for (const row of this.db.query<{
+      scope: string;
+      body: string
+    }, []>("SELECT scope, body FROM task_history_rollups").all()) this.rollups.set(
+      row.scope,
+      JSON.parse(row.body) as Rollup
+    );
     this.revision = this.db.query<{ revision: number }, []>("SELECT revision FROM task_history_revision WHERE one = 1").get()!.revision;
     this.readSteps();
     this.metadata = undefined;
@@ -377,20 +478,28 @@ export class TaskHistory {
         const task = JSON.parse(row.body) as Task;
         const products = taskProductIds(task);
         const reviews = JSON.parse(row.reviews) as ReviewStats;
-        for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(task.id, productId, historyAt(task));
+        for (const productId of products) this.db.query("INSERT INTO task_history_products(task_id, product_id, finished_at) VALUES(?, ?, ?)").run(
+          task.id,
+          productId,
+          historyAt(task)
+        );
         const item = historyItem(task);
         this.db.query("UPDATE task_history SET item = ?, final_status = ? WHERE id = ?").run(JSON.stringify(item), historyStatus(item), task.id);
         for (const scope of new Set(["", ...products])) {
           const rollup = this.rollups.get(scope) ?? emptyRollup();
           rollup.total += 1;
-          if (task.state === "done") rollup.done += 1; else rollup.cancelled += 1;
+          if (task.state === "done") rollup.done += 1;
+          else rollup.cancelled += 1;
           rollup.shared = (rollup.shared ?? 0) + Number(products.length > 1);
           if (scope) rollup.blocked = (rollup.blocked ?? 0) + productHistory([task], scope).unfinished;
           rollup.reviews = combineReviewStats(rollup.reviews, reviews);
           this.rollups.set(scope, rollup);
         }
       }
-      for (const [scope, rollup] of this.rollups) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?)").run(scope, JSON.stringify(rollup));
+      for (const [scope, rollup] of this.rollups) this.db.query("INSERT INTO task_history_rollups(scope, body) VALUES(?, ?)").run(
+        scope,
+        JSON.stringify(rollup)
+      );
     }).immediate();
   }
 
@@ -408,7 +517,16 @@ export class TaskHistory {
   private readSteps(): void {
     this.recentSteps = [];
     for (const kind of this.db.query<{ role_id: string; repeat: number }, []>("SELECT role_id, repeat FROM task_history_step_kinds").all()) {
-      const rows = this.db.query<{ role_id: string; repeat: number; worked: number; at: number }, [string, number, number]>("SELECT role_id, repeat, worked, at FROM task_history_steps WHERE role_id = ? AND repeat = ? ORDER BY at DESC, task_id DESC, position DESC LIMIT ?").all(kind.role_id, kind.repeat, HISTORY);
+      const rows = this.db.query<{
+        role_id: string;
+        repeat: number;
+        worked: number;
+        at: number
+      }, [string, number, number]>("SELECT role_id, repeat, worked, at FROM task_history_steps WHERE role_id = ? AND repeat = ? ORDER BY at DESC, task_id DESC, position DESC LIMIT ?").all(
+        kind.role_id,
+        kind.repeat,
+        HISTORY
+      );
       this.recentSteps.push(...rows.map((row) => ({ roleId: row.role_id, repeat: !!row.repeat, worked: row.worked, at: row.at })));
     }
   }

@@ -58,7 +58,12 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
       </div>
       <ProductSwitcher state={state} value={product} onChange={onProduct} />
       <div className="palette-launcher">
-        <button className={searchField ? "search-field palette-trigger" : "btn ghost icon"} aria-label="Find tasks, products or actions" title={`Command palette (${mod}K)`} onClick={onPalette}>
+        <button
+          className={searchField ? "search-field palette-trigger" : "btn ghost icon"}
+          aria-label="Find tasks, products or actions"
+          title={`Command palette (${mod}K)`}
+          onClick={onPalette}
+        >
           <Search size={18} aria-hidden="true" />
           {searchField && (
             <>
@@ -91,7 +96,14 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
         </button>
       )}
       {barExtras && <PoolButton state={state} find={find} onOpen={onOpen} onAnalytics={onAnalytics} compact={!poolSquares} />}
-      <button ref={inboxButton} className="btn quiet" onClick={onToggleInbox} aria-pressed={inboxOpen} aria-label={`Inbox, ${state.inbox.length} waiting on you`} title="Needs you (I)">
+      <button
+        ref={inboxButton}
+        className="btn quiet"
+        onClick={onToggleInbox}
+        aria-pressed={inboxOpen}
+        aria-label={`Inbox, ${state.inbox.length} waiting on you`}
+        title="Needs you (I)"
+      >
         <Bell size={16} aria-hidden="true" />
         {inboxLabel && "Inbox"}
         {state.inbox.length > 0 && <span className="count">{state.inbox.length}</span>}
@@ -100,7 +112,18 @@ export function TopBar({ state, find, status, room, product, onProduct, query, o
         <Plus size={16} aria-hidden="true" />
         New task
       </button>
-      {barExtras ? <ThemeMenu theme={theme} onTheme={onTheme} /> : <MoreMenu state={state} find={find} onOpen={onOpen} onAnalytics={onAnalytics} status={status} theme={theme} onTheme={onTheme} />}
+      {barExtras ? <ThemeMenu
+        theme={theme}
+        onTheme={onTheme}
+      /> : <MoreMenu
+        state={state}
+        find={find}
+        onOpen={onOpen}
+        onAnalytics={onAnalytics}
+        status={status}
+        theme={theme}
+        onTheme={onTheme}
+      />}
     </header>
   );
 }
@@ -127,7 +150,13 @@ function MoreMenu({ state, find, onOpen, onAnalytics, status, theme, onTheme }: 
   const mark = screenMark(state);
   return (
     <div style={{ position: "relative" }} ref={box}>
-      <button className={`btn ghost icon ${mark ? "with-mark" : ""}`} aria-label={mark ? `More. ${mark.label}` : "More"} title={mark?.label} aria-expanded={open} onClick={() => setOpen((on) => !on)}>
+      <button
+        className={`btn ghost icon ${mark ? "with-mark" : ""}`}
+        aria-label={mark ? `More. ${mark.label}` : "More"}
+        title={mark?.label}
+        aria-expanded={open}
+        onClick={() => setOpen((on) => !on)}
+      >
         <ScreenMarkIcon state={state} />
         <Ellipsis size={18} aria-hidden="true" />
       </button>

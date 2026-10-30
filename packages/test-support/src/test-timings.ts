@@ -8,7 +8,8 @@ export function testTimingHints(body: string, expected: readonly string[]): Test
   const hints = value as Partial<TestTimingHints>;
   if (hints.version !== 1 || !hints.files || typeof hints.files !== "object" || Array.isArray(hints.files)) return;
   const known = new Set(expected.map(file => file.replaceAll("\\", "/").replace(/^\.\//, "")));
-  const seen = new Set<string>(), files: Record<string, number> = Object.create(null);
+  const seen = new Set<string>();
+  const files: Record<string, number> = Object.create(null);
   for (const [file, ms] of Object.entries(hints.files)) {
     if (!file || typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return;
     const name = file.replaceAll("\\", "/").replace(/^\.\//, "");

@@ -25,7 +25,14 @@ export class NativeToolProbe implements ToolProbe {
     const which = this.which();
     const timeoutMs = this.k.options.toolCheckTimeoutMs;
     const platform = this.k.s.setup?.platform ?? "linux";
-    if (id === "git") return checkGit(which, platform, { ...(timeoutMs ? { timeoutMs } : {}), ...(this.k.options.developerTools ? { developerTools: this.k.options.developerTools } : {}) });
+    if (id === "git") return checkGit(
+      which,
+      platform,
+      {
+      ...(timeoutMs ? { timeoutMs } : {}),
+      ...(this.k.options.developerTools ? { developerTools: this.k.options.developerTools } : {})
+    }
+    );
     if (id === "node") return checkNode(which, timeoutMs);
     if (id === "gh") {
       const gh = this.k.options.gh ?? [which("gh")].filter((path): path is string => path !== null);

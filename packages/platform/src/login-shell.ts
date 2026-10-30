@@ -3,8 +3,12 @@ import { readOwnedProcessOutput, ProcessOutputCleanupError, type OutputProcess }
 import type { ProcessDeadline } from "./process-capabilities.js";
 
 const MARK = "__petrina_env__";
-const GRACE_MS = 100, FORCE_MS = 400;
-const arm: ProcessDeadline = (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
+const GRACE_MS = 100;
+const FORCE_MS = 400;
+const arm: ProcessDeadline = (expired, ms) => {
+  const timer = setTimeout(expired, ms);
+  return () => clearTimeout(timer);
+};
 
 export interface LoginShellProcess extends OutputProcess {}
 export interface LoginShellOptions {

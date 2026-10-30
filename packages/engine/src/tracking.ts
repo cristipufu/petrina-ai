@@ -8,7 +8,24 @@ import { executionOf, type RepositoryContext } from "@petrina/orchestrator";
 // names and ids go in. The window asks for the numbers one view needs (usage), never for the log itself.
 
 import { randomUUID } from "node:crypto";
-import { continuingAgentTurn, askMomentId, turnTokens, usageView, type AgentProfile, type AskAnswer, type DeepMutable, type Id, type InboxItem, type MomentOutcome, type UsageReport, type TurnReason, type UsageRequest, type UsageViewFor, type WorkMoment, type WorkStageKind } from "@petrina/core";
+import {
+  continuingAgentTurn,
+  askMomentId,
+  turnTokens,
+  usageView,
+  type AgentProfile,
+  type AskAnswer,
+  type DeepMutable,
+  type Id,
+  type InboxItem,
+  type MomentOutcome,
+  type UsageReport,
+  type TurnReason,
+  type UsageRequest,
+  type UsageViewFor,
+  type WorkMoment,
+  type WorkStageKind
+} from "@petrina/core";
 import type { TurnNotes, TurnResult, AgentSession } from "@petrina/orchestrator";
 import type { Kernel, MutableStage, RuntimeTask } from "./kernel.js";
 import { WaitClock, WorkLog } from "@petrina/storage/worklog";
@@ -60,11 +77,17 @@ export class Tracking {
     const { since, fresh } = this.log.ensureSince(now);
     for (const product of this.k.s.products) this.log.recordProduct({ id: product.id, name: product.name, repo: product.repo, addedAt: since });
     for (const task of this.k.s.tasks) {
-      if (!this.k.s.products.some((product) => product.id === task.productId) && !this.log.knowsProduct(task.productId)) this.log.recordProduct({ id: task.productId, removedAt: now });
+      if (!this.k.s.products.some((product) => product.id === task.productId) && !this.log.knowsProduct(task.productId)) this.log.recordProduct({
+        id: task.productId,
+        removedAt: now
+      });
       if (fresh && task.startedAt !== undefined) this.log.markUntracked(task.id, task.productId, now);
     }
     if (fresh) for (const task of this.k.store.history.earlierWork()) {
-      if (!this.k.s.products.some((product) => product.id === task.productId) && !this.log.knowsProduct(task.productId)) this.log.recordProduct({ id: task.productId, removedAt: now });
+      if (!this.k.s.products.some((product) => product.id === task.productId) && !this.log.knowsProduct(task.productId)) this.log.recordProduct({
+        id: task.productId,
+        removedAt: now
+      });
       this.log.markUntracked(task.id, task.productId, now);
     }
     this.log.markLost();
@@ -88,7 +111,17 @@ export class Tracking {
 
   /** One view at a fixed time, without refreshing accounts. `live`: allowance readings to use instead of the pool's current ones. */
   usageAt<R extends UsageRequest>(request: R, now: number, live?: readonly UsageReport[]): UsageViewFor<R> {
-    return usageView(this.log, request, { now, ...(live ? { usage: live } : {}), state: this.k.activeState(), task: (id) => this.k.task(id), taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id) });
+    return usageView(
+      this.log,
+      request,
+      {
+      now,
+      ...(live ? { usage: live } : {}),
+      state: this.k.activeState(),
+      task: (id) => this.k.task(id),
+      taskName: (id) => this.k.s.tasks.find((task) => task.id === id)?.title ?? this.k.store.history.title(id)
+    }
+    );
   }
 
   // ── Products and ids ───────────────────────────────────────────────────
@@ -197,7 +230,18 @@ export class Tracking {
     }
     const who = by ?? (task.agent ? { roleId: task.agent.roleId, profileId: task.agent.profileId } : undefined);
     const toolId = who?.profileId ? this.k.profile(who.profileId)?.toolId : undefined;
-    this.moment(scope, { kind: "failure", outcome: failureReason(error), ...(who ? { roleId: who.roleId, ...(who.profileId ? { profileId: who.profileId } : {}) } : {}), ...(toolId ? { toolId } : {}) });
+    this.moment(
+      scope,
+      {
+      kind: "failure",
+      outcome: failureReason(error),
+      ...(who ? {
+      roleId: who.roleId,
+      ...(who.profileId ? { profileId: who.profileId } : {})
+    } : {}),
+      ...(toolId ? { toolId } : {})
+    }
+    );
   }
 
   /** An agent's result was unusable, and it is asked to redo it. */
@@ -213,7 +257,29 @@ export class Tracking {
     const { task } = scope;
     if (!["question", "permission", "plan", "design", "delivery", "disagreement"].includes(item.kind)) return;
     const ask = item.kind === "question" ? "question" : item.kind === "permission" ? "permission" : "checkpoint";
-    this.moment(scope, { kind: "ask", ask, ...(answer ? { answer, durationMs: Math.max(0, Date.now() - item.at) } : {}), ...(item.roleId ? { roleId: item.roleId } : {}), ...(item.profileId ? { profileId: item.profileId } : {}) }, { id: askMomentId(task.id, item.id), at: item.at });
+    this.moment(
+      scope,
+      {
+      kind: "ask",
+      ask,
+      ...(answer ? {
+      answer,
+      durationMs: Math.max(
+      0,
+      Date.now() - item.at
+    )
+    } : {}),
+      ...(item.roleId ? { roleId: item.roleId } : {}),
+      ...(item.profileId ? { profileId: item.profileId } : {})
+    },
+      {
+      id: askMomentId(
+      task.id,
+      item.id
+    ),
+      at: item.at
+    }
+    );
   }
 
   /** Complete the saved request, including late answers after its inbox item disappeared. */
@@ -233,10 +299,28 @@ export class Tracking {
   }
 
   /** One design round: the architect (`stage`'s author), the design reviewer, and what it raised. */
-  designRound(target: RuntimeTask | RepositoryContext, stage: MutableStage, reviewer: { roleId: Id; profileId: Id }, round: number, count: number, blocking: number): void {
+  designRound(target: RuntimeTask | RepositoryContext, stage: MutableStage, reviewer: {
+    roleId: Id;
+    profileId: Id
+  }, round: number, count: number, blocking: number): void {
     const scope = executionOf(target);
     const { task } = scope;
-    this.moment(scope, { kind: "design-round", ...this.author(task, stage, round), peerRoleId: reviewer.roleId, peerProfileId: reviewer.profileId, round, count, blocking });
+    this.moment(
+      scope,
+      {
+      kind: "design-round",
+      ...this.author(
+      task,
+      stage,
+      round
+    ),
+      peerRoleId: reviewer.roleId,
+      peerProfileId: reviewer.profileId,
+      round,
+      count,
+      blocking
+    }
+    );
   }
 
   /** How a design ended: settled, or with the coordinator. Its stage ends with it. */
@@ -280,7 +364,14 @@ export class Tracking {
     if (known) return known;
     const logged = this.log.openStage(task.id);
     if (!logged?.stageId) return undefined;
-    const open: OpenStage = { stageId: logged.stageId, title: logged.stageTitle ?? "", kind: logged.stageKind ?? "do", roleId: logged.roleId ?? "", run: logged.round ?? 1, startedAt: logged.at };
+    const open: OpenStage = {
+      stageId: logged.stageId,
+      title: logged.stageTitle ?? "",
+      kind: logged.stageKind ?? "do",
+      roleId: logged.roleId ?? "",
+      run: logged.round ?? 1,
+      startedAt: logged.at
+    };
     this.openStages.set(task.id, open);
     return open;
   }
@@ -308,7 +399,21 @@ export class Tracking {
     const open = this.openStage(task);
     if (!open) return;
     const now = Date.now();
-    this.moment(scope, { kind: "stage-end", outcome, roleId: open.roleId, round: open.run, durationMs: now - open.startedAt, workMs: this.log.stageWork(task.id, open.stageId, open.startedAt) });
+    this.moment(
+      scope,
+      {
+      kind: "stage-end",
+      outcome,
+      roleId: open.roleId,
+      round: open.run,
+      durationMs: now - open.startedAt,
+      workMs: this.log.stageWork(
+      task.id,
+      open.stageId,
+      open.startedAt
+    )
+    }
+    );
     this.openStages.delete(task.id);
   }
 
@@ -319,7 +424,10 @@ export class Tracking {
     return this.openStage(task)?.run ?? 1;
   }
 
-  private moment(target: RuntimeTask | RepositoryContext, moment: Omit<WorkMoment, "id" | "at" | "taskId" | "productId">, when: { id?: Id; at?: number } = {}): void {
+  private moment(target: RuntimeTask | RepositoryContext, moment: Omit<WorkMoment, "id" | "at" | "taskId" | "productId">, when: {
+    id?: Id;
+    at?: number
+  } = {}): void {
     const scope = executionOf(target);
     const { task } = scope;
     // Stopped: the log is closed, and work cut off by the stop changes nothing.
@@ -392,7 +500,13 @@ export class Tracking {
       // Claude Code's breakdown already counts its helper agents; only Codex leaves them out (and starts them as spawnAgent).
       const helpers = profile.toolId === "codex" ? (result?.helpers ?? 0) : 0;
       const model = result?.report?.model ?? settings.modelName ?? settings.model ?? result?.modelSeen;
-      const counted = turnTokens({ toolId: profile.toolId, ...(result?.report ? { report: result.report } : {}), ...(model ? { model } : {}), rerouted: result?.rerouted ?? false, helpers });
+      const counted = turnTokens({
+        toolId: profile.toolId,
+        ...(result?.report ? { report: result.report } : {}),
+        ...(model ? { model } : {}),
+        rerouted: result?.rerouted ?? false,
+        helpers
+      });
       this.log.endTurn(
         id,
         {
@@ -436,7 +550,10 @@ export class Tracking {
 const retryKey = (taskId: Id, roleId: Id, plannedId: Id) => `${taskId}|${roleId}|${plannedId}`;
 
 /** Indexed history plus last completed participant, independent of the live Engine. */
-export function authorFor(log: Pick<WorkLog, "turns">, task: Pick<RuntimeTask, "id">, stage: Pick<MutableStage, "id" | "roleId">, round: number): { roleId: Id; profileId?: Id } {
+export function authorFor(log: Pick<WorkLog, "turns">, task: Pick<RuntimeTask, "id">, stage: Pick<MutableStage, "id" | "roleId">, round: number): {
+  roleId: Id;
+  profileId?: Id
+} {
     // The last completed turn in this round produced the brief, including after a restart or a handover.
     const author = log.turns({ taskId: task.id, stageId: stage.id, round }).filter((turn) => turn.roleId === stage.roleId && turn.end === "finished").at(-1);
     return { roleId: stage.roleId, ...(author ? { profileId: author.profileId } : {}) };

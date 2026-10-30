@@ -2,6 +2,7 @@ import { describe as originalDescribe } from "bun:test";
 import { expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { conventions } from "../../quality/conventions.js";
+import { formatProductionSource } from "../../quality/format.js";
 import { sourceFacts } from "../../quality/source.js";
 import { testResults } from "@petrina/test-support/test-results";
   const found = (source: string, file = "packages/engine/test/a.test.ts") => conventions(new Map([[file, source]])).map((error) => error.slice(file.length + 1));
@@ -278,4 +279,72 @@ it("attributes failures to structured runner outcomes, including XML escaping an
   expect(() => testResults('<testsuites tests="0" failures="0" />', "packages/engine", "bun", root)).toThrow("Missing");
   expect(() => testResults("{}", "packages/core", "vitest", root)).toThrow("Missing");
   expect(testResults(xml.replace('tests="2" failures="1"', 'tests="3" failures="2"').replace('</testsuites>', '<testsuite file="test/a&amp;b.test.ts" tests="1" failures="1"><testcase><failure /></testcase></testsuite></testsuites>'), "packages/engine", "bun", root).failures).toEqual(["packages/engine/test/a&b.test.ts"]);
+});
+
+it("enforces the 650-line production module ceiling and frozen native boundary ratchets", () => {
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => `export const v${index} = ${index};`).join("\n") + "\n";
+  expect(found(lines(650), "packages/core/src/example.ts")).toEqual([]);
+  expect(found(lines(651), "packages/core/src/example.ts")).toEqual([
+    expect.stringContaining("651 lines exceeds the 650-line production module ceiling"),
+  ]);
+  expect(found(lines(707), "packages/repositories/src/git/worktrees.ts")).toEqual([]);
+  expect(found(lines(708), "packages/repositories/src/git/worktrees.ts")).toEqual([
+    expect.stringContaining("708 lines exceeds the 707-line production module ceiling"),
+  ]);
+});
+
+it("rejects TypeScript any keywords in production source while ignoring comments, strings and identifiers", () => {
+  for (const snippet of [
+    "export function parse(input: any) { return input; }",
+    "export type Bag = Record<string, any>;",
+    "export const cast = (value: unknown) => value as any;",
+  ]) {
+    expect(found(snippet, "packages/engine/src/example.ts")).toEqual([
+      expect.stringContaining("avoid 'any' in production source"),
+    ]);
+  }
+  expect(
+    found(
+      "// any comment mentioning Record<string, any>\nexport const text = 'do not match any word in prose';\nexport const anyValue = Promise.any([Promise.resolve(1)]);\n",
+      "packages/engine/src/example.ts",
+    ),
+  ).toEqual([]);
+  expect(
+    found(
+      "export type Ctor = new (...args: any[]) => Error;\n",
+      "packages/test-support/src/rejections.ts",
+    ),
+  ).toEqual([]);
+  expect(
+    found(
+      "export type Ctor = new (...args: any[]) => Error;\nexport type Extra = any;\n",
+      "packages/test-support/src/rejections.ts",
+    ),
+  ).toEqual([expect.stringContaining("avoid 'any' in production source")]);
+});
+
+it("enforces vertical statement density and 160-character structured line wrapping in production source", () => {
+  expect(found("export const a = 1; export const b = 2;\n", "packages/core/src/example.ts")).toEqual([
+    expect.stringContaining("keep one statement or member per line"),
+  ]);
+  expect(found("export function pick(flag: boolean) {\n  if (flag) return 1; else return 2;\n}\n", "packages/core/src/example.ts")).toEqual([
+    expect.stringContaining("place 'else' on its own line"),
+  ]);
+  expect(found("export const a = 1, b = 2;\n", "packages/core/src/example.ts")).toEqual([
+    expect.stringContaining("keep one variable declaration per line"),
+  ]);
+  const wideObject = `export const config = { alphaParameterName: "first-value", betaParameterName: "second-value", gammaParameterName: "third-value", deltaParameterName: "fourth-value" };\n`;
+  expect(found(wideObject, "packages/core/src/example.ts")).toEqual([
+    expect.stringContaining("wrap structured line exceeding 160 characters"),
+  ]);
+  for (const unformatted of [
+    "export const a = 1; export const b = 2;\n",
+    "export function pick(flag: boolean) {\n  if (flag) return 1; else return 2;\n}\n",
+    "export const a = 1, b = 2;\n",
+    wideObject,
+  ]) {
+    const formatted = formatProductionSource(unformatted, "packages/core/src/example.ts");
+    expect(formatProductionSource(formatted, "packages/core/src/example.ts")).toBe(formatted);
+    expect(found(formatted, "packages/core/src/example.ts")).toEqual([]);
+  }
 });

@@ -1,14 +1,37 @@
-import { CLEANUP_WORDS, beginYouStep, endOpenStep, endPetrinaStep, endYouStep, JOURNEY_WORDS, lastIndexWhere, openStep, landingState, syncRuntimeWait, type Id } from "@petrina/core";
+import {
+  CLEANUP_WORDS,
+  beginYouStep,
+  endOpenStep,
+  endPetrinaStep,
+  endYouStep,
+  JOURNEY_WORDS,
+  lastIndexWhere,
+  openStep,
+  landingState,
+  syncRuntimeWait,
+  type Id
+} from "@petrina/core";
 import { executionFor, type RepositoryContext } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
-import type { DeliveryEvidence, DeliveryRecoveryEffects, DeliveryRecoveryHost, DeliveryRecoveryFailures, PullRequestCreationEffects, ReleaseCreationEffects } from "./ports/delivery-recovery.js";
+import type {
+  DeliveryEvidence,
+  DeliveryRecoveryEffects,
+  DeliveryRecoveryHost,
+  DeliveryRecoveryFailures,
+  PullRequestCreationEffects,
+  ReleaseCreationEffects
+} from "./ports/delivery-recovery.js";
 
 /** A delivery from before the update, which Petrina leaves to the coordinator. */
 export const CARRIED_OVER = "This delivery was interrupted before Petrina was updated";
 
 /** Decide what observed delivery means, and record recovery without performing native publication. */
 export class DeliveryRecovery {
-  constructor(private readonly host: DeliveryRecoveryHost, private readonly effects: DeliveryRecoveryEffects, private readonly failures: DeliveryRecoveryFailures) {}
+  constructor(
+    private readonly host: DeliveryRecoveryHost,
+    private readonly effects: DeliveryRecoveryEffects,
+    private readonly failures: DeliveryRecoveryFailures
+  ) {}
 
   /** A successful or duplicate create still needs an exact observation before recording. */
   async createPullRequest(scope: RepositoryContext, signal: AbortSignal, effects: PullRequestCreationEffects): Promise<"done"> {
@@ -30,7 +53,10 @@ export class DeliveryRecovery {
     if (!created.ok && !created.exists) throw new Error(`GitHub did not create the release ${tag} (${created.error}). Retry: Petrina looks for it on GitHub before creating another.`);
     const release = await effects.find();
     if (!release) throw new Error(`GitHub ${created.ok ? "said it created" : "says it already has"} the release ${tag}, but Petrina cannot find it. Retry to check again.`);
-    if (await effects.tag() !== tested) throw new Error(`The release ${tag} is on GitHub, but its tag is not at the tested commit ${tested.slice(0, 7)}. Look at it on GitHub.`);
+    if (await effects.tag() !== tested) throw new Error(`The release ${tag} is on GitHub, but its tag is not at the tested commit ${tested.slice(
+      0,
+      7
+    )}. Look at it on GitHub.`);
     return this.recordRelease(scope, release, "published");
   }
 
@@ -86,10 +112,21 @@ export class DeliveryRecovery {
     if (task.state === "cancelled") {
       this.host.log(scope, "status", `Pull request #${pr.number} went out while you cancelled it: ${pr.url}`);
     } else {
-      if (how) this.host.log(scope, "done", how === "updated" ? `Updated PR #${pr.number}: ${repository.report?.summary ?? "The checked work was added"}. Delivered to ${repository.source!.destination.repo} · ${repository.source!.destination.branch}` : `Petrina opened pull request #${pr.number}, and checked it on GitHub`);
+      if (how) this.host.log(
+        scope,
+        "done",
+        how === "updated" ? `Updated PR #${pr.number}: ${repository.report?.summary ?? "The checked work was added"}. Delivered to ${repository.source!.destination.repo} · ${repository.source!.destination.branch}` : `Petrina opened pull request #${pr.number}, and checked it on GitHub`
+      );
       if (!task.repositories) this.host.delivered(scope);
-      endPetrinaStep(task, { outcome: how === "updated" ? `Updated pull request #${pr.number}` : how ? JOURNEY_WORDS.openedPr(pr.number) : JOURNEY_WORDS.alreadyOut(`pull request #${pr.number}`) }, this.host.now());
-      if (task.repositories) {  this.saveOutcome(); return "done"; }
+      endPetrinaStep(
+        task,
+        { outcome: how === "updated" ? `Updated pull request #${pr.number}` : how ? JOURNEY_WORDS.openedPr(pr.number) : JOURNEY_WORDS.alreadyOut(`pull request #${pr.number}`) },
+        this.host.now()
+      );
+      if (task.repositories) {
+        this.saveOutcome();
+        return "done";
+      }
       if (pr.state === "open") {
         delete task.agent;
         task.holdsSlot = false;
@@ -136,7 +173,17 @@ export class DeliveryRecovery {
     }
     else {
       if (!task.repositories) this.host.delivered(scope);
-      if (how) this.host.log(scope, "done", how === "found" ? `Checked: ${branch} already has it (${sha.slice(0, 7)})` : `Petrina moved ${branch} forward to it (${sha.slice(0, 7)}), and checked the main copy`);
+      if (how) this.host.log(
+        scope,
+        "done",
+        how === "found" ? `Checked: ${branch} already has it (${sha.slice(
+        0,
+        7
+      )})` : `Petrina moved ${branch} forward to it (${sha.slice(
+        0,
+        7
+      )}), and checked the main copy`
+      );
       endPetrinaStep(task, { outcome: how === "moved" ? JOURNEY_WORDS.movedMain(branch) : JOURNEY_WORDS.alreadyOut(`${branch} has it`) }, this.host.now());
       this.finished(scope, `Committed to ${branch}`);
     }
@@ -155,7 +202,10 @@ export class DeliveryRecovery {
 
   finished(scope: RepositoryContext, statusLine: string): void {
     const { task } = scope;
-    if (task.repositories) { task.statusLine = statusLine;  return; }
+    if (task.repositories) {
+      task.statusLine = statusLine;
+      return;
+    }
     delete task.agent;
     task.holdsSlot = false;
     task.state = "done";
@@ -202,7 +252,15 @@ export class DeliveryRecovery {
     task.statusLine = `${CARRIED_OVER}: check GitHub, then choose`;
     if (!this.host.state.inbox.some((item) => item.taskId === task.id && item.kind === "shipping")) {
       // The step that was delivering ends as interrupted, and the task waits for the coordinator's choice.
-      if (openStep(task)?.kind !== "you") endOpenStep(task, { outcome: JOURNEY_WORDS.interrupted, reason: JOURNEY_WORDS.shippingInterrupted, tone: "back" }, this.host.now());
+      if (openStep(task)?.kind !== "you") endOpenStep(
+        task,
+        {
+        outcome: JOURNEY_WORDS.interrupted,
+        reason: JOURNEY_WORDS.shippingInterrupted,
+        tone: "back"
+      },
+        this.host.now()
+      );
       beginYouStep(task, "shipping", this.host.now());
       this.host.raise(task, "shipping", `Shipping “${task.title}” was interrupted`, false, {
         body: `${CARRIED_OVER}: check GitHub, then choose. Its delivery agent published deliveries itself then, so Petrina cannot tell what went out, and does nothing with it until you choose.`,
@@ -274,7 +332,11 @@ export class DeliveryRecovery {
     if (task.repositories) {
       for (const work of task.repositories) if (work.pr?.state === "closed" && !work.landingAccepted) work.landingAccepted = { at: this.host.now() };
       this.host.log(task, "you", "You resolved the closed pull requests. Open companion pull requests still need to land.");
-      if (landingState(task.repositories) === "unfinished") { this.host.toWaiting(task); this.host.commitNow(); this.host.schedule(); }
+      if (landingState(task.repositories) === "unfinished") {
+        this.host.toWaiting(task);
+        this.host.commitNow();
+        this.host.schedule();
+      }
       else this.effects.finishMany(task);
       return;
     }
@@ -286,7 +348,10 @@ export class DeliveryRecovery {
       scope!.work.cleanup = { ...scope!.work.cleanup, pullRequest: "unconfirmed", ...(tested ? { checkedDelivery: { tested, base } } : {}) };
       if (!tested) delete scope!.work.cleanup.checkedDelivery;
     }
-    if (!scope!.work.pr && !scope!.work.release && (!scope!.work.landed || scope!.work.localUpdate?.pushed === false)) scope!.work.cleanup = { ...scope!.work.cleanup, markedDone: true };
+    if (!scope!.work.pr && !scope!.work.release && (!scope!.work.landed || scope!.work.localUpdate?.pushed === false)) scope!.work.cleanup = {
+      ...scope!.work.cleanup,
+      markedDone: true
+    };
     delete scope!.work.shipping;
     this.host.clearStep(task);
     this.host.delivered(task);

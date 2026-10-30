@@ -140,7 +140,12 @@ export function ProductSwitcher({ state, value, onChange }: { state: State; valu
                     {group.title} <span className="num">{group.items.length}</span>
                   </div>
                   {group.items.map((entry) => (
-                    <button key={entry.product.id} className={`switcher-row tone-${entry.product.tone} ${value === entry.product.id ? "on" : ""}`} onClick={() => pick(entry.product.id)} aria-current={value === entry.product.id}>
+                    <button
+                      key={entry.product.id}
+                      className={`switcher-row tone-${entry.product.tone} ${value === entry.product.id ? "on" : ""}`}
+                      onClick={() => pick(entry.product.id)}
+                      aria-current={value === entry.product.id}
+                    >
                       <i aria-hidden="true" />
                       <span className="name">{entry.product.name}</span>
                       <ProductCounts stats={entry} />
@@ -178,7 +183,13 @@ const PIPE: readonly { column: Column; label: string }[] = [
 ];
 
 /** The portfolio: every product on one screen, what is in flight and what waits on you. */
-export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: { state: State; onPick: (productId: string) => void; onAdd?: () => void; settings: string | undefined; onSettings: (productId: string | undefined) => void }) {
+export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: {
+  state: State;
+  onPick: (productId: string) => void;
+  onAdd?: () => void;
+  settings: string | undefined;
+  onSettings: (productId: string | undefined) => void
+}) {
   const stats = productStats(state).sort(
     (a, b) => b.needsYou - a.needsYou || Number(b.active) - Number(a.active) || b.working - a.working || a.product.name.localeCompare(b.product.name),
   );
@@ -269,13 +280,30 @@ export function ProductsPage({ state, onPick, onAdd, settings, onSettings }: { s
                 <td>
                   <span className="delivery-summary">{DELIVERY_LABEL[entry.product.delivery ?? "pull-request"]} · {(entry.product.approveDelivery ?? true) ? "asks first" : "ships automatically"}</span>
                 </td>
-                <td><button className="btn small" data-product-settings={entry.product.id} aria-label={`Settings for ${entry.product.name}`} aria-haspopup="dialog" aria-expanded={settings === entry.product.id} aria-controls={`product-editor-${entry.product.id}`} onClick={() => onSettings(settings === entry.product.id ? undefined : entry.product.id)}>Settings</button></td>
+                <td><button
+                  className="btn small"
+                  data-product-settings={entry.product.id}
+                  aria-label={`Settings for ${entry.product.name}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={settings === entry.product.id}
+                  aria-controls={`product-editor-${entry.product.id}`}
+                  onClick={() => onSettings(settings === entry.product.id ? undefined : entry.product.id)}
+                >Settings</button></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {state.products.filter(product => product.id === settings).map(product => <ProductEditor key={product.id} product={product} state={state} onClose={() => closeSettings(product.id)} onRemoved={() => { onSettings(undefined); table.current?.focus(); }} />)}
+      {state.products.filter(product => product.id === settings).map(product => <ProductEditor
+        key={product.id}
+        product={product}
+        state={state}
+        onClose={() => closeSettings(product.id)}
+        onRemoved={() => {
+        onSettings(undefined);
+        table.current?.focus();
+      }}
+      />)}
     </div>
   );
 }

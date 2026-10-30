@@ -1,171 +1,86 @@
-import { DesignConversations, recordDesignAnswers, recordDesignBrief, recordDesignObjections, type RepositoryContext } from "@petrina/orchestrator";
-import { designWorkKey } from "./repositories.js";
-import { conversationDigest, ParticipantUnavailable } from "./participant-conversation.js";
-import { reviewContextIntact } from "./review-context.js";
-export { designConversationScope } from "./participant-conversation.js";
-// Design convergence: the architect writes the brief and a design reviewer objects, round after round,
-// until nothing blocking is left; and following the coordinator's call when the architects disagree.
+// Native design convergence adapter; portable convergence and coordinator-call routing live in @petrina/orchestrator.
 
-import { answerByCall, beginYouStep, CALL_WORDS, endAgentStep, followingCall, hintProducts, JOURNEY_WORDS, recordStepResult, unanswered, type CallAnswer, type DesignCall, type Id, type Task, designRoundEnd, type SourcePointer, type Stage } from "@petrina/core";
-import { formatObjections } from "./prompts.js";
-import { BriefResult, ObjectionsResult } from "./roles.js";
-import { Kernel, type MutableStage, type RuntimeTask } from "./kernel.js";
-import type { Turns } from "./turn.js";
+import { DesignConversations, DesignWorkflow, type RepositoryContext } from "@petrina/orchestrator";
 import type { Context } from "./context.js";
-import { checkSourceHints } from "./source-hints.js";
+import type { Kernel, MutableStage } from "./kernel.js";
+import { conversationDigest, ParticipantUnavailable } from "./participant-conversation.js";
+import { formatObjections } from "./prompts.js";
+import { reviewContextIntact } from "./review-context.js";
+import { BriefResult, ObjectionsResult } from "./roles.js";
+import type { Turns } from "./turn.js";
+
+export { designConversationScope } from "./participant-conversation.js";
 
 export class Design {
-  private readonly conversations: DesignConversations;
-  constructor(private readonly k: Kernel, private readonly turns: Turns, private readonly context: Context) {
-    this.conversations = new DesignConversations({ profile: id => k.profile(id), profiles: () => k.s.profiles,
-      role: id => k.role(id), digest: text => conversationDigest(text), conversation: scope => scope.work.conversation,
-      contextIntact: context => reviewContextIntact(context), unavailable: reason => new ParticipantUnavailable(reason),
+  private readonly workflow: DesignWorkflow;
+
+  constructor(k: Kernel, turns: Turns, context: Context) {
+    const conversations = new DesignConversations({
+      profile: (id) => k.profile(id),
+      profiles: () => k.s.profiles,
+      role: (id) => k.role(id),
+      digest: (text) => conversationDigest(text),
+      conversation: (scope) => scope.work.conversation,
+      contextIntact: (saved) => reviewContextIntact(saved),
+      unavailable: (reason) => new ParticipantUnavailable(reason),
     });
-  }
-
-  private participant(scope: RepositoryContext, stage: MutableStage, side: "author" | "reviewer", roleId: Id, plannedId: Id) {
-    return this.conversations.participant(scope, stage, side, roleId, plannedId);
-  }
-
-  async runConverge(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
-    const { task } = scope;
-    if (followingCall(task)) return this.followCall(scope, stage, signal);
-    const round = task.rounds[stage.id] ?? 1;
-    if (task.sub === 0) {
-      const profileId = stage.profileIds[0] ?? "opus-xhigh";
-      const participant = this.participant(scope, stage, "author", stage.roleId, profileId);
-      let by = profileId;
-      // Every objection the architect is shown gets its answer: none is accepted or rejected by default.
-      const due = task.objections.filter((objection) => objection.status === "open").map((objection) => objection.id);
-      // Answers add up across repairs, so the architect can hand back just the ones it left out.
-      const given = new Map<string, { id: string; status: "accepted" | "rejected"; answer: string }>();
-      const result = await this.turns.turn(scope, stage.roleId, profileId, () => this.context.sectionsFor(scope, stage.roleId), BriefResult, signal, {
-        resume: participant.resume,
-        designContext: true,
-        used: (id) => { by = id; participant.used(id); },
-        check: (value) => {
-          for (const answer of value.answers) given.set(answer.id, answer);
-          const missing = task.objections.filter((objection) => due.includes(objection.id) && !given.has(objection.id));
-          return missing.length ? `every objection you were shown needs an answer by id, accepted or rejected with your reason, and these have none:\n${formatObjections(missing as Task["objections"])}` : undefined;
+    this.workflow = new DesignWorkflow(
+      conversations,
+      {
+        now: () => Date.now(),
+        id: (prefix) => k.id(prefix),
+        role: (id) => k.role(id),
+        formatObjections,
+        note: (scope, tone, text, roleId, profileId) => k.log(scope, tone, text, roleId, profileId),
+        finishStep: (scope) => k.finishStep(scope),
+        rerun: (task) => k.rerun(task),
+        recordDesignRound: (scope, stage, reviewer, round, objectionCount, blockingCount) =>
+          k.tracking.designRound(scope, stage, reviewer, round, objectionCount, blockingCount),
+        recordDesignEnd: (scope, stage, round, outcome) => k.tracking.designEnd(scope, stage, round, outcome),
+        endStage: (scope, outcome) => k.tracking.endStage(scope, outcome),
+        raiseDisagreement: (scope, title, body) => {
+          k.raise(scope, "disagreement", title, false, { body });
         },
-      });
-      const sourcePointers = this.sourceHints(scope, result.sourcePointers, stage.roleId, by);
-      recordDesignBrief(task, result, sourcePointers);
-      recordDesignAnswers(task, given.size ? given.values() : result.answers);
-      participant.remember();
-      this.k.log(scope, "done", round === 1 ? "Design brief ready" : "Answered every objection", stage.roleId, by);
-      recordStepResult(task, { objections: task.objections.filter((objection) => due.includes(objection.id)) });
-      endAgentStep(task, round === 1 ? { outcome: JOURNEY_WORDS.wroteBrief, reason: JOURNEY_WORDS.briefReady } : { outcome: JOURNEY_WORDS.answeredAll, reason: JOURNEY_WORDS.objectionsAnswered }, Date.now());
-      await this.k.saveRoleEdits(scope, stage.roleId, by);
-      this.k.finishStep(scope);
-      if (this.k.rerun(task)) return "continue";
-      if (this.nextProduct(scope, stage)) return "continue";
-      task.sub = 1;
-      this.k.commit();
-      return "continue";
-    }
-    const reviewerRole = stage.reviewerRoleId ?? "design-reviewer";
-    const reviewerProfile = stage.reviewerProfileIds?.[0] ?? "sol-xhigh";
-    const participant = this.participant(scope, stage, "reviewer", reviewerRole, reviewerProfile);
-    let reviewer = reviewerProfile;
-    const result = await this.turns.turn(scope, reviewerRole, reviewerProfile, () => this.context.sectionsFor(scope, reviewerRole), ObjectionsResult, signal, { resume: participant.resume, designContext: true, used: (id) => { reviewer = id; participant.used(id); } });
-    participant.remember();
-    const { before, blocking } = recordDesignObjections(task, result, reviewer, round, () => this.k.id(`${task.id}-obj`));
-    recordStepResult(task, { objections: task.objections.slice(before) });
-    endAgentStep(task, blocking ? { outcome: JOURNEY_WORDS.objections(result.objections.length, blocking), reason: JOURNEY_WORDS.blocking(blocking), tone: "back" } : { outcome: JOURNEY_WORDS.objections(result.objections.length, 0), reason: JOURNEY_WORDS.noBlocking }, Date.now());
-    this.k.finishStep(scope);
-    if (this.k.rerun(task)) return "continue";
-    this.k.tracking.designRound(scope, stage, { roleId: reviewerRole, profileId: reviewer }, round, result.objections.length, blocking);
-    const end = designRoundEnd(blocking, round, stage as Stage);
-    if (end === "settled") {
-      // Nobody decides on non-blocking points raised in the last round: they stay as follow-ups, never "rejected".
-      for (const objection of task.objections) if (objection.status === "open" && !objection.blocking) objection.status = "noted";
-      this.k.log(scope, "done", "Design settled: no blocking objections", reviewerRole, reviewer);
-      this.k.tracking.designEnd(scope, stage, round, "settled");
-      task.stageIndex += 1;
-      task.sub = 0;
-      this.k.commit();
-      return "continue";
-    }
-    this.k.log(scope, "warn", `Raised ${result.objections.length} objection${result.objections.length === 1 ? "" : "s"}, ${blocking} blocking`, reviewerRole, reviewer);
-    if (end === "disagreement") {
-      this.k.tracking.designEnd(scope, stage, round, "to-you");
-      delete task.agent;
-      task.holdsSlot = false;
-      task.statusLine = "The architects disagree. Your call";
-      beginYouStep(task, "call", Date.now());
-      this.k.raise(scope, "disagreement", `The architects disagree on “${task.title}”`, false, { body: CALL_WORDS.disagreement });
-      this.k.commitNow();
-      return "stop";
-    }
-    task.rounds[stage.id] = round + 1;
-    task.sub = 0;
-    this.k.commit();
-    return "continue";
-  }
-
-  /**
-   * The brief's optional hints, each checked against the task's current products. A supplied list replaces the earlier
-   * one with its valid entries; an omitted list keeps the earlier hints that still qualify. What is left out is noted.
-   */
-  private sourceHints(scope: RepositoryContext, supplied: unknown, roleId: Id, by: Id): SourcePointer[] {
-    const { task } = scope;
-    const hints = checkSourceHints(supplied === undefined ? task.brief?.sourcePointers : supplied, hintProducts(task));
-    if (hints.left) this.k.log(scope, "status", hints.left, roleId, by);
-    return hints.pointers;
-  }
-
-  private nextProduct(scope: RepositoryContext, stage: MutableStage): boolean {
-    const { task, work: repository } = scope;
-    if (!task.repositories || !this.k.role(stage.roleId)?.canEdit) return false;
-
-    const key = designWorkKey(task, stage.id);
-    const own = task.repositories.find((work) => work.productId === repository.productId)!;
-    own.completedStages = [...new Set([...own.completedStages, key])];
-    const next = task.repositories.find((work) => !work.completedStages.includes(key));
-    task.activeProductId = next?.productId ?? task.leadProductId ?? task.repositories[0]!.productId;
-    this.k.commitNow();
-    return !!next;
-  }
-
-  /** The coordinator made the call: the architect updates the brief to follow it, then the design goes to the coordinator's check. */
-  private async followCall(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue"> {
-    const { task } = scope;
-    const call = task.call!;
-    const profileId = stage.profileIds[0] ?? "opus-xhigh";
-    const participant = this.participant(scope, stage, "author", stage.roleId, profileId);
-    let by = profileId;
-    const revising = !task.objections.some((objection) => objection.status === "open");
-    // Answers add up across repairs, so the architect can hand back just the ones it left out.
-    const answers = new Map<Id, CallAnswer>();
-    const result = await this.turns.turn(scope, stage.roleId, profileId, () => this.context.sectionsFor(scope, stage.roleId), BriefResult, signal, {
-      status: CALL_WORDS.following,
-      resume: participant.resume,
-      designContext: true,
-      used: (id) => { by = id; participant.used(id); },
-      check: (value) => {
-        for (const answer of value.answers) answers.set(answer.id, answer);
-        const missing = unanswered(task.objections as Task["objections"], call as DesignCall, [...answers.values()]);
-        return missing.length ? `every objection listed for an answer needs one by id, and these have none:\n${formatObjections(missing)}` : undefined;
+        checkpoint: () => k.commitNow(),
+        changed: () => k.commit(),
       },
-    });
-    const sourcePointers = this.sourceHints(scope, result.sourcePointers, stage.roleId, by);
-    recordDesignBrief(task, result, sourcePointers);
-    task.objections = answerByCall(task.objections as Task["objections"], call as DesignCall, [...answers.values()]) as RuntimeTask["objections"];
-    participant.remember();
-    recordStepResult(task, { objections: task.objections.filter((objection) => answers.has(objection.id) || call.open.includes(objection.id)) });
-    this.k.log(scope, "done", revising ? CALL_WORDS.revised : CALL_WORDS.updated, stage.roleId, by);
-    endAgentStep(task, { outcome: JOURNEY_WORDS.followed, reason: JOURNEY_WORDS.followsCall }, Date.now());
-    await this.k.saveRoleEdits(scope, stage.roleId, by);
-    this.k.finishStep(scope);
-    if (this.nextProduct(scope, stage)) return "continue";
-    this.k.tracking.endStage(scope, "settled");
-    this.k.log(scope, "done", CALL_WORDS.settled);
-    if (this.k.rerun(task)) return "continue";
-    // The design check comes next, maybe after steps such as Screens: the call made sure there is one.
-    task.stageIndex += 1;
-    task.sub = 0;
-    this.k.commit();
-    return "continue";
+      {
+        runAuthorTurn: (scope, input, signal) =>
+          turns.turn(
+            scope,
+            input.roleId,
+            input.profileId,
+            () => context.sectionsFor(scope, input.roleId),
+            BriefResult,
+            signal,
+            {
+              ...(input.status ? { status: input.status } : {}),
+              resume: input.resume as Parameters<Turns["turn"]>[6] extends { resume?: infer R } ? R : never,
+              designContext: true,
+              used: input.used,
+              check: input.check,
+            },
+          ),
+        runReviewerTurn: (scope, input, signal) =>
+          turns.turn(
+            scope,
+            input.roleId,
+            input.profileId,
+            () => context.sectionsFor(scope, input.roleId),
+            ObjectionsResult,
+            signal,
+            {
+              resume: input.resume as Parameters<Turns["turn"]>[6] extends { resume?: infer R } ? R : never,
+              designContext: true,
+              used: input.used,
+            },
+          ),
+        saveRoleEdits: (scope, roleId, profileId) => k.saveRoleEdits(scope, roleId, profileId),
+      },
+    );
+  }
+
+  runConverge(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
+    return this.workflow.runConverge(scope, stage, signal);
   }
 }

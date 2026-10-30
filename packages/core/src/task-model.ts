@@ -2,7 +2,33 @@
 // composing them does not introduce projection copies or a second schema.
 import type { Column, DeliveryMode, Id, InboxKind, Lesson, Plan, RiskLevel, RunState, TaskKind } from "./catalog-model.js";
 import type { CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupInvalidation } from "./check-model.js";
-import type { ActiveAgent, AgentToolActivity, BuilderContext, Cleanup, ConversationNote, DesignBrief, DesignCall, Driving, Finding, HandedBack, Hunt, Objection, ProofDecision, ProofRequest, PullRequest, QueuedMessage, ScreenRequest, SessionLine, ShippingRecord, SourcePointer, StepClock, StepNote, StepRecord, TimelineEntry, WorkRow } from "./review-model.js";
+import type {
+  ActiveAgent,
+  AgentToolActivity,
+  BuilderContext,
+  Cleanup,
+  ConversationNote,
+  DesignBrief,
+  DesignCall,
+  Driving,
+  Finding,
+  HandedBack,
+  Hunt,
+  Objection,
+  ProofDecision,
+  ProofRequest,
+  PullRequest,
+  QueuedMessage,
+  ScreenRequest,
+  SessionLine,
+  ShippingRecord,
+  SourcePointer,
+  StepClock,
+  StepNote,
+  StepRecord,
+  TimelineEntry,
+  WorkRow
+} from "./review-model.js";
 import type { AcceptanceGap, JourneyStep } from "./journey-model.js";
 export type { ProofDecision, ProofRequest } from "./review-model.js";
 import type { PullRequestBackground, TaskSource, WorkChoice } from "./source.js";
@@ -23,7 +49,19 @@ export interface RepositoryState {
   /** The last time Petrina ran the product's checks on this task, and on which commit. */
   /** The tree is the code itself: a squash keeps it, so the checks still count. */
   /** The definition covers commands and hook inputs, separately from the code. */
-  checks?: { current?: boolean; at: number; sha?: string; tree?: string; definition?: string; environment?: CheckEnvironmentBinding; results: readonly CheckRun[]; provenance?: { nodeId: Id; attemptId: string } };
+  checks?: {
+    current?: boolean;
+    at: number;
+    sha?: string;
+    tree?: string;
+    definition?: string;
+    environment?: CheckEnvironmentBinding;
+    results: readonly CheckRun[];
+    provenance?: {
+    nodeId: Id;
+    attemptId: string
+  }
+  };
   /** Last actual setup observation, never an invented pass for a product with no declarations. */
   checkSetup?: CheckSetupAttempt;
   /** An actual coordinator change/rerun, including one made before the first observation. */
@@ -71,7 +109,17 @@ export interface RepositoryState {
   /** Final acceptance failures return to the builder twice, then wait for the coordinator. */
   acceptanceReturns?: number;
   /** The builder's own conversation from its last step: fix rounds and updates go back to it. */
-  builderSession?: { stageId: Id; profileId: Id; plannedProfileId?: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; rethought?: boolean; readinessWait?: ReadinessWait };
+  builderSession?: {
+    stageId: Id;
+    profileId: Id;
+    plannedProfileId?: Id;
+    toolId: Id;
+    model: string;
+    sessionId: string;
+    context?: BuilderContext;
+    rethought?: boolean;
+    readinessWait?: ReadinessWait
+  };
   pr?: PullRequest;
   /** The task's own branch and working copy. */
   branch?: string;
@@ -253,7 +301,18 @@ export interface TaskDesignState {
   /** The coordinator's call on a disagreement. It stays, so no later design check reopens the design it settled. */
   call?: DesignCall;
   /** Separate completed design conversations per stage, participant and product. Never shared between author and reviewer. */
-  designSessions?: Readonly<Record<string, { scope: string; plannedProfileId: Id; profileId: Id; toolId: Id; model: string; sessionId: string; context?: BuilderContext; briefDigest?: string; freshReason?: string; readinessWait?: ReadinessWait }>>;
+  designSessions?: Readonly<Record<string, {
+    scope: string;
+    plannedProfileId: Id;
+    profileId: Id;
+    toolId: Id;
+    model: string;
+    sessionId: string;
+    context?: BuilderContext;
+    briefDigest?: string;
+    freshReason?: string;
+    readinessWait?: ReadinessWait
+  }>>;
   /** Changes were asked at this design check: earlier checks of the same design pass by themselves on the way back to it. */
   returnToCheck?: number;
   designRevision?: number;

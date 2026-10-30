@@ -1,5 +1,22 @@
 // A decision projection of existing task and journey evidence. No new evidence or gate state is saved.
-import { assignedProducts, checkSetupOutcome, recordedCheckBatch, checkEntryCommandOutcome, checkOutcome, evidenceFor, findingReportCounts, originalCheck, outstandingReportsFirst, resultSeatOf, reviewDecisionPending, roleForTask, taskProductIds, type CheckSetupOutcome, type InboxItem, type Task } from "@petrina/core";
+import {
+  assignedProducts,
+  checkSetupOutcome,
+  recordedCheckBatch,
+  checkEntryCommandOutcome,
+  checkOutcome,
+  evidenceFor,
+  findingReportCounts,
+  originalCheck,
+  outstandingReportsFirst,
+  resultSeatOf,
+  reviewDecisionPending,
+  roleForTask,
+  taskProductIds,
+  type CheckSetupOutcome,
+  type InboxItem,
+  type Task
+} from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { checkCommandOutcome, readCheckLog, SAVED_RESULT_PREVIEW, unreportedCheckExit } from "./check-log-read.js";
 import { fingerprint } from "@petrina/storage/receipt-identity";
@@ -43,7 +60,11 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
         commandOutcome: original ? checkEntryCommandOutcome({ ...original.check, run }) : checkCommandOutcome(run),
         reportedOk: run?.ok ?? null,
         ...(attemptId ? { attemptId } : {}),
-        ...(attempt && (attempt.sha !== saved.sha || attempt.tree !== saved.tree || attempt.definition !== saved.definition) ? { versions: { sha: attempt.sha, tree: attempt.tree, definition: attempt.definition } } : {}),
+        ...(attempt && (attempt.sha !== saved.sha || attempt.tree !== saved.tree || attempt.definition !== saved.definition) ? { versions: {
+          sha: attempt.sha,
+          tree: attempt.tree,
+          definition: attempt.definition
+        } } : {}),
         ...(run ? { startedAt: run.startedAt ?? null, endedAt: run.endedAt ?? null, durationMs: run.ms } : {}),
         ...(run?.interruption ? { interruption: run.interruption } : {}),
         ...(run?.timedOut ? { timedOut: true } : {}),
@@ -51,7 +72,19 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
         ...(run?.cleanupIncomplete ? { cleanupIncomplete: true } : {}),
         ...(run && unreportedCheckExit(run) ? { exitUnreported: true } : {}),
         ...(check.reusedAt !== undefined ? { reusedAt: check.reusedAt } : {}),
-        ...(reuse ? { reuse: { at: reuse.at, originalAt: reuse.originalAt, purpose: reuse.purpose, basis: reuse.basis }, reuseHistory: { operation: "journey.node", taskId, nodeId: node!.id } } : {}),
+        ...(reuse ? {
+          reuse: {
+          at: reuse.at,
+          originalAt: reuse.originalAt,
+          purpose: reuse.purpose,
+          basis: reuse.basis
+        },
+          reuseHistory: {
+          operation: "journey.node",
+          taskId,
+          nodeId: node!.id
+        }
+        } : {}),
         original: originalRead ?? null,
         ...(!originalRead ? { originalUnavailable: "No unique original journey check was recorded or retained." } : run && !original?.check.run ? { originalUnavailable: "The original check entry has no retained run. Diagnostics use this exact saved result." } : {}),
         diagnostics: diagnostics ? {
@@ -61,9 +94,30 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
           ...(diagnostics.message ? { message: diagnostics.message } : {}),
           omitted: failure ? "Complete process output and saved result" : "Successful process output and saved result",
           read: { operation: "journey.check", ...ref },
-          ...(failure ? { savedResult: diagnostics.savedResult, ...(diagnostics.savedResultEnding ? { savedResultEnding: diagnostics.savedResultEnding } : {}), savedResultRead: { operation: "journey.check", ...ref, section: "result" } } : {}),
-          ...(failure && !(diagnostics.savedResult as { text?: string } | undefined)?.text ? { processExcerpt: diagnostics.text, processExcerptOffset: diagnostics.offset, processOmittedBefore: diagnostics.omittedBefore ?? 0 } : {}),
-        } : { completeness: "not-executed", message: "Skipped or unexecuted check; no command diagnostics exist.", ...(node ? { read: { operation: "journey.node", taskId, nodeId: node.id } } : {}), ...(check.detail ? { explanation: check.detail } : {}) },
+          ...(failure ? {
+            savedResult: diagnostics.savedResult,
+            ...(diagnostics.savedResultEnding ? { savedResultEnding: diagnostics.savedResultEnding } : {}),
+            savedResultRead: {
+            operation: "journey.check",
+            ...ref,
+            section: "result"
+          }
+          } : {}),
+          ...(failure && !(diagnostics.savedResult as { text?: string } | undefined)?.text ? {
+            processExcerpt: diagnostics.text,
+            processExcerptOffset: diagnostics.offset,
+            processOmittedBefore: diagnostics.omittedBefore ?? 0
+          } : {}),
+        } : {
+          completeness: "not-executed",
+          message: "Skipped or unexecuted check; no command diagnostics exist.",
+          ...(node ? { read: {
+          operation: "journey.node",
+          taskId,
+          nodeId: node.id
+        } } : {}),
+          ...(check.detail ? { explanation: check.detail } : {})
+        },
       };
     }));
     return {
@@ -80,7 +134,16 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
         ...(work.checkSetupInvalidated ? { invalidation: work.checkSetupInvalidated } : {}),
         authority: "Recorded only; not live verification",
       },
-      checkBatch: (() => { const batch = recordedCheckBatch(work); return { kind: batch.kind, ...(batch.kind === "blocked" ? { reason: batch.reason, previousProductFailures: batch.productFailures.length } : batch.kind === "product-failed" ? { failed: batch.failed.length } : {}) }; })(),
+      checkBatch: (() => {
+        const batch = recordedCheckBatch(work);
+        return {
+        kind: batch.kind,
+        ...(batch.kind === "blocked" ? {
+        reason: batch.reason,
+        previousProductFailures: batch.productFailures.length
+      } : batch.kind === "product-failed" ? { failed: batch.failed.length } : {})
+      };
+      })(),
       checks: saved ? {
         recordedAt: saved.at,
         versions: { sha: saved.sha ?? null, tree: saved.tree ?? null, definition: saved.definition ?? null },
@@ -102,8 +165,23 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
     task: { id: taskId, title: task.title, productIds: taskProductIds(task), request: { omitted: "Full task request", read: read("request") } },
     ...(request.kind === "plan" ? {
       plan: task.plan ?? null,
-      scope: { selectedProducts: task.selectedProducts, proposed: task.workProposal, rows: task.workRows, proposedSource: task.proposedSource, error: task.workError, validating: task.workValidating, confirmWork: task.confirmWork, approvalExplanation: task.approvalExplanation },
-    } : { plan: task.plan ? { omitted: "Plan stages and assigned profiles", read: { operation: "plan.inspect", taskId } } : { unavailable: "No plan recorded." } }),
+      scope: {
+        selectedProducts: task.selectedProducts,
+        proposed: task.workProposal,
+        rows: task.workRows,
+        proposedSource: task.proposedSource,
+        error: task.workError,
+        validating: task.workValidating,
+        confirmWork: task.confirmWork,
+        approvalExplanation: task.approvalExplanation
+      },
+    } : { plan: task.plan ? {
+      omitted: "Plan stages and assigned profiles",
+      read: {
+      operation: "plan.inspect",
+      taskId
+    }
+    } : { unavailable: "No plan recorded." } }),
     products,
     ...(request.kind === "delivery" ? {
       approvalMeaning: reviewDecisionPending(task) ? "Accept unresolved review and continue to final verification. This does not approve delivery." : "Delivery approval remains subject to the existing checks, acceptance and publishing gates.",
@@ -113,17 +191,57 @@ export async function checkpointView(engine: Engine, task: Task, request: InboxI
       proofRefreshBlocked: task.proofRefreshBlocked ?? false,
       proofDecision: task.checkedProofDecision ?? null,
       acceptance: checkpointAcceptance(task, engine.s.roles),
-      design: task.brief || task.objections.length || task.call ? { omitted: "Design brief, objections, responses and coordinator call", read: read("design") } : { unavailable: "No design recorded." },
+      design: task.brief || task.objections.length || task.call ? {
+        omitted: "Design brief, objections, responses and coordinator call",
+        read: read("design")
+      } : { unavailable: "No design recorded." },
     } : { brief: task.brief, objections: task.objections, call: task.call, designRead: read("design") }),
     findings: {
       counts: findingReportCounts(task.findings),
-      reports: outstandingReportsFirst(task.findings).map((finding) => ({ id: finding.id, text: finding.text.slice(0, 160), shortened: finding.text.length > 160, severity: finding.severity, status: finding.status, productIds: assignedProducts(task, finding.productIds), ...(finding.tracking ? { tracking: finding.tracking } : {}), omitted: "Full report, evidence, answers and verification", read: { ...read("findings"), findingId: finding.id } })),
+      reports: outstandingReportsFirst(task.findings).map((finding) => ({
+        id: finding.id,
+        text: finding.text.slice(
+        0,
+        160
+      ),
+        shortened: finding.text.length > 160,
+        severity: finding.severity,
+        status: finding.status,
+        productIds: assignedProducts(
+        task,
+        finding.productIds
+      ),
+        ...(finding.tracking ? { tracking: finding.tracking } : {}),
+        omitted: "Full report, evidence, answers and verification",
+        read: {
+        ...read("findings"),
+        findingId: finding.id
+      }
+      })),
     },
     supportingReview: supportingReview ? {
       nodeId: supportingReview.id, endedAt: supportingReview.endedAt ?? null,
       read: { operation: "journey.node", taskId, nodeId: supportingReview.id },
-      ...(supportingReview.reviewInput ? { input: { operation: "journey.review-input", taskId, nodeId: supportingReview.id } } : { inputUnavailable: "No saved review input reference." }),
-      results: (supportingReview.agentResults ?? []).map((result, index) => ({ operation: "journey.result", taskId, nodeId: supportingReview.id, index, seat: resultSeatOf(supportingReview, result, engine.s.roles, task) })),
+      ...(supportingReview.reviewInput ? { input: {
+        operation: "journey.review-input",
+        taskId,
+        nodeId: supportingReview.id
+      } } : { inputUnavailable: "No saved review input reference." }),
+      results: (supportingReview.agentResults ?? []).map((
+        result,
+        index
+      ) => ({
+        operation: "journey.result",
+        taskId,
+        nodeId: supportingReview.id,
+        index,
+        seat: resultSeatOf(
+        supportingReview,
+        result,
+        engine.s.roles,
+        task
+      )
+      })),
       exactInputs: { omitted: "Participant instructions and later updates", read: { operation: "journey.input", taskId, nodeId: supportingReview.id } },
     } : null,
   };

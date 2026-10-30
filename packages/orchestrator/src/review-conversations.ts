@@ -41,7 +41,15 @@ export class ReviewConversations {
       completed: (note: ConversationNote, actual: AgentProfile, role: Role) => {
         task.reviewSessions = { ...task.reviewSessions, [stage.id]: {
           ...task.reviewSessions?.[stage.id],
-          [seat]: { scope: reviewConversationScope(repositoryView(scope), stage.id, seat, role, planned, actual, text => this.host.digest(text)), bases: reviewBases(scope), round,
+          [seat]: { scope: reviewConversationScope(
+            repositoryView(scope),
+            stage.id,
+            seat,
+            role,
+            planned,
+            actual,
+            text => this.host.digest(text)
+          ), bases: reviewBases(scope), round,
             plannedProfileId: plannedId, profileId: actual.id, toolId: note.toolId, model: note.model, sessionId: note.sessionId, ...(note.context ? { context: note.context } : {}) },
         } };
         this.host.checkpoint();
@@ -61,12 +69,16 @@ export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonl
   const updates: string[] = [];
   for (const bound of scopes) {
     const { work } = bound;
-    const before = bases[work.productId], base = work.baseSha, head = heads[work.productId];
+    const before = bases[work.productId];
+    const base = work.baseSha;
+    const head = heads[work.productId];
     if (!before || !base || !head || !work.worktree) return { sections: [], reason: "its saved repository bases are unavailable" };
     if (work.portReview || work.updating) return { sections: [], reason: "the change requires a conflict port review" };
     if (before === base) continue;
     if (!(await effects.contains(bound, base, before))) return { sections: [], reason: "its starting branch's history was replaced or diverged" };
-    let incoming: readonly string[] = [], changed: readonly string[] = [], count = "";
+    let incoming: readonly string[] = [];
+    let changed: readonly string[] = [];
+    let count = "";
     await completeAll([
       effects.changedFiles(bound, before, base).then(value => { incoming = value; }),
       effects.changedFiles(bound, base, head).then(value => { changed = value; }),
@@ -75,7 +87,8 @@ export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonl
     const overlap = incoming.filter(file => changed.includes(file));
     const commits = Number(count.trim());
     if (!Number.isSafeInteger(commits) || commits < 1) throw new Error("Could not count the starting branch's incoming commits for review.");
-    const branch = work.source?.start.branch ?? "main", source = branch === "main" ? "Main" : branch;
+    const branch = work.source?.start.branch ?? "main";
+    const source = branch === "main" ? "Main" : branch;
     const incremental = work.reviewedSha
       ? `Read the incremental comparison too. ${source}'s incoming changes are not in the incremental comparison: it contains only this task's changes since the last round, carried onto the new base.`
       : "No incremental comparison is available. Review the complete change.";

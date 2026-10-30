@@ -1,4 +1,23 @@
-import { addEvidence, assignedProducts, closedFinding, findingCount, noteReproduction, noteReviewTag, openStep, recordDisputes, recordStepResult, reopenFinding, reopensUnresolved, reviewClaimIds, reviewRoundSteps, type DeepMutable, type Finding, type Id, type JourneyStep, type Stage } from "@petrina/core";
+import {
+  addEvidence,
+  assignedProducts,
+  closedFinding,
+  findingCount,
+  noteReproduction,
+  noteReviewTag,
+  openStep,
+  recordDisputes,
+  recordStepResult,
+  reopenFinding,
+  reopensUnresolved,
+  reviewClaimIds,
+  reviewRoundSteps,
+  type DeepMutable,
+  type Finding,
+  type Id,
+  type JourneyStep,
+  type Stage
+} from "@petrina/core";
 import type { RuntimeTask } from "./model.js";
 import type { ReviewReport, ReviewReportHost } from "./ports/review-reports.js";
 
@@ -12,7 +31,13 @@ function recordedReopenings(group: readonly JourneyStep[]): { id: Id; evidence: 
     if (recorded) for (const finding of recorded) reopened.set(finding.id, finding);
     // Only saved participant copies can recover older transitions, never today's live findings.
     else for (const result of step.agentResults ?? []) for (const finding of result.findings ?? []) {
-      if (finding.reopenedAt !== undefined && finding.reopenedAt >= group[0]!.startedAt && finding.reopenedAt >= result.at) reopened.set(finding.id, { id: finding.id, evidence: !!finding.evidence });
+      if (finding.reopenedAt !== undefined && finding.reopenedAt >= group[0]!.startedAt && finding.reopenedAt >= result.at) reopened.set(
+        finding.id,
+        {
+        id: finding.id,
+        evidence: !!finding.evidence
+      }
+      );
     }
   }
   return [...reopened.values()];
@@ -36,10 +61,38 @@ export class ReviewReports {
       if (finding && evidence?.trim()) noteReproduction(task, finding, this.host.now());
       if (finding && !finding.confirmedBy.includes(profileId)) finding.confirmedBy.push(profileId);
     }
-    if (task.hunt) for (const report of [...result.confirms.map(id => ({ id, resolved: false, evidence: result.confirmationEvidence[id] })), ...result.resolves.map(entry => ({ ...entry, resolved: true }))]) {
-      task.hunt.findingChecks = { ...task.hunt.findingChecks, [report.id]: { ...task.hunt.findingChecks?.[report.id], [reviewerKey]: { by: profileId, resolved: report.resolved, ...(report.evidence ? { evidence: report.evidence } : {}) } } };
+    if (task.hunt) for (const report of [
+      ...result.confirms.map(id => ({
+      id,
+      resolved: false,
+      evidence: result.confirmationEvidence[id]
+    })),
+      ...result.resolves.map(entry => ({
+      ...entry,
+      resolved: true
+    }))
+    ]) {
+      task.hunt.findingChecks = {
+        ...task.hunt.findingChecks,
+        [report.id]: {
+        ...task.hunt.findingChecks?.[report.id],
+        [reviewerKey]: {
+        by: profileId,
+        resolved: report.resolved,
+        ...(report.evidence ? { evidence: report.evidence } : {})
+      }
+      }
+      };
     }
-    recordDisputes(task.findings.filter((finding) => !task.repositories || assignedProducts(task, finding.productIds).length > 0), result.disputes, profileId, this.host.now());
+    recordDisputes(
+      task.findings.filter((finding) => !task.repositories || assignedProducts(
+      task,
+      finding.productIds
+    ).length > 0),
+      result.disputes,
+      profileId,
+      this.host.now()
+    );
     if (task.repositories && task.hunt) for (const finding of task.findings) {
       const owners = assignedProducts(task, finding.productIds);
       if (owners.length < 2 || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:") || !owners.every((id) => finding.answers?.[id]?.fixed)) continue;
@@ -76,19 +129,43 @@ export class ReviewReports {
     // A confirmed existing finding asks for fixes just as a newly raised one does. Count each once.
     const created = new Set(raised.map((finding) => finding.id));
     const step = openStep(task);
-    const seen = new Set([...(step?.result?.findings ?? []).map((finding) => finding.id), ...result.confirms, ...result.disputes.map((finding) => finding.id), ...result.resolves.map(finding => finding.id)]);
+    const seen = new Set([
+      ...(step?.result?.findings ?? []).map((finding) => finding.id),
+      ...result.confirms,
+      ...result.disputes.map((finding) => finding.id),
+      ...result.resolves.map(finding => finding.id)
+    ]);
     const priorChanges = step?.result?.findingChanges;
     const priorReopened = recordedReopenings(step ? reviewRoundSteps(task, step.id, this.host.roles()) : []);
     const reopened = task.findings.filter(finding => reopenings.has(finding.id)).map(finding => ({ id: finding.id, evidence: !!finding.evidence }));
     recordStepResult(task, {
       findings: task.findings.filter((finding) => seen.has(finding.id) || created.has(finding.id)),
-      findingChanges: { raised: [...(priorChanges?.raised ?? []), ...created], fixed: priorChanges?.fixed ?? [], dismissed: priorChanges?.dismissed ?? [], reopened: [...priorReopened, ...reopened] },
+      findingChanges: {
+        raised: [
+        ...(priorChanges?.raised ?? []),
+        ...created
+      ],
+        fixed: priorChanges?.fixed ?? [],
+        dismissed: priorChanges?.dismissed ?? [],
+        reopened: [
+        ...priorReopened,
+        ...reopened
+      ]
+      },
     });
     // This seat's own copy of the records it touched: later peers and rounds never rewrite it.
     const own = step?.agentResults?.findLast((entry) => entry.roleId === roleId && entry.profileId === profileId && (entry.inputIndex === undefined || step.agentInputs?.[entry.inputIndex]?.reviewerKey === reviewerKey));
     if (own) own.findings = structuredClone(task.findings.filter((finding) => result.confirms.includes(finding.id) || result.disputes.some((dispute) => dispute.id === finding.id) || result.resolves.some(entry => entry.id === finding.id) || created.has(finding.id)));
     const supported = task.findings.filter((finding) => finding.status === "open" && (result.confirms.includes(finding.id) || created.has(finding.id)));
-    this.host.verdict(task, roleId, profileId, task.rounds[stage.id] ?? 1, result.verdict, supported.length, supported.filter((finding) => finding.severity === "blocking").length);
+    this.host.verdict(
+      task,
+      roleId,
+      profileId,
+      task.rounds[stage.id] ?? 1,
+      result.verdict,
+      supported.length,
+      supported.filter((finding) => finding.severity === "blocking").length
+    );
     const confirmed = result.confirms.length;
     const also = [confirmed ? `confirmed ${confirmed}` : "", result.disputes.length ? `disputed ${result.disputes.length}` : ""].filter(Boolean).join(", ");
     this.host.note(task, important ? "warn" : "done", `${findingCount(raised)}${also ? `; ${also}` : ""}`, roleId, profileId);
@@ -127,7 +204,15 @@ export class ReviewReports {
       const raised = task.findings.slice(task.hunt.findings ?? task.findings.length).map(finding => finding.id);
       const claims = new Set(reviewClaimIds(task, group[0]!.id, this.host.roles()));
       const changed = task.findings.filter(finding => before.get(finding.id) !== finding.status);
-      const seen = new Set([...group.flatMap(entry => [...(entry.result?.findings ?? []), ...(entry.agentResults ?? []).flatMap(result => result.findings ?? [])]).map(finding => finding.id), ...raised, ...claims, ...changed.map(finding => finding.id)]);
+      const seen = new Set([
+        ...group.flatMap(entry => [
+        ...(entry.result?.findings ?? []),
+        ...(entry.agentResults ?? []).flatMap(result => result.findings ?? [])
+      ]).map(finding => finding.id),
+        ...raised,
+        ...claims,
+        ...changed.map(finding => finding.id)
+      ]);
       const findingChanges = {
         raised,
         fixed: task.findings.filter(finding => finding.status === "fixed" && (before.get(finding.id) !== "fixed" || claims.has(finding.id))).map(finding => finding.id),

@@ -18,7 +18,11 @@ export class SavedParticipantReadiness {
   /** Admission owners retaining a main place; releasing one never stops the tool's shared check. */
   private readonly held = new Map<Id, Set<() => boolean>>();
 
-  constructor(private readonly host: SavedParticipantReadinessHost, private readonly tools: SavedParticipantChecks, private readonly clock: SavedParticipantReadinessClock) {}
+  constructor(
+    private readonly host: SavedParticipantReadinessHost,
+    private readonly tools: SavedParticipantChecks,
+    private readonly clock: SavedParticipantReadinessClock
+  ) {}
 
   /** One agent check plus the previous check's stop: test overrides of the check timeout included. */
   limitMs(): number {
@@ -41,7 +45,15 @@ export class SavedParticipantReadiness {
     if (this.host.stopped() || signal?.aborted || runtimeWaitHolds(need.scope.task)) return Promise.resolve();
     if (!need.saved.readinessWait) {
       const check = checkOf(this.host.state().setup?.checks, need.toolId);
-      const wait: ReadinessWait = { at: this.clock.now(), toolId: need.toolId, previous: { status: check.status, ...(check.at !== undefined ? { at: check.at } : {}) }, check: check.checking ? "joined" : "started" };
+      const wait: ReadinessWait = {
+        at: this.clock.now(),
+        toolId: need.toolId,
+        previous: {
+        status: check.status,
+        ...(check.at !== undefined ? { at: check.at } : {})
+      },
+        check: check.checking ? "joined" : "started"
+      };
       need.saved.readinessWait = wait;
       // A Ready tool's ordinary check only settles, as before. Otherwise the timeline says why the participant waits: a line of
       // Petrina's own, never attributed to the participant, so a restart never reports it as the agent's last activity.
@@ -50,7 +62,11 @@ export class SavedParticipantReadiness {
         const before = { unknown: `${tool}'s last readiness check was inconclusive`, unchecked: `${tool} has no readiness answer yet`,
           "logged-out": `${tool} was last found logged out`, "not-installed": `${tool} was last found not installed` }[check.status];
         const role = this.host.role(need.roleId, need.scope.task)?.name ?? need.roleId;
-        this.host.note(need.scope, "status", `${need.words} (${role}): ${before}, so Petrina ${wait.check === "joined" ? "joined the check under way" : "started one recheck"}`);
+        this.host.note(
+          need.scope,
+          "status",
+          `${need.words} (${role}): ${before}, so Petrina ${wait.check === "joined" ? "joined the check under way" : "started one recheck"}`
+        );
       }
       this.host.checkpoint(need.scope);
       void this.tools.check(need.toolId);
@@ -68,7 +84,10 @@ export class SavedParticipantReadiness {
   async resolveHeld(need: ReadinessNeed, owner: AbortSignal, yieldPlace?: () => boolean): Promise<boolean> {
     const taskId = need.scope.task.id;
     const interrupted = new AbortController();
-    const end = () => { interrupted.abort(); return yieldPlace?.() ?? true; };
+    const end = () => {
+      interrupted.abort();
+      return yieldPlace?.() ?? true;
+    };
     const waits = this.held.get(taskId) ?? new Set<() => boolean>();
     waits.add(end);
     this.held.set(taskId, waits);
@@ -112,7 +131,13 @@ export class SavedParticipantReadiness {
     const profile = this.host.profile(need.profileId);
     if (runtimeWaitHolds(task) || !profile || slotWait(this.host.activeState(), { ...profile, taskId: task.id, toolId: profile.toolId })) return false;
     const same = task.agent?.roleId === need.roleId && task.agent.profileId === need.profileId && task.agent.reviewKey === reviewKey;
-    if (!same) task.agent = { roleId: need.roleId, profileId: need.profileId, since: this.clock.now(), step: 0, ...(reviewKey !== undefined ? { reviewKey } : {}) };
+    if (!same) task.agent = {
+      roleId: need.roleId,
+      profileId: need.profileId,
+      since: this.clock.now(),
+      step: 0,
+      ...(reviewKey !== undefined ? { reviewKey } : {})
+    };
     delete task.helpers;
     task.holdsSlot = true;
     return true;

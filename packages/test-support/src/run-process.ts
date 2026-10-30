@@ -18,18 +18,35 @@ export async function runProcess(argv: readonly string[], options: ProcessRunOpt
   const graceMs = interruptGraceMs ?? INTERRUPT_GRACE_MS;
   if (!(graceMs >= 0 && graceMs <= 2_147_483_647 && Number.isFinite(graceMs))) throw new RangeError("The interrupt grace must be between 0 and 2147483647 ms");
   const forced = new AbortController();
-  let child: Started | undefined, requested: InterruptSignal | undefined;
+  let child: Started | undefined;
+  let requested: InterruptSignal | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const interrupt = () => {
     requested = signal?.reason === "SIGINT" ? "SIGINT" : "SIGTERM";
-    if (!child?.interrupt || child.exitCode != null || child.signalCode != null) { forced.abort(); return; }
+    if (!child?.interrupt || child.exitCode != null || child.signalCode != null) {
+      forced.abort();
+      return;
+    }
     try { child.interrupt(requested); } catch { /* Force cleanup after the grace when a signal is unavailable. */ }
     timer ??= setTimeout(() => forced.abort(), graceMs);
   };
   signal?.addEventListener("abort", interrupt, { once: true });
   if (signal?.aborted) interrupt();
   try {
-    const result = await runCommand(argv, { ...command, signal: forced.signal, start: (args, settings) => child = (command.start ?? startCommand)(args, settings) });
+    const result = await runCommand(
+      argv,
+      {
+      ...command,
+      signal: forced.signal,
+      start: (
+      args,
+      settings
+    ) => child = (command.start ?? startCommand)(
+      args,
+      settings
+    )
+    }
+    );
     return requested ? { kind: "interrupted", signal: requested, result } : { kind: "exited", result };
   } finally {
     clearTimeout(timer);

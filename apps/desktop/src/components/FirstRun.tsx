@@ -117,7 +117,12 @@ export function FirstRun({ state, status }: { state: State; status: EngineStatus
             </li>
           ))}
         </ol>
-        <button className="btn quiet" onClick={() => sim.skipSetup()} disabled={!live} title={live ? "Go straight to the board. Setup won't come back." : "Petrina is reconnecting"}>
+        <button
+          className="btn quiet"
+          onClick={() => sim.skipSetup()}
+          disabled={!live}
+          title={live ? "Go straight to the board. Setup won't come back." : "Petrina is reconnecting"}
+        >
           Skip setup
         </button>
       </header>
@@ -240,7 +245,13 @@ function Tools({ state, onBack, onNext }: { state: State; onBack: (() => void) |
   );
 }
 
-function ProductStep({ state, clones, live, onBack, onNext }: { state: State; clones: Clone[] | undefined; live: boolean; onBack: (() => void) | undefined; onNext: () => void }) {
+function ProductStep({ state, clones, live, onBack, onNext }: {
+  state: State;
+  clones: Clone[] | undefined;
+  live: boolean;
+  onBack: (() => void) | undefined;
+  onNext: () => void
+}) {
   const [path, setPath] = useState("");
   const [adding, setAdding] = useState<string>();
   const [error, setError] = useState<string>();
@@ -306,7 +317,13 @@ function ProductStep({ state, clones, live, onBack, onNext }: { state: State; cl
                     <FolderGit2 size={20} aria-hidden="true" />
                     <span className="clone-name">{clone.repo.split("/")[1]}</span>
                     <span className="clone-where">
-                      {clone.repo} · {short(clone.path)} · changed {ago(clone.changedAt, state.now) === "now" ? "just now" : `${ago(clone.changedAt, state.now)} ago`}
+                      {clone.repo} · {short(clone.path)} · changed {ago(
+                        clone.changedAt,
+                        state.now
+                      ) === "now" ? "just now" : `${ago(
+                        clone.changedAt,
+                        state.now
+                      )} ago`}
                     </span>
                     {adding === clone.path && <span className="clone-adding">Adding…</span>}
                   </button>
@@ -324,7 +341,16 @@ function ProductStep({ state, clones, live, onBack, onNext }: { state: State; cl
           >
             <label htmlFor="setup-path">{found.length ? "Or paste the folder of a clone" : "Folder of a clone"}</label>
             <div className="paste-row">
-              <input id="setup-path" className="field" placeholder="~/code/my-product" value={path} onChange={(event) => setPath(event.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" />
+              <input
+                id="setup-path"
+                className="field"
+                placeholder="~/code/my-product"
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
               <button className="btn" type="submit" disabled={!path.trim() || !!adding || !live}>
                 {adding === path ? "Adding…" : "Add"}
               </button>
@@ -381,7 +407,17 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
     const clientId = draft.clientId ?? newClientId();
     if (!draft.clientId) setDraft({ clientId });
     try {
-      await sim.startFirstTask({ productId: productId!, title: draft.title.trim(), description: draft.description.trim(), kind: draft.kind, position: draft.position, approvePlan: draft.approvePlan, delivery, approveDelivery, clientId });
+      await sim.startFirstTask({
+        productId: productId!,
+        title: draft.title.trim(),
+        description: draft.description.trim(),
+        kind: draft.kind,
+        position: draft.position,
+        approvePlan: draft.approvePlan,
+        delivery,
+        approveDelivery,
+        clientId
+      });
       // Saved: the board takes over as soon as the engine's state says setup is done. Until then this stays as it is.
       clearFirstTaskDraft();
     } catch (failure) {
@@ -406,7 +442,16 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
         {state.products.length > 1 ? (
           <label className="product-pick">
             <span>Product</span>
-            <Select className="select" value={productId} onChange={(event) => setDraft({ productId: event.target.value, delivery: undefined, approveDelivery: undefined })} disabled={starting}>
+            <Select
+              className="select"
+              value={productId}
+              onChange={(event) => setDraft({
+              productId: event.target.value,
+              delivery: undefined,
+              approveDelivery: undefined
+            })}
+              disabled={starting}
+            >
               {state.products.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.name}
@@ -451,7 +496,14 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
             </button>
           ))}
         </div>
-        <textarea className="details" aria-label="Details" placeholder="Add details, links or how you'll judge it's done (optional)" value={draft.description} readOnly={starting} onChange={(event) => setDraft({ description: event.target.value })} />
+        <textarea
+          className="details"
+          aria-label="Details"
+          placeholder="Add details, links or how you'll judge it's done (optional)"
+          value={draft.description}
+          readOnly={starting}
+          onChange={(event) => setDraft({ description: event.target.value })}
+        />
         <label className="toggle">
           <input type="checkbox" checked={draft.approvePlan} disabled={starting} onChange={(event) => setDraft({ approvePlan: event.target.checked })} />
           Show me the plan first
@@ -463,7 +515,15 @@ function FirstTask({ state, onBack }: { state: State; onBack: (() => void) | und
         </button>
         {more && (
           <div className="more-options">
-            <TaskOptions kind={draft.kind} delivery={delivery} position={draft.position} onKind={(kind) => setDraft({ kind })} onDelivery={(value) => setDraft({ delivery: value })} onPosition={(position) => setDraft({ position })} disabled={starting} />
+            <TaskOptions
+              kind={draft.kind}
+              delivery={delivery}
+              position={draft.position}
+              onKind={(kind) => setDraft({ kind })}
+              onDelivery={(value) => setDraft({ delivery: value })}
+              onPosition={(position) => setDraft({ position })}
+              disabled={starting}
+            />
             <label className="toggle">
               <input type="checkbox" checked={approveDelivery} disabled={starting} onChange={(event) => setDraft({ approveDelivery: event.target.checked })} />
               Ask me before shipping

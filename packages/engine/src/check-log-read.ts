@@ -28,7 +28,17 @@ export function checkLogRevision(dataDir: string, taskId: string, paths: readonl
 
 export type CheckLogSubject = Pick<Task, "id" | "checks" | "checkSetup" | "journey" | "repositories"> & Partial<Pick<Task, "productId">>;
 
-export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: { nodeId?: string; productId?: string; setupAttemptId?: string; index: number; section?: string; cursor?: string; limit?: number; ifRevision?: string; preview?: "ends" }): Promise<Result> {
+export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: {
+  nodeId?: string;
+  productId?: string;
+  setupAttemptId?: string;
+  index: number;
+  section?: string;
+  cursor?: string;
+  limit?: number;
+  ifRevision?: string;
+  preview?: "ends"
+}): Promise<Result> {
   const node = a.nodeId ? task.journey?.find((node) => node.id === a.nodeId) : undefined;
   if (a.nodeId && !node) return { outcome: "missing", message: "That journey node does not exist." };
   const work = a.productId ? (task.repositories ?? [task]).find((work) => work.productId === a.productId) : task;
@@ -37,14 +47,20 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: { 
   const setups = a.setupAttemptId === undefined ? undefined : a.nodeId
     ? (node?.checkSetups ?? []).filter(attempt => attempt.id === a.setupAttemptId && (!a.productId || attempt.productId === a.productId))
     : work?.checkSetup?.id === a.setupAttemptId ? [work.checkSetup] : [];
-  if (setups && setups.length !== 1) return { outcome: "missing", message: "That exact local setup attempt is not recorded here. No newer attempt is substituted." };
+  if (setups && setups.length !== 1) return {
+    outcome: "missing",
+    message: "That exact local setup attempt is not recorded here. No newer attempt is substituted."
+  };
   const setup = setups?.[0];
   const setupResult = Array.isArray(setup?.results) ? setup.results[a.index] : undefined;
   if (setupResult && setupResult.requirementId !== setup?.requirements?.[a.index]?.id)
     return { outcome: "unavailable", message: "The recorded setup result does not match its requirement manifest." };
   const entry = a.setupAttemptId === undefined && a.nodeId ? node?.productChecks?.[a.index] : undefined;
   const run = setup ? setupResult?.run : a.setupAttemptId !== undefined ? undefined : a.nodeId ? entry?.run : work?.checks?.results[a.index];
-  if (a.ifRevision && (!run || fingerprint(run) !== a.ifRevision)) return { outcome: "changed", message: "That saved check changed. Inspect the checkpoint again. No newer run is substituted." };
+  if (a.ifRevision && (!run || fingerprint(run) !== a.ifRevision)) return {
+    outcome: "changed",
+    message: "That saved check changed. Inspect the checkpoint again. No newer run is substituted."
+  };
   const metadata = {
     commandOutcome: entry ? checkEntryCommandOutcome(entry) : checkCommandOutcome(run),
     reportedOk: run?.ok ?? null,
@@ -67,7 +83,20 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: { 
   let endingOffset = run.output.length - (previewLimit - headLimit);
   if (bisectsCharacter(run.output, endingOffset)) endingOffset++;
   const savedResultEnding = split ? {
-    ...readText(run.output, { limit: run.output.length - endingOffset, cursor: cursor({ key: fingerprint([resultScope, run.output]), at: endingOffset }) }, resultScope),
+    ...readText(
+      run.output,
+      {
+      limit: run.output.length - endingOffset,
+      cursor: cursor({
+      key: fingerprint([
+      resultScope,
+      run.output
+    ]),
+      at: endingOffset
+    })
+    },
+      resultScope
+    ),
     section: "result", omittedBefore: endingOffset,
   } : undefined;
   const details = { ...metadata, savedResult, ...(savedResultEnding ? { savedResultEnding } : {}) };
@@ -105,7 +134,10 @@ export async function readCheckLog(dataDir: string, task: CheckLogSubject, a: { 
       const size = Number(exact.size);
       const modified = exact.mtimeNs.toString();
       if (!exact.isFile() || exact.nlink !== 1n || exact.dev !== entry.dev || exact.ino !== entry.ino || !matchesCheckLogIdentity(logFileIdentity, exact)
-        || exact.size !== BigInt(logFileLength) || await checkLogBeginning(file, size) !== logFileBeginning) throw new Error("The diagnostic file is not the file Petrina created for this check.");
+        || exact.size !== BigInt(logFileLength) || await checkLogBeginning(
+          file,
+          size
+        ) !== logFileBeginning) throw new Error("The diagnostic file is not the file Petrina created for this check.");
       const key = fingerprint([task.id, a.nodeId, a.productId, a.index, ...setupScope, path, exact.dev.toString(), exact.ino.toString(), size, modified]);
       const completeness = run.logError || run.logComplete === false ? "incomplete" : run.logComplete ? "complete" : "legacy-unverified";
       if (size === 0 && run.output)

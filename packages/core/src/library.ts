@@ -296,7 +296,13 @@ export const DELIVERY_LABEL: Record<DeliveryMode, string> = {
 
 /** The end of every plan: the coordinator's check (when asked for), then the delivery step. The Release Manager only writes a release's notes. */
 export function deliveryStages(task: Pick<Task, "id" | "delivery" | "approveDelivery" | "source">, releaseManagerProfileId: string = "opus-high"): Stage[] {
-  const ship: Stage = { id: `${task.id}:ship`, kind: "do", title: task.source ? deliveryLabel(task) : DELIVERY_LABEL[task.delivery], roleId: "release-manager", profileIds: [releaseManagerProfileId] };
+  const ship: Stage = {
+    id: `${task.id}:ship`,
+    kind: "do",
+    title: task.source ? deliveryLabel(task) : DELIVERY_LABEL[task.delivery],
+    roleId: "release-manager",
+    profileIds: [releaseManagerProfileId]
+  };
   if (!task.approveDelivery) return [ship];
   return [{ id: `${task.id}:delivery`, kind: "gate", title: "Your delivery check", roleId: "release-manager", profileIds: [], gate: "delivery" }, ship];
 }
@@ -369,7 +375,18 @@ function basePlan(task: Pick<Task, "id" | "kind" | "delivery" | "approveDelivery
           ...designStages(id).slice(1),
           { id: `${id}:build`, kind: "do", title: "Build", roleId: "builder", profileIds: ["opus-high"] },
           { id: `${id}:test`, kind: "do", title: "Test", roleId: "tester", profileIds: ["sonnet-medium"] },
-          { id: `${id}:review`, kind: "review-chain", title: "Review", roleId: "code-reviewer", profileIds: ["opus-high", "sonnet-medium", "sol-xhigh"], maxRounds: 2 },
+          {
+            id: `${id}:review`,
+            kind: "review-chain",
+            title: "Review",
+            roleId: "code-reviewer",
+            profileIds: [
+            "opus-high",
+            "sonnet-medium",
+            "sol-xhigh"
+          ],
+            maxRounds: 2
+          },
           ...deliveryGate(),
         ],
       };

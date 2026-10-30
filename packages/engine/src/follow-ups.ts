@@ -4,7 +4,17 @@ import type { FileOperations } from "@petrina/platform/file-operations";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
-import { matchPrompt, extraSlot, limitOf, type AgentProfile, type FollowUpCredit, type Id, type MatchAnswer, type MatchAsk, type ReportImage } from "@petrina/core";
+import {
+  matchPrompt,
+  extraSlot,
+  limitOf,
+  type AgentProfile,
+  type FollowUpCredit,
+  type Id,
+  type MatchAnswer,
+  type MatchAsk,
+  type ReportImage
+} from "@petrina/core";
 import { FollowUpLinks, type AgentSession, type AgentSessionOptions } from "@petrina/orchestrator";
 import { AgentRun } from "@petrina/agent-runtime/acp-run";
 import { agentCommandFor } from "@petrina/agent-runtime/tools";
@@ -22,7 +32,8 @@ const MatchBody = z.object({
 export class FollowUps extends FollowUpLinks {
   private readonly matchingStopped: AbortController;
   constructor(k: Kernel) {
-    const stopped = new AbortController(), matchingJobs = new Set<Id>();
+    const stopped = new AbortController();
+    const matchingJobs = new Set<Id>();
     super({
       current: () => k.s, task: id => k.task(id), stopped: () => k.stopped,
       hold: id => k.holdFollowUp(id), track: work => k.trackWork(work),
@@ -36,7 +47,10 @@ export class FollowUps extends FollowUpLinks {
     });
     this.matchingStopped = stopped;
   }
-  override stop(): Promise<void> { this.matchingStopped.abort(); return super.stop(); }
+  override stop(): Promise<void> {
+    this.matchingStopped.abort();
+    return super.stop();
+  }
 }
 
 async function answer(k: Kernel, stopped: AbortSignal, matchingJobs: Set<Id>, ask: MatchAsk): Promise<MatchAnswer> {
@@ -53,7 +67,15 @@ async function answer(k: Kernel, stopped: AbortSignal, matchingJobs: Set<Id>, as
 
 function selectProfile(k: Kernel): AgentProfile | undefined {
     const ready = new Set(k.s.tools.filter((tool) => tool.status === "ready").map((tool) => tool.id));
-    const open = k.s.profiles.filter((profile) => !profile.standby && extraSlot(k.activeState(), profile.toolId, profile) && !limitOf(k.s.pool, profile, Date.now()));
+    const open = k.s.profiles.filter((profile) => !profile.standby && extraSlot(
+      k.activeState(),
+      profile.toolId,
+      profile
+    ) && !limitOf(
+      k.s.pool,
+      profile,
+      Date.now()
+    ));
     // Matching different descriptions of a bug needs judgment: prefer high, with xhigh last to bound cost.
     const effort = (profile: AgentProfile) => profile.effort === "high" ? 0 : profile.effort === "medium" ? 1 : profile.effort === "low" ? 2 : 3;
     open.sort((a, b) => effort(a) - effort(b));

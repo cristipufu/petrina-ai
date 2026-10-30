@@ -1,6 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
-import { OVER_TIME_SPLITS, count, durationText, runningTotal, tokenNumber, type AnalyticsUsage, type OverTimeMeasure, type OverTimeSeries, type OverTimeSplit, type SquadRow, type State, type WorkUsageLine, type UsagePeriod } from "@petrina/core";
+import {
+  OVER_TIME_SPLITS,
+  count,
+  durationText,
+  runningTotal,
+  tokenNumber,
+  type AnalyticsUsage,
+  type OverTimeMeasure,
+  type OverTimeSeries,
+  type OverTimeSplit,
+  type SquadRow,
+  type State,
+  type WorkUsageLine,
+  type UsagePeriod
+} from "@petrina/core";
 import { type Lookup } from "../lib";
 import { useUsage } from "../usage";
 import { BarsOverTime, ViewToggle, dayWords, type BarPoint, type ChartSeries } from "./Charts";
@@ -60,7 +74,13 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         <div className="tools">
           <div className="segmented" role="tablist" aria-label="Period">
             {PERIODS.map((entry) => (
-              <button key={entry.id} role="tab" aria-selected={period === entry.id} className={period === entry.id ? "on" : ""} onClick={() => setPeriod(entry.id)}>
+              <button
+                key={entry.id}
+                role="tab"
+                aria-selected={period === entry.id}
+                className={period === entry.id ? "on" : ""}
+                onClick={() => setPeriod(entry.id)}
+              >
                 {entry.label}
               </button>
             ))}
@@ -81,7 +101,18 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
         <div className="empty-state">Adding up the work log…</div>
       ) : (
         <>
-          <Usage view={view} state={state} find={find} showAbout={showAbout} onAbout={() => setShowAbout((on) => !on)} noteRef={noteRef} onOpen={onOpen} period={period} choices={choices} onChoices={setChoices} />
+          <Usage
+            view={view}
+            state={state}
+            find={find}
+            showAbout={showAbout}
+            onAbout={() => setShowAbout((on) => !on)}
+            noteRef={noteRef}
+            onOpen={onOpen}
+            period={period}
+            choices={choices}
+            onChoices={setChoices}
+          />
           <Squad view={view} details={choices.squadDetails} onDetails={(squadDetails) => setChoices((all) => ({ ...all, squadDetails }))} />
         </>
       )}
@@ -90,7 +121,12 @@ export function AnalyticsPage({ state, find, product, about, onAboutSeen, onOpen
           <h2 id="analytics-reviews">How reviews are going</h2>
           <p className="muted small">{scope} · all recorded reviews, across all dates.</p>
         </header>
-        <ReviewsPanel tasks={productId ? state.tasks.filter((task) => task.productId === productId) : state.tasks} roles={state.roles} find={find} history={productId ? state.history?.reviewsByProduct[productId] : state.history?.reviews} />
+        <ReviewsPanel
+          tasks={productId ? state.tasks.filter((task) => task.productId === productId) : state.tasks}
+          roles={state.roles}
+          find={find}
+          history={productId ? state.history?.reviewsByProduct[productId] : state.history?.reviews}
+        />
       </section>
     </div>
   );
@@ -108,16 +144,37 @@ interface Choices {
   squadDetails: boolean;
 }
 
-const MEASURE_WORDS: Record<OverTimeMeasure, string> = { tokens: "Tokens", input: "New input", cacheRead: "Reused input", output: "Output", time: "Agent time" };
+const MEASURE_WORDS: Record<OverTimeMeasure, string> = {
+  tokens: "Tokens",
+  input: "New input",
+  cacheRead: "Reused input",
+  output: "Output",
+  time: "Agent time"
+};
 const SPLIT_WORDS: Record<OverTimeSplit, string> = { tool: "By tool", model: "By model", provider: "By provider" };
 
 /** Fixed colours per series: the tool's, the provider's, or one per model. */
 function seriesColors(split: OverTimeSplit, series: readonly OverTimeSeries[]): ChartSeries[] {
   const models = split === "model" ? modelColors(series.map((entry) => entry.label)) : undefined;
-  return series.map((entry) => ({ key: entry.key, label: entry.label, color: models ? models.get(entry.label)! : split === "tool" ? toolColor(entry.toolId) : providerColor(entry.providerId) }));
+  return series.map((entry) => ({
+    key: entry.key,
+    label: entry.label,
+    color: models ? models.get(entry.label)! : split === "tool" ? toolColor(entry.toolId) : providerColor(entry.providerId)
+  }));
 }
 
-function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period, choices, onChoices }: { view: AnalyticsUsage; state: State; find: Lookup; showAbout: boolean; onAbout: () => void; noteRef: React.RefObject<HTMLDivElement | null>; onOpen: (taskId: string) => void; period: UsagePeriod; choices: Choices; onChoices: (update: (all: Choices) => Choices) => void }) {
+function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period, choices, onChoices }: {
+  view: AnalyticsUsage;
+  state: State;
+  find: Lookup;
+  showAbout: boolean;
+  onAbout: () => void;
+  noteRef: React.RefObject<HTMLDivElement | null>;
+  onOpen: (taskId: string) => void;
+  period: UsagePeriod;
+  choices: Choices;
+  onChoices: (update: (all: Choices) => Choices) => void
+}) {
   const { split, table, details, extra } = choices;
   // A part the period's records don't carry falls back to all tokens.
   const measure: OverTimeMeasure = view.overTime.measures.includes(choices.measure) ? choices.measure : "tokens";
@@ -214,10 +271,20 @@ function Usage({ view, state, find, showAbout, onAbout, noteRef, onOpen, period,
 
       <div className="splits-head row between">
         <div className="row">
-          <button className={`btn small ${extra === "product" ? "on" : ""}`} disabled={!view.byProduct} title={view.byProduct ? undefined : "Showing one product"} onClick={() => setExtra((on) => (on === "product" ? undefined : "product"))} aria-pressed={extra === "product"}>
+          <button
+            className={`btn small ${extra === "product" ? "on" : ""}`}
+            disabled={!view.byProduct}
+            title={view.byProduct ? undefined : "Showing one product"}
+            onClick={() => setExtra((on) => (on === "product" ? undefined : "product"))}
+            aria-pressed={extra === "product"}
+          >
             By product
           </button>
-          <button className={`btn small ${extra === "task" ? "on" : ""}`} onClick={() => setExtra((on) => (on === "task" ? undefined : "task"))} aria-pressed={extra === "task"}>
+          <button
+            className={`btn small ${extra === "task" ? "on" : ""}`}
+            onClick={() => setExtra((on) => (on === "task" ? undefined : "task"))}
+            aria-pressed={extra === "task"}
+          >
             By task
           </button>
         </div>
@@ -335,9 +402,56 @@ function Squad({ view, details, onDetails }: { view: AnalyticsUsage; details: bo
       {details && (
         <div className="squad-details">
           <p className="muted small">{squad.details.settingsLine}</p>
-          <ProfileTable title="Code and Security reviewers" rows={squad.details.reviewers} columns={[["Reviews", (row) => row.rounds], ["Blocking findings", (row) => row.blocking], ["Asked for fixes", (row) => row.sentBack]]} />
-          <ProfileTable title="Architects" rows={squad.details.architects} columns={[["Design rounds", (row) => row.rounds], ["Designs", (row) => row.designs], ["Came to you", (row) => row.sentBack]]} />
-          <ProfileTable title="Design reviewers" rows={squad.details.designReviewers} columns={[["Design rounds", (row) => row.rounds], ["Blocking objections", (row) => row.blocking]]} />
+          <ProfileTable
+            title="Code and Security reviewers"
+            rows={squad.details.reviewers}
+            columns={[
+            [
+            "Reviews",
+            (row) => row.rounds
+          ],
+            [
+            "Blocking findings",
+            (row) => row.blocking
+          ],
+            [
+            "Asked for fixes",
+            (row) => row.sentBack
+          ]
+          ]}
+          />
+          <ProfileTable
+            title="Architects"
+            rows={squad.details.architects}
+            columns={[
+            [
+            "Design rounds",
+            (row) => row.rounds
+          ],
+            [
+            "Designs",
+            (row) => row.designs
+          ],
+            [
+            "Came to you",
+            (row) => row.sentBack
+          ]
+          ]}
+          />
+          <ProfileTable
+            title="Design reviewers"
+            rows={squad.details.designReviewers}
+            columns={[
+            [
+            "Design rounds",
+            (row) => row.rounds
+          ],
+            [
+            "Blocking objections",
+            (row) => row.blocking
+          ]
+          ]}
+          />
           <section className="split">
             <h3>Failures and retries</h3>
             <ul className="plain">
@@ -359,7 +473,11 @@ function ProfileTable({ title, rows, columns }: { title: string; rows: readonly 
     <section className="split wide">
       <h3>{title}</h3>
       <div className="split-rows" role="table" aria-label={title}>
-        <div className="split-row head profiles" role="row" style={{ gridTemplateColumns: `minmax(220px, 2fr) repeat(${columns.length + 2}, minmax(80px, 1fr))` }}>
+        <div
+          className="split-row head profiles"
+          role="row"
+          style={{ gridTemplateColumns: `minmax(220px, 2fr) repeat(${columns.length + 2}, minmax(80px, 1fr))` }}
+        >
           <span role="columnheader">Ran on</span>
           <span role="columnheader">Stages</span>
           <span role="columnheader">Agent time</span>
@@ -370,7 +488,12 @@ function ProfileTable({ title, rows, columns }: { title: string; rows: readonly 
           ))}
         </div>
         {rows.map((row) => (
-          <div key={row.label} className="split-row profiles" role="row" style={{ gridTemplateColumns: `minmax(220px, 2fr) repeat(${columns.length + 2}, minmax(80px, 1fr))` }}>
+          <div
+            key={row.label}
+            className="split-row profiles"
+            role="row"
+            style={{ gridTemplateColumns: `minmax(220px, 2fr) repeat(${columns.length + 2}, minmax(80px, 1fr))` }}
+          >
             <span role="cell" className={row.credited ? "" : "muted"}>
               {row.label}
             </span>

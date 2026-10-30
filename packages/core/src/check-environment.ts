@@ -1,4 +1,16 @@
-import type { CheckEnvironmentBinding, CheckEnvironmentIdentity, CheckExecutorFacts, CheckOutputIdentity, CheckPipeIdentity, CheckPrerequisite, CheckRun, CheckSetupAttempt, CheckSetupInput, CheckSetupInvalidation, RepositoryState } from "./model.js";
+import type {
+  CheckEnvironmentBinding,
+  CheckEnvironmentIdentity,
+  CheckExecutorFacts,
+  CheckOutputIdentity,
+  CheckPipeIdentity,
+  CheckPrerequisite,
+  CheckRun,
+  CheckSetupAttempt,
+  CheckSetupInput,
+  CheckSetupInvalidation,
+  RepositoryState
+} from "./model.js";
 import { checkOutcome } from "./check-outcome.js";
 import { commandText } from "./check-commands.js";
 
@@ -48,12 +60,15 @@ export const CHECK_SETUP_LIMITS = { count: 12, id: 200, name: 40, argv: 500 } as
 /** Validate the whole declaration before a caller mutates products, approvals or saved evidence. */
 export function normalizeCheckPrerequisites(value: unknown): CheckPrerequisite[] {
   if (!Array.isArray(value) || value.length > CHECK_SETUP_LIMITS.count) throw new Error("Give at most 12 setup requirements.");
-  const requirements: CheckPrerequisite[] = [], ids = new Set<string>(), names = new Set<string>();
+  const requirements: CheckPrerequisite[] = [];
+  const ids = new Set<string>();
+  const names = new Set<string>();
   for (let index = 0; index < value.length; index++) {
     const entry: unknown = value[index];
     if (!record(entry) || !keys(entry, ["id", "name", "argv"]) || typeof entry.id !== "string" || typeof entry.name !== "string")
       throw new Error("Give every setup requirement an id, a name and literal command arguments.");
-    const id = entry.id.trim(), name = entry.name.trim();
+    const id = entry.id.trim();
+    const name = entry.name.trim();
     if (!id || id.length > CHECK_SETUP_LIMITS.id || ids.has(id)) throw new Error("Give every setup requirement a unique, nonempty id of at most 200 characters.");
     if (!name || name.length > CHECK_SETUP_LIMITS.name || names.has(name)) throw new Error("Give every setup requirement a unique, nonempty name of at most 40 characters.");
     if (!Array.isArray(entry.argv) || !entry.argv.length || entry.argv.length > CHECK_SETUP_LIMITS.argv)
@@ -66,7 +81,9 @@ export function normalizeCheckPrerequisites(value: unknown): CheckPrerequisite[]
     }
     if (!argv[0]!.trim() || JSON.stringify(argv).length > CHECK_SETUP_LIMITS.argv)
       throw new Error("Give a nonempty setup command with at most 500 characters of literal arguments.");
-    ids.add(id); names.add(name); requirements.push({ id, name, argv });
+    ids.add(id);
+    names.add(name);
+    requirements.push({ id, name, argv });
   }
   return requirements;
 }
@@ -130,7 +147,15 @@ export type CheckSetupOutcome =
   | { kind: "outdated"; reason: "explicit-rerun" | "requirements-changed" | "inputs-changed" }
   | { kind: "unavailable" | "incomplete"; reason: string; requirementId?: string }
   | { kind: "unmet"; requirementId: string; code: number }
-  | { kind: "verified"; executor: CheckExecutorFacts; observations: readonly { requirementId: string; output: CheckOutputIdentity }[]; identity?: CheckEnvironmentIdentity };
+  | {
+    kind: "verified";
+    executor: CheckExecutorFacts;
+    observations: readonly {
+    requirementId: string;
+    output: CheckOutputIdentity
+  }[];
+    identity?: CheckEnvironmentIdentity
+  };
 
 /** Input comparison is recorded applicability only; it neither observes Git nor authorizes a pass. */
 export function sameCheckSetupInput(a: CheckSetupInput, b: CheckSetupInput): boolean {
@@ -153,7 +178,10 @@ export function checkInputApplicability(recorded: unknown, observed: CheckSetupI
 export function checkSourceApplicability(recorded: unknown, observed: unknown): CheckInputApplicability {
   if (!record(recorded) || !record(observed)) return { kind: "unknown", reason: "source" };
   if ((recorded.sha !== undefined && !sourceIdentity(recorded.sha)) || (recorded.tree !== undefined && !sourceIdentity(recorded.tree))
-    || (observed.sha !== undefined && !sourceIdentity(observed.sha)) || (observed.tree !== undefined && !sourceIdentity(observed.tree))) return { kind: "unknown", reason: "source" };
+    || (observed.sha !== undefined && !sourceIdentity(observed.sha)) || (observed.tree !== undefined && !sourceIdentity(observed.tree))) return {
+      kind: "unknown",
+      reason: "source"
+    };
   if (sourceIdentity(recorded.tree) && sourceIdentity(observed.tree))
     return recorded.tree === observed.tree ? { kind: "matches", basis: "same-tree" } : { kind: "changed", reason: "code" };
   if (sourceIdentity(recorded.sha) && sourceIdentity(observed.sha))
@@ -172,11 +200,20 @@ export function checkSetupOutcome(attempt?: CheckSetupAttempt, expectedContract?
   if (expectedContract !== undefined && attempt.input.contract !== expectedContract) return { kind: "outdated", reason: "requirements-changed" };
   if (attempt.lifecycle === "pending" || attempt.lifecycle === "running" || attempt.lifecycle === "stopped") return { kind: attempt.lifecycle };
   if (attempt.lifecycle !== "settled" || !Number.isFinite(attempt.startedAt) || !Number.isFinite(attempt.endedAt)
-    || attempt.startedAt! < attempt.queuedAt || attempt.endedAt! < attempt.startedAt!) return { kind: "incomplete", reason: "Setup observation has not completed" };
+    || attempt.startedAt! < attempt.queuedAt || attempt.endedAt! < attempt.startedAt!) return {
+      kind: "incomplete",
+      reason: "Setup observation has not completed"
+    };
   if ("observationFailure" in attempt) {
     const failure: unknown = attempt.observationFailure;
     if (!record(failure) || !keys(failure, ["kind", "message"])
-      || typeof failure.kind !== "string" || !["executor", "identity", "inputs", "restoration", "execution"].includes(failure.kind) || typeof failure.message !== "string")
+      || typeof failure.kind !== "string" || ![
+        "executor",
+        "identity",
+        "inputs",
+        "restoration",
+        "execution"
+      ].includes(failure.kind) || typeof failure.message !== "string")
       return { kind: "incomplete", reason: "The setup observation failure is malformed" };
     return { kind: "unavailable", reason: text(failure.message) ? failure.message : "The setup observation could not be completed" };
   }
@@ -184,27 +221,58 @@ export function checkSetupOutcome(attempt?: CheckSetupAttempt, expectedContract?
   if (attempt.restoration !== undefined && !["unchanged", "restored", "unconfirmed"].includes(attempt.restoration))
     return { kind: "incomplete", reason: "The setup restoration observation is malformed" };
   if (attempt.restoration === "restored" || attempt.restoration === "unconfirmed")
-    return { kind: "incomplete", reason: attempt.restoration === "restored" ? "A setup requirement changed tracked work" : "Setup cleanup could not be confirmed" };
-  if (attempt.afterInput !== undefined && (!setupInput(attempt.afterInput) || typeof attempt.afterInput.trackedChanged !== "boolean")) return { kind: "incomplete", reason: "The setup input observation is malformed" };
-  if (attempt.afterInput && (attempt.afterInput.trackedChanged || !sameCheckSetupInput(attempt.input, attempt.afterInput))) return { kind: "outdated", reason: "inputs-changed" };
+    return {
+      kind: "incomplete",
+      reason: attempt.restoration === "restored" ? "A setup requirement changed tracked work" : "Setup cleanup could not be confirmed"
+    };
+  if (attempt.afterInput !== undefined && (!setupInput(attempt.afterInput) || typeof attempt.afterInput.trackedChanged !== "boolean")) return {
+    kind: "incomplete",
+    reason: "The setup input observation is malformed"
+  };
+  if (attempt.afterInput && (attempt.afterInput.trackedChanged || !sameCheckSetupInput(
+    attempt.input,
+    attempt.afterInput
+  ))) return {
+    kind: "outdated",
+    reason: "inputs-changed"
+  };
   const observations: { requirementId: string; output: CheckOutputIdentity }[] = [];
   if (attempt.results.length > attempt.requirements.length) return { kind: "incomplete", reason: "Unexpected setup results were recorded" };
   for (let index = 0; index < attempt.results.length; index++) {
-    const requirement = attempt.requirements[index]!, result = attempt.results[index]!;
+    const requirement = attempt.requirements[index]!;
+    const result = attempt.results[index]!;
     if (!record(result) || result.requirementId !== requirement.id || !checkRunRecord(result.run) || result.run.name !== requirement.name || result.run.command !== commandText(requirement.argv))
       return { kind: "incomplete", reason: "Setup result membership does not match the attempted declaration" };
-    if (!sameCheckExecutorFacts(result.run.executor, attempt.executor)) return { kind: "incomplete", requirementId: requirement.id, reason: "The requirement executor does not match the setup observation" };
+    if (!sameCheckExecutorFacts(
+      result.run.executor,
+      attempt.executor
+    )) return {
+      kind: "incomplete",
+      requirementId: requirement.id,
+      reason: "The requirement executor does not match the setup observation"
+    };
     const outcome = checkOutcome(result.run);
     if (outcome.kind !== "passed") {
-      if (index + 1 !== attempt.results.length) return { kind: "incomplete", requirementId: requirement.id, reason: "Setup continued after a requirement did not pass" };
+      if (index + 1 !== attempt.results.length) return {
+        kind: "incomplete",
+        requirementId: requirement.id,
+        reason: "Setup continued after a requirement did not pass"
+      };
       return outcome.kind === "failed" ? { kind: "unmet", requirementId: requirement.id, code: outcome.code }
         : { kind: outcome.kind === "unavailable" ? "unavailable" : "incomplete", requirementId: requirement.id, reason: outcome.reason };
     }
-    if (!isCheckOutputIdentity(result.run.outputIdentity)) return { kind: "incomplete", requirementId: requirement.id, reason: "The complete setup output identity was not observed" };
+    if (!isCheckOutputIdentity(result.run.outputIdentity)) return {
+      kind: "incomplete",
+      requirementId: requirement.id,
+      reason: "The complete setup output identity was not observed"
+    };
     observations.push({ requirementId: requirement.id, output: result.run.outputIdentity });
   }
   if (attempt.results.length !== attempt.requirements.length) return { kind: "incomplete", reason: "A setup requirement was not executed" };
-  if (attempt.requirements.length && (!attempt.afterInput || attempt.restoration !== "unchanged")) return { kind: "incomplete", reason: "The setup inputs and unchanged work were not confirmed" };
+  if (attempt.requirements.length && (!attempt.afterInput || attempt.restoration !== "unchanged")) return {
+    kind: "incomplete",
+    reason: "The setup inputs and unchanged work were not confirmed"
+  };
   if (attempt.identity !== undefined && !isCheckEnvironmentIdentity(attempt.identity)) return { kind: "incomplete", reason: "The setup identity is malformed" };
   if (attempt.identity && (attempt.identity.contract !== attempt.input.contract || attempt.identity.prerequisites.kind !== (attempt.requirements.length ? "declared" : "none")))
     return { kind: "incomplete", reason: "The setup identity does not describe its attempted declaration" };
@@ -218,7 +286,8 @@ export type RecordedCheckBatchOutcome =
 
 /** Recorded applicability for guards/readers. Actual verification additionally needs an operation-local observation. */
 function recordedBatch(work: Pick<RepositoryState, "checks" | "checkSetup" | "checkSetupInvalidated">, currency: "current" | "historical"): RecordedCheckBatchOutcome {
-  const setup = checkSetupOutcome(work.checkSetup, undefined, work.checkSetupInvalidated), saved: unknown = work.checks;
+  const setup = checkSetupOutcome(work.checkSetup, undefined, work.checkSetupInvalidated);
+  const saved: unknown = work.checks;
   const rows = record(saved) && Array.isArray(saved.results) ? saved.results : [];
   const productFailures = rows.filter(checkRunRecord).filter(run => checkOutcome(run).kind === "failed");
   const blocked = (reason: string): RecordedCheckBatchOutcome => ({ kind: "blocked", setup, reason, productFailures });
@@ -230,8 +299,14 @@ function recordedBatch(work: Pick<RepositoryState, "checks" | "checkSetup" | "ch
   if (!sameCheckEnvironmentIdentity(checks.environment, setup.identity)) return blocked("The recorded setup and batch environments differ");
   const applicability = checkInputApplicability(checks, work.checkSetup!.input);
   if (applicability.kind !== "matches") return blocked(applicability.kind === "changed" ? "The recorded setup and batch code or definitions differ" : "The recorded setup and batch have no comparable source and definition identity");
-  if (checks.results.some(run => !sameCheckExecutorFacts(run.executor, setup.executor))) return blocked("A product command has missing or different executor facts");
-  if (checks.results.some(run => { const kind = checkOutcome(run).kind; return kind !== "passed" && kind !== "failed"; })) return blocked("Product command execution is incomplete or unavailable");
+  if (checks.results.some(run => !sameCheckExecutorFacts(
+    run.executor,
+    setup.executor
+  ))) return blocked("A product command has missing or different executor facts");
+  if (checks.results.some(run => {
+    const kind = checkOutcome(run).kind;
+    return kind !== "passed" && kind !== "failed";
+  })) return blocked("Product command execution is incomplete or unavailable");
   return productFailures.length ? { kind: "product-failed", setup, failed: productFailures } : { kind: "passed", setup };
 }
 

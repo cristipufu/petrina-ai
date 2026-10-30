@@ -149,7 +149,26 @@ export function tokensOverTime(turns: readonly WorkTurn[], lines: readonly Token
     if (index < 0) continue;
     withLines.add(owner.id);
     const label = lineModelLabel(line);
-    for (const amounts of [place("tool", index, toolSeries(owner)), place("model", index, { key: label, label }), place("provider", index, providerSeries(owner))]) {
+    for (const amounts of [
+      place(
+      "tool",
+      index,
+      toolSeries(owner)
+    ),
+      place(
+      "model",
+      index,
+      {
+      key: label,
+      label
+    }
+    ),
+      place(
+      "provider",
+      index,
+      providerSeries(owner)
+    )
+    ]) {
       amounts.tokens += line.total ?? 0;
       amounts.input += line.input ?? 0;
       amounts.cacheRead += line.cacheRead ?? 0;
@@ -166,7 +185,26 @@ export function tokensOverTime(turns: readonly WorkTurn[], lines: readonly Token
     const index = bucketIndex(buckets, turnAt(turn));
     if (index < 0) continue;
     const label = turnModelLabel(turn);
-    for (const amounts of [place("tool", index, toolSeries(turn)), place("model", index, { key: label, label }), place("provider", index, providerSeries(turn))]) {
+    for (const amounts of [
+      place(
+      "tool",
+      index,
+      toolSeries(turn)
+    ),
+      place(
+      "model",
+      index,
+      {
+      key: label,
+      label
+    }
+    ),
+      place(
+      "provider",
+      index,
+      providerSeries(turn)
+    )
+    ]) {
       if (turn.workMs === undefined) (amounts.missing ??= {}).time = true;
       else amounts.time += turn.workMs;
       if (!withLines.has(turn.id)) {
@@ -177,6 +215,12 @@ export function tokensOverTime(turns: readonly WorkTurn[], lines: readonly Token
 
   const splits = {} as Record<OverTimeSplit, OverTimeSplitView>;
   for (const split of OVER_TIME_SPLITS) splits[split] = { series: orderSeries(seriesOf[split], pointsOf[split]), points: pointsOf[split] };
-  const measures: OverTimeMeasure[] = ["tokens", ...(has.input ? (["input"] as const) : []), ...(has.cacheRead ? (["cacheRead"] as const) : []), ...(has.output ? (["output"] as const) : []), "time"];
+  const measures: OverTimeMeasure[] = [
+    "tokens",
+    ...(has.input ? (["input"] as const) : []),
+    ...(has.cacheRead ? (["cacheRead"] as const) : []),
+    ...(has.output ? (["output"] as const) : []),
+    "time"
+  ];
   return { hourly, measures, splits };
 }

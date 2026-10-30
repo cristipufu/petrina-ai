@@ -17,14 +17,35 @@ export interface ContextPacketStorage {
 
 
 /** Delta only a confirmed continuation; an immutable full packet remains readable after compaction. */
-export async function builderContextInput(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous: BuilderContext | undefined, options: { design?: boolean; knownSections?: readonly string[]; findings?: readonly Finding[] }, storage: ContextPacketStorage): Promise<{ sections: Section[]; snapshot?: BuilderContext; omitted?: ContextOmission[] }> {
+export async function builderContextInput(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous: BuilderContext | undefined, options: {
+  design?: boolean;
+  knownSections?: readonly string[];
+  findings?: readonly Finding[]
+}, storage: ContextPacketStorage): Promise<{
+  sections: Section[];
+  snapshot?: BuilderContext;
+  omitted?: ContextOmission[]
+}> {
   sections = restoreRevisedCoordinatorNotes(sections, previous);
   const all = sections.filter(section => section.body).map((section) => ({ ...section }));
   if (!/^[a-zA-Z0-9_-]+$/.test(task.id)) return { sections: all };
   const root = storage.root(dataDir, task.id);
   // Advancing the approved branch changes the work, not the identity of this
   // conversation. Changed sections are still sent by content hash below.
-  const scope = hash(JSON.stringify({ sessionId, role, productId: task.productId, path: task.worktree, title: task.title, request: task.description, source: task.source, copies: task.repositories?.map((work) => ({ productId: work.productId, source: work.source, path: work.worktree })) }));
+  const scope = hash(JSON.stringify({
+    sessionId,
+    role,
+    productId: task.productId,
+    path: task.worktree,
+    title: task.title,
+    request: task.description,
+    source: task.source,
+    copies: task.repositories?.map((work) => ({
+    productId: work.productId,
+    source: work.source,
+    path: work.worktree
+  }))
+  }));
   const counts = new Map<string, number>();
   const keyed = sections.map((section) => {
     const occurrence = (counts.get(section.title) ?? 0) + 1;
@@ -37,10 +58,17 @@ export async function builderContextInput(dataDir: string, task: Task, role: Rol
   const versions = (task.repositories ?? [task]).map((work) => `${work.productId}: base ${work.baseSha ?? "not prepared"}`).join("\n");
   const answering = (title: string) => title === "Review findings (answer every one by id; fix every Important one)";
   const findingSection = (title: string) => title === "Findings so far (confirm or dispute by id)" || answering(title);
-  const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? builderFindings(task, task.productId) : undefined) : undefined;
+  const findingRecords = sections.some(section => findingSection(section.title)) ? options.findings ?? (role.result === "build" ? builderFindings(
+    task,
+    task.productId
+  ) : undefined) : undefined;
   // Empty note metadata tracks withdrawals without adding an empty heading to the saved packet.
   const packetSections = sections.filter(section => section.coordinatorNotes === undefined || (section.background ?? section.body));
-  const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${packetSections.map((section) => `## ${section.title}\n${section.background ?? section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(findingRecords, null, 2)}\n` : ""}`;
+  const packet = `# Current task: ${task.title}\n${task.description}\n\n## Current repository versions\n${versions}\n\n${packetSections.map((section) => `## ${section.title}\n${section.background ?? section.body}`).join("\n\n")}\n${findingRecords ? `\n## Complete recorded finding fields\n${JSON.stringify(
+    findingRecords,
+    null,
+    2
+  )}\n` : ""}`;
   try {
     // Check the old evidence first: saving identical content could recreate a missing old file.
     const intact = previous && previous.scope === scope && storage.contains(root, previous.file)
@@ -49,7 +77,17 @@ export async function builderContextInput(dataDir: string, task: Task, role: Rol
     const { file, digest } = await storage.save(root, packet);
     const findingHashes = findingRecords ? Object.fromEntries(findingRecords.map((finding) => [finding.id, hash(JSON.stringify(finding))])) : undefined;
     const noteHashes = coordinatorNoteHashes(sections);
-    const snapshot: BuilderContext = { scope, file, digest, hashes: Object.fromEntries(keyed.map((entry) => [entry.key, entry.digest])), ...(findingHashes ? { findingHashes } : {}), ...(noteHashes ? { noteHashes } : {}) };
+    const snapshot: BuilderContext = {
+      scope,
+      file,
+      digest,
+      hashes: Object.fromEntries(keyed.map((entry) => [
+      entry.key,
+      entry.digest
+    ])),
+      ...(findingHashes ? { findingHashes } : {}),
+      ...(noteHashes ? { noteHashes } : {})
+    };
     if (!intact || !previous) return { sections: all, snapshot };
     let reducedFindings = false;
     let reducedNotes = false;
@@ -79,11 +117,23 @@ export async function builderContextInput(dataDir: string, task: Task, role: Rol
         const removed = Object.keys(previous.findingHashes).filter((id) => !(id in findingHashes));
         reducedFindings = true;
         return [
-          { title: "Current finding status index", body: `${findingRecords.map((finding) => `- ${finding.id}: ${finding.status}, ${FINDING_TAG[finding.severity]}`).join("\n") || "No current findings."}${removed.length ? `\nNo longer present: ${removed.join(", ")}.` : ""}\n${answering(section.title) ? "Answer every open finding by id, including unchanged records. " : ""}Unchanged records are in the complete current context packet above. Reopening a settled finding still requires fresh evidence on the current code.` },
-          ...(changed.length ? [{ title: answering(section.title) ? "New or changed review findings (answer every one by id; fix every Important one)" : "New or changed finding records (confirm or dispute by id)", body: formatFindings(changed, { complete: true }) }] : []),
+          {
+            title: "Current finding status index",
+            body: `${findingRecords.map((finding) => `- ${finding.id}: ${finding.status}, ${FINDING_TAG[finding.severity]}`).join("\n") || "No current findings."}${removed.length ? `\nNo longer present: ${removed.join(", ")}.` : ""}\n${answering(section.title) ? "Answer every open finding by id, including unchanged records. " : ""}Unchanged records are in the complete current context packet above. Reopening a settled finding still requires fresh evidence on the current code.`
+          },
+          ...(changed.length ? [{
+            title: answering(section.title) ? "New or changed review findings (answer every one by id; fix every Important one)" : "New or changed finding records (confirm or dispute by id)",
+            body: formatFindings(
+            changed,
+            { complete: true }
+          )
+          }] : []),
         ];
       }
-      if (options.design && options.knownSections?.includes(section.title)) { omitted.push({ title: section.title, digest }); return []; }
+      if (options.design && options.knownSections?.includes(section.title)) {
+        omitted.push({ title: section.title, digest });
+        return [];
+      }
       // Objections and coordinator calls remain explicit on every design continuation.
       const background = options.design ? !/^(?:Objections|The coordinator's call)/.test(section.title) : reusable(section.title);
       if (!background || previous.hashes[key] !== digest) return [{ ...section }];
@@ -92,7 +142,17 @@ export async function builderContextInput(dataDir: string, task: Task, role: Rol
     });
     const removed = Object.keys(previous.hashes).filter((key) => !(key in snapshot.hashes));
     if (!reducedFindings && !reducedNotes && sent.length === all.length && !removed.length) return { sections: all, snapshot };
-    return { snapshot, omitted, sections: [{ title: "Current authoritative task context", body: `Unchanged background is not repeated in this continued conversation. The complete current request and sections are saved at ${file} (reference ${digest}). This packet replaces earlier versions. Read it before acting if context is missing or was compacted, or you need to recheck a constraint. New instructions and findings below remain authoritative.${removed.length ? `\nEarlier sections no longer apply: ${removed.join(", ")}.` : ""}` }, ...sent] };
+    return {
+      snapshot,
+      omitted,
+      sections: [
+      {
+      title: "Current authoritative task context",
+      body: `Unchanged background is not repeated in this continued conversation. The complete current request and sections are saved at ${file} (reference ${digest}). This packet replaces earlier versions. Read it before acting if context is missing or was compacted, or you need to recheck a constraint. New instructions and findings below remain authoritative.${removed.length ? `\nEarlier sections no longer apply: ${removed.join(", ")}.` : ""}`
+    },
+      ...sent
+    ]
+    };
   } catch {
     // Optional context reduction must never remove requirements when storage is unavailable.
     return { sections: all };

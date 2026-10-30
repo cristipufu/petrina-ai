@@ -19,7 +19,26 @@ export function isVersionFile(path: string): boolean {
 }
 
 /** The keys where a TOML version file states the product's own version. */
-const OWN_TOML_VERSIONS: readonly (readonly string[])[] = [["package", "version"], ["project", "version"], ["workspace", "package", "version"], ["tool", "poetry", "version"]];
+const OWN_TOML_VERSIONS: readonly (readonly string[])[] = [
+  [
+  "package",
+  "version"
+],
+  [
+  "project",
+  "version"
+],
+  [
+  "workspace",
+  "package",
+  "version"
+],
+  [
+  "tool",
+  "poetry",
+  "version"
+]
+];
 
 /**
  * Whether a version file's change sets the version and nothing else, so no dependency, script or setting can
@@ -42,7 +61,14 @@ export function onlyVersionChanged(path: string, before: string | undefined, aft
   }
   if (!old || !now || typeof old !== "object" || typeof now !== "object") return false;
   if (name === "Cargo.lock") return lockOnlyBumps(old, now, version, from);
-  const keys: readonly (readonly string[])[] = name.endsWith(".json") ? [["version"], ...(name === "package-lock.json" ? [["packages", "", "version"]] : [])] : OWN_TOML_VERSIONS;
+  const keys: readonly (readonly string[])[] = name.endsWith(".json") ? [
+    ["version"],
+    ...(name === "package-lock.json" ? [[
+    "packages",
+    "",
+    "version"
+  ]] : [])
+  ] : OWN_TOML_VERSIONS;
   const changed = keys.map((key) => [get(old, key), get(now, key)] as const).filter(([was, is]) => was !== is);
   if (changed.some(([, is]) => is !== version)) return false;
   return JSON.stringify(cleared(old, keys)) === JSON.stringify(cleared(now, keys));
@@ -58,7 +84,13 @@ function lockOnlyBumps(old: Record<string, unknown>, now: Record<string, unknown
     const next = is[index]!;
     if (JSON.stringify(entry) === JSON.stringify(next)) return true;
     const local = entry.source === undefined && next.source === undefined;
-    return local && entry.version === from && next.version === version && JSON.stringify({ ...entry, version: "" }) === JSON.stringify({ ...next, version: "" });
+    return local && entry.version === from && next.version === version && JSON.stringify({
+      ...entry,
+      version: ""
+    }) === JSON.stringify({
+      ...next,
+      version: ""
+    });
   });
 }
 

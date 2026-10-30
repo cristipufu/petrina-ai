@@ -7,12 +7,35 @@ const short = (text: string) => createHash("sha256").update(text).digest("hex").
 
 /** Which sections the message actually supplied, by name, size and identity, with duplicate names told apart. */
 export function inputManifest(instructions: string, sections: readonly Section[], omitted: readonly ContextOmission[] = [], complete = false): InputManifestEntry[] {
-  const entries: InputManifestEntry[] = complete ? [] : [{ name: "Role instructions", size: instructions.length, digest: short(instructions), kind: "instructions" }];
+  const entries: InputManifestEntry[] = complete ? [] : [{
+    name: "Role instructions",
+    size: instructions.length,
+    digest: short(instructions),
+    kind: "instructions"
+  }];
   for (const section of sections) {
     const reference = section.title === "Current authoritative task context" ? /saved at (.+?) \(reference ([a-f0-9]+)\)/.exec(section.body) : undefined;
-    entries.push({ name: section.title, size: section.body.length, digest: short(section.body), kind: reference ? "reference" : section.title === "Role instructions" ? "instructions" : "text", ...(reference ? { file: reference[1]!, reference: reference[2]! } : {}) });
+    entries.push({
+      name: section.title,
+      size: section.body.length,
+      digest: short(section.body),
+      kind: reference ? "reference" : section.title === "Role instructions" ? "instructions" : "text",
+      ...(reference ? {
+      file: reference[1]!,
+      reference: reference[2]!
+    } : {})
+    });
   }
-  for (const entry of omitted) entries.push({ name: entry.title, size: 0, digest: entry.noteId ? entry.digest : entry.digest.slice(0, 16), kind: "omitted", ...(entry.noteId ? { noteId: entry.noteId } : {}) });
+  for (const entry of omitted) entries.push({
+    name: entry.title,
+    size: 0,
+    digest: entry.noteId ? entry.digest : entry.digest.slice(
+    0,
+    16
+  ),
+    kind: "omitted",
+    ...(entry.noteId ? { noteId: entry.noteId } : {})
+  });
   return numberInputManifest(entries);
 }
 

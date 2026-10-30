@@ -9,7 +9,14 @@ export interface ParticipantSessionEffects<S extends AgentSession> {
 }
 
 /** A saved-session opening is a probe until it succeeds; failed probes cannot announce phantom work. */
-export async function openParticipantSession<S extends AgentSession>(options: { sessionId?: string; reselect?: boolean }, effects: ParticipantSessionEffects<S>): Promise<{ run: S; off?: string; reopenFailure?: string }> {
+export async function openParticipantSession<S extends AgentSession>(options: {
+  sessionId?: string;
+  reselect?: boolean
+}, effects: ParticipantSessionEffects<S>): Promise<{
+  run: S;
+  off?: string;
+  reopenFailure?: string
+}> {
   let announced = false;
   const announce = () => {
     if (announced || effects.aborted()) return;

@@ -82,7 +82,16 @@ export const OPERATIONS = [
   }),
   op("task.queue", "Queue a reviewed backlog request for work using the existing engine rules. Agents may start if scheduling allows.", task, true),
   op("task.backlog", "Move an unstarted queued task back to backlog for review. Does not interrupt admitted work.", task, true),
-  op("task.update-backlog", "Edit the title and request of a backlog task before work starts. Does not queue it or edit product files.", { ...task, title: z.string().trim().min(1).max(200), description: z.string().max(8000) }, true),
+  op(
+    "task.update-backlog",
+    "Edit the title and request of a backlog task before work starts. Does not queue it or edit product files.",
+    {
+    ...task,
+    title: z.string().trim().min(1).max(200),
+    description: z.string().max(8000)
+  },
+    true
+  ),
   op(
     "task.inspect",
     "Inspect one task's current summary, workers, next step, waiting reason, delivery confirmation and inbox references. Read longer evidence separately.",
@@ -94,18 +103,64 @@ export const OPERATIONS = [
     argv: z.array(z.string().max(8000).refine(word => !word.includes("\0"))).min(1).max(100).refine(words => !!words[0]?.trim() && words.join(" ").length <= 16000),
     ...wait,
   }, true),
-  op("validation.inspect", "Read an extra run by its original request reference, including its exact saved version, state, image and outcome. Never product-check evidence.", { requestId: id }),
-  op("validation.log", "Read the original extra-run diagnostic with the same file-identity checks as a product check.", { requestId: id, section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence }),
-  op("task.activity", "Inspect reported tool activity and bounded recent invocations, including available command/file details. Defaults to the latest agent step; filter by node and worker seat. Missing status or command means unreported; turnEndedAt never means completion.", { ...task, nodeId: id.optional(), seat: id.optional(), ...page }),
+  op(
+    "validation.inspect",
+    "Read an extra run by its original request reference, including its exact saved version, state, image and outcome. Never product-check evidence.",
+    { requestId: id }
+  ),
+  op(
+    "validation.log",
+    "Read the original extra-run diagnostic with the same file-identity checks as a product check.",
+    {
+    requestId: id,
+    section: z.enum([
+    "diagnostics",
+    "result"
+  ]).default("diagnostics"),
+    ...evidence
+  }
+  ),
+  op(
+    "task.activity",
+    "Inspect reported tool activity and bounded recent invocations, including available command/file details. Defaults to the latest agent step; filter by node and worker seat. Missing status or command means unreported; turnEndedAt never means completion.",
+    {
+    ...task,
+    nodeId: id.optional(),
+    seat: id.optional(),
+    ...page
+  }
+  ),
   op(
     "task.conversation",
     "Read recent recorded messages, optionally for one Journey node or message. Activity is hidden by default. The character budget bounds message text; up to 100 messages. Items have stable IDs, text offsets, content revisions and mayChange (null if unknown). Poll with ifRevision to skip unchanged text; upsert by message ID and revision. activeMessages identifies each unfinished participant's latest bubble, even outside the page: read a changed one with messageId. Cursor reads older messages, survives appends, and rejects changes to unread text. Full original evidence remains available with task.read.",
-    { ...task, nodeId: id.optional(), messageId: id.optional().describe("Read a specific message, for example an active peer whose text lies outside the recent page."), ...evidence, ifRevision: id.optional(), includeActivity: z.boolean().default(false) },
+    {
+      ...task,
+      nodeId: id.optional(),
+      messageId: id.optional().describe("Read a specific message, for example an active peer whose text lies outside the recent page."),
+      ...evidence,
+      ifRevision: id.optional(),
+      includeActivity: z.boolean().default(false)
+    },
   ),
   op(
     "task.read",
     "Read recorded task detail, conversation, findings, design or queued messages in bounded text pages. findingId selects one current report in section=findings; its status may differ from a historical journey.finding copy. Older missing evidence is unavailable.",
-    { ...task, section: z.enum(["request", "conversation", "timeline", "findings", "design", "messages", "source", "check-setup", "error"]), findingId: id.optional(), ...evidence },
+    {
+      ...task,
+      section: z.enum([
+      "request",
+      "conversation",
+      "timeline",
+      "findings",
+      "design",
+      "messages",
+      "source",
+      "check-setup",
+      "error"
+    ]),
+      findingId: id.optional(),
+      ...evidence
+    },
   ),
   ...["hold", "unhold", "pause", "resume", "cancel"].map((name) =>
     op(
@@ -133,7 +188,11 @@ export const OPERATIONS = [
     "task.wait",
     "Let a started task wait for the complete prerequisite list to land, with a saved reason. Admitted work finishes; no new work starts. An empty list explicitly clears the wait. Never-started tasks use task.dependencies instead.",
     // Keep input shapes strict; the shared wait rules explain semantic limits in plain language.
-    { ...task, after: z.array(id).describe("Complete list of up to 20 prerequisites. An empty list clears the wait."), reason: z.string().describe("Required reason between 1 and 1,000 characters.") },
+    {
+      ...task,
+      after: z.array(id).describe("Complete list of up to 20 prerequisites. An empty list clears the wait."),
+      reason: z.string().describe("Required reason between 1 and 1,000 characters.")
+    },
     true,
   ),
   op(
@@ -180,17 +239,41 @@ export const OPERATIONS = [
   op(
     "journey.input",
     "Read one seat's exact saved input for a node: the complete opening message as sent (section=message), its bounded section manifest with names, sizes and content identities (section=manifest), or one later update such as an answer, repair or continuation (section=update with update index). Select the seat from a seat.started event; index picks an earlier attempt. Missing, changed or expired files report that condition and never substitute newer evidence.",
-    { ...task, nodeId: id, seat: id.optional().describe("The seat named by the event, for example reviewer:1 or builder. Defaults to the node's latest input."), index: z.number().int().min(0).optional().describe("Which input on that seat, oldest first. Defaults to the latest."), section: z.enum(["message", "manifest", "update"]).default("message"), update: z.number().int().min(0).optional().describe("With section=update: which update, oldest first."), ...evidence },
+    {
+      ...task,
+      nodeId: id,
+      seat: id.optional().describe("The seat named by the event, for example reviewer:1 or builder. Defaults to the node's latest input."),
+      index: z.number().int().min(0).optional().describe("Which input on that seat, oldest first. Defaults to the latest."),
+      section: z.enum([
+      "message",
+      "manifest",
+      "update"
+    ]).default("message"),
+      update: z.number().int().min(0).optional().describe("With section=update: which update, oldest first."),
+      ...evidence
+    },
   ),
   op(
     "journey.result",
     "Read one seat's accepted result for a node exactly as it was handed back, with its recorded versions and picture references. Select it from a seat.finished event's result reference.",
-    { ...task, nodeId: id, seat: id.optional(), index: z.number().int().min(0).optional().describe("The result's position on the node, oldest first. Defaults to the latest for the seat."), ...evidence },
+    {
+      ...task,
+      nodeId: id,
+      seat: id.optional(),
+      index: z.number().int().min(0).optional().describe("The result's position on the node, oldest first. Defaults to the latest for the seat."),
+      ...evidence
+    },
   ),
   op(
     "journey.finding",
     "Read the immutable copy of one finding saved with a node's recorded result: the node-level copy, or with result index the copy one seat's result left. Later peers and rounds cannot rewrite it. A finding absent from that copy reports missing rather than returning a newer record.",
-    { ...task, nodeId: id, findingId: id, result: z.number().int().min(0).optional().describe("A seat's result position on the node, for the copy that seat's result left."), ...evidence },
+    {
+      ...task,
+      nodeId: id,
+      findingId: id,
+      result: z.number().int().min(0).optional().describe("A seat's result position on the node, for the copy that seat's result left."),
+      ...evidence
+    },
   ),
   op(
     "task.health",
@@ -200,7 +283,19 @@ export const OPERATIONS = [
   op(
     "journey.check",
     "Read an original check's diagnostics from beginning to end, with a bounded savedResult including startup failures and other engine explanations. Use section=result and its cursor to continue the saved result separately. Reports command outcome, relevance and log completeness; missing logs never become passes.",
-    { ...task, nodeId: id.optional(), setupAttemptId: id.optional().describe("Select this exact local setup attempt instead of product check entries; index selects its recorded requirement result."), productId: id.optional().describe("Select one product’s latest saved run when nodeId is absent."), ifRevision: id.optional().describe("Pin a latest-run reference supplied by checkpoint inspection; changed evidence returns changed."), index: z.number().int().min(0), section: z.enum(["diagnostics", "result"]).default("diagnostics"), ...evidence },
+    {
+      ...task,
+      nodeId: id.optional(),
+      setupAttemptId: id.optional().describe("Select this exact local setup attempt instead of product check entries; index selects its recorded requirement result."),
+      productId: id.optional().describe("Select one product’s latest saved run when nodeId is absent."),
+      ifRevision: id.optional().describe("Pin a latest-run reference supplied by checkpoint inspection; changed evidence returns changed."),
+      index: z.number().int().min(0),
+      section: z.enum([
+      "diagnostics",
+      "result"
+    ]).default("diagnostics"),
+      ...evidence
+    },
   ),
   op("inbox.list", "List compact inbox requests, filtered inside the engine before pagination.", {
     ...filter,
@@ -228,7 +323,12 @@ export const OPERATIONS = [
     { ...decision, note: text.max(4000) },
     true,
   ),
-  op("inbox.rerun-checks", "Run failed or unverified product checks afresh at the inspected decision. Approves no delivery and grants no automatic repair returns. Reuse the request reference after a lost reply.", decision, true),
+  op(
+    "inbox.rerun-checks",
+    "Run failed or unverified product checks afresh at the inspected decision. Approves no delivery and grants no automatic repair returns. Reuse the request reference after a lost reply.",
+    decision,
+    true
+  ),
   op("inbox.retry", "Retry the inspected stuck item, including existing tool-readiness checks. Cannot approve checkpoints.", decision, true),
   op(
     "inbox.recovery",
@@ -270,7 +370,15 @@ export const OPERATIONS = [
     },
     true,
   ),
-  op("product.check-setup", "Set coordinator-owned local setup requirements. Commands run through the existing local check owner; no installation or delivery approval.", { productId: id, requirements: CheckSetupRequirementsSchema }, true),
+  op(
+    "product.check-setup",
+    "Set coordinator-owned local setup requirements. Commands run through the existing local check owner; no installation or delivery approval.",
+    {
+    productId: id,
+    requirements: CheckSetupRequirementsSchema
+  },
+    true
+  ),
   op("pool.inspect", "Inspect pool limits, scheduling preference, admitted work and drain blockers.", {}),
   op("pool.limit", "Set the existing total agent cap (1–12).", { limit: z.number().int().min(1).max(12) }, true),
   op("tools.inspect", "Inspect tool readiness, usage, profile choices and caps in bounded pages.", evidence),

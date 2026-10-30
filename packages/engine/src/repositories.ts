@@ -1,4 +1,5 @@
-import { observeCommittedCode, scopesFor } from "@petrina/orchestrator";
+import { designWorkKey, observeCommittedCode, scopesFor } from "@petrina/orchestrator";
+export { designWorkKey };
 import { applyAcceptanceVersions, assignedProducts, completeAll, type Task } from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import type { RuntimeTask } from "./kernel.js";
@@ -50,8 +51,4 @@ export async function invalidateAcceptance(task: RuntimeTask, versions?: Record<
   const current = versions ?? await versionsOf(task);
   applyAcceptanceVersions(task, current);
   return current;
-}
-
-export function designWorkKey(task: RuntimeTask, stageId: string): string {
-  return `${stageId}:author:${task.rounds[stageId] ?? 1}:${task.designRevision ?? 0}`;
 }

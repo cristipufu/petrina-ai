@@ -63,7 +63,13 @@ export function AgentsPage({ state, find, onOpen }: { state: State; find: Lookup
               <div className="grow" />
               <div className="foot">
                 <ProductName product={find.product(task.productId)} />
-                {driving ? <span className="num label needs-you">{drivingText(task, state.now)}</span> : <span className="num">{duration(agent?.since, state.now)}</span>}
+                {driving ? <span className="num label needs-you">{drivingText(
+                  task,
+                  state.now
+                )}</span> : <span className="num">{duration(
+                  agent?.since,
+                  state.now
+                )}</span>}
                 {driving ? (
                   <button className="btn small lead" onClick={() => openHandBack(task.id)}>
                     <Undo2 size={16} aria-hidden="true" />
@@ -108,7 +114,12 @@ function TerminalPicker({ state }: { state: State }) {
         <div className="tile" style={{ minHeight: 0 }}>
           <strong style={{ fontWeight: 600 }}>Take over opens in</strong>
           {terminals.length ? (
-            <Select className="select" aria-label="The terminal take over opens in" value={state.terminal ?? ""} onChange={(event) => sim.setTerminal(event.target.value)}>
+            <Select
+              className="select"
+              aria-label="The terminal take over opens in"
+              value={state.terminal ?? ""}
+              onChange={(event) => sim.setTerminal(event.target.value)}
+            >
               <option value="">The usual one ({terminals[0]!.name})</option>
               {terminals.map((terminal) => (
                 <option key={terminal.id} value={terminal.id}>
@@ -128,7 +139,14 @@ function TerminalPicker({ state }: { state: State }) {
 const TOOL_STATUS = { ready: "Ready", "logged-out": "Needs you to log in", "not-installed": "Not installed" } as const;
 
 /** The squad's roles, the tools found on this machine, and the profiles built from them. */
-export function LibraryPage({ state, onRole, product = "all", view = "roles", onView, onEditorDialog }: { state: State; onRole: (target: RolePanelTarget) => void; product?: string; view?: "roles" | "profiles"; onView?: (view: "roles" | "profiles") => void; onEditorDialog?: (open: boolean) => void }) {
+export function LibraryPage({ state, onRole, product = "all", view = "roles", onView, onEditorDialog }: {
+  state: State;
+  onRole: (target: RolePanelTarget) => void;
+  product?: string;
+  view?: "roles" | "profiles";
+  onView?: (view: "roles" | "profiles") => void;
+  onEditorDialog?: (open: boolean) => void
+}) {
 
   return (
     <div className="page">
@@ -139,7 +157,26 @@ export function LibraryPage({ state, onRole, product = "all", view = "roles", on
         </div>
       </div>
 
-      <nav className="library-views" aria-label="Library views">{(["roles", "profiles"] as const).map(tab => <a key={tab} className={`btn ${view === tab ? "on" : ""}`} aria-current={view === tab ? "page" : undefined} href={routeHref({ view: "library", product, libraryView: tab })} onClick={e => followLink(e, () => onView?.(tab))}>{tab[0]!.toUpperCase() + tab.slice(1)}</a>)}</nav>
+      <nav
+        className="library-views"
+        aria-label="Library views"
+      >{([
+        "roles",
+        "profiles"
+      ] as const).map(tab => <a
+        key={tab}
+        className={`btn ${view === tab ? "on" : ""}`}
+        aria-current={view === tab ? "page" : undefined}
+        href={routeHref({
+        view: "library",
+        product,
+        libraryView: tab
+      })}
+        onClick={e => followLink(
+        e,
+        () => onView?.(tab)
+      )}
+      >{tab[0]!.toUpperCase() + tab.slice(1)}</a>)}</nav>
       {view === "roles" && <RolesSection state={state} onOpen={onRole} />}
       {view === "profiles" && <Profiles state={state} onDialogChange={onEditorDialog} />}
     </div>

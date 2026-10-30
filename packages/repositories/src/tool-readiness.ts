@@ -50,7 +50,10 @@ export function gitHubReadiness(result: RunResult, timeoutMs = CHECK_TIMEOUT_MS)
  * Is Git there? On a Mac without Apple's developer tools, /usr/bin/git is a stand-in that opens
  * their installer when it runs, so that case is told apart without running it.
  */
-export async function checkGit(which: Which, platform: Platform, options: { timeoutMs?: number; developerTools?: () => Promise<DeveloperToolsResult> } = {}): Promise<ToolProbeResult> {
+export async function checkGit(which: Which, platform: Platform, options: {
+  timeoutMs?: number;
+  developerTools?: () => Promise<DeveloperToolsResult>
+} = {}): Promise<ToolProbeResult> {
   const timeoutMs = options.timeoutMs ?? CHECK_TIMEOUT_MS;
   const path = which("git");
   if (!path) return { status: "not-installed" };

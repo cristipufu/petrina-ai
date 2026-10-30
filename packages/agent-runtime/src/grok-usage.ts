@@ -13,7 +13,19 @@ import { withUsageProcess } from "./usage-process.js";
 /** Initialize ACP, ask its read-only billing extension, then stop. No session or AI turn. */
 export async function readGrokUsage(options: ReadOptions): Promise<UsageInfo[]> {
   const [program, ...args] = options.command ?? GROK_AGENT_COMMAND;
-  return withUsageProcess(options, () => spawn(program!, args, { stdio: ["pipe", "pipe", "pipe"], env: options.env, windowsHide: true }), async (child, signal) => {
+  return withUsageProcess(options, () => spawn(
+    program!,
+    args,
+    {
+    stdio: [
+    "pipe",
+    "pipe",
+    "pipe"
+  ],
+    env: options.env,
+    windowsHide: true
+  }
+  ), async (child, signal) => {
     child.stdin!.on("error", () => undefined);
     child.stderr!.resume();
     let abort = () => {};
@@ -26,12 +38,33 @@ export async function readGrokUsage(options: ReadOptions): Promise<UsageInfo[]> 
     });
     if (signal.aborted) abort();
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>);
-    const connection = new acp.ClientSideConnection(() => ({ sessionUpdate: async () => undefined, requestPermission: async () => ({ outcome: { outcome: "cancelled" } }) }), stream);
+    const connection = new acp.ClientSideConnection(
+      () => ({
+      sessionUpdate: async () => undefined,
+      requestPermission: async () => ({ outcome: { outcome: "cancelled" } })
+    }),
+      stream
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Grok did not report usage in time")), options.timeoutMs ?? 20_000); });
+    const late = new Promise<never>((
+      _,
+      reject
+    ) => { timer = setTimeout(
+      () => reject(new Error("Grok did not report usage in time")),
+      options.timeoutMs ?? 20_000
+    ); });
     const read = (async () => {
       if (signal.aborted) throw signal.reason;
-      await connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+      await connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {
+        fs: {
+        readTextFile: false,
+        writeTextFile: false
+      },
+        terminal: false
+      }
+      });
       if (signal.aborted) throw signal.reason;
       return grokReports(await connection.request("_x.ai/billing", {}));
     })();
@@ -43,13 +76,32 @@ export async function readGrokUsage(options: ReadOptions): Promise<UsageInfo[]> 
       throw error;
     }
     finally {
-      clearTimeout(timer); signal.removeEventListener("abort", abort);
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
     }
   });
 }
 
 export class GrokUsage extends UsageReader {
-  constructor(options: { command: readonly string[]; env: () => NodeJS.ProcessEnv; record: (reports: UsageInfo[]) => void; log: (text: string) => void; changed?: () => void; timeoutMs?: number }) {
-    super({ name: "Grok", record: options.record, log: options.log, ...(options.changed ? { changed: options.changed } : {}), read: context => readGrokUsage({ command: options.command, env: options.env(), ...context, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
+  constructor(options: {
+    command: readonly string[];
+    env: () => NodeJS.ProcessEnv;
+    record: (reports: UsageInfo[]) => void;
+    log: (text: string) => void;
+    changed?: () => void;
+    timeoutMs?: number
+  }) {
+    super({
+      name: "Grok",
+      record: options.record,
+      log: options.log,
+      ...(options.changed ? { changed: options.changed } : {}),
+      read: context => readGrokUsage({
+      command: options.command,
+      env: options.env(),
+      ...context,
+      ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {})
+    })
+    });
   }
 }

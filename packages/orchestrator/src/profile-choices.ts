@@ -50,8 +50,12 @@ export class ProfileChoiceController {
       this.cache.set(key, { at: this.effects.now(), choices });
       this.cache.set(JSON.stringify([toolId, choices.modelId]), { at: this.effects.now(), choices });
       return structuredClone(choices);
-    }).finally(() => { this.pending.delete(key); if (this.tools.get(toolId) === work) this.tools.delete(toolId); });
-    this.pending.set(key, work); this.tools.set(toolId, work);
+    }).finally(() => {
+      this.pending.delete(key);
+      if (this.tools.get(toolId) === work) this.tools.delete(toolId);
+    });
+    this.pending.set(key, work);
+    this.tools.set(toolId, work);
     return work;
   }
 }

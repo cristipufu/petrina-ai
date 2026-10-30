@@ -9,7 +9,13 @@ export interface SideStepHost { checkpoint(task: RuntimeTask): void }
 export function beginInternalStep(host: SideStepHost, { task, work }: RepositoryContext, roleId: Id): () => void {
   if (work.sideStep && work.sideStep.roleId !== roleId) throw new Error("Another internal step is still unfinished.");
   if (!work.sideStep) {
-    work.sideStep = structuredClone({ roleId, ...(work.conversation?.roleId !== roleId && work.conversation ? { conversation: work.conversation } : {}), ...(work.stepAttempts !== undefined ? { stepAttempts: work.stepAttempts } : {}), ...(task.todo !== undefined ? { todo: task.todo } : {}), ...(task.stepClock ? { stepClock: task.stepClock } : {}) });
+    work.sideStep = structuredClone({
+      roleId,
+      ...(work.conversation?.roleId !== roleId && work.conversation ? { conversation: work.conversation } : {}),
+      ...(work.stepAttempts !== undefined ? { stepAttempts: work.stepAttempts } : {}),
+      ...(task.todo !== undefined ? { todo: task.todo } : {}),
+      ...(task.stepClock ? { stepClock: task.stepClock } : {})
+    });
     if (work.conversation?.roleId !== roleId) delete work.conversation;
     host.checkpoint(task);
   }

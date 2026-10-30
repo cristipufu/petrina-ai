@@ -32,7 +32,10 @@ export function processMetricsPlan(platform: NodeJS.Platform): ProcessMetricsPla
 export function parseProcessMetrics(text: string, format: ProcessMetricsPlan["format"]): ProcessMetric[] {
   const seen = new Set<number>();
   const numeric = (value: unknown): number => typeof value === "number" ? value : typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
-  const unique = (pid: number): void => { if (seen.has(pid)) throw new Error("Duplicate process identity in observation."); seen.add(pid); };
+  const unique = (pid: number): void => {
+    if (seen.has(pid)) throw new Error("Duplicate process identity in observation.");
+    seen.add(pid);
+  };
   if (format === "windows") {
     const value: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
     const rows = Array.isArray(value) ? value : value === null ? [] : [value];
@@ -40,7 +43,10 @@ export function parseProcessMetrics(text: string, format: ProcessMetricsPlan["fo
       if (!raw || typeof raw !== "object") throw new Error("Malformed Windows process observation.");
       const row = raw as Record<string, unknown>;
       if (row.pid === 0) return [];
-      const pid = numeric(row.pid), ppid = numeric(row.ppid), rssBytes = numeric(row.rssBytes), cpuMs = numeric(row.cpuMs);
+      const pid = numeric(row.pid);
+      const ppid = numeric(row.ppid);
+      const rssBytes = numeric(row.rssBytes);
+      const cpuMs = numeric(row.cpuMs);
       if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isFinite(rssBytes) || rssBytes < 0 || !Number.isFinite(cpuMs) || cpuMs < 0
         || typeof row.born !== "string" || !/^\d{4}-\d\d-\d\dT/.test(row.born) || !Number.isFinite(Date.parse(row.born)) || typeof row.program !== "string" || !row.program) throw new Error("Incomplete Windows process observation.");
       unique(pid);
@@ -51,7 +57,10 @@ export function parseProcessMetrics(text: string, format: ProcessMetricsPlan["fo
     const match = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\S+\s+\d+)\s+(.+?)\s*$/.exec(line);
     if (!match) throw new Error("Malformed ps process observation.");
     const [, id, parent, cpu, rss, born, command] = match;
-    const pid = Number(id), ppid = Number(parent), cpuPercent = Number(cpu), rssBytes = Number(rss) * 1024;
+    const pid = Number(id);
+    const ppid = Number(parent);
+    const cpuPercent = Number(cpu);
+    const rssBytes = Number(rss) * 1024;
     if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isFinite(cpuPercent) || !Number.isSafeInteger(rssBytes)) throw new Error("Invalid ps process observation.");
     unique(pid);
     return { pid, ppid, cpuPercent, rssBytes, born: born!, program: command!.split(/[\\/]/).at(-1)! };
@@ -75,11 +84,18 @@ export class SampledProcessTree {
     const rootPresent = !this.rootEnded && !!root && root.born === this.rootBorn;
     if (this.rootBorn && !rootPresent) this.rootEnded = true;
     const selected = new Set(rootPresent ? [this.root] : []);
-    for (const [pid, born] of this.known) { if (pid === this.root) continue; if (byId.get(pid)?.born === born) selected.add(pid); else this.known.delete(pid); }
+    for (const [pid, born] of this.known) {
+      if (pid === this.root) continue;
+      if (byId.get(pid)?.born === born) selected.add(pid);
+    else this.known.delete(pid);
+    }
     let changed = true;
     while (changed) {
       changed = false;
-      for (const row of rows) if (selected.has(row.ppid) && !selected.has(row.pid)) { selected.add(row.pid); changed = true; }
+      for (const row of rows) if (selected.has(row.ppid) && !selected.has(row.pid)) {
+        selected.add(row.pid);
+        changed = true;
+      }
     }
     const processes = rows.filter(row => selected.has(row.pid));
     for (const row of processes) this.known.set(row.pid, row.born);

@@ -16,7 +16,27 @@ const reportedStatus = (value?: string | null): ToolInvocationStatus | undefined
   ["pending", "in_progress", "completed", "failed"].includes(value ?? "") ? value as ToolInvocationStatus : undefined;
 
 // Retain only fields used for descriptions/diagnostics, never outputs, patches or arbitrary payloads.
-const INPUT_FIELDS = ["command", "cmd", "CommandLine", "description", "toolAction", "toolSummary", "target_file", "file_path", "path", "filePath", "tool_name", "name", "ToolName", "url", "element", "arguments", "args", "parameters", "Arguments"];
+const INPUT_FIELDS = [
+  "command",
+  "cmd",
+  "CommandLine",
+  "description",
+  "toolAction",
+  "toolSummary",
+  "target_file",
+  "file_path",
+  "path",
+  "filePath",
+  "tool_name",
+  "name",
+  "ToolName",
+  "url",
+  "element",
+  "arguments",
+  "args",
+  "parameters",
+  "Arguments"
+];
 function boundedInput(value: unknown, depth = 0): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value) || depth > 2) return undefined;
   const fields: [string, unknown][] = [];
@@ -49,7 +69,11 @@ function mergeCall(previous: ToolActivity, update: ToolActivity): ToolActivity {
       const item = (value as Record<string, unknown>)[key];
       return typeof item === "string" ? [[key, item.slice(0, 240)]] : [];
     })) : undefined;
-    call._meta = { ...previous._meta, ...(small(meta["x.ai/tool"]) ? { "x.ai/tool": small(meta["x.ai/tool"]) } : {}), ...(small(meta.mcp) ? { mcp: small(meta.mcp) } : {}) };
+    call._meta = {
+      ...previous._meta,
+      ...(small(meta["x.ai/tool"]) ? { "x.ai/tool": small(meta["x.ai/tool"]) } : {}),
+      ...(small(meta.mcp) ? { mcp: small(meta.mcp) } : {})
+    };
   }
   return call;
 }
@@ -61,7 +85,11 @@ export class ToolInvocations {
   private turnId: string;
   constructor(private readonly publish: (event: ToolActivityEvent) => void, private readonly effects: InvocationEffects) { this.turnId = effects.id(); }
 
-  startTurn(): void { this.entries.clear(); this.latest = undefined; this.turnId = this.effects.id(); }
+  startTurn(): void {
+    this.entries.clear();
+    this.latest = undefined;
+    this.turnId = this.effects.id();
+  }
   known(id: string): ToolActivity | undefined { return this.entries.get(id)?.call; }
 
   update(update: Update, start: boolean): void {
@@ -99,7 +127,12 @@ export class ToolInvocations {
     const invocation = [...this.entries.values()].reverse().find(entry => entry.invocation && !terminal(entry.invocation.status) && !entry.invocation.turnEndedAt)?.invocation;
     return {
       lastActivity: this.latest ? this.entries.get(this.latest)?.invocation?.description : undefined,
-      runningTool: invocation ? { id: invocation.id, description: invocation.description, startedAt: invocation.startedAt, ...(invocation.status ? { status: invocation.status } : {}) } : undefined,
+      runningTool: invocation ? {
+        id: invocation.id,
+        description: invocation.description,
+        startedAt: invocation.startedAt,
+        ...(invocation.status ? { status: invocation.status } : {})
+      } : undefined,
     };
   }
 

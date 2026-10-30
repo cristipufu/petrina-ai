@@ -23,7 +23,16 @@ export interface GuideProposalsHost {
 /** Native guide reads, actual participant replies and interruption identities remain effects. */
 export interface GuideProposalsEffects {
   guide(scope: RepositoryContext): Promise<string>;
-  turn(scope: RepositoryContext, input: { note: string; guide: string }, profileId: Id, signal: AbortSignal, used: (id: Id) => void): Promise<GuideProposalResult>;
+  turn(
+    scope: RepositoryContext,
+    input: {
+    note: string;
+    guide: string
+  },
+    profileId: Id,
+    signal: AbortSignal,
+    used: (id: Id) => void
+  ): Promise<GuideProposalResult>;
   interrupted(error: unknown): boolean;
   deferred(error: unknown): boolean;
 }

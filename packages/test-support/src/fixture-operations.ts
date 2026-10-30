@@ -49,8 +49,12 @@ export class FixtureOperations {
     if (this.closing) return this.closing;
     // Publish both closed admission and the closing identity before stop can re-enter either method.
     this.accepting = false;
-    let resolve!: () => void, reject!: (error: unknown) => void;
-    this.closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    this.closing = new Promise<void>((done, failed) => {
+      resolve = done;
+      reject = failed;
+    });
     // stop is still requested synchronously; only its completion is asynchronous.
     void this.finish().then(resolve, reject);
     return this.closing;
@@ -73,9 +77,18 @@ export class FixtureOperations {
       throw new AggregateError([...this.errors, error], `${this.effects.label}: cleanup could not be confirmed; resources retained`);
     } finally { cancel(); }
     if (outcomes === expired)
-      throw new AggregateError([...this.errors, new Error("Owned fixture operations did not settle within their cleanup allowance")], `${this.effects.label}: cleanup could not be confirmed; resources retained`);
+      throw new AggregateError(
+        [
+        ...this.errors,
+        new Error("Owned fixture operations did not settle within their cleanup allowance")
+      ],
+        `${this.effects.label}: cleanup could not be confirmed; resources retained`
+      );
     if (outcomes.some(result => result.failed))
-      throw new AggregateError(outcomes.filter(result => result.failed).map(result => result.error), `${this.effects.label}: cleanup failed; resources retained`);
+      throw new AggregateError(
+        outcomes.filter(result => result.failed).map(result => result.error),
+        `${this.effects.label}: cleanup failed; resources retained`
+      );
     await this.effects.dispose();
   }
 }

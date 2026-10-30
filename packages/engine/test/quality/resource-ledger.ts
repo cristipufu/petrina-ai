@@ -4,18 +4,52 @@ import { createReadStream, mkdirSync, readdirSync, readFileSync, writeFileSync }
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { ResourceSummary } from "@petrina/test-support/resources/summary";
+import { MAX_NATIVE_LAUNCHES, verifyResourceReconciliation } from "./resource-limits.js";
 
-const args = process.argv.slice(2);
-if (!args.length || args.length > 2 || args[0]!.startsWith("-")) {
+const usage = () => {
   console.log(
-    "bun packages/engine/test/quality/resource-ledger.ts CAPTURE [OUTPUT]\n"
-      + "Rebuild complete per-test, file, directory and caller rankings without running tests.",
+    "bun packages/engine/test/quality/resource-ledger.ts [--check] [--max-launches N] CAPTURE [OUTPUT]\n"
+      + `Rebuild complete per-test, file, directory and caller rankings without running tests (--check enforces the ${MAX_NATIVE_LAUNCHES} native launch ceiling).`,
   );
-  process.exit(args.length === 1 && ["--help", "-h"].includes(args[0]!) ? 0 : 1);
+};
+
+const rawArgs = process.argv.slice(2);
+if (rawArgs.length === 1 && ["--help", "-h"].includes(rawArgs[0]!)) {
+  usage();
+  process.exit(0);
 }
 
-const capture = resolve(args[0]!);
-const output = args[1] ? resolve(args[1]) : join(capture, "ledger");
+let checkLaunchCeiling = false;
+let maxNativeLaunches: number | undefined;
+const positional: string[] = [];
+for (let index = 0; index < rawArgs.length; index++) {
+  const token = rawArgs[index]!;
+  if (token === "--check") {
+    checkLaunchCeiling = true;
+  } else if (token === "--max-launches") {
+    const next = rawArgs[++index];
+    const parsed = next !== undefined ? Number(next) : Number.NaN;
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      usage();
+      process.exit(1);
+    }
+    maxNativeLaunches = parsed;
+    checkLaunchCeiling = true;
+  } else if (token.startsWith("-")) {
+    usage();
+    process.exit(1);
+  } else {
+    positional.push(token);
+  }
+}
+
+if (!positional.length || positional.length > 2) {
+  usage();
+  process.exit(1);
+}
+
+const capture = resolve(positional[0]!);
+const output = positional[1] ? resolve(positional[1]) : join(capture, "ledger");
 const summary = new ResourceSummary();
 const seen = new Set<string>();
 const perCase = new Map<string, { programs: Record<string, number>; gitOperations: Record<string, number> }>();
@@ -369,20 +403,21 @@ const readmeText = [
 ].join("\n");
 
 writeFileSync(join(output, "README.md"), readmeText);
-console.log(JSON.stringify({ output, ...reconciliation }, null, 2));
+const violations = verifyResourceReconciliation(reconciliation, { checkLaunchCeiling, maxNativeLaunches });
+console.log(
+  JSON.stringify(
+    {
+      output,
+      ...reconciliation,
+      ...(checkLaunchCeiling ? { maxNativeLaunches: maxNativeLaunches ?? MAX_NATIVE_LAUNCHES } : {}),
+      violations,
+    },
+    null,
+    2,
+  ),
+);
 
-if (
-  missingFiles.length
-  || invalidLines
-  || all.unfinishedCases
-  || all.truncated
-  || all.launchesWithoutObservedExit
-  || unknownCaptureEvidence.length
-  || quality.observerErrors
-  || quality.outputTruncated?.length
-  || quality.samplingErrors?.length
-  || quality.collectorExitCode !== 0
-  || quality.fullExitCode !== 0
-) {
+if (violations.length) {
+  for (const violation of violations) console.error(`Resource verification failed: ${violation}`);
   process.exitCode = 1;
 }

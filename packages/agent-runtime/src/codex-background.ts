@@ -19,7 +19,10 @@ function object(value: unknown): Record<string, unknown> {
 // which cannot represent null (Codex otherwise turns it into an empty string).
 function withoutNulls(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutNulls);
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).filter(([, value]) => value !== null).map(([key, value]) => [key, withoutNulls(value)]));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).filter(([, value]) => value !== null).map(([key, value]) => [
+    key,
+    withoutNulls(value)
+  ]));
   return value;
 }
 
@@ -62,15 +65,27 @@ async function main() {
       return;
     }
     const waiting = pending.get(String(message.id));
-    if (!waiting) { process.stdout.write(`${line}\n`); return; }
+    if (!waiting) {
+      process.stdout.write(`${line}\n`);
+      return;
+    }
     pending.delete(String(message.id));
     if (message.error) waiting.reject(new Error("Codex could not read its inherited browser connections."));
     else waiting.resolve(object(message.result));
   });
   const read = (cwd: unknown) => new Promise<Record<string, unknown>>((resolve, reject) => {
     const id = `petrina-background-${++seq}`;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error("Codex did not return its inherited browser connections.")); }, 30_000);
-    pending.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error("Codex did not return its inherited browser connections."));
+    }, 30_000);
+    pending.set(id, { resolve: (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    }, reject: (error) => {
+      clearTimeout(timer);
+      reject(error);
+    } });
     send({ id, method: "config/read", params: { cwd, includeLayers: true } });
   });
   createInterface({ input: process.stdin }).on("line", (line) => {
@@ -83,7 +98,13 @@ async function main() {
           params.config = backgroundConfig(object(params.config), object(inherited.config), Array.isArray(inherited.layers) ? inherited.layers : []);
           message.params = params;
         } catch {
-          process.stdout.write(`${JSON.stringify({ id: message.id, error: { code: -32603, message: "Codex could not switch off inherited browser and desktop connections. Try this step again." } })}\n`);
+          process.stdout.write(`${JSON.stringify({
+            id: message.id,
+            error: {
+            code: -32603,
+            message: "Codex could not switch off inherited browser and desktop connections. Try this step again."
+          }
+          })}\n`);
           return;
         }
       }

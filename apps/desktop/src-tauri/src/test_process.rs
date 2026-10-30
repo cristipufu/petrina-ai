@@ -1,5 +1,5 @@
 //! Private desktop lifecycle fixtures. Real child handles and loopback controls, with no shell or PID killing.
-use super::engine_process::ChildOwner;
+use super::engine_process::{spawn_command, ChildOwner};
 use super::{read_handoff_events, Started};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -214,7 +214,7 @@ pub fn start_child(mode: &str, address: &str) -> Started {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut child = command.spawn().expect("controlled child starts");
+    let mut child = spawn_command(&mut command).expect("controlled child starts");
     let handoff = Arc::new(AtomicBool::new(false));
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let line = child.stdin.take();
@@ -348,12 +348,13 @@ mod tests {
         let listener = Listener::new();
         let mut command = actor_command(mode, &listener.address(), helper);
         let mut child = PreparationOwner(Some(
-            command
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap(),
+            spawn_command(
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            )
+            .unwrap(),
         ));
         let mut stdout = child.0.as_mut().unwrap().stdout.take().unwrap();
         let (prepared, preparation) = mpsc::channel();

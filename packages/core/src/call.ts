@@ -47,7 +47,11 @@ export function designCheckIndex(stages: readonly Stage[], designIndex: number, 
  * The plan's own design check for that stage is the one the coordinator answers; one is added right after
  * the stage only if the plan has none before the build.
  */
-export function startCall(task: Pick<Task, "plan" | "stageIndex" | "objections">, text: string, at: number, roles: readonly Pick<Role, "id" | "result">[]): { stages: Stage[]; stageIndex: number; call: DesignCall } | undefined {
+export function startCall(task: Pick<Task, "plan" | "stageIndex" | "objections">, text: string, at: number, roles: readonly Pick<Role, "id" | "result">[]): {
+  stages: Stage[];
+  stageIndex: number;
+  call: DesignCall
+} | undefined {
   const stages = task.plan?.stages ?? [];
   const index = designStageIndex(stages, task.stageIndex);
   const stage = stages[index];

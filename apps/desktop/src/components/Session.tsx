@@ -40,7 +40,12 @@ function groupLines(lines: readonly SessionLine[]): (SessionLine | SessionLine[]
 }
 
 /** Collapsing releases the rows and their icons, rather than only hiding a long list. */
-function ActivityGroup({ lines, className = "", reveal = false, children }: { lines: SessionLine[]; className?: string; reveal?: boolean; children: (line: SessionLine) => ReactNode }) {
+function ActivityGroup({ lines, className = "", reveal = false, children }: {
+  lines: SessionLine[];
+  className?: string;
+  reveal?: boolean;
+  children: (line: SessionLine) => ReactNode
+}) {
   const [expanded, setExpanded] = useState(reveal);
   return <details className={`step-activity ${className}`} open={expanded} data-line={lines[0]!.id} onToggle={(event) => setExpanded(event.currentTarget.open)}>
     <summary>{lines.length} agent action{lines.length === 1 ? "" : "s"}</summary>
@@ -58,7 +63,15 @@ function ReportPicture({ taskId, image, finished }: { taskId: string; image: Rep
 }
 
 /** Only this run's saved conversation, read in place without changing the task's Session tab. */
-export function StepConversation({ lines, find, now, live = false, taskId, repositories = find.task(taskId)?.repositories, finished = false }: { lines: readonly SessionLine[]; find: Lookup; now: number; live?: boolean; taskId: string; repositories?: Task["repositories"]; finished?: boolean }) {
+export function StepConversation({ lines, find, now, live = false, taskId, repositories = find.task(taskId)?.repositories, finished = false }: {
+  lines: readonly SessionLine[];
+  find: Lookup;
+  now: number;
+  live?: boolean;
+  taskId: string;
+  repositories?: Task["repositories"];
+  finished?: boolean
+}) {
   const section = useRef<HTMLElement>(null);
   const pinned = useRef(true);
   const textSize = useMemo(() => lines.reduce((size, line) => size + line.text.length, 0), [lines]);
@@ -77,16 +90,70 @@ export function StepConversation({ lines, find, now, live = false, taskId, repos
   return <section ref={section} className="step-conversation" aria-label="This step's conversation">
     <div className="chat">
       {groups.map((group) => Array.isArray(group) ? (
-        <ActivityGroup key={group[0]!.id} lines={group}>{(line) => <li key={line.id}><ArrowRight size={12} aria-hidden="true" /><span>{line.productId && `${messageProduct(line.productId, find, repositories)}: `}{line.text}</span></li>}</ActivityGroup>
+        <ActivityGroup
+          key={group[0]!.id}
+          lines={group}
+        >{(line) => <li key={line.id}><ArrowRight
+          size={12}
+          aria-hidden="true"
+        /><span>{line.productId && `${messageProduct(
+          line.productId,
+          find,
+          repositories
+        )}: `}{line.text}</span></li>}</ActivityGroup>
       ) : group.from === "system" ? (
         <p key={group.id} className="system">{group.text} · {when(group.at, now)}</p>
       ) : (
         <div key={group.id} className={`msg ${group.from === "you" ? "you" : "agent"}`}>
-          {group.from === "you" ? <span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span> : <RoleAvatar role={find.role(group.roleId)} size={28} />}
-          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}{group.productId && <> · {messageProduct(group.productId, find, repositories)}</>}<time>{when(group.at, now)}</time>{group.coordinatorMessageId && <DeliveryStatus message={find.task(taskId)?.queued.find(message => message.id === group.coordinatorMessageId)} taskId={taskId} />}</div><div className="bubble"><MessageBody text={group.text} taskId={taskId} productId={group.productId} finished={finished} /></div>{group.images?.map((image) => <ReportPicture key={image.id} taskId={taskId} image={image} finished={finished} />)}</div>
+          {group.from === "you" ? <span
+            className="avatar tone-slate"
+            style={{
+            width: 28,
+            height: 28
+          }}
+            aria-hidden="true"
+          ><User size={16} /></span> : <RoleAvatar
+            role={find.role(group.roleId)}
+            size={28}
+          />}
+          <div style={{ minWidth: 0 }}><div className="name">{group.from === "you" ? "You" : find.role(group.roleId)?.name ?? "Agent"}{group.productId && <> · {messageProduct(
+            group.productId,
+            find,
+            repositories
+          )}</>}<time>{when(
+            group.at,
+            now
+          )}</time>{group.coordinatorMessageId && <DeliveryStatus
+            message={find.task(taskId)?.queued.find(message => message.id === group.coordinatorMessageId)}
+            taskId={taskId}
+          />}</div><div className="bubble"><MessageBody
+            text={group.text}
+            taskId={taskId}
+            productId={group.productId}
+            finished={finished}
+          /></div>{group.images?.map((image) => <ReportPicture
+            key={image.id}
+            taskId={taskId}
+            image={image}
+            finished={finished}
+          />)}</div>
         </div>
       ))}
-      {live && find.task(taskId)?.queued.filter(message => !lines.some(line => line.coordinatorMessageId === message.id)).map(message => <div key={message.id} className="msg you queued" data-queued><span className="avatar tone-slate" style={{ width: 28, height: 28 }} aria-hidden="true"><User size={16} /></span><div style={{ minWidth: 0 }}><div className="name">You <DeliveryStatus message={message} taskId={taskId} /></div><div className="bubble">{message.text}</div></div></div>)}
+      {live && find.task(taskId)?.queued.filter(message => !lines.some(line => line.coordinatorMessageId === message.id)).map(message => <div
+        key={message.id}
+        className="msg you queued"
+        data-queued
+      ><span
+        className="avatar tone-slate"
+        style={{
+        width: 28,
+        height: 28
+      }}
+        aria-hidden="true"
+      ><User size={16} /></span><div style={{ minWidth: 0 }}><div className="name">You <DeliveryStatus
+        message={message}
+        taskId={taskId}
+      /></div><div className="bubble">{message.text}</div></div></div>)}
     </div>
   </section>;
 }
@@ -186,8 +253,18 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
             <time className="num">{when(line.at, state.now)}</time>
             {line.coordinatorMessageId && <DeliveryStatus message={task.queued.find(message => message.id === line.coordinatorMessageId)} taskId={task.id} />}
           </div>
-          <div className="bubble"><MessageBody text={line.text} taskId={task.id} productId={line.productId} finished={task.state === "done" || task.state === "cancelled"} /></div>
-          {line.images?.map((image) => <ReportPicture key={image.id} taskId={task.id} image={image} finished={task.state === "done" || task.state === "cancelled"} />)}
+          <div className="bubble"><MessageBody
+            text={line.text}
+            taskId={task.id}
+            productId={line.productId}
+            finished={task.state === "done" || task.state === "cancelled"}
+          /></div>
+          {line.images?.map((image) => <ReportPicture
+            key={image.id}
+            taskId={task.id}
+            image={image}
+            finished={task.state === "done" || task.state === "cancelled"}
+          />)}
         </div>
       </div>
     );
@@ -226,7 +303,12 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
         {groups.map((group) => {
           if (Array.isArray(group))
             return (
-              <ActivityGroup key={group[0]!.id} lines={group} className={`session-activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`} reveal={group.some((line) => Boolean(inStep(line)))}>
+              <ActivityGroup
+                key={group[0]!.id}
+                lines={group}
+                className={`session-activity ${group.some((line) => inStep(line)) ? "in-step" : ""}`}
+                reveal={group.some((line) => Boolean(inStep(line)))}
+              >
                 {(line) => (
                   <li key={line.id} data-line={line.id} className={inStep(line)}>
                     <ArrowRight size={12} aria-hidden="true" />
@@ -275,11 +357,28 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
 
 function DeliveryStatus({ message, taskId }: { message?: QueuedMessage; taskId: Id }) {
   const kept = message ? messageRemovalText(message) : undefined;
-  return <><span className="queued-note" role="status">{message ? messageDeliveryText(message) : "Heard"}</span>{message && <button className="btn ghost small" disabled={kept !== undefined} title={kept} onClick={() => sim.removeQueued(taskId, message.id)}>Remove</button>}</>;
+  return <><span
+    className="queued-note"
+    role="status"
+  >{message ? messageDeliveryText(message) : "Heard"}</span>{message && <button
+    className="btn ghost small"
+    disabled={kept !== undefined}
+    title={kept}
+    onClick={() => sim.removeQueued(
+    taskId,
+    message.id
+  )}
+  >Remove</button>}</>;
 }
 
 /** Guidance can join active work, wait, or explicitly stop it first. */
-function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task; find: Lookup; drafts: TaskDrafts; focusRequest: boolean; onFocused: () => void }) {
+function Composer({ task, find, drafts, focusRequest, onFocused }: {
+  task: Task;
+  find: Lookup;
+  drafts: TaskDrafts;
+  focusRequest: boolean;
+  onFocused: () => void
+}) {
   const text = useSyncExternalStore(drafts.subscribe, () => drafts.get(task.id));
   const onText = (value: string) => drafts.set(task.id, value);
   const id = useId();
@@ -289,7 +388,10 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task;
     if (focusRequest) setExpanded(true);
   }, [focusRequest]);
   useEffect(() => {
-    if (focusRequest && expanded) { textarea.current?.focus(); onFocused(); }
+    if (focusRequest && expanded) {
+      textarea.current?.focus();
+      onFocused();
+    }
   }, [focusRequest, expanded, onFocused]);
   const [mode, setMode] = useState<MessageMode>("now");
   const role = find.role(task.agent?.roleId ?? task.driving?.roleId ?? task.conversation?.roleId);
@@ -305,12 +407,22 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task;
 
   return (
     <div className="composer">
-      <button type="button" className="composer-toggle" id={`${id}-title`} aria-expanded={expanded} aria-controls={`${id}-body`} onClick={() => setExpanded((value) => !value)}>
+      <button
+        type="button"
+        className="composer-toggle"
+        id={`${id}-title`}
+        aria-expanded={expanded}
+        aria-controls={`${id}-body`}
+        onClick={() => setExpanded((value) => !value)}
+      >
         <span>{live || task.driving || task.conversation ? `Message ${recipient}` : "Message the next agent"}</span>
         {!expanded && text.trim() && <span className="composer-draft">Draft</span>}
         <ChevronDown size={16} aria-hidden="true" />
       </button>
-      <form hidden={!expanded} className="composer-body" id={`${id}-body`} onSubmit={(event) => { event.preventDefault(); send(); }}>
+      <form hidden={!expanded} className="composer-body" id={`${id}-body`} onSubmit={(event) => {
+        event.preventDefault();
+        send();
+      }}>
         <textarea
           id={id}
           ref={textarea}
@@ -330,11 +442,32 @@ function Composer({ task, find, drafts, focusRequest, onFocused }: { task: Task;
       <div className="composer-actions">
         {live && (
           <div className="segmented" role="radiogroup" aria-label="When to deliver">
-            <button type="button" role="radio" aria-checked={mode === "now"} className={mode === "now" ? "on" : ""} onClick={() => setMode("now")} title="Try to reach the working agent now">Send now</button>
-            <button type="button" role="radio" aria-checked={mode === "queue"} className={mode === "queue" ? "on" : ""} onClick={() => setMode("queue")} title="Deliver after the current step">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === "now"}
+              className={mode === "now" ? "on" : ""}
+              onClick={() => setMode("now")}
+              title="Try to reach the working agent now"
+            >Send now</button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === "queue"}
+              className={mode === "queue" ? "on" : ""}
+              onClick={() => setMode("queue")}
+              title="Deliver after the current step"
+            >
               Wait
             </button>
-            <button type="button" role="radio" aria-checked={mode === "interrupt"} className={mode === "interrupt" ? "on" : ""} onClick={() => setMode("interrupt")} title="Stop the current step and deliver now">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === "interrupt"}
+              className={mode === "interrupt" ? "on" : ""}
+              onClick={() => setMode("interrupt")}
+              title="Stop the current step and deliver now"
+            >
               Stop and send
             </button>
           </div>

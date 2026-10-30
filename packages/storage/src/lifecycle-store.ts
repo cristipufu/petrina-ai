@@ -44,8 +44,19 @@ export class LifecycleStore {
         };
       } else {
         apply();
-        if (replacesPause) this.updateReceipts(current, "superseded", `The pause's drain wait was superseded by ${kind}. Inspect engine status for the operation now under way.`, a.requestId);
-        const operation: LifecycleOperation = { id: a.requestId, kind, phase: launcherPid === undefined ? "draining" : "starting", scheduling, ...(launcherPid === undefined ? {} : { launcherPid }) };
+        if (replacesPause) this.updateReceipts(
+          current,
+          "superseded",
+          `The pause's drain wait was superseded by ${kind}. Inspect engine status for the operation now under way.`,
+          a.requestId
+        );
+        const operation: LifecycleOperation = {
+          id: a.requestId,
+          kind,
+          phase: launcherPid === undefined ? "draining" : "starting",
+          scheduling,
+          ...(launcherPid === undefined ? {} : { launcherPid })
+        };
         this.current = operation;
         result = { outcome: "pending", requestId: a.requestId, operation };
       }
@@ -59,7 +70,11 @@ export class LifecycleStore {
       if (this.receipt(a.requestId)) return this.begin(kind, a, observed.scheduling);
       const current = this.current;
       if (current?.id !== observed.id || current.kind !== kind || !["pause", "restart"].includes(kind) || ["completed", "failed"].includes(current.phase))
-        return { outcome: "disconnected", requestId: a.requestId, message: "The lifecycle operation changed before this request was confirmed. Retry with its original reference." };
+        return {
+          outcome: "disconnected",
+          requestId: a.requestId,
+          message: "The lifecycle operation changed before this request was confirmed. Retry with its original reference."
+        };
       return this.begin(kind, a, current.scheduling);
     })();
   }
@@ -77,7 +92,16 @@ export class LifecycleStore {
   private updateReceipts(op: LifecycleOperation, outcome: Result["outcome"], message?: string, supersededBy?: string): void {
     // Followers keep their own request identity and advance with the operation they joined.
     const rows = this.db.query<{ id: string }, [string]>("SELECT id FROM receipts WHERE json_extract(result, '$.operation.id') = ? AND json_extract(result, '$.outcome') = 'pending'").all(op.id);
-    for (const { id } of rows) this.db.query("UPDATE receipts SET result=? WHERE id=?").run(JSON.stringify({ outcome, requestId: id, operation: op, ...(message ? { message } : {}), ...(supersededBy ? { supersededBy } : {}) }), id);
+    for (const { id } of rows) this.db.query("UPDATE receipts SET result=? WHERE id=?").run(
+      JSON.stringify({
+      outcome,
+      requestId: id,
+      operation: op,
+      ...(message ? { message } : {}),
+      ...(supersededBy ? { supersededBy } : {})
+    }),
+      id
+    );
   }
   receipt(id: string): Result | undefined {
     const row = this.db.query<{ result: string }, [string]>("SELECT result FROM receipts WHERE id=?").get(id);

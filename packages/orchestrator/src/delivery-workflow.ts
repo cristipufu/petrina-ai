@@ -1,4 +1,16 @@
-import { beginPetrinaStep, endPetrinaStep, companionText, completeAll, landingState, repositoryDelivered, syncRuntimeWait, undecidedAcceptanceGap, petrinaMoment, lastIndexWhere, JOURNEY_WORDS } from "@petrina/core";
+import {
+  beginPetrinaStep,
+  endPetrinaStep,
+  companionText,
+  completeAll,
+  landingState,
+  repositoryDelivered,
+  syncRuntimeWait,
+  undecidedAcceptanceGap,
+  petrinaMoment,
+  lastIndexWhere,
+  JOURNEY_WORDS
+} from "@petrina/core";
 import { clearDeliveryPreparation } from "./delivery-return.js";
 import { addDeliveryCheck } from "./delivery-gate.js";
 import type { RuntimeTask } from "./model.js";
@@ -134,7 +146,10 @@ export class DeliveryWorkflow {
       await this.clearUnpublishedPreparations(task);
       // Check the restored work, so failures belonging only to the removed version do not reach a builder.
       const restoredChecks = await this.effects.restoredChecks(scope, signal);
-      if (restoredChecks.kind === "blocked") { this.host.checksBlocked(task); return "stop"; }
+      if (restoredChecks.kind === "blocked") {
+        this.host.checksBlocked(task);
+        return "stop";
+      }
 
       const delivery = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && entry.kind === "gate" && entry.gate === "delivery");
       if (delivery < 0) throw new Error("The plan has no delivery check before release preparation");
@@ -145,7 +160,14 @@ export class DeliveryWorkflow {
       this.host.gate(task, problem);
       return "stop";
     }
-    task.findings.push({ id: this.host.findingId(task), text: `Getting the delivery ready failed, so nothing was published: ${reason}`, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+    task.findings.push({
+      id: this.host.findingId(task),
+      text: `Getting the delivery ready failed, so nothing was published: ${reason}`,
+      severity: "blocking",
+      raisedBy: "petrina",
+      confirmedBy: [],
+      status: "open"
+    });
     repository.shipping = { moves: 0, failures };
     this.clearApproval(scope);
     delete task.agent;
@@ -160,7 +182,10 @@ export class DeliveryWorkflow {
     this.host.noteScope(scope, "warn", `Not ready to publish: ${reason} Nothing was published; it goes back to the builder.`);
     this.host.checkpoint();
     if (failures < MAX_FAILURES && builder >= 0) return "continue";
-    this.host.fail(task.id, new Error(`Getting the delivery ready failed ${failures} times, so Petrina stopped and published nothing. The last reason: ${reason} Try again to send it back to the builder, or cancel it.`));
+    this.host.fail(
+      task.id,
+      new Error(`Getting the delivery ready failed ${failures} times, so Petrina stopped and published nothing. The last reason: ${reason} Try again to send it back to the builder, or cancel it.`)
+    );
     return "stop";
   }
 
@@ -208,10 +233,32 @@ export class DeliveryWorkflow {
     if (task.stageIndex < 0) throw new Error(why === "proof" ? "Requested proof needs a coordinator delivery check before publishing." : "Unverified acceptance needs a coordinator delivery check before publishing.");
     task.sub = 0;
     if (why === "proof") {
-      petrinaMoment(task, "delivery", { outcome: "Nothing published; a new delivery decision is needed", reason: "The versions or requested proof differ from your delivery decision", tone: "back" }, this.host.now());
-      this.host.log(task, "warn", "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again.");
+      petrinaMoment(
+        task,
+        "delivery",
+        {
+        outcome: "Nothing published; a new delivery decision is needed",
+        reason: "The versions or requested proof differ from your delivery decision",
+        tone: "back"
+      },
+        this.host.now()
+      );
+      this.host.log(
+        task,
+        "warn",
+        "Nothing more was published: the code versions or requested proof changed after the delivery decision. Petrina asks you again."
+      );
     } else {
-      petrinaMoment(task, "delivery", { outcome: "Nothing published; your delivery decision is needed", reason: "Required acceptance could not be verified", tone: "back" }, this.host.now());
+      petrinaMoment(
+        task,
+        "delivery",
+        {
+        outcome: "Nothing published; your delivery decision is needed",
+        reason: "Required acceptance could not be verified",
+        tone: "back"
+      },
+        this.host.now()
+      );
       this.host.log(task, "warn", approved
         ? "Nothing was published: Petrina has no record that your approval covered the acceptance checks that could not be verified, so it asks you about them first."
         : "Nothing was published: required acceptance could not be verified and has no decision from you yet. Petrina asks you first.");
@@ -277,7 +324,10 @@ export class DeliveryWorkflow {
       const state = states[index];
       if (state) work.pr!.state = state;
     }
-    if (task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) { this.finishMany(task); return "stop"; }
+    if (task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) {
+      this.finishMany(task);
+      return "stop";
+    }
     // Complete preparation everywhere before the first publication. Already delivered records are immutable.
     for (const work of task.repositories!) {
       const scope: RepositoryContext = { task, work };
@@ -292,7 +342,10 @@ export class DeliveryWorkflow {
       if (!scope.work.shipping?.prepared) {
         if (scope.work.delivery !== "local") await this.effects.needGitHub(task);
         if (await this.effects.readyToShip(scope, signal) === "back") return "continue";
-        if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
+        if (lostTurn()) {
+          this.admission.invalidateUnpublishedPreparations(task);
+          return "continue";
+        }
         this.beforePublishing(scope);
         if (scope.work.delivery !== "release" && scope.work.baseSha === await this.effects.head(scope)) {
           work.nothingToPublish = true;
@@ -304,16 +357,25 @@ export class DeliveryWorkflow {
         if (result !== "ready") return result;
         // A question can release the turn while a helper is finishing. Discard its result too,
         // then restart the preparation pass so earlier products refresh before anything publishes.
-        if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
+        if (lostTurn()) {
+          this.admission.invalidateUnpublishedPreparations(task);
+          return "continue";
+        }
       }
     }
     // Even an unchanged product can ask a question and take the shortcut above. Every unfinished
     // product must belong to this preparation pass before the first publication is admitted.
-    if (lostTurn()) { this.admission.invalidateUnpublishedPreparations(task); return "continue"; }
+    if (lostTurn()) {
+      this.admission.invalidateUnpublishedPreparations(task);
+      return "continue";
+    }
     const preview = companionText(task.repositories!);
     if (preview) for (const work of task.repositories!) {
 
-      if (!work.nothingToPublish && (work.delivery === "pull-request" || work.source?.destination.kind === "update-pr")) work.companion ??= { text: preview, state: "pending" };
+      if (!work.nothingToPublish && (work.delivery === "pull-request" || work.source?.destination.kind === "update-pr")) work.companion ??= {
+        text: preview,
+        state: "pending"
+      };
     }
     this.host.checkpoint();
     for (const work of task.repositories!) {
@@ -321,11 +383,17 @@ export class DeliveryWorkflow {
       if (repositoryDelivered(work)) continue;
       this.beforePublishing(scope);
       task.activeProductId = work.productId;
-      if (scope.work.shipping?.prepared?.body && preview) scope.work.shipping.prepared.body = `${scope.work.shipping.prepared.body.replace(/\n*Part of a change across: [^\n]*$/u, "")}\n\n${preview}`;
+      if (scope.work.shipping?.prepared?.body && preview) scope.work.shipping.prepared.body = `${scope.work.shipping.prepared.body.replace(
+        /\n*Part of a change across: [^\n]*$/u,
+        ""
+      )}\n\n${preview}`;
       const result = await this.deliverOne(scope, stage, signal);
 
       if (!repositoryDelivered(work)) return result;
-      if (work.pr?.state === "closed" && !work.landingAccepted) { this.finishMany(task); return "stop"; }
+      if (work.pr?.state === "closed" && !work.landingAccepted) {
+        this.finishMany(task);
+        return "stop";
+      }
       if (signal.aborted || task.state === "cancelled") return "stop";
       task.state = "running";
       this.host.checkpoint();
@@ -341,9 +409,14 @@ export class DeliveryWorkflow {
     const landed = landingState(task.repositories!);
     delete task.agent;
     task.holdsSlot = false;
-    if (task.repositories!.every(repositoryDelivered) && task.repositories!.every((work) => !work.companion || work.companion.state === "done") && !task.deliveryRecorded) { this.host.delivered(task); task.deliveryRecorded = true; }
+    if (task.repositories!.every(repositoryDelivered) && task.repositories!.every((work) => !work.companion || work.companion.state === "done") && !task.deliveryRecorded) {
+      this.host.delivered(task);
+      task.deliveryRecorded = true;
+    }
     if (landed === "unfinished") {
-      task.state = "needs-you"; task.column = "ready"; task.statusLine = "Confirmed deliveries are saved. Unfinished deliveries need retry";
+      task.state = "needs-you";
+      task.column = "ready";
+      task.statusLine = "Confirmed deliveries are saved. Unfinished deliveries need retry";
       if (!this.host.hasDecision(task.id, ["stuck", "shipping"])) this.host.raise(task, "stuck", "Resume the unfinished deliveries");
     } else if (landed === "decision") {
       task.state = "needs-you";
@@ -351,12 +424,28 @@ export class DeliveryWorkflow {
       const closed = task.repositories!.filter((work) => work.pr?.state === "closed" && !work.landingAccepted);
       task.statusLine = `${closed.map((work) => work.source!.product.name).join(", ")}: pull request closed without merging. Your decision is needed`;
       // The question belongs to the closed product, so the others keep their own recorded results.
-      if (!this.host.hasDecision(task.id, ["shipping"])) this.host.raise({ task, work: closed[0]! }, "shipping", task.statusLine, { body: "Confirmed deliveries remain saved. Dependent tasks stay blocked until you explicitly decide this change has landed." });
+      if (!this.host.hasDecision(
+        task.id,
+        ["shipping"]
+      )) this.host.raise(
+        {
+        task,
+        work: closed[0]!
+      },
+        "shipping",
+        task.statusLine,
+        { body: "Confirmed deliveries remain saved. Dependent tasks stay blocked until you explicitly decide this change has landed." }
+      );
     } else if (landed === "waiting") {
-      task.state = "pr-open"; task.column = "ready"; task.statusLine = "Waiting for every pull request to merge";
+      task.state = "pr-open";
+      task.column = "ready";
+      task.statusLine = "Waiting for every pull request to merge";
     } else if (landed === "landed") {
       const fresh = task.state !== "done";
-      task.state = "done"; task.column = "done"; task.statusLine = "All products have landed"; task.finishedAt ??= this.host.now();
+      task.state = "done";
+      task.column = "done";
+      task.statusLine = "All products have landed";
+      task.finishedAt ??= this.host.now();
       if (fresh) this.host.done(task);
     }
     syncRuntimeWait(task, id => this.host.taskDetails(id), this.host.now());

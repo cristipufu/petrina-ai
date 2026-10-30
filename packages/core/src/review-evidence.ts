@@ -60,7 +60,11 @@ function needsCurrentEvidence(finding: Finding): boolean {
  * never unexplained old ids.
  */
 export function checkReviewEvidence(findings: readonly Finding[], result: ReviewEvidenceInput, task?: Pick<Task, "reviewDecision">): string | undefined {
-  const unknown = [...result.confirms, ...result.disputes.map((entry) => entry.id), ...result.resolves.map(entry => entry.id)].filter((id) => !findings.some((finding) => finding.id === id));
+  const unknown = [
+    ...result.confirms,
+    ...result.disputes.map((entry) => entry.id),
+    ...result.resolves.map(entry => entry.id)
+  ].filter((id) => !findings.some((finding) => finding.id === id));
   if (unknown.length) return `Confirm or dispute only finding ids provided in your saved review input. These ids were not shown: ${[...new Set(unknown)].join(", ")}. Report a new problem as a new finding instead.`;
   const invalid = result.resolves.filter(entry => !findings.some(finding => finding.id === entry.id && finding.severity === "pre-existing" && finding.raisedBy !== "petrina") || result.confirms.includes(entry.id) || result.disputes.some(dispute => dispute.id === entry.id));
   if (invalid.length) return `Use "resolves" only for a supplied pre-existing bug you proved was repaired in current code, without also confirming or disputing that id: ${invalid.map(entry => entry.id).join(", ")}. Include the original reproduction, current observed result and nearby controls in the evidence.`;

@@ -2,7 +2,11 @@ import type { Finding } from "./model.js";
 
 /** Compact previews show unresolved work before settled history, without changing any report. */
 export function outstandingReportsFirst<T extends Pick<Finding, "status" | "severity">>(reports: readonly T[]): T[] {
-  const rank = (report: T) => report.status === "open" ? ({ blocking: 0, suggestion: 1, "pre-existing": 2 }[report.severity]) : report.status === "unverified" ? 3 : 4;
+  const rank = (report: T) => report.status === "open" ? ({
+    blocking: 0,
+    suggestion: 1,
+    "pre-existing": 2
+  }[report.severity]) : report.status === "unverified" ? 3 : 4;
   return [...reports].sort((a, b) => rank(a) - rank(b));
 }
 

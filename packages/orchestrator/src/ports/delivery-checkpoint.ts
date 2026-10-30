@@ -22,7 +22,11 @@ export interface DeliveryCheckpointEffects {
   writeGuide(scope: RepositoryContext): Promise<void>;
   writeLearnings(scope: RepositoryContext): Promise<void>;
   upToDate(scope: RepositoryContext, signal: AbortSignal): Promise<"current" | "moved" | "conflict">;
-  checksBeforeDelivery(scope: RepositoryContext, signal: AbortSignal, prepare: () => Promise<boolean>): Promise<"passed" | "returned" | "exhausted" | "blocked">;
+  checksBeforeDelivery(
+    scope: RepositoryContext,
+    signal: AbortSignal,
+    prepare: () => Promise<boolean>
+  ): Promise<"passed" | "returned" | "exhausted" | "blocked">;
   offerLearnings(scope: RepositoryContext): Promise<void>;
   previewRelease(scope: RepositoryContext, stage: DeliveryStage, signal: AbortSignal): Promise<void>;
   head(scope: RepositoryContext): Promise<string>;

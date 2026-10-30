@@ -175,7 +175,23 @@ export class TurnRecovery {
       this.host.checkpoint(scope);
       const since = this.host.now();
       try {
-        return await request.attempt(role, profile, { key, refresh, plannedId, selectionReason, freshReason, readiness, ...(stopped ? { took: { profileId: stopped.profileId, at: stopped.at, ...(this.errors.capacity(stopped.error) ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {}) } } : {}) });
+        return await request.attempt(
+          role,
+          profile,
+          {
+          key,
+          refresh,
+          plannedId,
+          selectionReason,
+          freshReason,
+          readiness,
+          ...(stopped ? { took: {
+          profileId: stopped.profileId,
+          at: stopped.at,
+          ...(this.errors.capacity(stopped.error) ? { refusal: "the selected model is at capacity" } : stopped.error.retry ? { refusal: stopped.error.reason } : {})
+        } } : {})
+        }
+        );
       } catch (error) {
         if (signal.aborted) throw error;
         if (this.host.discardUnavailable(scope, roleId, error, request.reviewerKey)) continue;
@@ -186,7 +202,17 @@ export class TurnRecovery {
           this.host.showReviewWork(task);
           this.host.keepWords(scope, roleId, profile.id, request.reviewerKey, error);
           // Peers keep working. The group waits only once this member's short retries, or its stand-in, are exhausted.
-          if (this.capacity.defer(scope, roleId, profile.id, error, plannedId, request.member)) throw this.errors.capacityWait(this.capacity.words(scope, profile.id));
+          if (this.capacity.defer(
+            scope,
+            roleId,
+            profile.id,
+            error,
+            plannedId,
+            request.member
+          )) throw this.errors.capacityWait(this.capacity.words(
+            scope,
+            profile.id
+          ));
           stopped = { profileId: profile.id, error, at: since };
           continue;
         }

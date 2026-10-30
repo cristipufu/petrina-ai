@@ -3,7 +3,22 @@
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { CheckSetupObservations } from "../CheckSetupObservations";
-import { checkCounts, checkOutcome, checkOutcomeLabel, checkProblemWords, checkResult, findingCount, independentVotes, trackingWords, VERDICT_WORDS, voteSummary, type CheckRun, type Finding, type Task, type Vote } from "@petrina/core";
+import {
+  checkCounts,
+  checkOutcome,
+  checkOutcomeLabel,
+  checkProblemWords,
+  checkResult,
+  findingCount,
+  independentVotes,
+  trackingWords,
+  VERDICT_WORDS,
+  voteSummary,
+  type CheckRun,
+  type Finding,
+  type Task,
+  type Vote
+} from "@petrina/core";
 import { ago, profileText, type Lookup } from "../../lib";
 import { followLink, routeHref } from "../../routes";
 import { openFirst } from "./order";
@@ -48,8 +63,16 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
       <p className="issue-text">{finding.text}</p>
       {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
       <p className="issue-who">
-        Raised by {finding.roleId && find.role(finding.roleId) ? `${find.role(finding.roleId)!.name} on ` : ""}{profileText(find.profile(finding.raisedBy), find, true)}
-        {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(find.profile(profileId), find, true)).join(" and ")}`}
+        Raised by {finding.roleId && find.role(finding.roleId) ? `${find.role(finding.roleId)!.name} on ` : ""}{profileText(
+          find.profile(finding.raisedBy),
+          find,
+          true
+        )}
+        {finding.confirmedBy.length > 0 && `. Confirmed by ${finding.confirmedBy.map((profileId) => profileText(
+          find.profile(profileId),
+          find,
+          true
+        )).join(" and ")}`}
       </p>
       {finding.tracking && <FollowUpLine finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />}
       {(finding.disputes ?? []).map((dispute, index) => (
@@ -72,7 +95,16 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
         <summary>{beforeFix ? "Votes before the reported fix" : "Tool verdicts and reasons"}</summary>
         {votes.map(vote => <p key={vote.toolId}><b>{voteAttribution(vote, find)}: {VERDICT_WORDS[vote.verdict]}</b>{vote.reason}</p>)}
       </details>}
-      {finding.answers && Object.entries(finding.answers).map(([id, answer]) => <div className="issue-response" key={id}><b>{find.product(id)?.name ?? id}: {answer.fixed ? "Builder claims a fix" : "Builder answered: not fixed"}</b>{answer.text}{answerAttribution(finding, answer.fixed) && <p>{answerAttribution(finding, answer.fixed)}</p>}</div>)}
+      {finding.answers && Object.entries(finding.answers).map(([id, answer]) => <div
+        className="issue-response"
+        key={id}
+      ><b>{find.product(id)?.name ?? id}: {answer.fixed ? "Builder claims a fix" : "Builder answered: not fixed"}</b>{answer.text}{answerAttribution(
+        finding,
+        answer.fixed
+      ) && <p>{answerAttribution(
+        finding,
+        answer.fixed
+      )}</p>}</div>)}
       {!finding.answers && finding.answer && (
         <div className="issue-response">
           <b>{finding.answer.fixed ? "Builder reported a fix" : "Builder reported no fix"}</b>
@@ -124,24 +156,49 @@ export function ReviewView({ task, now, find, onOpen }: { task: Task; now: numbe
     {task.repositories.map((work) => <section className="sheet-section repository-row" key={work.productId}>
       <h2>{work.source?.product.name ?? work.productId}</h2><p className="note">{work.source?.product.repo}</p>
       <p className="note">Deleted or skipped tests: {work.tamper ? work.tamper.problems.length ? "Needs attention" : "Passed" : "Not run"}</p>
-      <CheckSetupObservations latest={work.checkSetup} invalidated={work.checkSetupInvalidated} history={setupHistory.filter(attempt => attempt.productId === work.productId)} />
+      <CheckSetupObservations
+        latest={work.checkSetup}
+        invalidated={work.checkSetupInvalidated}
+        history={setupHistory.filter(attempt => attempt.productId === work.productId)}
+      />
       {work.checks?.current === false && <p className="note">Recorded check results need fresh verification before delivery.</p>}
       {!work.checks?.results.length && <p className="note">Product checks: Not run</p>}
       {!!work.checks?.results.length && <ChecksSection runs={work.checks.results} at={work.checks.at} now={now} />}
-      <FindingsSection find={find} findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)} empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview} {...(onOpen ? { onOpen } : {})} />
+      <FindingsSection
+        find={find}
+        findings={task.findings.filter((finding) => finding.productIds?.length === 1 && finding.productIds[0] === work.productId)}
+        empty={together.length ? "No findings assigned only to this product. Shared findings appear under Together." : emptyReview}
+        {...(onOpen ? { onOpen } : {})}
+      />
     </section>)}
-    <section className="sheet-section"><h2>Together</h2>{!together.length && <p className="quiet-text">{emptyReview}</p>}<ol className="issues">{openFirst(together.map((finding) => ({ ...finding, blocking: finding.severity === "blocking" }))).map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></section>
+    <section className="sheet-section"><h2>Together</h2>{!together.length && <p className="quiet-text">{emptyReview}</p>}<ol className="issues">{openFirst(together.map((finding) => ({
+      ...finding,
+      blocking: finding.severity === "blocking"
+    }))).map((finding) => <FindingItem
+      key={finding.id}
+      finding={finding}
+      find={find}
+      {...(onOpen ? { onOpen } : {})}
+    />)}</ol></section>
   </>;
 
   const runs = task.checks?.results ?? [];
-  if (task.findings.length === 0 && runs.length === 0) return <><CheckSetupObservations latest={task.checkSetup} invalidated={task.checkSetupInvalidated} history={setupHistory.filter(attempt => attempt.productId === task.productId)} /><div className="empty-state">{emptyReview}</div></>;
+  if (task.findings.length === 0 && runs.length === 0) return <><CheckSetupObservations
+    latest={task.checkSetup}
+    invalidated={task.checkSetupInvalidated}
+    history={setupHistory.filter(attempt => attempt.productId === task.productId)}
+  /><div className="empty-state">{emptyReview}</div></>;
 
   // Petrina's own findings that aren't failing checks come from the tamper check.
   const tampered = task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed"));
 
   return (
     <>
-      <CheckSetupObservations latest={task.checkSetup} invalidated={task.checkSetupInvalidated} history={setupHistory.filter(attempt => attempt.productId === task.productId)} />
+      <CheckSetupObservations
+        latest={task.checkSetup}
+        invalidated={task.checkSetupInvalidated}
+        history={setupHistory.filter(attempt => attempt.productId === task.productId)}
+      />
       {task.checks?.current === false && <p className="note">Recorded check results need fresh verification before delivery.</p>}
       {runs.length > 0 && <ChecksSection runs={runs} at={task.checks!.at} now={now} />}
       {reviewing && (
@@ -186,7 +243,8 @@ function ChecksSection({ runs, at, now }: { runs: readonly CheckRun[]; at: numbe
 
 function CheckItem({ run }: { run: CheckRun }) {
   const outcome = checkOutcome(run);
-  const passed = outcome.kind === "passed", failed = outcome.kind === "failed";
+  const passed = outcome.kind === "passed";
+  const failed = outcome.kind === "failed";
   const words = checkOutcomeLabel(outcome);
   const label = words[0]!.toUpperCase() + words.slice(1);
   const [open, setOpen] = useState(!passed);

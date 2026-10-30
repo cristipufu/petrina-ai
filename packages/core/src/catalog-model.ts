@@ -50,7 +50,25 @@ export type RoleIcon =
   | "bug";
 
 /** The icons and colours a role the coordinator adds can pick from. */
-export const ROLE_ICON_CHOICES: readonly RoleIcon[] = ["lightbulb", "shield", "pen", "megaphone", "chart", "globe", "users", "bug", "book", "compass", "scale", "palette", "hammer", "flask", "search", "map", "rocket"];
+export const ROLE_ICON_CHOICES: readonly RoleIcon[] = [
+  "lightbulb",
+  "shield",
+  "pen",
+  "megaphone",
+  "chart",
+  "globe",
+  "users",
+  "bug",
+  "book",
+  "compass",
+  "scale",
+  "palette",
+  "hammer",
+  "flask",
+  "search",
+  "map",
+  "rocket"
+];
 
 export type Tone = "indigo" | "orange" | "violet" | "purple" | "pink" | "blue" | "green" | "teal" | "slate" | "amber";
 

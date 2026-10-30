@@ -35,7 +35,8 @@ export class GuideProposals {
 
   async propose(scope: RepositoryContext, signal: AbortSignal): Promise<void> {
     const { task, work } = scope;
-    const product = this.host.productOf(scope), miss = task.miss;
+    const product = this.host.productOf(scope);
+    const miss = task.miss;
     if (!product || !miss || !work.worktree) return;
     const restore = beginInternalStep({ checkpoint: () => this.host.checkpointNow() }, scope, "guide-keeper");
     const keeper = this.host.profile();
@@ -51,7 +52,14 @@ export class GuideProposals {
       else if (hasPoint(guide, result.line)) this.host.log(scope, "done", "The review guide already has that point", "guide-keeper", ran);
       else {
         const state = task.state;
-        this.host.offer(scope, `Add a point to ${product.name}'s review guide?`, { body: result.line, detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.` });
+        this.host.offer(
+          scope,
+          `Add a point to ${product.name}'s review guide?`,
+          {
+          body: result.line,
+          detail: `${result.why} It goes into ${GUIDE_FILE}, which AGENTS.md points every agent to, in Petrina or in your own sessions.`
+        }
+        );
         task.state = state;
         this.host.log(scope, "done", `Proposed a point for the review guide: ${result.line}`, "guide-keeper", ran);
       }

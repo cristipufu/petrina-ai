@@ -20,10 +20,19 @@ export function ReviewRoundFindings({ groups, find, onOpen }: { groups: ReviewRo
     </dl>
     <p className="note">{groups.settled ? "Settled decisions for this review round." : "Hand-back copies; no settled decision was saved."}</p>
     {!groups.fixedRecorded && <p className="note">Some earlier fix answers were not recorded, so a complete fixed count is unavailable.</p>}
-    {sections.filter((section) => section.findings.length).map((section) => <details className="journey-review-group" key={section.key} open={section.key !== "fixed"}>
+    {sections.filter((section) => section.findings.length).map((section) => <details
+      className="journey-review-group"
+      key={section.key}
+      open={section.key !== "fixed"}
+    >
       <summary><ChevronRight size={14} aria-hidden="true" /><span>{section.title}</span><span className="num">{section.findings.length}</span></summary>
       <p className="note">{section.note}</p>
-      <ol className="issues">{section.findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol>
+      <ol className="issues">{section.findings.map((finding) => <FindingItem
+        key={finding.id}
+        finding={finding}
+        find={find}
+        {...(onOpen ? { onOpen } : {})}
+      />)}</ol>
     </details>)}
     {sections.every((section) => !section.findings.length) && <p className="note">No findings were raised or reopened in this round.</p>}
   </section>;

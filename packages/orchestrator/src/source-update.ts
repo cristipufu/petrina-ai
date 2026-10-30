@@ -23,11 +23,25 @@ export class SourceUpdates {
     const builder = task.plan?.stages.find((stage) => this.host.role(stage.roleId, task)?.result === "build");
     const by = repository.builderSession?.profileId ?? builder?.profileIds[0];
     const changes = (repository.report?.changes ?? []).map((change) => `- ${change}`).join("\n");
-    return [repository.report?.title ?? task.title, repository.report?.summary ?? "", changes, `Built by Petrina${by ? `: ${this.host.describe(builder?.roleId ?? "builder", by)}` : ""}`].filter(Boolean).join("\n\n");
+    return [
+      repository.report?.title ?? task.title,
+      repository.report?.summary ?? "",
+      changes,
+      `Built by Petrina${by ? `: ${this.host.describe(
+      builder?.roleId ?? "builder",
+      by
+    )}` : ""}`
+    ].filter(Boolean).join("\n\n");
   }
 
   /** The branch as one commit on top of where it forked, with the same code and the task's message. */
-  async fold(scope: RepositoryContext, sourceRef: (path: string, ref: string) => Promise<string | undefined> = (path, ref) => this.effects.sourceRef(path, ref)): Promise<FoldedVersion | undefined> {
+  async fold(scope: RepositoryContext, sourceRef: (path: string, ref: string) => Promise<string | undefined> = (
+    path,
+    ref
+  ) => this.effects.sourceRef(
+    path,
+    ref
+  )): Promise<FoldedVersion | undefined> {
     const { work: repository } = scope;
     // While the builder brings the work up to date, the branch sits on main with the change not committed yet.
     const worktree = repository.worktree;
@@ -68,19 +82,39 @@ export class SourceUpdates {
     const branch = repository.source?.start.branch ?? product.defaultBranch ?? "main";
     const main = repository.source?.start.kind === "pull-request"
       ? await sourceRef(product.path, `refs/petrina/sources/${task.id}`)
-      : (repository.delivery !== "local" || repository.localUpdate?.pushed === false ? await sourceRef(product.path, `refs/remotes/origin/${branch}`) : undefined) ?? (await sourceRef(product.path, `refs/heads/${branch}`));
+      : (repository.delivery !== "local" || repository.localUpdate?.pushed === false ? await sourceRef(
+        product.path,
+        `refs/remotes/origin/${branch}`
+      ) : undefined) ?? (await sourceRef(
+        product.path,
+        `refs/heads/${branch}`
+      ));
     if (!main) return { base };
     const observed = await observe();
     const head = observed.kind === "observed" ? observed.head : "HEAD";
     // Direct recorded ancestry proves the ordinary unchanged source without walking history again.
-    if (main === base && observed.kind === "observed" && (observed.head === base || observed.parents.length === 1 && observed.parents[0] === base)) return { base, fork: base };
+    if (main === base && observed.kind === "observed" && (observed.head === base || observed.parents.length === 1 && observed.parents[0] === base)) return {
+      base,
+      fork: base
+    };
     if ((await this.effects.repository(worktree).mergeBase(head, main)) === base) return { base, fork: base };
     // Moving where the work starts rests on the commits themselves, not on Git's commit index: an edited one could
     // move it past a lesson main removed, which the learnings kept on an update would then bring back.
     const met = await this.effects.repository(worktree).mergeBase(head, main, true);
     if (!met) return { base };
     if (met === base) return { base, fork: base };
-    const [forward, baseInBranch] = await completeAll([this.effects.repository(worktree).contains(met, base, true), this.effects.repository(worktree).contains(head, base, true)]);
+    const [forward, baseInBranch] = await completeAll([
+      this.effects.repository(worktree).contains(
+      met,
+      base,
+      true
+    ),
+      this.effects.repository(worktree).contains(
+      head,
+      base,
+      true
+    )
+    ]);
     // The usual case: the branch forked at the base and main moved on since. Nothing to settle.
     if (!forward && baseInBranch) return { base, fork: base };
     repository.baseSha = met;
@@ -89,7 +123,10 @@ export class SourceUpdates {
       scope,
       "warn",
       forward
-        ? `The builder brought ${branch} into the branch itself, so the work now counts from ${met.slice(0, 7)} and reviews see only its own changes. Petrina brings work up to date; builders need not.`
+        ? `The builder brought ${branch} into the branch itself, so the work now counts from ${met.slice(
+          0,
+          7
+        )} and reviews see only its own changes. Petrina brings work up to date; builders need not.`
         : `The work's noted base was not in the branch: it now counts from ${met.slice(0, 7)}, where the branch last met ${branch}`,
     );
     this.host.changed();
@@ -125,7 +162,10 @@ export class SourceUpdates {
     const readSourceRef = (path: string, ref: string) => {
       const key = `${path}\0${ref}`;
       let hit = sourceRefs.get(key);
-      if (!hit) { hit = this.effects.sourceRef(path, ref); sourceRefs.set(key, hit); }
+      if (!hit) {
+        hit = this.effects.sourceRef(path, ref);
+        sourceRefs.set(key, hit);
+      }
       return hit;
     };
     const folded = await this.fold(scope, readSourceRef);
@@ -141,7 +181,10 @@ export class SourceUpdates {
     if (!fork) throw new Error(`The work and ${latest.ref} share no history, so Petrina could not bring the work up to date`);
     if (fork === latest.sha) return "current";
     const observation = this.effects.repository(worktree);
-    let clean!: boolean, merged: SourceMerge | undefined, gained!: number, tree: string | undefined;
+    let clean!: boolean;
+    let merged: SourceMerge | undefined;
+    let gained!: number;
+    let tree: string | undefined;
     await completeAll([
       observation.isClean().then(value => { clean = value; }),
       observation.mergeTree(latest.sha).then(value => { merged = value; }),
@@ -167,7 +210,15 @@ export class SourceUpdates {
       await this.carryReviewed(scope);
       if (kept) {
         // Not a send-back: told apart from a conflict on the journey, with the lines it kept in the log.
-        petrinaMoment(task, "update", { outcome: JOURNEY_WORDS.keptLearnings, reason: sourceName === "main" ? JOURNEY_WORDS.upToDate : `up to date with ${sourceName}` }, this.host.now());
+        petrinaMoment(
+          task,
+          "update",
+          {
+          outcome: JOURNEY_WORDS.keptLearnings,
+          reason: sourceName === "main" ? JOURNEY_WORDS.upToDate : `up to date with ${sourceName}`
+        },
+          this.host.now()
+        );
         this.host.note(scope, "done", keptLearningsMessage(kept, sourceName, commits));
       } else this.host.note(scope, "done", `Brought up to date with ${sourceName} (${commits} there), with no conflicts`);
       this.host.changed();
@@ -177,7 +228,13 @@ export class SourceUpdates {
     return this.conflicts.begin(scope, {
       sourceName, from: fork, onto: latest.sha, ontoRef: latest.ref,
       files: merged.conflicts, notes: merged.notes, gained, reviewed,
-    }, { head: () => folded?.version.head ? Promise.resolve(folded.version.head) : this.effects.repository(worktree).head(), open: () => this.effects.repository(worktree).openOn(latest.sha, conflicted.tree) });
+    }, {
+      head: () => folded?.version.head ? Promise.resolve(folded.version.head) : this.effects.repository(worktree).head(),
+      open: () => this.effects.repository(worktree).openOn(
+      latest.sha,
+      conflicted.tree
+    )
+    });
   }
 
   /** Both sides' approved learnings kept, when `ref` and main overlap in nothing else. Only onto the product's own main. */
@@ -203,7 +260,11 @@ export class SourceUpdates {
     const fork = merged.conflicts.length ? await this.effects.repository(worktree).mergeBase(sha, base) : undefined;
     const tree = merged.conflicts.length ? fork && (await this.keptLearnings(scope, fork, base, merged, sha))?.tree : merged.tree;
     if (!tree) return undefined;
-    return this.effects.repository(worktree).commitTree(tree, base, "The version the last review round saw, carried onto the latest main (Petrina's reference, on no branch)");
+    return this.effects.repository(worktree).commitTree(
+      tree,
+      base,
+      "The version the last review round saw, carried onto the latest main (Petrina's reference, on no branch)"
+    );
   }
 
   /** Keep the incremental comparison task-only, whoever advanced the execution base. */
@@ -252,9 +313,22 @@ export class SourceUpdates {
       const fetched = await this.effects.fetchDefault(scope, signal);
       if (fetched.ok || !fetched.missing) sourceRefs.clear();
       if (fetched.ok) remote = { ref: `origin/${branch}`, sha: fetched.sha };
-      else if (requiredSource && (repository.delivery !== "local" || !!product.remote && !product.remoteRefused && !product.repo.startsWith("local/"))) throw new Error(`Petrina could not get the latest starting code from GitHub (${this.host.fetchFailure(scope, fetched)}). Your work is preserved. Try again when the connection is available.`);
-      else if (fresh && !fetched.missing) throw new Error(`Petrina could not get the latest ${branch} from GitHub (${this.host.fetchFailure(scope, fetched)}), so it published nothing. Retry when that is sorted.`);
-      else if (!fetched.missing) this.host.note(scope, "warn", `Did not update from GitHub: ${this.host.fetchFailure(scope, fetched)}, so Petrina compared the work with the local copy of ${branch}`);
+      else if (requiredSource && (repository.delivery !== "local" || !!product.remote && !product.remoteRefused && !product.repo.startsWith("local/"))) throw new Error(`Petrina could not get the latest starting code from GitHub (${this.host.fetchFailure(
+        scope,
+        fetched
+      )}). Your work is preserved. Try again when the connection is available.`);
+      else if (fresh && !fetched.missing) throw new Error(`Petrina could not get the latest ${branch} from GitHub (${this.host.fetchFailure(
+        scope,
+        fetched
+      )}), so it published nothing. Retry when that is sorted.`);
+      else if (!fetched.missing) this.host.note(
+        scope,
+        "warn",
+        `Did not update from GitHub: ${this.host.fetchFailure(
+        scope,
+        fetched
+      )}, so Petrina compared the work with the local copy of ${branch}`
+      );
     }
     if (repository.delivery !== "local" || repository.source?.start.kind === "pull-request") {
       if (remote) return remote;

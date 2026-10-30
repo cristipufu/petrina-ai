@@ -39,9 +39,13 @@ export class ExtraValidations {
         this.timer = setInterval(() => {
           void this.retryCleanup().catch(error => console.error("Could not retry extra validation cleanup:", error));
         }, k.options.extraCleanupEveryMs ?? 15_000);
-        this.pump(); this.k.schedule();
+        this.pump();
+        this.k.schedule();
       }
-    }, error => { this.k.extraRecovery = false; throw error; });
+    }, error => {
+      this.k.extraRecovery = false;
+      throw error;
+    });
   }
   private get records(): Record[] { return this.k.s.extraValidations ?? []; }
   get blockers(): string[] {
@@ -71,7 +75,13 @@ export class ExtraValidations {
     if (process.platform === "win32") throw new Error("Extra full validation currently requires a local Linux container on a Unix host.");
     const task = this.k.s.tasks.find(task => task.id === a.taskId);
     if (!task) throw new Error("That current task does not exist.");
-    if (["done", "cancelled", "pr-open", "backlog", "paused"].includes(task.state)) throw new Error("Extra validation needs an unfinished, unpaused task outside Backlog.");
+    if ([
+      "done",
+      "cancelled",
+      "pr-open",
+      "backlog",
+      "paused"
+    ].includes(task.state)) throw new Error("Extra validation needs an unfinished, unpaused task outside Backlog.");
     if (task.repositories && task.repositories.length > 1 && !a.productId) throw new Error("Name the product for this shared task.");
     const scope = executionFor(task, a.productId);
     const product = this.k.productOf(scope);
@@ -84,8 +94,16 @@ export class ExtraValidations {
     const workingStatus = scope.work.worktree ? await git.worktreeStatus(scope.work.worktree) : undefined;
     const workingEdits = !!workingStatus && (!workingStatus.clean || workingStatus.head !== saved.commit);
     // Recheck after filesystem reads: task cancellation/removal can come from the window too.
-    if (!this.k.s.tasks.includes(task) || ["done", "cancelled", "pr-open", "backlog", "paused"].includes(task.state)) throw new Error("The task changed while the version was inspected. Inspect it again.");
-    const id = randomUUID(), queueOrder = this.k.checkQueue.reserveOrder(), waitingReason = this.prerequisiteWait(task.id);
+    if (!this.k.s.tasks.includes(task) || [
+      "done",
+      "cancelled",
+      "pr-open",
+      "backlog",
+      "paused"
+    ].includes(task.state)) throw new Error("The task changed while the version was inspected. Inspect it again.");
+    const id = randomUUID();
+    const queueOrder = this.k.checkQueue.reserveOrder();
+    const waitingReason = this.prerequisiteWait(task.id);
     const record: Record = { id, requestId: a.requestId, taskId: task.id, productId: scope.work.productId, productName: product.name,
       repository: product.repo, source, nodeId: openStep(task)?.id, name: a.name, reason: a.reason, image: a.image, argv: [...a.argv],
       ...saved, versionNote: VERSION_NOTE, workingEdits, host: { system: platform(), arch: arch() },
@@ -120,12 +138,21 @@ export class ExtraValidations {
     if (this.k.stopped || this.k.extraRecovery) return;
     for (const record of [...this.records]) {
       const task = this.k.s.tasks.find(task => task.id === record.taskId);
-      if (!task || ["done", "cancelled", "pr-open", "paused", "backlog"].includes(task.state)) { this.cancelTask(record.taskId); continue; }
+      if (!task || ["done", "cancelled", "pr-open", "paused", "backlog"].includes(task.state)) {
+        this.cancelTask(record.taskId);
+        continue;
+      }
       if (record.state !== "queued") continue;
       const waitingReason = this.prerequisiteWait(record.taskId);
       if (record.waitingReason !== waitingReason) this.change(record, () => {
-        if (waitingReason) { record.waitingReason = waitingReason; delete record.queuePosition; }
-        else { delete record.waitingReason; record.queuePosition = this.queuePosition(record.queueOrder); }
+        if (waitingReason) {
+          record.waitingReason = waitingReason;
+          delete record.queuePosition;
+        }
+        else {
+          delete record.waitingReason;
+          record.queuePosition = this.queuePosition(record.queueOrder);
+        }
         this.note(record, "queued", this.queuedWords(record));
         this.persist();
       });
@@ -146,13 +173,23 @@ export class ExtraValidations {
       unsubscribe();
       job.release = place;
       if (job.stop.signal.aborted || this.k.stopped || this.k.taskAdmissionsClosed(record.taskId)) {
-        place(); this.jobs.delete(record.id); if (!this.k.stopped) this.pump(); return;
+        place();
+        this.jobs.delete(record.id);
+        if (!this.k.stopped) this.pump();
+        return;
       }
-      const work = this.execute(record, job.stop.signal).finally(() => { job.work = undefined; this.k.syncIdleSleep(); });
+      const work = this.execute(record, job.stop.signal).finally(() => {
+        job.work = undefined;
+        this.k.syncIdleSleep();
+      });
       job.work = work;
       void this.k.trackWork(work);
       this.k.syncIdleSleep();
-    }, () => { unsubscribe(); this.jobs.delete(record.id); if (!this.k.stopped) this.pump(); })
+    }, () => {
+      unsubscribe();
+      this.jobs.delete(record.id);
+      if (!this.k.stopped) this.pump();
+    })
       .catch(error => console.error("Could not update extra validation queue:", error));
   }
 
@@ -199,18 +236,27 @@ export class ExtraValidations {
   private finish(record: Record, result: NonNullable<ExtraValidation["result"]>, detail: string): void {
     // Update the durable receipt and current ownership together before releasing capacity.
     this.change(record, () => {
-      record.state = "finished"; record.result = result; record.detail = detail;
+      record.state = "finished";
+      record.result = result;
+      record.detail = detail;
       delete record.waitingReason;
-      record.endedAt ??= Date.now(); record.durationMs ??= 0;
+      record.endedAt ??= Date.now();
+      record.durationMs ??= 0;
       record.waitingMs ??= Math.max(0, (record.startedAt ?? record.endedAt) - record.queuedAt);
-      this.note(record, "finished", `Extra validation “${record.name}” ${result} (${Math.round(record.durationMs / 1000)} seconds). This is extra evidence only.`);
+      this.note(
+        record,
+        "finished",
+        `Extra validation “${record.name}” ${result} (${Math.round(record.durationMs / 1000)} seconds). This is extra evidence only.`
+      );
       this.k.store.database.query("UPDATE coordination_receipts SET result = ? WHERE id = ?").run(JSON.stringify(this.reply(record)), record.requestId);
       this.k.s.extraValidations = this.records.filter(entry => entry.id !== record.id);
       this.persist();
     });
     const job = this.jobs.get(record.id);
     if (record.startedAt === undefined) job?.stop.abort("task");
-    job?.release?.(); job?.unblock?.(); this.jobs.delete(record.id);
+    job?.release?.();
+    job?.unblock?.();
+    this.jobs.delete(record.id);
     if (!this.k.stopped) {
       this.k.schedule();
     }
@@ -218,10 +264,14 @@ export class ExtraValidations {
 
   /** A failed state/receipt write rolls back the matching in-memory owner and evidence too. */
   private change<T>(record: Record, apply: () => T): T {
-    const records = this.k.s.extraValidations, previous = structuredClone(record);
+    const records = this.k.s.extraValidations;
+    const previous = structuredClone(record);
     const task = this.k.extraValidationTask(record.id) ?? this.k.task(record.taskId);
-    const timeline = task?.timeline.slice(), node = task?.journey?.find(node => node.id === record.nodeId), evidence = node?.extraValidations;
-    const parent = this.notices, notices: (() => void)[] = [];
+    const timeline = task?.timeline.slice();
+    const node = task?.journey?.find(node => node.id === record.nodeId);
+    const evidence = node?.extraValidations;
+    const parent = this.notices;
+    const notices: (() => void)[] = [];
     this.notices = notices;
     let result: T;
     try { result = this.k.store.database.transaction(apply)(); }
@@ -234,7 +284,8 @@ export class ExtraValidations {
       this.k.store.history.reloadMetadata();
       throw error;
     } finally { this.notices = parent; }
-    if (parent) parent.push(...notices); else for (const notify of notices) notify();
+    if (parent) parent.push(...notices);
+    else for (const notify of notices) notify();
     return result;
   }
 
@@ -252,7 +303,8 @@ export class ExtraValidations {
       try { this.k.events.log.append([event]); }
       catch (error) { console.error("Could not publish extra validation event:", error); }
     };
-    if (this.notices) this.notices.push(notify); else notify();
+    if (this.notices) this.notices.push(notify);
+    else notify();
   }
   private persist(): void {
     if (!this.k.stopped) this.k.commitNow();
@@ -262,14 +314,26 @@ export class ExtraValidations {
   private async recover(records: Record[]): Promise<void> {
     for (const record of records) {
       if (record.startedAt === undefined && record.state === "preparing") record.resumeQueued = true;
-      if (!record.resumeQueued) { record.result ??= "stopped"; record.detail ??= "Petrina restarted; the uncertain run was not repeated."; }
+      if (!record.resumeQueued) {
+        record.result ??= "stopped";
+        record.detail ??= "Petrina restarted; the uncertain run was not repeated.";
+      }
       if (record.run && record.run.endedAt === undefined) {
         record.run.output = "Petrina restarted before the command outcome was recorded. This is incomplete extra evidence.";
         record.run.interrupted = true;
       }
-      record.endedAt ??= Date.now(); record.durationMs ??= record.startedAt ? record.endedAt - record.startedAt : 0;
+      record.endedAt ??= Date.now();
+      record.durationMs ??= record.startedAt ? record.endedAt - record.startedAt : 0;
       try {
-        if (await this.container.cleanup(record)) { await this.sealLog(record); if (record.resumeQueued) this.requeue(record); else this.finish(record, record.result ?? "stopped", record.detail ?? "Petrina restarted."); }
+        if (await this.container.cleanup(record)) {
+          await this.sealLog(record);
+          if (record.resumeQueued) this.requeue(record);
+        else this.finish(
+          record,
+          record.result ?? "stopped",
+          record.detail ?? "Petrina restarted."
+        );
+        }
         else this.hold(record, "Cleanup is unconfirmed.");
       } catch (error) { this.hold(record, `Cleanup is unconfirmed: ${String(error)}`); }
     }
@@ -283,15 +347,20 @@ export class ExtraValidations {
     }
     this.change(record, () => {
       record.state = "queued";
-      delete record.resumeQueued; delete record.result; delete record.detail; delete record.cleanupDetail;
-      delete record.endedAt; delete record.durationMs;
+      delete record.resumeQueued;
+      delete record.result;
+      delete record.detail;
+      delete record.cleanupDetail;
+      delete record.endedAt;
+      delete record.durationMs;
       this.persist();
     });
     const job = this.jobs.get(record.id);
     this.jobs.delete(record.id);
     // Restore the original FIFO entry while the recovery block still prevents handoff.
     if (!this.k.stopped) this.enqueue(record);
-    job?.release?.(); job?.unblock?.();
+    job?.release?.();
+    job?.unblock?.();
     if (!this.k.stopped && !this.k.extraRecovery) this.k.schedule();
   }
 
@@ -314,7 +383,8 @@ export class ExtraValidations {
       } catch { run.logError = "The original interrupted diagnostic could not be verified."; }
     }
     // Cleanup settled the interrupted attempt even if creating its diagnostic failed.
-    run.endedAt = record.endedAt; run.ms = record.durationMs ?? 0;
+    run.endedAt = record.endedAt;
+    run.ms = record.durationMs ?? 0;
   }
 
   retryCleanup(): Promise<void> {
@@ -323,7 +393,15 @@ export class ExtraValidations {
       if (this.k.stopped) return;
       for (const record of [...this.records].filter(record => record.state === "held")) {
         try {
-          if (await this.container.cleanup(record)) { await this.sealLog(record); if (record.resumeQueued) this.requeue(record); else this.finish(record, record.result ?? "stopped", record.detail ?? "Cleanup confirmed."); }
+          if (await this.container.cleanup(record)) {
+            await this.sealLog(record);
+            if (record.resumeQueued) this.requeue(record);
+          else this.finish(
+            record,
+            record.result ?? "stopped",
+            record.detail ?? "Cleanup confirmed."
+          );
+          }
         } catch (error) { this.hold(record, `Cleanup is unconfirmed: ${String(error)}`); }
       }
     }).finally(() => { this.retrying = undefined; });

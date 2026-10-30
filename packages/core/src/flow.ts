@@ -58,7 +58,10 @@ export function gateTitle(task: Task, gate: GateKind): string {
   if (gate === "delivery" && reviewDecisionPending(task)) return `Your call on “${task.title}”: review needs a decision before final checks`;
   if (gate === "delivery" && deliveryDecisionProblem(task) === "unverified") return `Your call on “${task.title}”: checks unverified`;
   const failing = gate === "delivery" ? deliveryCheckWorks(task).flatMap((work) => work.checks?.results.filter((run) => checkOutcome(run).kind === "failed").map((run) => run.name) ?? []) : [];
-  const unverifiedChecks = gate === "delivery" ? deliveryCheckWorks(task).flatMap((work) => work.checks?.results.filter((run) => { const kind = checkOutcome(run).kind; return kind === "incomplete" || kind === "unavailable"; }).map((run) => run.name) ?? []) : [];
+  const unverifiedChecks = gate === "delivery" ? deliveryCheckWorks(task).flatMap((work) => work.checks?.results.filter((run) => {
+    const kind = checkOutcome(run).kind;
+    return kind === "incomplete" || kind === "unavailable";
+  }).map((run) => run.name) ?? []) : [];
   if (failing.length) return checkProblemTitle(task.title, failing, unverifiedChecks);
   const open = gate === "delivery" ? stillBlocking(task) : 0;
   if (open) return `Your call on “${task.title}”: ${open === 1 ? "1 blocking finding" : `${open} blocking findings`} still open`;
@@ -223,7 +226,17 @@ export function reviewRoundEnd(task: Task, stage: Stage, round: number, roles: r
   const open = blocking.length;
   if (open === 0) return { kind: "passed" };
   if (blocking.every((finding) => covered.has(finding.id))) return { kind: "passed", covered: open };
-  const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && roleForTask(roles, entry.roleId, task)?.result === "build");
+  const builder = lastIndexWhere(
+    task.plan?.stages ?? [],
+    (
+    entry,
+    index
+  ) => index < task.stageIndex && roleForTask(
+    roles,
+    entry.roleId,
+    task
+  )?.result === "build"
+  );
   if (builder < 0) return { kind: "used up", open };
   if (allowsReviewFix(task, stage, round)) return { kind: "send back", builder, open };
   return { kind: "used up", open };

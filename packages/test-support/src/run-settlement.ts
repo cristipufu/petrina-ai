@@ -18,7 +18,8 @@ export async function observeRun<T extends CanonicalRun>(effects: { run(): Promi
 
 /** Shared disposal authority for actual canonical commands using one private test environment. */
 export function runSettlements() {
-  let pending = 0, uncertain = false;
+  let pending = 0;
+  let uncertain = false;
   const safeToDispose = () => pending === 0 && !uncertain;
   return {
     get safeToDispose() { return safeToDispose(); },

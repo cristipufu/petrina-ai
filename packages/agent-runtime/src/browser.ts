@@ -11,7 +11,10 @@ import { browserProcesses, type BrowserProcessControl } from "@petrina/platform/
 import { BrowserCleanupAttempt, StopUnconfirmed, reapBrowser, type BrowserCleanupClock, type BrowserCleanupReason } from "./browser-cleanup.js";
 export { CLEANUP_NOTE, cleanupNote } from "./browser-cleanup.js";
 
-const startupDeadline: ProcessDeadline = (expired, ms) => { const timer = setTimeout(expired, ms); return () => clearTimeout(timer); };
+const startupDeadline: ProcessDeadline = (expired, ms) => {
+  const timer = setTimeout(expired, ms);
+  return () => clearTimeout(timer);
+};
 export interface BrowserStartupEffects {
   /** Transfer one native helper handle; the caller retains it until stop and output close are confirmed. */
   launch?(directory: string, secret: string, owner: number, env: NodeJS.ProcessEnv): ChildProcess;
@@ -28,7 +31,18 @@ const cleanupClock = { now: () => Date.now(), pause: (ms: number) => Bun.sleep(m
 
 export class AgentBrowser {
   private closing?: Promise<void>;
-  private constructor(readonly directory: string, private readonly child: ChildProcess, readonly mcp: McpServer, private readonly lifecycle: { used: boolean; closedUnused: boolean }, private readonly registration?: string, private readonly onLog?: (text: string) => void, private readonly processes: BrowserProcessControl = browserProcesses) {}
+  private constructor(
+    readonly directory: string,
+    private readonly child: ChildProcess,
+    readonly mcp: McpServer,
+    private readonly lifecycle: {
+    used: boolean;
+    closedUnused: boolean
+  },
+    private readonly registration?: string,
+    private readonly onLog?: (text: string) => void,
+    private readonly processes: BrowserProcessControl = browserProcesses
+  ) {}
 
   /**
    * `parent` registers the session folder for recovery after a crash. `root` holds session folders:
@@ -65,17 +79,41 @@ export class AgentBrowser {
     const lifecycle = { used: false, closedUnused: false };
     try {
       child = startup.launch ? startup.launch(directory, secret, process.pid, clean)
-        : spawn(process.execPath, [join(import.meta.dir, "browser-server.ts"), directory, secret, String(process.pid)], { cwd: import.meta.dir, env: clean, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+        : spawn(
+          process.execPath,
+          [
+          join(
+          import.meta.dir,
+          "browser-server.ts"
+        ),
+          directory,
+          secret,
+          String(process.pid)
+        ],
+          {
+          cwd: import.meta.dir,
+          env: clean,
+          stdio: [
+          "pipe",
+          "pipe",
+          "pipe"
+        ],
+          windowsHide: true
+        }
+        );
       const helper = child;
       closed = (helper.exitCode !== null || helper.signalCode !== null) && helper.stdout?.readableEnded && helper.stderr?.readableEnded
         ? Promise.resolve() : new Promise<void>(resolve => helper.once("close", () => resolve()));
       child.stderr?.on("data", (data: Buffer) => onLog?.(data.toString()));
       const url = await new Promise<string>((resolve, reject) => {
-        let settled = false, cancel = () => {};
+        let settled = false;
+        let cancel = () => {};
         const finish = (value: string | Error) => {
           if (settled) return;
-          settled = true; cancel();
-          if (typeof value === "string") resolve(value); else reject(value);
+          settled = true;
+          cancel();
+          if (typeof value === "string") resolve(value);
+          else reject(value);
         };
         cancel = arm(() => finish(new Error("The headless browser server did not start.")), 30_000);
         // An injected deadline may settle synchronously; its returned handle still needs disposal.
@@ -97,7 +135,26 @@ export class AgentBrowser {
         helper.once("exit", () => finish(new Error("The headless browser server stopped.")));
         helper.once("error", (error) => finish(error));
       });
-      return new AgentBrowser(directory, child, { type: "http", name: `petrina-browser-${secret.slice(0, 8)}`, url, headers: [{ name: "Authorization", value: `Bearer ${secret}` }] }, lifecycle, registration, onLog, processes);
+      return new AgentBrowser(
+        directory,
+        child,
+        {
+        type: "http",
+        name: `petrina-browser-${secret.slice(
+        0,
+        8
+      )}`,
+        url,
+        headers: [{
+        name: "Authorization",
+        value: `Bearer ${secret}`
+      }]
+      },
+        lifecycle,
+        registration,
+        onLog,
+        processes
+      );
     } catch (error) {
       if (child) {
         const helper = child;
@@ -146,7 +203,10 @@ function helperState(child: ChildProcess, closed: boolean, lifecycle: { used: bo
 }
 
 /** Stop the controller and every browser process this session started. Resolves only once they are gone. */
-async function stopBrowser(child: ChildProcess, directory: string, lifecycle: { used: boolean; closedUnused: boolean }, processes: BrowserProcessControl): Promise<void> {
+async function stopBrowser(child: ChildProcess, directory: string, lifecycle: {
+  used: boolean;
+  closedUnused: boolean
+}, processes: BrowserProcessControl): Promise<void> {
   const pid = child.pid;
   if (pid === undefined) return;
   const attempt = new BrowserCleanupAttempt(processes, cleanupClock);
@@ -210,7 +270,10 @@ async function stopBrowser(child: ChildProcess, directory: string, lifecycle: { 
 function within(done: Promise<void>, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), ms);
-    done.then(() => { clearTimeout(timer); resolve(true); });
+    done.then(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
   });
 }
 
@@ -274,7 +337,10 @@ export async function recoverBrowserTemps(registry: string, root = browserTempRo
       catch (error) {
         if (!(error instanceof StopUnconfirmed) || !processes.groups) throw error;
         log(error.note);
-        throw new Error(["Petrina could not confirm that a background browser from an earlier session stopped.", ...error.reasons.map((reason) => UNCONFIRMED[reason])].join(" "));
+        throw new Error([
+          "Petrina could not confirm that a background browser from an earlier session stopped.",
+          ...error.reasons.map((reason) => UNCONFIRMED[reason])
+        ].join(" "));
       }
       await rm(directory, { recursive: true, force: true });
     }

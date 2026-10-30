@@ -63,10 +63,22 @@ export function publishingResult(
     return { kind: "local-unpushed", landed: false, branch: work.localUpdate.branch, sha: work.localUpdate.sha };
   }
   if (work.landed) {
-    return { kind: "committed", landed: true, branch: work.landed.branch, sha: work.landed.sha, ...(work.localUpdate?.pushed === true ? { pushed: true } : {}) };
+    return {
+      kind: "committed",
+      landed: true,
+      branch: work.landed.branch,
+      sha: work.landed.sha,
+      ...(work.localUpdate?.pushed === true ? { pushed: true } : {})
+    };
   }
   if (work.pr?.state === "open") {
-    return { kind: "pull-request-open", landed: false, number: work.pr.number, url: work.pr.url, ...(work.source?.start.kind === "pull-request" ? { updated: true } : {}) };
+    return {
+      kind: "pull-request-open",
+      landed: false,
+      number: work.pr.number,
+      url: work.pr.url,
+      ...(work.source?.start.kind === "pull-request" ? { updated: true } : {})
+    };
   }
   if (work.localUpdate && !work.localUpdate.pushed) {
     return { kind: "local-unpushed", landed: false, branch: work.localUpdate.branch, sha: work.localUpdate.sha };

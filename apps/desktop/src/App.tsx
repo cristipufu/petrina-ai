@@ -1,47 +1,46 @@
-import { RoutineRuns } from "./components/RoutineRuns";
-import { Routines } from "./components/Routines";
 import { involvesProduct, taskProductIds } from "@petrina/core";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { boardOrder, inboxOrder, inboxTab, keyArea, matchesWords, reconcileHighlight, stepHighlight, type KeyArea, type Page, type State, type Task, type TaskList } from "@petrina/core";
-import { sim, mode, startClock, useEngineStatus, useSim, type EngineStatus } from "./engine";
-import { AddProductDialog } from "./components/AddProduct";
-import { AnalyticsPage } from "./components/Analytics";
+import {
+  boardOrder,
+  inboxOrder,
+  inboxTab,
+  keyArea,
+  matchesWords,
+  reconcileHighlight,
+  type KeyArea,
+  type Page,
+  type State,
+  type Task,
+  type TaskList
+} from "@petrina/core";
+import { sim, mode, useEngineStatus, useSim, type EngineStatus } from "./engine";
 import { CouldNotStart, EngineRecovery, StartingScreen } from "./components/EngineState";
-import { clearFirstTaskDraft, FirstRun } from "./components/FirstRun";
+import { FirstRun } from "./components/FirstRun";
 import { blockingCount, lookup } from "./lib";
 import { useViewport, viewportSize } from "./components/bits";
-import { Board } from "./components/Board";
-import { History, TaskLoading, useHistoryPage, type HistoryPosition } from "./components/History";
+import { useHistoryPage, type HistoryPosition } from "./components/History";
 import { Inbox } from "./components/Inbox";
-import { NewTaskDialog } from "./components/NewTask";
-import { AgentsPage, LibraryPage } from "./components/Pages";
-import { ProductsPage } from "./components/Products";
 import { Rail } from "./components/Rail";
 import type { SheetTab } from "./components/TaskCard";
-import { TakeOverDialogs } from "./components/TakeOver";
-import { DependencyEditor } from "./components/TaskDependencies";
-import { TaskSheet } from "./components/TaskSheet";
 import { TopBar } from "./components/TopBar";
-import { SettingsPage } from "./components/Settings";
 import { useLanding } from "./notify/useLanding";
 import { useNotices } from "./notify/useNotices";
 import type { Notice } from "./notify/words";
-import { applyTheme, initialTheme, type Theme } from "./theme";
-import { CommandPalette, KeyboardShortcuts, taskState } from "./components/CommandPalette";
-import { isTyping, useSingleKeys } from "./keyboard";
-import { useGlobalKeys } from "./globalKeys";
-import { appActions, taskActions } from "./paletteActions";
+import { initialTheme, type Theme } from "./theme";
+import { useSingleKeys } from "./keyboard";
 import { taskCommands } from "./taskCommands";
-import { Toasts, useToasts } from "./toasts";
-import { PAGE_NAMES, routeHref, useAppRoute } from "./routes";
+import { useToasts } from "./toasts";
+import { routeHref, useAppRoute } from "./routes";
 import { useTaskDetails } from "./task-details";
 import { TaskDrafts } from "./drafts";
+import { useWorkspaceFocus } from "./useWorkspaceFocus";
+import { WorkspaceMain, WorkspaceOverlays } from "./WorkspaceViews";
 
 // The app's frame: which page shows, the board and inbox highlights and focus, the task sheet and the
 // dialogs. The top bar, the rail, the keyboard, the palette's actions, notification landings and toasts
 // each live in a module of their own.
 
-import { RolePanel, type RolePanelTarget } from "./components/Roles";
+import type { RolePanelTarget } from "./components/Roles";
 
 /** Below this width the inbox opens over the board instead of beside it. */
 const DOCKED_INBOX = 1200;
@@ -77,7 +76,18 @@ export function App() {
 }
 
 function Workspace({ state, status }: { state: State; status: EngineStatus }) {
-  const find = useMemo(() => lookup(state), [state.roles, state.profiles, state.retiredProfiles, state.tools, state.products, state.tasks, state.history?.dependencies]);
+  const find = useMemo(
+    () => lookup(state),
+    [
+    state.roles,
+    state.profiles,
+    state.retiredProfiles,
+    state.tools,
+    state.products,
+    state.tasks,
+    state.history?.dependencies
+  ]
+  );
   const viewport = useViewport();
   const [route, navigate] = useAppRoute();
   const { view, product, sheet, productSettings } = route;
@@ -100,9 +110,29 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const history = useHistoryPage(state, view === "history", product, route.history, { includeUsage: true });
   const runs = view === "routines" ? route.routineRuns : undefined;
   const runHistory = useHistoryPage(state, !!runs, product, runs?.history, { routineId: runs?.id });
-  const currentRuns = useMemo(() => runs ? state.tasks.filter(task => task.maintenance?.routineId === runs.id && task.state !== "done" && task.state !== "cancelled" && (product === "all" || involvesProduct(task, product))).sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)) : [], [runs?.id, state.tasks, product]);
+  const currentRuns = useMemo(
+    () => runs ? state.tasks.filter(task => task.maintenance?.routineId === runs.id && task.state !== "done" && task.state !== "cancelled" && (product === "all" || involvesProduct(
+    task,
+    product
+  ))).sort((
+    a,
+    b
+  ) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)) : [],
+    [
+    runs?.id,
+    state.tasks,
+    product
+  ]
+  );
   const runTasks = useMemo(() => [...currentRuns, ...(runHistory.page?.items ?? [])], [currentRuns, runHistory.page]);
-  const setRunPosition = (position: HistoryPosition) => navigate(previous => ({ ...previous, routineRuns: previous.routineRuns ? { ...previous.routineRuns, history: position } : undefined, sheet: undefined }));
+  const setRunPosition = (position: HistoryPosition) => navigate(previous => ({
+    ...previous,
+    routineRuns: previous.routineRuns ? {
+    ...previous.routineRuns,
+    history: position
+  } : undefined,
+    sheet: undefined
+  }));
   const historyIds = useMemo(() => history.page?.items.map((task) => task.id) ?? [], [history.page]);
   const setHistoryPosition = (position: HistoryPosition) => navigate((previous) => ({ ...previous, history: position, sheet: undefined }));
   const [detailsRetry, setDetailsRetry] = useState(0);
@@ -127,8 +157,16 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const focusArea = useRef<KeyArea | undefined>(undefined);
   const { toasts, showToast, toast, dismiss } = useToasts();
   // Read by notification clicks, which arrive outside React's renders.
-  const latest = useRef({ state, dialog: creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen, sheet: sheet !== undefined });
-  latest.current = { state, dialog: creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen, sheet: sheet !== undefined };
+  const latest = useRef({
+    state,
+    dialog: creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen,
+    sheet: sheet !== undefined
+  });
+  latest.current = {
+    state,
+    dialog: creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen,
+    sheet: sheet !== undefined
+  };
 
   // What the top bar gives up as the window narrows (or zooms, or text grows), in this order: the
   // wordmark and repeated wording, then the search field, the pool's squares, then pool and theme
@@ -141,20 +179,26 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const barExtras = width >= 800;
   const inboxLabel = width >= 640;
 
-  useEffect(() => startClock(), []);
-  // Setup is done: a first task draft left behind (its reply was lost) has nothing to come back to.
-  // Only this mode's draft: the demo never clears one still being written for the real engine.
-  useEffect(() => clearFirstTaskDraft(), []);
-
-  useEffect(() => applyTheme(theme), [theme]);
-
   useEffect(() => {
-    if (!route.missing && product !== "all" && !state.products.some((entry) => entry.id === product)) navigate((previous) => ({ ...previous, product: "all" }), true);
+    if (!route.missing && product !== "all" && !state.products.some((entry) => entry.id === product)) navigate(
+      (previous) => ({
+      ...previous,
+      product: "all"
+    }),
+      true
+    );
   }, [state.products, product, route.missing, navigate]);
 
 
   const visible = useCallback(
-    (task: Task) => (product === "all" || involvesProduct(task, product)) && matchesWords(query, task.title, ...taskProductIds(task).map((id) => find.product(id)?.name ?? "")),
+    (task: Task) => (product === "all" || involvesProduct(
+      task,
+      product
+    )) && matchesWords(
+      query,
+      task.title,
+      ...taskProductIds(task).map((id) => find.product(id)?.name ?? "")
+    ),
     [product, query, find],
   );
   const activeBoardIds = useMemo(() => boardOrder(state.tasks, visible, false), [state.tasks, visible]);
@@ -173,49 +217,67 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   }, [sheet, boardIds, inboxIds]);
   const currentBoardId = reconcileHighlight(previousBoard.current, boardIds, boardId);
   const currentInboxId = reconcileHighlight(previousInbox.current, inboxIds, inboxId);
-  useEffect(() => { setBoardId(currentBoardId); previousBoard.current = boardIds; }, [currentBoardId, boardIds]);
-  useEffect(() => { setInboxId(currentInboxId); previousInbox.current = inboxIds; }, [currentInboxId, inboxIds]);
+  useEffect(() => {
+    setBoardId(currentBoardId);
+    previousBoard.current = boardIds;
+  }, [currentBoardId, boardIds]);
+  useEffect(() => {
+    setInboxId(currentInboxId);
+    previousInbox.current = inboxIds;
+  }, [currentInboxId, inboxIds]);
   const area = keyArea(view, inboxOpen, owner, Boolean(sheet));
   const sheetTask = !needsDetails ? liveSheetTask : (fetchedTask?.id === wantedTaskId ? fetchedTask?.task : undefined);
   const loadingDetails = Boolean(sheet && !sheetTask && fetchedTask?.id !== wantedTaskId);
   const detailsError = !sheetTask && fetchedTask?.id === wantedTaskId ? fetchedTask?.error : undefined;
   // Only the open historical task joins this view of the sheet. The board and Analytics keep the engine projection.
-  const detailTasks = useMemo(() => sheetTask && sheetTask !== liveSheetTask ? [...state.tasks.filter((task) => task.id !== sheetTask.id), sheetTask] : state.tasks, [state.tasks, sheetTask, liveSheetTask]);
+  const detailTasks = useMemo(
+    () => sheetTask && sheetTask !== liveSheetTask ? [
+    ...state.tasks.filter((task) => task.id !== sheetTask.id),
+    sheetTask
+  ] : state.tasks,
+    [
+    state.tasks,
+    sheetTask,
+    liveSheetTask
+  ]
+  );
   const detailState = useMemo(() => detailTasks === state.tasks ? state : { ...state, tasks: detailTasks }, [state, detailTasks]);
-  const detailFind = useMemo(() => lookup(detailState, sheetTask), [sheetTask?.maintenance, detailState.roles, detailState.profiles, detailState.retiredProfiles, detailState.tools, detailState.products, detailState.tasks, detailState.history?.dependencies]);
+  const detailFind = useMemo(
+    () => lookup(
+    detailState,
+    sheetTask
+  ),
+    [
+    sheetTask?.maintenance,
+    detailState.roles,
+    detailState.profiles,
+    detailState.retiredProfiles,
+    detailState.tools,
+    detailState.products,
+    detailState.tasks,
+    detailState.history?.dependencies
+  ]
+  );
   const missing = route.missing ? "Page not found"
     : sheet && !sheetTask && !loadingDetails && !detailsError ? "Task not found"
     : productSettings && !find.product(productSettings) ? "Product not found" : undefined;
   const highlightedItem = items.find((item) => item.id === currentInboxId);
   const focusedTask = sheetTask ?? (area === "inbox" ? find.task(highlightedItem?.taskId) : area === "board" ? find.task(currentBoardId) : undefined);
   const [paletteTaskId, setPaletteTaskId] = useState<string>();
-  const openPalette = () => { setPaletteTaskId(focusedTask?.id); setPalette(true); };
-  const focusSnapshot = useRef<{ area: typeof area; id: string | undefined }>({ area, id: undefined });
-  // While a pointer is pressed, a highlight it moves does not scroll: the button would move away before the click lands.
-  const pressing = useRef(false);
-  useEffect(() => {
-    const down = () => { pressing.current = true; setBoardKeyboard(false); };
-    const up = () => { pressing.current = false; };
-    window.addEventListener("pointerdown", down, true);
-    window.addEventListener("pointerup", up, true);
-    window.addEventListener("pointercancel", up, true);
-    window.addEventListener("keydown", up, true);
-    window.addEventListener("blur", up);
-    return () => {
-      window.removeEventListener("pointerdown", down, true);
-      window.removeEventListener("pointerup", up, true);
-      window.removeEventListener("pointercancel", up, true);
-      window.removeEventListener("keydown", up, true);
-      window.removeEventListener("blur", up);
-    };
-  }, []);
+  const openPalette = () => {
+    setPaletteTaskId(focusedTask?.id);
+    setPalette(true);
+  };
 
   const open = useCallback((taskId: string, tab: SheetTab = "overview", list?: TaskList, itemId?: string) => {
     sheetOrder.current = list === "board" || list === "history" ? boardIds : list === "inbox" ? inboxIds : [];
     setMessageFocus(undefined);
     setSheet({ taskId, tab, list, ...(itemId ? { itemId } : {}) });
   }, [boardIds, inboxIds]);
-  const close = useCallback(() => { setSheet(undefined); setMessageFocus(undefined); }, []);
+  const close = useCallback(() => {
+    setSheet(undefined);
+    setMessageFocus(undefined);
+  }, []);
   /** Go to Analytics, optionally with "About these numbers" open. */
   const analytics = useCallback((about = false) => {
     navigate((previous) => ({ ...previous, view: "analytics", sheet: undefined }));
@@ -241,14 +303,29 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
 
   const go = (page: Page) => {
     navigate((previous) => ({ ...previous, view: page, sheet: undefined, productSettings: undefined, routineRuns: undefined }));
-    setMessageFocus(undefined); setOwner("board"); focusArea.current = page === "board" || page === "history" ? "board" : undefined;
+    setMessageFocus(undefined);
+    setOwner("board");
+    focusArea.current = page === "board" || page === "history" ? "board" : undefined;
   };
   /** App settings, or a product's editor on Products. */
   const openSettings = (productId?: string) => {
     navigate((previous) => ({ ...previous, view: productId ? "products" : "settings", sheet: undefined, productSettings: productId }));
-    setMessageFocus(undefined); setOwner("board");
+    setMessageFocus(undefined);
+    setOwner("board");
   };
-  const openBoard = (id: string, tab: SheetTab = "overview") => { setOwner("board"); setBoardId(id); open(id, tab, view === "history" || runs ? "history" : "board"); if (tab === "session") setMessageFocus(id); };
+  const openBoard = (
+    id: string,
+    tab: SheetTab = "overview"
+  ) => {
+    setOwner("board");
+    setBoardId(id);
+    open(
+    id,
+    tab,
+    view === "history" || runs ? "history" : "board"
+  );
+    if (tab === "session") setMessageFocus(id);
+  };
   const openLinked = useCallback((taskId: string) => {
     const known = find.task(taskId);
     const finished = !known || known.state === "done" || known.state === "cancelled";
@@ -261,22 +338,45 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
   const openItem = (id: string, tab?: SheetTab) => {
     const item = items.find((entry) => entry.id === id);
     if (!item) return;
-    setOwner("inbox"); setInboxId(id); open(item.taskId, tab ?? inboxTab(item.kind), "inbox", id);
+    setOwner("inbox");
+    setInboxId(id);
+    open(item.taskId, tab ?? inboxTab(item.kind), "inbox", id);
   };
   const openInbox = () => {
-    close(); setInboxOpen(true); setOwner("inbox"); setInboxId(inboxIds[0]);
+    close();
+    setInboxOpen(true);
+    setOwner("inbox");
+    setInboxId(inboxIds[0]);
     blankLanding.current = false;
     focusArea.current = "inbox";
   };
   const closeInbox = (keepButton: boolean) => {
     focusArea.current = !keepButton && view === "board" ? "board" : undefined;
-    setInboxOpen(false); setOwner("board"); inboxButton.current?.focus();
+    setInboxOpen(false);
+    setOwner("board");
+    inboxButton.current?.focus();
   };
-  const inboxKey = () => { close(); if (inboxOpen && owner === "inbox") closeInbox(false); else openInbox(); };
-  const newTask = (title = "") => { setNewTitle(title); setCreating(true); };
+  const inboxKey = () => {
+    close();
+    if (inboxOpen && owner === "inbox") closeInbox(false);
+  else openInbox();
+  };
+  const newTask = (title = "") => {
+    setNewTitle(title);
+    setCreating(true);
+  };
   const pickProduct = (id: string) => {
-    navigate((previous) => ({ ...previous, product: id, view: previous.view === "analytics" || previous.view === "history" || previous.view === "routines" ? previous.view : "board", sheet: undefined, productSettings: undefined, history: undefined, routineRuns: previous.routineRuns ? { id: previous.routineRuns.id } : undefined }));
-    setMessageFocus(undefined); setOwner("board");
+    navigate((previous) => ({
+      ...previous,
+      product: id,
+      view: previous.view === "analytics" || previous.view === "history" || previous.view === "routines" ? previous.view : "board",
+      sheet: undefined,
+      productSettings: undefined,
+      history: undefined,
+      routineRuns: previous.routineRuns ? { id: previous.routineRuns.id } : undefined
+    }));
+    setMessageFocus(undefined);
+    setOwner("board");
     if (view === "history") focusArea.current = "board";
   };
   const message = (task: Task) => {
@@ -287,79 +387,58 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
     setMessageFocus(task.id);
   };
   const { sendAction, pause, move, place } = taskCommands({ state, find, live: () => status.link === "live", visible, toast });
-  const walk = (direction: -1 | 1) => {
-    if (area === "board" || sheet?.list === "board") setBoardKeyboard(true);
-    if (sheet) {
-      if (!sheet.list) { toast("J and K walk the board or the inbox", "Open a task there to walk that list."); return; }
-      if (sheet.list === "board" || sheet.list === "history") {
-        const id = stepHighlight(boardIds, sheet.taskId, direction, sheetOrder.current);
-        if (id) { setBoardId(id); open(id, sheet.tab, sheet.list); }
-      } else {
-        const id = stepHighlight(inboxIds, sheet.itemId, direction, sheetOrder.current); if (id) openItem(id);
-      }
-    } else if (area === "inbox") setInboxId(stepHighlight(inboxIds, currentInboxId, direction));
-    else if (area === "board") setBoardId(stepHighlight(boardIds, currentBoardId, direction));
-  };
-
-  useEffect(() => {
-    const id = area === "board" ? currentBoardId : area === "inbox" ? currentInboxId : undefined;
-    const changed = focusSnapshot.current.area !== area || focusSnapshot.current.id !== id;
-    const leftInbox = focusSnapshot.current.area === "inbox" && area !== "inbox";
-    focusSnapshot.current = { area, id };
-    // Button clicks and overlay Escape stay on the Inbox button; explicit board navigation moves on.
-    if (leftInbox && document.activeElement === inboxButton.current && !focusArea.current) return;
-    // Closing a palette or dialog restores its opener. Only explicit navigation moves focus.
-    if (!changed && !focusArea.current) return;
-    if (area !== "board" && area !== "inbox") return;
-    const attr = area === "board" ? "data-task-id" : "data-inbox-id";
-    const el = id ? Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`)).find((node) => node.getAttribute(attr) === id) : area === "inbox" ? inboxPanel.current : document.querySelector<HTMLElement>(view === "history" ? ".history-page" : ".board");
-    if (id && !pressing.current) el?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    // Give Tab a starting point at the highlighted item, without taking focus from a field.
-    if (el && !palette && !creating && !addingProduct && !rolePanel && !dependencyTask && !routineDialog && !productSettingsOpen && !shortcuts && (focusArea.current === area || (!el.contains(document.activeElement) && !isTyping(document.activeElement as HTMLElement)))) {
-      el.focus({ preventScroll: true });
-      focusArea.current = undefined;
-    }
-  }, [area, currentBoardId, currentInboxId, palette, creating, addingProduct, rolePanel, dependencyTask, routineDialog, productSettingsOpen, shortcuts, history.page]);
-
-  useGlobalKeys({
-    palette,
-    modal: creating || addingProduct || shortcuts || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen,
-    sheetOpen: Boolean(sheet),
+  const modalWithoutShortcuts =
+    creating || addingProduct || Boolean(rolePanel) || Boolean(dependencyTask) || routineDialog || productSettingsOpen;
+  // The palette's task rows stay with the task in focus when it opened, and go if that task does.
+  const paletteTask = palette ? detailFind.task(paletteTaskId) : undefined;
+  const { actions, forTask } = useWorkspaceFocus({
+    state,
+    theme,
+    onTheme: setTheme,
     area,
+    view,
+    overlay,
+    sheet,
+    boardIds,
+    inboxIds,
+    currentBoardId,
+    currentInboxId,
+    sheetOrder,
+    focusArea,
+    inboxButton,
+    inboxPanel,
+    palette,
+    paletteTask,
+    shortcuts,
+    modalWithoutShortcuts,
     singleKeys,
     focusedTask,
-    boardId: currentBoardId,
-    inboxId: currentInboxId,
-    togglePalette: () => {
-      if (creating || addingProduct || rolePanel || dependencyTask || routineDialog || productSettingsOpen) return;
-      if (palette) setPalette(false);
-      else openPalette();
-    },
+    historyPage: history.page,
+    visible,
+    sendAction,
+    setBoardKeyboard,
+    setBoardId,
+    setInboxId,
+    setOwner,
+    setPalette,
+    setShortcuts,
+    setMessageFocus,
+    openPalette,
+    open,
+    openBoard: (id) => openBoard(id),
+    openItem: (id) => openItem(id),
+    openInbox,
     closeSheet: close,
-    // Over the board the inbox hides and hands focus to the Inbox button. Docked, it hands the keys to the
-    // board, and off the board to nothing: no hidden Enter, and no palette handing them back on close.
-    leaveInbox: () => {
-      if (overlay) { closeInbox(true); return; }
-      setOwner("board");
-      if (inboxPanel.current?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
-    },
+    closeInbox,
+    inboxKey,
     newTask: () => newTask(),
     openSettings: () => openSettings(),
     move,
-    openBoard: (id) => openBoard(id),
-    openItem: (id) => openItem(id),
-    inboxKey,
-    go: (page) => { if (page === "board") setBoardKeyboard(true); go(page); },
-    showShortcuts: () => setShortcuts(true),
-    walk,
+    go,
     pause,
     message,
+    toast,
   });
-
-  // The palette's task rows stay with the task in focus when it opened, and go if that task does.
-  const paletteTask = palette ? detailFind.task(paletteTaskId) : undefined;
-  const actions = appActions({ state, singleKeys, newTask: () => newTask(), openInbox, go, showShortcuts: () => setShortcuts(true), sendAction, theme, onTheme: setTheme });
-  const forTask = taskActions({ task: paletteTask, state, sheetOpen: sheet?.taskId === paletteTask?.id, open, message, focusMessage: setMessageFocus, pause, visible, sendAction });
   const blocking = blockingCount(state);
   const docked = inboxOpen && !overlay;
   const recovery = mode === "engine" && !status.desktop && status.link !== "live" && status.recovery;
@@ -389,100 +468,171 @@ function Workspace({ state, status }: { state: State; status: EngineStatus }) {
       />
       {recovery && <EngineRecovery status={status} />}
 
-      <Rail view={view} blocking={blocking} onGo={go} hrefFor={(page) => routeHref({ ...route, view: page, sheet: undefined, productSettings: undefined, routineRuns: undefined })} />
-      <main className="main" aria-label={missing ?? PAGE_NAMES[view]}>
-        {missing && <div className="page route-missing"><p>This link is unavailable. It may have been removed or the address may be incomplete.</p><button className="btn outline" onClick={() => go("board")}>Go to Board</button></div>}
-        {!missing && view === "board" && (
-          <Board
-            state={state}
-            find={find}
-            visible={visible}
-            selectedId={area === "board" && boardKeyboard ? currentBoardId : undefined}
-            onOpen={openBoard}
-            onDependencies={setDependencyTask}
-            onFocus={(id) => { setOwner("board"); if (id) setBoardId(id); }}
-            drafts={drafts}
-            onPlace={place}
-            onNewTask={() => newTask()}
-            onShowInbox={openInbox}
-            {...(canAddProduct ? { onAddProduct: () => setAddingProduct(true) } : {})}
-          />
-        )}
-        {!missing && view === "history" && <History page={history.page} error={history.error} reload={history.reload} position={route.history} onPosition={setHistoryPosition} find={find} selectedId={area === "board" ? currentBoardId : undefined} onFocus={(id) => { setOwner("board"); if (id) setBoardId(id); }} onOpen={openBoard} hrefFor={(id) => routeHref({ ...route, sheet: { taskId: id, tab: "overview", list: "history" } })} drafts={drafts} />}
-        {!missing && view === "products" && (
-          <ProductsPage
-            state={state}
-            settings={productSettings}
-            onSettings={setProductSettings}
-            {...(canAddProduct ? { onAdd: () => setAddingProduct(true) } : {})}
-            onPick={pickProduct}
-          />
-        )}
-        {!missing && view === "agents" && <AgentsPage state={state} find={find} onOpen={open} />}
-        {!missing && view === "analytics" && <AnalyticsPage state={state} find={find} product={product} about={aboutNumbers} onAboutSeen={aboutSeen} onOpen={(taskId) => open(taskId)} />}
-        {!missing && view === "routines" && (runs ? <RoutineRuns id={runs.id} state={state} product={product} find={find} current={currentRuns} history={runHistory} position={runs.history} onPosition={setRunPosition} onBack={() => go("routines")} onOpen={openBoard} hrefFor={id => routeHref({ ...route, sheet: { taskId: id, tab: "overview", list: "history" } })} drafts={drafts} /> : <div className="page"><Routines state={state} find={find} product={product} onOpen={open} onRuns={id => navigate(previous => ({ ...previous, routineRuns: { id }, sheet: undefined }))} onDialogChange={setRoutineDialog} /></div>)}
-        {!missing && view === "library" && <LibraryPage state={state} onRole={setRolePanel} onEditorDialog={setRoutineDialog} product={product} view={route.libraryView ?? "roles"} onView={libraryView => navigate(previous => ({ ...previous, libraryView }))} />}
-        {!missing && view === "settings" && <SettingsPage onShortcuts={() => setShortcuts(true)} theme={theme} onTheme={setTheme} />}
-      </main>
+      <Rail
+        view={view}
+        blocking={blocking}
+        onGo={go}
+        hrefFor={(page) => routeHref({
+        ...route,
+        view: page,
+        sheet: undefined,
+        productSettings: undefined,
+        routineRuns: undefined
+      })}
+      />
+      <WorkspaceMain
+        missing={missing}
+        route={route}
+        state={state}
+        find={find}
+        area={area}
+        boardKeyboard={boardKeyboard}
+        currentBoardId={currentBoardId}
+        drafts={drafts}
+        canAddProduct={canAddProduct}
+        aboutNumbers={aboutNumbers}
+        history={history}
+        runs={runs}
+        currentRuns={currentRuns}
+        runHistory={runHistory}
+        theme={theme}
+        visible={visible}
+        onGo={go}
+        onOpenBoard={openBoard}
+        onOpen={open}
+        onSetOwnerBoard={() => setOwner("board")}
+        onSetBoardId={setBoardId}
+        onSetDependencyTask={setDependencyTask}
+        onPlace={place}
+        onNewTask={() => newTask()}
+        onShowInbox={openInbox}
+        onAddProduct={() => setAddingProduct(true)}
+        onHistoryPosition={setHistoryPosition}
+        onProductSettings={setProductSettings}
+        onPickProduct={pickProduct}
+        onAboutSeen={aboutSeen}
+        onRunPosition={setRunPosition}
+        onOpenRoutineRuns={(id) => navigate((previous) => ({ ...previous, routineRuns: { id }, sheet: undefined }))}
+        onRoutineDialog={setRoutineDialog}
+        onRolePanel={setRolePanel}
+        onLibraryView={(libraryView) => navigate((previous) => ({ ...previous, libraryView }))}
+        onShowShortcuts={() => setShortcuts(true)}
+        onTheme={setTheme}
+      />
 
-      {inboxOpen ? <Inbox ref={inboxPanel} state={state} find={find} overlay={overlay && !sheet} landing={landing} onOpen={open} onClose={() => closeInbox(false)} selectedId={area === "inbox" ? currentInboxId : undefined} onFocus={(id) => {
-        setOwner("inbox");
-        if (!id && blankLanding.current) return;
-        blankLanding.current = false;
-        setInboxId(id ?? currentInboxId ?? inboxIds[0]);
-      }} onOpenItem={openItem} /> : <div />}
-
-      {sheet && !sheetTask && (loadingDetails || detailsError) && <TaskLoading error={detailsError} onRetry={() => setDetailsRetry((value) => value + 1)} onClose={close} />}
-
-      {sheetTask && sheet && (
-        <TaskSheet task={sheetTask} tasks={runs && sheet.list === "history" ? runTasks : sheet.list === "history" ? history.page?.items ?? [] : activeBoardIds.flatMap((id) => find.task(id) ? [find.task(id)!] : [])} onTask={openBoard} onOpenTask={openLinked} onDependencies={setDependencyTask} state={detailState} find={detailFind} tab={sheet.tab} onTab={(tab) => setSheet({ ...sheet, tab, stepId: undefined })} selectedStep={sheet.stepId} selectedAttempt={sheet.attemptId} onStep={(stepId, attemptId) => setSheet({ ...sheet, stepId, attemptId })} hasDraft={Boolean(drafts[sheetTask.id])} drafts={draftStore} messageFocus={messageFocus === sheetTask.id} onMessageFocused={messageFocused} onMessage={() => message(sheetTask)} onClose={close} onToast={(title, detail) => toast(title, detail)} onAboutNumbers={() => analytics(true)} {...(jump?.sheet ? { waiting: jump.line } : {})} />
-      )}
-
-      {!missing && rolePanel && <RolePanel key={JSON.stringify(rolePanel)} state={state} target={rolePanel} onClose={() => setRolePanel(undefined)} />}
-
-      <TakeOverDialogs state={state} find={find} onToast={(title, detail) => toast(title, detail)} />
-
-      {addingProduct && (
-        <AddProductDialog
-          {...(jump ? { waiting: jump.line } : {})}
-          onClose={() => setAddingProduct(false)}
-          onAdded={(productId) => {
-            setAddingProduct(false);
-            pickProduct(productId);
-          }}
-        />
-      )}
-
-      {creating && (
-        <NewTaskDialog
+      {inboxOpen ? (
+        <Inbox
+          ref={inboxPanel}
           state={state}
-          initialTitle={newTitle}
-          {...(jump ? { waiting: jump.line } : {})}
-          {...(product !== "all" ? { defaultProduct: product } : {})}
-          onClose={() => setCreating(false)}
-          onCreated={() => {
-            setCreating(false);
-            // An open task keeps its page and list return point while the new task joins the queue.
-            if (!sheet) go("board");
+          find={find}
+          overlay={overlay && !sheet}
+          landing={landing}
+          onOpen={open}
+          onClose={() => closeInbox(false)}
+          selectedId={area === "inbox" ? currentInboxId : undefined}
+          onFocus={(id) => {
+            setOwner("inbox");
+            if (!id && blankLanding.current) return;
+            blankLanding.current = false;
+            setInboxId(id ?? currentInboxId ?? inboxIds[0]);
           }}
+          onOpenItem={openItem}
         />
+      ) : (
+        <div />
       )}
 
-      {palette && <CommandPalette state={state} actions={actions} taskActions={forTask} onClose={() => setPalette(false)} onTask={(id) => open(id)} onProduct={pickProduct} onHistoryProduct={(id) => { navigate((previous) => ({ ...previous, view: "history", product: id, sheet: undefined, productSettings: undefined, history: undefined })); setMessageFocus(undefined); setOwner("board"); focusArea.current = "board"; }} onNew={newTask} onFilter={(text) => { setQuery(text); go("board"); }} onLimit={(limit) => { void sendAction(() => sim.setPoolLimit(limit), `Pool limit set to ${limit}`, "Lowering the limit never stops anyone."); }} />}
-      {shortcuts && <KeyboardShortcuts onClose={() => setShortcuts(false)} />}
-      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{focusedTask ? `${focusedTask.title}, ${taskState(focusedTask, state)}${area === "inbox" && highlightedItem ? `, ${highlightedItem.title}` : ""}` : ""}</div>
-
-      {mode === "engine" && status.link === "failed" && <CouldNotStart problem={status.problem} />}
-
-      <Toasts
+      <WorkspaceOverlays
+        state={state}
+        find={find}
+        detailState={detailState}
+        detailFind={detailFind}
+        missing={missing}
+        product={product}
+        sheet={sheet}
+        sheetTask={sheetTask}
+        sheetTasks={
+          runs && sheet?.list === "history"
+            ? runTasks
+            : sheet?.list === "history"
+              ? (history.page?.items ?? [])
+              : activeBoardIds.flatMap((id) => (find.task(id) ? [find.task(id)!] : []))
+        }
+        loadingDetails={loadingDetails}
+        detailsError={detailsError}
+        drafts={drafts}
+        draftStore={draftStore}
+        messageFocus={messageFocus}
+        jump={jump}
+        rolePanel={rolePanel}
+        addingProduct={addingProduct}
+        creating={creating}
+        newTitle={newTitle}
+        palette={palette}
+        actions={actions}
+        forTask={forTask}
+        shortcuts={shortcuts}
+        focusedTask={focusedTask}
+        area={area}
+        highlightedItem={highlightedItem}
+        engineFailedProblem={mode === "engine" && status.link === "failed" ? (status.problem ?? "") : undefined}
         toasts={toasts}
-        onView={(entry) => {
-          // Exactly like a click on its notification.
+        dependencyTask={dependencyTask}
+        onRetryDetails={() => setDetailsRetry((value) => value + 1)}
+        onCloseSheet={close}
+        onOpenBoard={openBoard}
+        onOpenLinked={openLinked}
+        onSetDependencyTask={setDependencyTask}
+        onSheetChange={setSheet}
+        onMessageFocused={messageFocused}
+        onMessage={message}
+        onToast={(title, detail) => toast(title, detail)}
+        onAboutNumbers={() => analytics(true)}
+        onCloseRolePanel={() => setRolePanel(undefined)}
+        onCloseAddProduct={() => setAddingProduct(false)}
+        onProductAdded={(productId) => {
+          setAddingProduct(false);
+          pickProduct(productId);
+        }}
+        onCloseCreating={() => setCreating(false)}
+        onTaskCreated={() => {
+          setCreating(false);
+          if (!sheet) go("board");
+        }}
+        onClosePalette={() => setPalette(false)}
+        onOpenTask={(id) => open(id)}
+        onPickProduct={pickProduct}
+        onHistoryProduct={(id) => {
+          navigate((previous) => ({
+            ...previous,
+            view: "history",
+            product: id,
+            sheet: undefined,
+            productSettings: undefined,
+            history: undefined,
+          }));
+          setMessageFocus(undefined);
+          setOwner("board");
+          focusArea.current = "board";
+        }}
+        onNewTask={newTask}
+        onFilter={(text) => {
+          setQuery(text);
+          go("board");
+        }}
+        onPoolLimit={(limit) => {
+          void sendAction(
+            () => sim.setPoolLimit(limit),
+            `Pool limit set to ${limit}`,
+            "Lowering the limit never stops anyone.",
+          );
+        }}
+        onCloseShortcuts={() => setShortcuts(false)}
+        onViewToast={(entry) => {
           dismiss(entry.id);
-          requestJump(entry.target!);
+          if (entry.target) requestJump(entry.target);
         }}
       />
-      {dependencyTask && <DependencyEditor task={find.task(dependencyTask.id) ?? { ...dependencyTask, state: "done" }} state={state} onClose={() => setDependencyTask(undefined)} onOpenTask={(id) => { setDependencyTask(undefined); openLinked(id); }} />}
     </div>
   );
 }

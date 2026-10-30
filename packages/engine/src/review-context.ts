@@ -31,7 +31,16 @@ export interface ReviewInput {
 type InputRef = NonNullable<Hunt["input"]>;
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
-const immutable = (folder: string, suffix: string, body: string) => saveImmutable(folder, suffix, body, "The saved review material changed. Try the review again.");
+const immutable = (
+  folder: string,
+  suffix: string,
+  body: string
+) => saveImmutable(
+  folder,
+  suffix,
+  body,
+  "The saved review material changed. Try the review again."
+);
 
 async function output(path: string, args: string[]): Promise<string> {
   const result = await git.run(["git", ...args], path, undefined, { timeoutMs: 30_000, rawOutput: true });
@@ -71,15 +80,34 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
       return `## Lockfile changes\nLockfile paths are included in the statistics above. Their patch is separate: ${JSON.stringify(saved.file)} (reference ${saved.digest}). These changes remain in review scope: read this patch when assessing dependency or integrity changes. Security reviewers and Verifiers must inspect relevant lockfile changes before clearing their claims.`;
     };
     const parts = [header, rules];
-    if (change) parts.push(`## Complete change\nComparison: git diff ${full}\n${change.stat}\n${change.patch || "No non-lockfile changes."}`, await lockMaterial(change.locks, "full"));
+    if (change) parts.push(
+      `## Complete change\nComparison: git diff ${full}\n${change.stat}\n${change.patch || "No non-lockfile changes."}`,
+      await lockMaterial(
+      change.locks,
+      "full"
+    )
+    );
     if (work.portReview) {
       const port = work.portReview;
       // Git rejects range-diff when either side has no commits. Explicit before/after
       // patches still show a removed or newly introduced change without inventing a port.
       const compare = async (paths: string[], includeEmpty = false) => {
-        if (port.from !== port.head && port.onto !== head) return output(path, ["range-diff", "--no-color", `${port.from}..${port.head}`, `${port.onto}..${head}`, "--", ...paths]);
+        if (port.from !== port.head && port.onto !== head) return output(
+          path,
+          [
+          "range-diff",
+          "--no-color",
+          `${port.from}..${port.head}`,
+          `${port.onto}..${head}`,
+          "--",
+          ...paths
+        ]
+        );
         const patch = (range: string) => output(path, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", range, "--", ...paths]);
-        const [before, after] = await Promise.all([port.from === port.head ? "" : patch(`${port.from}..${port.head}`), port.onto === head ? "" : patch(`${port.onto}..${head}`)]);
+        const [before, after] = await Promise.all([
+          port.from === port.head ? "" : patch(`${port.from}..${port.head}`),
+          port.onto === head ? "" : patch(`${port.onto}..${head}`)
+        ]);
         return before || after || includeEmpty ? `Previous reviewed change:\n${before || (port.from === port.head ? "No commits in this range." : "No changes.")}\n\nCurrent port:\n${after || (port.onto === head ? "No commits in this range." : "No changes.")}` : "";
       };
       const [ported, portLocks, resolved] = await Promise.all([
@@ -88,20 +116,44 @@ export async function prepareReviewInput(dataDir: string, scope: RepositoryConte
         comparison(path, `${port.onto}..${head}`, port.files),
       ]);
       parts.push(`## Port of the previously reviewed change\n${ported}`);
-      parts.push(`## Resolved files against the new base\n${resolved.stat}\n${resolved.patch || "No non-lockfile changes."}`, await lockMaterial([portLocks, resolved.locks].filter(Boolean).join("\n\n"), "port"));
+      parts.push(
+        `## Resolved files against the new base\n${resolved.stat}\n${resolved.patch || "No non-lockfile changes."}`,
+        await lockMaterial(
+        [
+        portLocks,
+        resolved.locks
+      ].filter(Boolean).join("\n\n"),
+        "port"
+      )
+      );
     }
     signal.throwIfAborted();
     const saved = await immutable(folder, "full.md", parts.filter(Boolean).join("\n\n"));
     artifacts.push(saved);
     materials.push(`- ${work.source?.product.name ?? work.productId} (${work.productId}), commit ${head}, base ${base}: ${JSON.stringify(saved.file)} (reference ${saved.digest}); ${work.portReview ? "port comparison and resolved files for the previously reviewed change" : `complete comparison git diff ${base}...HEAD`}, with HEAD fixed at ${head}`);
     if (fixes && delta) {
-      const incremental = await immutable(folder, "incremental.md", [header, rules, `## Changes since the last completed code-review round\nComparison: git diff ${delta}\n${fixes.stat}\n${fixes.patch || "No non-lockfile changes."}`, await lockMaterial(fixes.locks, "incremental")].filter(Boolean).join("\n\n"));
+      const incremental = await immutable(
+        folder,
+        "incremental.md",
+        [
+        header,
+        rules,
+        `## Changes since the last completed code-review round\nComparison: git diff ${delta}\n${fixes.stat}\n${fixes.patch || "No non-lockfile changes."}`,
+        await lockMaterial(
+        fixes.locks,
+        "incremental"
+      )
+      ].filter(Boolean).join("\n\n")
+      );
       artifacts.push(incremental);
       materials.push(`  Incremental comparison git diff ${work.reviewedSha}..HEAD: ${JSON.stringify(incremental.file)} (reference ${incremental.digest}). Code reviewers on this fix round read this file; the full file is available when earlier context is needed.`);
     }
     artifacts.push(...lockFiles);
   }
-  input.material = { title: PREPARED_REVIEW, body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read the files appropriate to your scope; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round read the separate incremental file. When your saved base advanced, also follow the base-update section: read the complete comparison against the new base and revisit incoming changes and their interactions. Otherwise the complete change need not be reread. Security reviewers and Verifiers retain their full-change scope and use the full file. Lockfile patches are separate, linked from each comparison, never excluded from review scope. Port reviews use the full file's port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}` };
+  input.material = {
+    title: PREPARED_REVIEW,
+    body: `Petrina prepared the saved base's REVIEW.md and exact comparisons once for this round. Read the files appropriate to your scope; do not regenerate the same diffs or guide just to load context. Code reviewers on a fix round read the separate incremental file. When your saved base advanced, also follow the base-update section: read the complete comparison against the new base and revisit incoming changes and their interactions. Otherwise the complete change need not be reread. Security reviewers and Verifiers retain their full-change scope and use the full file. Lockfile patches are separate, linked from each comparison, never excluded from review scope. Port reviews use the full file's port comparison. Inspect the full code and run focused reproductions wherever needed. The engine's passing checks remain the automated evidence.\n${materials.join("\n")}`
+  };
   input.artifacts = artifacts;
   await freezeReviewHistory(folder, input);
   signal.throwIfAborted();
@@ -134,7 +186,10 @@ export function reviewBases(scope: RepositoryContext): Record<Id, string> {
 }
 
 /** Native observations are consumed by the portable conversation owner. */
-export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonly<Record<Id, string>> | undefined, heads: Readonly<Record<Id, string>>): Promise<{ sections: Section[]; reason?: string }> {
+export async function reviewBaseUpdates(scope: RepositoryContext, bases: Readonly<Record<Id, string>> | undefined, heads: Readonly<Record<Id, string>>): Promise<{
+  sections: Section[];
+  reason?: string
+}> {
   return observedReviewBaseUpdates(scope, bases, heads, {
     contains: (bound, base, before) => git.contains(bound.work.worktree!, base, before),
     changedFiles: (bound, from, to) => git.changedFiles(bound.work.worktree!, from, to),

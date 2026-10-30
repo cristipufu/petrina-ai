@@ -1,7 +1,14 @@
 import { openStep, type Id } from "@petrina/core";
 import type { RepositoryContext } from "./repository-context.js";
 import type { AgentMessage, SessionSettings } from "./ports/agents.js";
-import type { InputSection, PendingParticipantInput, ParticipantInputDetails, ParticipantInputEffects, ParticipantInputHost, ParticipantContextPreparation } from "./ports/participant-input.js";
+import type {
+  InputSection,
+  PendingParticipantInput,
+  ParticipantInputDetails,
+  ParticipantInputEffects,
+  ParticipantInputHost,
+  ParticipantContextPreparation
+} from "./ports/participant-input.js";
 
 /** The actual input handoff: capture at preparation, attach the exact outgoing message, and retain public updates. */
 export class ParticipantInputs {
@@ -23,7 +30,20 @@ export class ParticipantInputs {
     const input = {
       productId: work.productId,
       stepAttempts: work.stepAttempts ?? 0,
-      versions: { ...(work.baseSha ? { base: work.baseSha } : {}), ...(work.reviewedSha ? { reviewed: work.reviewedSha } : {}), ...(work.reviewedTree ? { reviewedTree: work.reviewedTree } : {}), ...(work.checks ? { checks: { at: work.checks.at, sha: work.checks.sha, tree: work.checks.tree, definition: work.checks.definition, passed: work.checks.results.every((run) => run.ok), count: work.checks.results.length, ...(work.checks.provenance ? { node: work.checks.provenance.nodeId } : {}) } } : {}) },
+      versions: {
+        ...(work.baseSha ? { base: work.baseSha } : {}),
+        ...(work.reviewedSha ? { reviewed: work.reviewedSha } : {}),
+        ...(work.reviewedTree ? { reviewedTree: work.reviewedTree } : {}),
+        ...(work.checks ? { checks: {
+        at: work.checks.at,
+        sha: work.checks.sha,
+        tree: work.checks.tree,
+        definition: work.checks.definition,
+        passed: work.checks.results.every((run) => run.ok),
+        count: work.checks.results.length,
+        ...(work.checks.provenance ? { node: work.checks.provenance.nodeId } : {})
+      } } : {})
+      },
       ...(step.reviewInput ? { reviewInput: this.effects.clone(step.reviewInput) } : {}),
       at: this.host.now(), instructions, requestedProfileId: plannedId,
       ...(reason ? { selectionReason: reason } : {}),
@@ -50,12 +70,32 @@ export class ParticipantInputs {
     const step = task.journey?.find(entry => entry.id === pending.stepId);
     if (!step) return;
     const exact = await this.effects.saveExact(task.id, text);
-    const input = { ...pending.input, sections: [...pending.input.sections, ...openingSections].filter(section => section.body), ...(additions.length ? { manifest: this.effects.numberManifest([...(pending.input.manifest ?? []), ...this.effects.manifest("", additions, [], true)]) } : {}), ...(exact ? { exact } : {}) } as NonNullable<typeof step.agentInputs>[number];
+    const input = {
+      ...pending.input,
+      sections: [
+      ...pending.input.sections,
+      ...openingSections
+    ].filter(section => section.body),
+      ...(additions.length ? { manifest: this.effects.numberManifest([
+      ...(pending.input.manifest ?? []),
+      ...this.effects.manifest(
+      "",
+      additions,
+      [],
+      true
+    )
+    ]) } : {}),
+      ...(exact ? { exact } : {})
+    } as NonNullable<typeof step.agentInputs>[number];
     step.agentInputs = [...(step.agentInputs ?? []), input];
     this.host.checkpoint(scope);
   }
 
-  async prepare<S extends InputSection>(scope: RepositoryContext, request: ParticipantContextPreparation<S>): Promise<{ sections: S[]; refreshRole: boolean; omitted?: readonly import("./ports/participant-input.js").InputOmission[] }> {
+  async prepare<S extends InputSection>(scope: RepositoryContext, request: ParticipantContextPreparation<S>): Promise<{
+    sections: S[];
+    refreshRole: boolean;
+    omitted?: readonly import("./ports/participant-input.js").InputOmission[]
+  }> {
     const prepared = request.packet ? await request.prepare() : { sections: request.sections };
     if (request.note && request.packet) {
       if (prepared.snapshot) request.note.context = prepared.snapshot;
@@ -63,7 +103,11 @@ export class ParticipantInputs {
     }
     const supplied = !request.supplyHistory ? { sections: prepared.sections } : await request.history(prepared.sections, !!request.previous);
     if (supplied.retained) this.host.checkpoint(scope);
-    return { sections: supplied.sections, refreshRole: !request.previous || prepared.snapshot?.scope !== request.previous.scope, ...(prepared.omitted ? { omitted: prepared.omitted } : {}) };
+    return {
+      sections: supplied.sections,
+      refreshRole: !request.previous || prepared.snapshot?.scope !== request.previous.scope,
+      ...(prepared.omitted ? { omitted: prepared.omitted } : {})
+    };
   }
 
   stream(scope: RepositoryContext, roleId: Id, profileId: Id, reviewerKey: string | undefined, signal: AbortSignal, main = false): (message: AgentMessage) => void {
@@ -76,7 +120,8 @@ export class ParticipantInputs {
       const line = saved?.key === message.id ? task.session.find(entry => entry.id === saved.line) : undefined;
       if (line) {
         if (line.text === message.text) return;
-        line.text = message.text; this.host.noteStream(scope);
+        line.text = message.text;
+        this.host.noteStream(scope);
       } else {
         this.host.say(scope, message.text, roleId, profileId, reviewerKey);
         last = { key: message.id, line: task.session.at(-1)!.id };

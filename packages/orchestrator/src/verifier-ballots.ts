@@ -1,9 +1,44 @@
-import { acceptsAnswer, authorProfile, ballotOf, choosePanel, decide, endAgentStep, engagedTools, findingCount, findingsNeedingVotes, inBallot, isRejectedReopenOfVerifiedFix, JOURNEY_WORDS, openStep, panelAnswers, planThirdAnswers, recordStepResult, replacementFor, reviewedCode, seatRemaining, type DeepMutable, type Finding, type Hunt, type Id, type PanelCandidate, type Stage, type Task, type VerifierPanel, type VerifierSeat, type Vote } from "@petrina/core";
+import {
+  acceptsAnswer,
+  authorProfile,
+  ballotOf,
+  choosePanel,
+  decide,
+  endAgentStep,
+  engagedTools,
+  findingCount,
+  findingsNeedingVotes,
+  inBallot,
+  isRejectedReopenOfVerifiedFix,
+  JOURNEY_WORDS,
+  openStep,
+  panelAnswers,
+  planThirdAnswers,
+  recordStepResult,
+  replacementFor,
+  reviewedCode,
+  seatRemaining,
+  type DeepMutable,
+  type Finding,
+  type Hunt,
+  type Id,
+  type PanelCandidate,
+  type Stage,
+  type Task,
+  type VerifierPanel,
+  type VerifierSeat,
+  type Vote
+} from "@petrina/core";
 import type { RuntimeTask } from "./model.js";
 import type { PendingVerification, VerifierAnswerSource, VerifierCatalog, VerifierRecording, VerifierSelection, VerifierVerdict } from "./ports/verifiers.js";
 
 const listWords = (names: readonly string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
-const VERDICT_WORDS: Record<Vote["verdict"], string> = { real: "real", "not-a-bug": "not a bug", nit: "only a nit", "pre-existing": "an older bug unrelated to the approved task" };
+const VERDICT_WORDS: Record<Vote["verdict"], string> = {
+  real: "real",
+  "not-a-bug": "not a bug",
+  nit: "only a nit",
+  "pre-existing": "an older bug unrelated to the approved task"
+};
 
 /** Saved ballot phases and replacements; native selection, transport and persistence remain effects. */
 export class VerifierBallots {
@@ -13,7 +48,8 @@ export class VerifierBallots {
   recordAnswers(task: RuntimeTask, source: VerifierAnswerSource, verdicts: readonly VerifierVerdict[]): void {
     const toolId = this.catalog.profile(source.profileId)?.toolId;
     if (!toolId || !task.hunt) throw new Error("A verifier answer needs its recorded participant and active ballot.");
-    const hunt = task.hunt, assigned = new Set(source.findingIds);
+    const hunt = task.hunt;
+    const assigned = new Set(source.findingIds);
     const older = hunt.panel?.rule === "majority";
     for (const verdict of verdicts) {
       const finding = task.findings.find(entry => entry.id === verdict.id && assigned.has(entry.id));
@@ -21,7 +57,20 @@ export class VerifierBallots {
       if (hunt.panel && !acceptsAnswer(hunt.panel, source.place, finding, hunt, toolId)) continue;
       const previous = finding.votes?.findLast(vote => vote.toolId === toolId && (older || (vote.ballot?.seat === source.place.key && inBallot(vote, hunt))));
       if (previous?.by === source.profileId && previous.verdict === verdict.verdict && previous.reason === verdict.reason) continue;
-      finding.votes = [...(finding.votes ?? []), { by: source.profileId, toolId, plannedProfileId: source.plannedProfileId, verdict: verdict.verdict, reason: verdict.reason, ballot: ballotOf(hunt, source.place.key) }];
+      finding.votes = [
+        ...(finding.votes ?? []),
+        {
+        by: source.profileId,
+        toolId,
+        plannedProfileId: source.plannedProfileId,
+        verdict: verdict.verdict,
+        reason: verdict.reason,
+        ballot: ballotOf(
+        hunt,
+        source.place.key
+      )
+      }
+      ];
     }
     recordStepResult(task, { findings: task.findings.filter(finding => assigned.has(finding.id)) });
     this.recording.checkpoint(task);
@@ -32,13 +81,19 @@ export class VerifierBallots {
     const ids = new Set(pending.findings.map(finding => finding.id));
     const panel = task.hunt?.panel ?? pending.panel;
     const at = this.recording.now();
-    let real = 0, disputed = 0, unresolved = 0;
+    let real = 0;
+    let disputed = 0;
+    let unresolved = 0;
     for (const finding of task.findings.filter(entry => ids.has(entry.id))) {
       if (!panel || !task.hunt) continue;
       const decision = decide(panel, panelAnswers(panel, finding, task.hunt));
       if (!decision) continue;
       if (decision.verdict === "third") {
-        finding.unresolved = { at, reason: panel.escalations?.[finding.id]?.reason ?? "Both answers said it does not block, and the required third answer could not be had: it stays Important, unresolved.", ...reviewedCode(task.hunt) };
+        finding.unresolved = {
+          at,
+          reason: panel.escalations?.[finding.id]?.reason ?? "Both answers said it does not block, and the required third answer could not be had: it stays Important, unresolved.",
+          ...reviewedCode(task.hunt)
+        };
         unresolved += 1;
         continue;
       }
@@ -46,7 +101,12 @@ export class VerifierBallots {
         real += 1;
         if (decision.disputed.length) disputed += 1;
         const dispute = decision.disputed.map(vote => `${this.catalog.profileName(vote.by)} answered ${VERDICT_WORDS[vote.verdict]}: ${vote.reason}`).join(" ");
-        finding.verification = { by: decision.vote.by, verdict: "real", reason: dispute ? `${decision.vote.reason} Disputed: ${dispute}` : decision.vote.reason, at };
+        finding.verification = {
+          by: decision.vote.by,
+          verdict: "real",
+          reason: dispute ? `${decision.vote.reason} Disputed: ${dispute}` : decision.vote.reason,
+          at
+        };
         continue;
       }
       finding.verification = { by: decision.vote.by, verdict: decision.verdict, reason: decision.vote.reason, at };
@@ -66,7 +126,10 @@ export class VerifierBallots {
   /** A vote's places are its step's expected seats, named by place: recorded on the open vote step, never on an ended one. */
   private syncVoterSeats(task: RuntimeTask, seats: readonly VerifierSeat[]): void {
     const step = openStep(task);
-    if (step?.kind === "agent" && step.roleId && this.catalog.roleResult(step.roleId, task) === "votes") step.seats = seats.map((seat) => `verifier:${seat.key}`);
+    if (step?.kind === "agent" && step.roleId && this.catalog.roleResult(
+      step.roleId,
+      task
+    ) === "votes") step.seats = seats.map((seat) => `verifier:${seat.key}`);
   }
 
   /**
@@ -92,7 +155,17 @@ export class VerifierBallots {
       if (!chosen) {
         // Nobody can vote yet: leave the panel open until at least one tool is usable, and keep the review waiting.
         const waiting = this.selection.candidates(stage)[0];
-        return { findings: eligible, seats: waiting ? [{ key: waiting, profileId: waiting, toolId: this.catalog.profile(waiting)?.toolId ?? "", findingIds: eligible.map((finding) => finding.id), reason: "" }] : [], voters: waiting ? [waiting] : [] };
+        return {
+          findings: eligible,
+          seats: waiting ? [{
+          key: waiting,
+          profileId: waiting,
+          toolId: this.catalog.profile(waiting)?.toolId ?? "",
+          findingIds: eligible.map((finding) => finding.id),
+          reason: ""
+        }] : [],
+          voters: waiting ? [waiting] : []
+        };
       }
       panel = chosen.panel;
       // A paused scheduler may ask who would run next before tool checks finish.
@@ -101,7 +174,11 @@ export class VerifierBallots {
         chosen.keep();
         hunt.panel = panel as DeepMutable<VerifierPanel>;
         this.syncVoterSeats(task, panel.seats);
-        this.recording.note(task, "milestone", `${panel.seats.length === 1 ? "Verifier" : "Verifiers"}: ${listWords(panel.seats.map((seat) => this.catalog.profileName(seat.profileId)))} check ${findingCount(eligible)}; usable at selection: ${listWords(panel.usable.map((tool) => this.toolName(tool)))}`);
+        this.recording.note(
+          task,
+          "milestone",
+          `${panel.seats.length === 1 ? "Verifier" : "Verifiers"}: ${listWords(panel.seats.map((seat) => this.catalog.profileName(seat.profileId)))} check ${findingCount(eligible)}; usable at selection: ${listWords(panel.usable.map((tool) => this.toolName(tool)))}`
+        );
         this.recording.checkpoint(task);
       }
     }
@@ -118,7 +195,21 @@ export class VerifierBallots {
     // Before the round saves its state, the preview reads answers as this stage and round's.
     const ballot = hunt ?? { stageId: stage.id, round: task.rounds[stage.id] ?? 1 };
     const remaining = (seat: VerifierSeat) => seatRemaining(panel, seat, findings, ballot).length > 0;
-    const admit = (seats: VerifierSeat[], phase: VerifierSeat[], third?: boolean): PendingVerification => ({ findings: findings as Task["findings"], panel, seats, voters: seats.map((seat) => this.voterOn(task, seat)), phase, ...(third ? { third } : {}) });
+    const admit = (
+      seats: VerifierSeat[],
+      phase: VerifierSeat[],
+      third?: boolean
+    ): PendingVerification => ({
+      findings: findings as Task["findings"],
+      panel,
+      seats,
+      voters: seats.map((seat) => this.voterOn(
+      task,
+      seat
+    )),
+      phase,
+      ...(third ? { third } : {})
+    });
     const initial = panel.seats.filter((seat) => !seat.third);
     if (initial.some(remaining)) {
       if (hunt?.panel === panel && !this.selection.admissionsClosed(task)) this.replaceStalled(task, stage, panel, findings, initial);
@@ -177,16 +268,40 @@ export class VerifierBallots {
   private recoveredAnswers(task: RuntimeTask, findings: Task["findings"]): { candidates: PanelCandidate[]; keep: () => void } {
     const hunt = task.hunt;
     if (!hunt) return { candidates: [], keep: () => {} };
-    const recorded = (finding: Finding, vote: Vote) => !!hunt.input?.digest && (task.journey ?? []).some((step) => step.stageId === hunt.stageId && step.round === hunt.round && step.reviewInput?.digest === hunt.input!.digest && this.catalog.roleResult(step.roleId ?? "", task) === "votes" &&
-      [...(step.result?.findings ?? []), ...(step.agentResults ?? []).flatMap((entry) => entry.findings ?? [])].some((copy) => copy.id === finding.id && copy.votes?.some((saved) => !saved.ballot && saved.toolId === vote.toolId && saved.by === vote.by && saved.verdict === vote.verdict && saved.reason === vote.reason)));
+    const recorded = (finding: Finding, vote: Vote) => !!hunt.input?.digest && (task.journey ?? []).some((step) => step.stageId === hunt.stageId && step.round === hunt.round && step.reviewInput?.digest === hunt.input!.digest && this.catalog.roleResult(
+      step.roleId ?? "",
+      task
+    ) === "votes" &&
+      [
+        ...(step.result?.findings ?? []),
+        ...(step.agentResults ?? []).flatMap((entry) => entry.findings ?? [])
+      ].some((copy) => copy.id === finding.id && copy.votes?.some((saved) => !saved.ballot && saved.toolId === vote.toolId && saved.by === vote.by && saved.verdict === vote.verdict && saved.reason === vote.reason)));
     const proven = (finding: Finding, vote: Vote) => !!vote.toolId && (vote.ballot ? inBallot(vote, hunt) : recorded(finding, vote));
     const places = new Map<Id, Id>();
-    for (const finding of findings) for (const vote of finding.votes ?? []) if (proven(finding, vote) && !places.has(vote.toolId!)) places.set(vote.toolId!, vote.plannedProfileId ?? vote.by);
+    for (const finding of findings) for (const vote of finding.votes ?? []) if (proven(
+      finding,
+      vote
+    ) && !places.has(vote.toolId!)) places.set(
+      vote.toolId!,
+      vote.plannedProfileId ?? vote.by
+    );
     return {
       candidates: [...places].map(([toolId, profileId]) => ({ toolId, profileId })),
       // Proven answers are attributed to their tool's kept place, so the saved panel counts them as this ballot's.
       keep: () => {
-        for (const finding of findings) if (finding.votes?.some((vote) => proven(finding, vote))) finding.votes = finding.votes.map((vote) => proven(finding, vote) ? { ...vote, ballot: ballotOf(hunt, places.get(vote.toolId!)!) } : vote);
+        for (const finding of findings) if (finding.votes?.some((vote) => proven(
+          finding,
+          vote
+        ))) finding.votes = finding.votes.map((vote) => proven(
+          finding,
+          vote
+        ) ? {
+          ...vote,
+          ballot: ballotOf(
+          hunt,
+          places.get(vote.toolId!)!
+        )
+        } : vote);
       },
     };
   }
@@ -199,7 +314,14 @@ export class VerifierBallots {
     return {
       rule: "majority",
       usable: [...new Set(planned.map(toolOf))],
-      seats: planned.map((id) => ({ key: id, profileId: id, toolId: toolOf(id), findingIds: findings.map((finding) => finding.id), reason: "Kept the place this ballot admitted before bounded panels, with its original rule.", ...(hunt.voterReplacements?.[id] ? { replaced: hunt.voterReplacements[id]! } : {}) })),
+      seats: planned.map((id) => ({
+        key: id,
+        profileId: id,
+        toolId: toolOf(id),
+        findingIds: findings.map((finding) => finding.id),
+        reason: "Kept the place this ballot admitted before bounded panels, with its original rule.",
+        ...(hunt.voterReplacements?.[id] ? { replaced: hunt.voterReplacements[id]! } : {})
+      })),
     };
   }
 
@@ -230,7 +352,17 @@ export class VerifierBallots {
       if (choice && choice.kind === "selected" && choice.profile.toolId === seat.toolId) continue;
       const busy = new Set(phase.filter((other) => other !== seat && seatRemaining(panel, other, findings, hunt).length).map((other) => other.toolId));
       const alternatives = this.usableVoters(task, stage).filter((candidate) => candidate.toolId !== seat.toolId && !busy.has(candidate.toolId));
-      const replacement = replacementFor(owed, (id) => engagedTools(panel, findings.find((finding) => finding.id === id)!, hunt, seat), alternatives, owed.map((id) => panel.authors?.[id]));
+      const replacement = replacementFor(
+        owed,
+        (id) => engagedTools(
+        panel,
+        findings.find((finding) => finding.id === id)!,
+        hunt,
+        seat
+      ),
+        alternatives,
+        owed.map((id) => panel.authors?.[id])
+      );
       if (!replacement) continue;
       const reason = `${this.catalog.profileName(seat.profileId)} could not finish verification (${choice && choice.kind !== "selected" ? choice.waiting : "selection did not retain its tool"}). ${this.catalog.profileName(replacement.profileId)} takes its required seat on a different tool; saved votes remain.`;
       seat.replaced = { from: seat.profileId, reason };
@@ -248,7 +380,14 @@ export class VerifierBallots {
   private thirdAnswers(task: RuntimeTask, stage: Stage, panel: VerifierPanel, findings: Task["findings"], ballot: Pick<Hunt, "stageId" | "round" | "input">) {
     const needs = findings.flatMap((finding) => {
       const answers = panelAnswers(panel, finding, ballot);
-      return decide(panel, answers)?.verdict === "third" ? [{ id: finding.id, answered: answers.map((vote) => vote.toolId!), ...(panel.authors?.[finding.id] ? { author: panel.authors[finding.id]! } : {}) }] : [];
+      return decide(
+        panel,
+        answers
+      )?.verdict === "third" ? [{
+        id: finding.id,
+        answered: answers.map((vote) => vote.toolId!),
+        ...(panel.authors?.[finding.id] ? { author: panel.authors[finding.id]! } : {})
+      }] : [];
     });
     if (!needs.length) return { seats: [], escalations: {} };
     // Any ready tool that has not answered a finding may give its third answer when it can start now. Only a tool
@@ -284,12 +423,27 @@ export class VerifierBallots {
       task.capacityRetries = task.capacityRetries?.filter((entry) => !voting(entry));
       task.capacityPaused = task.capacityPaused?.filter((entry) => !voting(entry));
     }
-    for (const [id, escalation] of Object.entries(plan.escalations)) this.recording.note(task, escalation.unresolved ? "warn" : "milestone", `${findings.find((finding) => finding.id === id)?.text.slice(0, 80) ?? id}: ${escalation.reason}`);
+    for (const [id, escalation] of Object.entries(plan.escalations)) this.recording.note(
+      task,
+      escalation.unresolved ? "warn" : "milestone",
+      `${findings.find((finding) => finding.id === id)?.text.slice(0, 80) ?? id}: ${escalation.reason}`
+    );
     const asked = plan.seats.reduce((count, seat) => count + seat.findingIds.length, 0);
     const open = openStep(task);
     if (asked && open?.kind === "agent" && open.roleId && this.catalog.roleResult(open.roleId, task) === "votes") {
       const real = findings.filter((finding) => decide(panel, panelAnswers(panel, finding, hunt))?.verdict === "real").length;
-      endAgentStep(task, { outcome: JOURNEY_WORDS.firstAnswers(findings.length, real, Object.keys(plan.escalations).length), reason: JOURNEY_WORDS.thirdAnswer(asked) }, this.recording.now());
+      endAgentStep(
+        task,
+        {
+        outcome: JOURNEY_WORDS.firstAnswers(
+        findings.length,
+        real,
+        Object.keys(plan.escalations).length
+      ),
+        reason: JOURNEY_WORDS.thirdAnswer(asked)
+      },
+        this.recording.now()
+      );
     }
     this.recording.checkpoint(task);
   }

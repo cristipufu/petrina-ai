@@ -1,6 +1,18 @@
 // GitHub CLI requests pinned to the approved product, outside working copies.
 import { tmpdir } from "node:os";
-import { run, commandFailure, isRefName, isRepoName, EXIT_UNREPORTED, FETCH_TIMEOUT_MS, OUTPUT_INCOMPLETE, OUTPUT_UNREADABLE, type Gh, type Check, type RunResult } from "./git.js";
+import {
+  run,
+  commandFailure,
+  isRefName,
+  isRepoName,
+  EXIT_UNREPORTED,
+  FETCH_TIMEOUT_MS,
+  OUTPUT_INCOMPLETE,
+  OUTPUT_UNREADABLE,
+  type Gh,
+  type Check,
+  type RunResult
+} from "./git.js";
 const GH: Gh = ["gh"];
 
 /** Explicit transport for a host-supplied service; native commands retain their existing bounded lifecycle. */
@@ -30,7 +42,8 @@ const UNFINISHED: readonly (readonly [string, string])[] = [
 export function inGitHubTerms(result: RunResult): RunResult {
   if (!result.timedOut) return result;
   const { stderr } = result;
-  let own = stderr, why = "GitHub's answer is unknown";
+  let own = stderr;
+  let why = "GitHub's answer is unknown";
   const known = UNFINISHED.find(([reason]) => stderr === reason || stderr.endsWith(`\n${reason}`));
   const unreadable = stderr.lastIndexOf(`${OUTPUT_UNREADABLE}: `);
   if (known) [own, why] = [stderr.slice(0, -known[0].length), known[1]];
@@ -72,7 +85,13 @@ export async function canSee(repo: string, cmd: GitHubCommand = GH): Promise<Che
   if (result.startFailure) return { ok: false, error: `Petrina couldn't start the repository check for ${repo} (${commandFailure(result).error})` };
   if (result.timedOut) return { ok: false, error: `Petrina could not confirm whether your GitHub login can see ${repo} (${commandFailure(result).error})` };
   if (result.code !== 0) return { ok: false, error: `your GitHub login cannot see ${repo} (${commandFailure(result).error})` };
-  return result.stdout.toLowerCase() === repo.toLowerCase() ? { ok: true, value: undefined } : { ok: false, error: `GitHub answered for ${result.stdout || "another repository"}, not ${repo}` };
+  return result.stdout.toLowerCase() === repo.toLowerCase() ? {
+    ok: true,
+    value: undefined
+  } : {
+    ok: false,
+    error: `GitHub answered for ${result.stdout || "another repository"}, not ${repo}`
+  };
 }
 
 /** "Not there", once the login is known to see the repository; otherwise why GitHub could not say. */
@@ -98,7 +117,22 @@ export async function prState(repo: string, number: number, cmd: GitHubCommand =
  */
 export async function pullRequests(repo: string, branch: string, cmd: GitHubCommand = GH): Promise<Check<PullRequestInfo[]>> {
   if (!isRefName(branch)) return { ok: false, error: "not a branch Petrina looks up" };
-  const result = await gh(cmd, repo, ["pr", "list", "--head", branch, "--state", "all", "--limit", String(LIST_LIMIT), "--json", "number,url,state,headRefName,baseRefName,headRefOid,isCrossRepository"]);
+  const result = await gh(
+    cmd,
+    repo,
+    [
+    "pr",
+    "list",
+    "--head",
+    branch,
+    "--state",
+    "all",
+    "--limit",
+    String(LIST_LIMIT),
+    "--json",
+    "number,url,state,headRefName,baseRefName,headRefOid,isCrossRepository"
+  ]
+  );
   if (result.code !== 0) return commandFailure(result);
   try {
     const list = JSON.parse(result.stdout) as Record<string, unknown>[];
@@ -109,7 +143,15 @@ export async function pullRequests(repo: string, branch: string, cmd: GitHubComm
       if (typeof entry.number !== "number" || typeof entry.url !== "string" || typeof entry.headRefName !== "string" || typeof entry.baseRefName !== "string" || typeof entry.headRefOid !== "string") {
         return { ok: false, error: "GitHub's answer was not readable" };
       }
-      prs.push({ number: entry.number, url: entry.url, state: stateOf(entry.state), head: entry.headRefName, base: entry.baseRefName, commit: entry.headRefOid, fork: entry.isCrossRepository === true });
+      prs.push({
+        number: entry.number,
+        url: entry.url,
+        state: stateOf(entry.state),
+        head: entry.headRefName,
+        base: entry.baseRefName,
+        commit: entry.headRefOid,
+        fork: entry.isCrossRepository === true
+      });
     }
     if (!prs.length) {
       const seen = await canSee(repo, cmd);
@@ -124,7 +166,12 @@ export async function pullRequests(repo: string, branch: string, cmd: GitHubComm
 export type Created = { ok: true; url: string } | { ok: false; exists: boolean; error: string };
 
 /** Open a pull request from an already pushed branch. The title and body stay text: arguments and standard input, never a shell. */
-export async function openPullRequest(repo: string, pr: { head: string; base: string; title: string; body: string }, cmd: GitHubCommand = GH): Promise<Created> {
+export async function openPullRequest(repo: string, pr: {
+  head: string;
+  base: string;
+  title: string;
+  body: string
+}, cmd: GitHubCommand = GH): Promise<Created> {
   if (!isRefName(pr.head) || !isRefName(pr.base)) return { ok: false, exists: false, error: "not a branch Petrina publishes" };
   const result = await gh(cmd, repo, ["pr", "create", "--head", pr.head, "--base", pr.base, `--title=${pr.title}`, "--body-file", "-"], pr.body);
   return created(result);
@@ -148,7 +195,11 @@ export async function latestRelease(repo: string, cmd: GitHubCommand = GH): Prom
 }
 
 /** The release for a tag; undefined only when the login sees the repository and it has none. */
-export async function findRelease(repo: string, tag: string, cmd: GitHubCommand = GH): Promise<Check<{ tag: string; url: string; draft: boolean } | undefined>> {
+export async function findRelease(repo: string, tag: string, cmd: GitHubCommand = GH): Promise<Check<{
+  tag: string;
+  url: string;
+  draft: boolean
+} | undefined>> {
   if (!isRefName(tag)) return { ok: false, error: "not a tag Petrina looks up" };
   const result = await gh(cmd, repo, ["release", "view", tag, "--json", "tagName,url,isDraft"]);
   if (result.code !== 0) return noRelease(result) ? notThere(repo, cmd) : commandFailure(result);

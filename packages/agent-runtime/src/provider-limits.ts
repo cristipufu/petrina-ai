@@ -52,7 +52,11 @@ export function codexLimit(data: Record<string, unknown>): LimitFailure | undefi
 }
 /** null means a known busy service, which must not fall through to a quota category. */
 export function grokLimit(data: Record<string, unknown>, message: string): LimitFailure | null | undefined {
-  if (data.http_status === 402 && message.includes(GROK_BALANCE_MESSAGE)) return { kind: "usage", retryAfter: GROK_REFUSAL_COOLDOWN_MS, reason: `Grok refused the request: ${GROK_BALANCE_MESSAGE}` };
+  if (data.http_status === 402 && message.includes(GROK_BALANCE_MESSAGE)) return {
+    kind: "usage",
+    retryAfter: GROK_REFUSAL_COOLDOWN_MS,
+    reason: `Grok refused the request: ${GROK_BALANCE_MESSAGE}`
+  };
   if (data.http_status === 503 || data.http_status === 529 || GROK_BUSY.some(line => message.includes(line))) return null;
   if (data.error === GROK_RATE || message.includes(GROK_RATE_MESSAGE)) return { kind: "rate" };
 }

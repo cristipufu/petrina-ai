@@ -1,5 +1,4 @@
 import { ReviewConversations, nextReviewPlace, pendingReviewPlaces, plannedReviewPlaces, rememberReviewProfile } from "@petrina/orchestrator";
-import { ParallelAdmissionGroup } from "@petrina/orchestrator";
 import { ReviewRoundCompletion, ReviewWorkflow } from "@petrina/orchestrator";
 import { createVerifierBallots } from "./verifier-host.js";
 import { executionFor, ReviewReports, type VerifierBallots, type PendingVerification, type RepositoryContext } from "@petrina/orchestrator";
@@ -7,14 +6,16 @@ import { changesOf, versionsOf } from "./repositories.js";
 // Review rounds: Petrina's tamper check and the product's checks first, then every reviewer at once, then
 // fresh agents voting on Important findings, and the round closing back to the builder or on to delivery.
 
-import { checkReviewEvidence, inBallot, openStep,   reviewerAt, seatAnswered,  type ActiveAgent, type AgentProfile, type Id, type ReadinessRecheck, type Stage } from "@petrina/core";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import {
+  checkReviewEvidence,
+  reviewerAt,
+  type Id,
+  type Stage
+} from "@petrina/core";
 import type { z } from "zod";
 import * as git from "@petrina/repositories/git";
-import { formatFindings } from "./prompts.js";
-import { contractFor, VerifyResult, ReviewResult } from "./roles.js";
-import { Kernel, type MutableStage, type RuntimeTask,  SourceRefreshRequired } from "./kernel.js";
+import { contractFor, ReviewResult } from "./roles.js";
+import { Kernel, type MutableStage, type RuntimeTask } from "./kernel.js";
 import type { Turns } from "./turn.js";
 import type { Context } from "./context.js";
 import { CheckPreparationChanged, type ProductChecks } from "./product-checks.js";
@@ -22,11 +23,12 @@ import type { Learnings } from "./learnings.js";
 import type { Updates } from "./update.js";
 import { prepareReviewInput, readReviewInput, reviewBaseUpdates, reviewContextIntact, type ReviewInput } from "./review-context.js";
 import { conversationDigest, ParticipantUnavailable } from "./participant-conversation.js";
-import { completeAll } from "@petrina/core";
 import { checkProofRequests, recordReviewProofs } from "@petrina/orchestrator";
-
-/** What admission decided for a parallel seat: the words on its start, why a saved conversation was not kept, and its readiness recheck. */
-type SeatSelection = { selectionReason?: string; freshReason?: string; readiness?: ReadinessRecheck };
+import {
+  runParallelReviewGroup,
+  runVerificationVote,
+  type ParallelReviewMember,
+} from "./review-parallel-group.js";
 
 export class Reviews {
   private readonly ballots: VerifierBallots;
@@ -55,7 +57,10 @@ export class Reviews {
     this.ballots = createVerifierBallots(k);
     this.rounds = new ReviewRoundCompletion({
       role: (id, task) => k.role(id, task), roles: () => k.s.roles,
-      incrementalReview: id => { const role = k.role(id); return role && contractFor(role).incrementalReview; },
+      incrementalReview: id => {
+        const role = k.role(id);
+        return role && contractFor(role).incrementalReview;
+      },
       ownChanges: task => this.ownChanges(task),
       anchor: async ({ work }, observation) => observation.incremental
         ? git.commitVersion(work.worktree!) : { tree: await git.treeOf(work.worktree!) },
@@ -70,7 +75,22 @@ export class Reviews {
       finishStep: task => k.finishStep(task), clearStep: task => k.clearStep(task), rerun: task => k.rerun(task),
     }, {
       prepareChecks: (scope, signal) => this.prepareChecks(scope, signal),
-      checks: async (scope, signal) => this.checks.failing(scope, signal, await this.checks.ensureChecks(scope, signal), "review", () => this.prepareChecks(scope, signal)),
+      checks: async (
+        scope,
+        signal
+      ) => this.checks.failing(
+        scope,
+        signal,
+        await this.checks.ensureChecks(
+        scope,
+        signal
+      ),
+        "review",
+        () => this.prepareChecks(
+        scope,
+        signal
+      )
+      ),
       preparationChanged: error => error instanceof CheckPreparationChanged,
       backToBuilder: (scope, products) => this.checks.backToBuilder(scope, "before review", products), blocked: task => this.checks.blocked(task),
       versions: versionsOf,
@@ -80,7 +100,23 @@ export class Reviews {
         this.inputs.set(scope.task, { digest: input.digest, input: snapshot });
         return input;
       },
-      pendingReviewers: (task, stage) => this.pendingReviewers(task, stage), hunt: (task, stage, reviewers, signal) => this.hunt(task, stage, reviewers, signal),
+      pendingReviewers: (
+        task,
+        stage
+      ) => this.pendingReviewers(
+        task,
+        stage
+      ), hunt: (
+        task,
+        stage,
+        reviewers,
+        signal
+      ) => this.hunt(
+        task,
+        stage,
+        reviewers,
+        signal
+      ),
       pendingVote: (task, stage) => this.pendingVote(task, stage), vote: (task, pending, signal) => this.vote(task, pending, signal),
       finishBallot: (task, pending) => this.ballots.finish(task, pending),
       closeRound: (task, stage, round, outcome, versions) => this.closeReviewRound(task, stage, round, outcome, versions),
@@ -104,10 +140,22 @@ export class Reviews {
     }
     for (const problem of problems) {
       if (!task.findings.some(finding => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(work.productId)))) {
-        task.findings.push({ ...(task.repositories ? { productIds: [work.productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+        task.findings.push({
+          ...(task.repositories ? { productIds: [work.productId] } : {}),
+          id: this.k.id(task.id),
+          text: problem,
+          severity: "blocking",
+          raisedBy: "petrina",
+          confirmedBy: [],
+          status: "open"
+        });
       }
     }
-    this.k.log(scope, problems.length ? "warn" : "done", problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped");
+    this.k.log(
+      scope,
+      problems.length ? "warn" : "done",
+      problems.length ? `Tamper check: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tamper check passed: no tests removed or skipped"
+    );
     return true;
   }
 
@@ -182,7 +230,15 @@ export class Reviews {
   private async hunt(task: RuntimeTask, stage: MutableStage, reviewers: readonly { key: string; profileId: Id }[], signal: AbortSignal): Promise<void> {
     const scope = executionFor(task);
     const input = await this.input(task, signal);
-    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(input.findings, result, task) ?? checkProofRequests(this.k, task, result.proofRequests);
+    const check = (result: z.infer<typeof ReviewResult>) => checkReviewEvidence(
+      input.findings,
+      result,
+      task
+    ) ?? checkProofRequests(
+      this.k,
+      task,
+      result.proofRequests
+    );
     // What the step waits for: every planned place, not only the participants that happen to start.
     const seats = this.plannedSeats(task, stage);
     if (stage.profileIds.length === 1 && !task.repositories) {
@@ -190,7 +246,35 @@ export class Reviews {
       const roleId = reviewerAt(stage, Number(key));
       const participant = { ...this.participant(scope, stage, key, profileId), reviewFindings: input.findings };
       let by = profileId;
-      const result = await this.turns.turn(scope, roleId, profileId, () => this.context.sectionsFor(scope, roleId, undefined, undefined, `review-${key}`, input), ReviewResult, signal, { ...participant, check, reviewerKey: key, seats, used: (id) => { by = id; this.rememberReviewer(task, key, id); } });
+      const result = await this.turns.turn(
+        scope,
+        roleId,
+        profileId,
+        () => this.context.sectionsFor(
+        scope,
+        roleId,
+        undefined,
+        undefined,
+        `review-${key}`,
+        input
+      ),
+        ReviewResult,
+        signal,
+        {
+        ...participant,
+        check,
+        reviewerKey: key,
+        seats,
+        used: (id) => {
+        by = id;
+        this.rememberReviewer(
+        task,
+        key,
+        id
+      );
+      }
+      }
+      );
       await this.applyReview(scope, stage, result, by, roleId, key);
       this.reportAccepted(task, key);
       return;
@@ -210,18 +294,64 @@ export class Reviews {
           let by = profileId;
           const roleId = reviewerAt(stage, Number(key));
           const participant = { ...this.participant(scope, stage, key, profileId), reviewFindings: input.findings };
-          const used = (id: Id) => { by = id; onUsed(id); };
+          const used = (id: Id) => {
+            by = id;
+            onUsed(id);
+          };
           const given = () => this.context.sectionsFor(scope, roleId, `review-${key}`, this.turns.repositoryCopies.get(copy), undefined, input);
           const result = continuing
-            ? await this.turns.turn(scope, roleId, profileId, given, ReviewResult, signal, { ...participant, check, copy, member: `review-${key}`, reviewKey: `reviewer:${key}`, used, room, reviewerKey: key, seats })
-            : await this.turns.parallel(scope, roleId, profileId, copy, given, ReviewResult, signal, { ...participant, check, key: `reviewer:${key}`, member: `review-${key}`, used, room, seat, ...selection, reviewerKey: key, seats, agent, refresh: false });
+            ? await this.turns.turn(
+              scope,
+              roleId,
+              profileId,
+              given,
+              ReviewResult,
+              signal,
+              {
+              ...participant,
+              check,
+              copy,
+              member: `review-${key}`,
+              reviewKey: `reviewer:${key}`,
+              used,
+              room,
+              reviewerKey: key,
+              seats
+            }
+            )
+            : await this.turns.parallel(
+              scope,
+              roleId,
+              profileId,
+              copy,
+              given,
+              ReviewResult,
+              signal,
+              {
+              ...participant,
+              check,
+              key: `reviewer:${key}`,
+              member: `review-${key}`,
+              used,
+              room,
+              seat,
+              ...selection,
+              reviewerKey: key,
+              seats,
+              agent,
+              refresh: false
+            }
+            );
           await this.applyReview(scope, stage, result, by, roleId, key);
           this.k.finishReviewWork(task, `reviewer:${key}`);
           this.reportAccepted(task, key);
         },
       })),
       signal,
-      (running, waiting) => `${running} ${role.toLowerCase()}${running === 1 ? ` looking at the ${scope.work.portReview ? "port" : "change"}` : "s looking at the change at once"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
+      (
+        running,
+        waiting
+      ) => `${running} ${role.toLowerCase()}${running === 1 ? ` looking at the ${scope.work.portReview ? "port" : "change"}` : "s looking at the change at once"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
     );
   }
 
@@ -250,187 +380,41 @@ export class Reviews {
    * as it arrives with its place, so a limit or restart only asks for what that place still owes.
    */
   private async vote(task: RuntimeTask, pending: PendingVerification, signal: AbortSignal): Promise<void> {
-    const scope = executionFor(task);
-    const input = task.hunt?.input ? await this.input(task, signal) : undefined;
-    // Every voter sees the same original claims and evidence, never a peer's ballot.
-    const claims = structuredClone(pending.findings).map(({ votes: _votes, verification: _verification, unresolved: _unresolved, ...finding }) => finding);
-    // The step waits for every place of its phase, finished or not, whoever stands in on each tool.
-    const seats = (pending.phase ?? pending.seats).map((seat) => `verifier:${seat.key}`);
-    // The live status counts only the findings these places were given.
-    const findings = new Set(pending.seats.flatMap((seat) => seat.findingIds).filter((id) => claims.some((finding) => finding.id === id))).size;
-    await this.together(
+    return runVerificationVote(
+      {
+        k: this.k,
+        turns: this.turns,
+        context: this.context,
+        ballots: this.ballots,
+        readInput: (current, innerSignal) => this.input(current, innerSignal),
+        together: (current, members, innerSignal, status) => this.together(current, members, innerSignal, status),
+      },
       task,
-      pending.seats.map((planned, index) => {
-        const profileId = pending.voters[index]!;
-        const plannedId = planned.profileId;
-        const assigned = new Set(planned.findingIds);
-        // The member is named after its place, never its tool: a replacement saves its conversation and retry count
-        // there, a later start of this place finds them under the same name, and a reused tool never shares them.
-        const key = `vote-${planned.key}`;
-        const reviewKey = `verifier:${planned.key}`;
-        return {
-        key,
-        reviewKey,
-        roleId: "verifier",
-        profileId,
-        work: async (copy, room, seat, used, agent, continuing, signal, selection) => {
-          let by = seat;
-          const place = () => task.hunt?.panel?.seats.find((entry) => entry.key === planned.key) ?? planned;
-          const answered = (id: Id) => {
-            const finding = task.findings.find((entry) => entry.id === id);
-            const panel = task.hunt?.panel;
-            if (!finding) return true;
-            return panel ? seatAnswered(panel, place(), finding, task.hunt!) : (finding.votes ?? []).some((vote) => vote.toolId === this.k.profile(by)!.toolId && inBallot(vote, task.hunt!));
-          };
-          const missing = () => claims.filter((finding) => assigned.has(finding.id) && !answered(finding.id));
-          const given = async () => [...await this.context.sectionsFor(scope, "verifier", key, this.turns.repositoryCopies.get(copy), undefined, input), { title: "Important findings to check (a verdict on every one, by id)", body: formatFindings(missing(), { complete: true }) }];
-          const check = (value: z.infer<typeof VerifyResult>) => {
-            this.ballots.recordAnswers(task, { profileId: by, plannedProfileId: plannedId, place: place(), findingIds: [...assigned] }, value.verdicts);
-            const left = missing();
-            return left.length ? `give a verdict on every finding by id, and these have none:\n${formatFindings(left, { complete: true })}` : undefined;
-          };
-          const heard = (id: Id) => { by = id; used(id); };
-          const why = [place().replaced?.reason ?? place().reason, selection?.selectionReason].filter(Boolean).join(" ");
-          if (continuing) await this.turns.turn(scope, "verifier", plannedId, given, VerifyResult, signal, { copy, member: key, reviewKey, check, used: heard, room, seats, place: planned.key });
-          else await this.turns.parallel(scope, "verifier", plannedId, copy, given, VerifyResult, signal, {
-            key: reviewKey,
-            room,
-            seat, ...selection,
-            ...(why ? { selectionReason: why } : {}),
-            used: heard,
-            member: key,
-            check,
-            seats,
-            place: planned.key,
-            agent,
-            refresh: false,
-          });
-          task.hunt = { ...task.hunt!, voted: { ...task.hunt?.voted, [by]: true } };
-          const own = openStep(task)?.agentResults?.findLast((entry) => (this.k.role(entry.roleId, task)?.result === "votes" || entry.roleId === "verifier") && entry.profileId === by);
-          if (own) own.findings = structuredClone(task.findings.filter((finding) => assigned.has(finding.id)));
-          this.k.finishReviewWork(task, reviewKey);
-          this.k.commit();
-        },
-      };
-      }),
+      pending,
       signal,
-      (running, waiting) => `${running} fresh agent${running === 1 ? "" : "s"} ${pending.third ? "giving a third answer on" : "voting on"} ${findings} important finding${findings === 1 ? "" : "s"}${waiting ? `, ${waiting} waiting for a slot` : ""}`,
     );
   }
 
   /**
    * Several agents on one step at once, each in a working copy of its own made from the task's current
    * commit, so a test one runs or a checkout one makes never disturbs another, and the task's own copy is
-   * never touched. The first takes the task's own slot; each other one starts when a slot of its own is
-   * free, so the pool and every tool's cap still hold. One that cannot get a slot by the time the others
-   * finish is left for the driver, which waits for one. A failure stops the rest. A member whose tool and
-   * every stand-in are out of usage does not: the others finish, and then the task waits for a limit to end.
-   * A member whose model is full waits aside with its copy, conversation and retry count. When its own wait
-   * ends while peers still work, the scheduler offers it a seat like other work in progress and it rejoins;
-   * the task waits for it only once every peer has finished first.
+   * never touched.
    */
-  private async together(task: RuntimeTask, members: readonly { key: string; reviewKey: string; roleId: Id; profileId: Id; reviewerKey?: string; work: (copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: SeatSelection) => Promise<void> }[], parentSignal: AbortSignal, status: (running: number, waiting: number) => string): Promise<void> {
-    const scope = executionFor(task);
-    const root = this.k.repositoryOf(scope)!.path!;
-    const copyFolder = (productId: Id) => join(this.k.dataDir, "worktrees", productId, `${task.id}.copies`);
-    const folder = copyFolder(scope.work.productId);
-    // Pin all repositories before any reviewer starts. Every peer receives its own complete map.
-    const versions = task.repositories ? await Promise.all(task.repositories.map(async (work) => {
-      const restoreSha = await git.head(work.worktree!);
-      return { productId: work.productId, root: work.source!.product.path!, path: work.worktree!, restoreSha, sha: task.hunt?.input?.heads[work.productId] ?? restoreSha };
-    })) : [];
-    const restoreSha = versions.find((work) => work.productId === scope.work.productId)?.restoreSha ?? await git.head(scope.work.worktree!);
-    const sha = task.hunt?.input?.heads[scope.work.productId] ?? restoreSha;
-    const copyOwners = versions.length ? versions.map((work) => ({ root: work.root, folder: copyFolder(work.productId) })) : [{ root, folder }];
-    // Only saved screen conversations keep their copies; interrupted background peers start fresh.
-    const keptCopies = () => Object.values(task.hunt?.screenTurns ?? {}).flatMap((entry) => [entry.copy, ...Object.values(entry.copies ?? {})]);
-    await completeAll(copyOwners.map((owner) => git.removeCopies(owner.root, owner.folder, keptCopies())));
-    // Each member's own copy in each product, fixed for the group once chosen, so a member coming back reopens it.
-    // Its folder name encodes the member's name, which may hold characters a file system refuses (a third answer's
-    // `third:` place). A folder already held is never shared, including one a screen wait saved under an earlier
-    // version's naming: the member takes the next free `.1`, `.2`… folder instead, a form no encoded name has.
-    const chosen = new Map<string, string>();
-    const memberCopy = (productId: Id, member: string) => {
-      const key = JSON.stringify([productId, member]);
-      const known = chosen.get(key);
-      if (known !== undefined) return known;
-      // Compared without case too: a disk that ignores case treats two such folders as one.
-      const held = new Set([...chosen.values(), ...keptCopies()].map((path) => path.toLowerCase()));
-      const base = join(copyFolder(productId), git.copyFolderName(member));
-      let path = base;
-      for (let next = 1; held.has(path.toLowerCase()) || existsSync(path); next += 1) path = `${base}.${next}`;
-      chosen.set(key, path);
-      return path;
-    };
-    // One fresh pull-request read is shared by reviewers; a usage replacement reads again on its attempt.
-    await this.turns.refresh(scope);
-    // An unopened group must return through ordinary source updates and snapshot preparation.
-    if (this.k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-    const group = new ParallelAdmissionGroup({
-      state: () => this.k.s, activeState: () => this.k.activeState(), now: () => Date.now(), draining: () => this.k.draining,
-      admissionsClosed: task => this.k.taskAdmissionsClosed(task), admissionWait: task => this.k.taskAdmissionWait(task), sourceRefreshDue: task => this.k.taskSourceRefreshDue(task),
-      selectScreen: task => this.k.selectScreen(task), syncScreen: () => this.k.syncScreen(), showReviewWork: task => this.k.showReviewWork(task), finishStep: task => this.k.finishStep(task), waitForUsage: (task, words) => this.k.waitForUsage(task, words),
-      rememberReviewer: (task, key, profileId) => this.rememberReviewer(task, key, profileId), changed: () => this.k.commit(), checkpoint: () => this.k.commitNow(), schedule: () => this.k.schedule(),
-    }, this.k.agentAdmission);
-    await group.run({ scope, members, signal: parentSignal, status, workspaces: {
-      reference: member => memberCopy(scope.work.productId, member),
-      prepare: async (member, copy, continuing, reuse) => {
-        const kept = continuing ? task.hunt?.screenTurns?.[member.key]?.copies : undefined;
-        const copies: Record<string, string> = { [scope.work.productId]: copy };
-        await completeAll([
-          reuse ? Promise.resolve() : git.addCopy(root, copy, sha),
-          ...versions.filter((work) => work.productId !== scope.work.productId).map(async (work) => {
-            const peer = kept?.[work.productId] ?? memberCopy(work.productId, member.key);
-            if (!reuse) await git.addCopy(work.root, peer, work.sha);
-            copies[work.productId] = peer;
-          }),
-        ]);
-        return {
-          activate: () => {
-            if (versions.length) this.turns.repositoryCopies.set(copy, copies);
-            if (!reuse) this.turns.copyHeads.set(copy, sha);
-          },
-          finish: () => {
-            const saved = task.hunt?.screenTurns?.[member.key];
-            if (saved && versions.length) { saved.copies = copies; saved.conversation.repositoryCopies = copies; this.k.commitNow(); }
-            // Primary and companion copies are reclaimed together by their owning repositories
-            // when the group settles; saved screen turns retain their complete map.
-            this.turns.repositoryCopies.delete(copy);
-            this.turns.copyHeads.delete(copy);
-          },
-        };
-      },
-      stopHelpers: () => this.k.stopHelpers(task.id), closeTaskRun: () => {
-        const run = this.k.runs.get(task.id);
-        if (run) void this.k.stopAgent(task.id, run).catch(() => undefined);
-      }, releasedStops: () => this.turns.releasedStops(task.id),
-      finish: async readOnly => {
-        await completeAll([
-          ...copyOwners.map(async (owner) => {
-            try { await git.removeCopies(owner.root, owner.folder, keptCopies()); }
-            catch (error) {
-              // Disposable-copy cleanup must not discard an accepted report or hide the
-              // agent's original failure. The normal cleanup sweep can reclaim it later.
-              this.k.log(task, "warn", `Could not remove a review copy: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          }),
-          ...versions.filter((work) => !readOnly || work.path !== scope.work.worktree).map(async (work) => {
-            const state = await git.worktreeStatus(work.path);
-            if (state.head !== work.restoreSha) await git.resetTo(work.path, work.restoreSha);
-            if (!state.clean) await git.discardChanges(work.path);
-          }),
-          // Copies share branches: recover the original task copy too, after every agent stopped.
-          ...(scope.work.worktree && readOnly ? [(async () => {
-            const state = await git.worktreeStatus(scope.work.worktree!);
-            if (state.head !== restoreSha) {
-              await git.resetTo(scope.work.worktree!, restoreSha);
-              this.k.log(task, "warn", `Undid commits from ${this.k.role(members[0]!.roleId)?.name ?? "a reviewer"}, which is read-only`);
-            }
-            await this.k.undoReadOnly(scope, members[0]!.roleId, scope.work.worktree!, state.clean);
-          })()] : []),
-        ]);
-      },
-    } });
+  private async together(
+    task: RuntimeTask,
+    members: readonly ParallelReviewMember[],
+    parentSignal: AbortSignal,
+    status: (running: number, waiting: number) => string,
+  ): Promise<void> {
+    return runParallelReviewGroup(
+      this.k,
+      this.turns,
+      (current, key, profileId) => this.rememberReviewer(current, key, profileId),
+      task,
+      members,
+      parentSignal,
+      status,
+    );
   }
 
   /** Settle objections and shared repairs together, only after the whole reviewer group reports. */

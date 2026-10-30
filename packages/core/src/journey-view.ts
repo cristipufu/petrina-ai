@@ -123,7 +123,10 @@ function stageSteps(task: Task, stage: Stage, index: number, ctx: Pick<JourneyCo
       const agent: Planned = { ...base, kind: "agent", roleId: stage.roleId, ...(stage.profileIds[0] ? { profileId: stage.profileIds[0] } : {}) };
       if (!isDelivery(stage, ctx.roles)) {
         return from === 0
-          ? [{ ...agent, ...(task.updating && index === task.stageIndex ? { update: true } : task.fixing && index === task.stageIndex ? { fixing: true } : {}) }]
+          ? [{
+            ...agent,
+            ...(task.updating && index === task.stageIndex ? { update: true } : task.fixing && index === task.stageIndex ? { fixing: true } : {})
+          }]
           : [];
       }
       // The release notes are written once: an interrupted delivery only publishes again.

@@ -33,9 +33,34 @@ function Mark({ node }: { node: JourneyNode }) {
 
 function StepMarks({ node }: { node: JourneyNode }) {
   if (!node.roundMark && !node.updateMark && !node.repeatMark && !node.fixMark && !node.portMark && !node.callMark) return null;
-  const label = [node.roundMark ? `Round ${node.roundMark}` : "", node.updateMark ? "Update" : "", node.fixMark ? `Fix ${node.fixMark}` : "", node.portMark ? "Port review" : "", node.callMark ? "Your call" : "", node.repeatMark ? "Repeated" : ""].filter(Boolean).join(", ");
+  const label = [
+    node.roundMark ? `Round ${node.roundMark}` : "",
+    node.updateMark ? "Update" : "",
+    node.fixMark ? `Fix ${node.fixMark}` : "",
+    node.portMark ? "Port review" : "",
+    node.callMark ? "Your call" : "",
+    node.repeatMark ? "Repeated" : ""
+  ].filter(Boolean).join(", ");
   return <span className="jn-step-marks" role="img" aria-label={label} title={label}>
-    {node.roundMark ? <span className="jn-round-marks" aria-hidden="true">{Array.from({ length: Math.min(node.roundMark, 5) }, (_, index) => <i key={index} className={index === Math.min(node.roundMark!, 5) - 1 ? "current" : ""} />)}</span> : null}
+    {node.roundMark ? <span
+      className="jn-round-marks"
+      aria-hidden="true"
+    >{Array.from(
+      { length: Math.min(
+      node.roundMark,
+      5
+    ) },
+      (
+      _,
+      index
+    ) => <i
+      key={index}
+      className={index === Math.min(
+      node.roundMark!,
+      5
+    ) - 1 ? "current" : ""}
+    />
+    )}</span> : null}
     {node.updateMark ? <Pencil size={11} aria-hidden="true" /> : null}
     {node.fixMark ? <span className="jn-fix-mark" aria-hidden="true"><Wrench size={10} />{node.fixMark}</span> : null}
     {node.portMark ? <GitBranch size={11} aria-hidden="true" /> : null}
@@ -46,7 +71,16 @@ function StepMarks({ node }: { node: JourneyNode }) {
 
 const JourneyBox = memo(function JourneyBox({ data }: NodeProps<Node<BoxData>>) {
   const { kind, node } = data;
-  const classes = ["jn", `k-${kind}`, node ? `s-${node.state}` : undefined, node?.state === "now" ? `r-${node.run}` : undefined, node?.kind === "wait" ? "wait" : undefined, data.endState ? `e-${data.endState}` : undefined, data.selected ? "selected" : undefined, data.focused ? "focused" : undefined].filter(Boolean).join(" ");
+  const classes = [
+    "jn",
+    `k-${kind}`,
+    node ? `s-${node.state}` : undefined,
+    node?.state === "now" ? `r-${node.run}` : undefined,
+    node?.kind === "wait" ? "wait" : undefined,
+    data.endState ? `e-${data.endState}` : undefined,
+    data.selected ? "selected" : undefined,
+    data.focused ? "focused" : undefined
+  ].filter(Boolean).join(" ");
   return (
     <div className="jn-item" style={{ width: data.width, height: data.height }}>
       <Handle type="target" position={Position.Left} isConnectable={false} className="jn-handle" style={{ top: data.spine }} />
@@ -268,7 +302,15 @@ export function Diagram({ nodes, edges, items, contentHeight, height, target, fo
 }
 
 /** Zoom and pan only when asked: small buttons, and Back to now once you moved away from the live step. */
-export function Controls({ glide, bounds, following, setFollowing }: { glide: number; bounds: { width: number; height: number }; following: boolean; setFollowing: (following: boolean) => void }) {
+export function Controls({ glide, bounds, following, setFollowing }: {
+  glide: number;
+  bounds: {
+  width: number;
+  height: number
+};
+  following: boolean;
+  setFollowing: (following: boolean) => void
+}) {
   const flow = useReactFlow();
   return (
     <div className="journey-controls" role="group" aria-label="Diagram view">
@@ -278,13 +320,48 @@ export function Controls({ glide, bounds, following, setFollowing }: { glide: nu
           <span>Back to now</span>
         </button>
       )}
-      <button className="btn quiet small icon" aria-label="Zoom in" title="Zoom in" onClick={() => { setFollowing(false); void flow.zoomIn({ duration: glide }); }}>
+      <button
+        className="btn quiet small icon"
+        aria-label="Zoom in"
+        title="Zoom in"
+        onClick={() => {
+        setFollowing(false);
+        void flow.zoomIn({ duration: glide });
+      }}
+      >
         <ZoomIn size={16} aria-hidden="true" />
       </button>
-      <button className="btn quiet small icon" aria-label="Zoom out" title="Zoom out" onClick={() => { setFollowing(false); void flow.zoomOut({ duration: glide }); }}>
+      <button
+        className="btn quiet small icon"
+        aria-label="Zoom out"
+        title="Zoom out"
+        onClick={() => {
+        setFollowing(false);
+        void flow.zoomOut({ duration: glide });
+      }}
+      >
         <ZoomOut size={16} aria-hidden="true" />
       </button>
-      <button className="btn quiet small icon" aria-label="Show the whole journey" title="Show the whole journey" onClick={() => { setFollowing(false); void flow.fitBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height }, { padding: 0.04, duration: glide }); }}>
+      <button
+        className="btn quiet small icon"
+        aria-label="Show the whole journey"
+        title="Show the whole journey"
+        onClick={() => {
+        setFollowing(false);
+        void flow.fitBounds(
+        {
+        x: 0,
+        y: 0,
+        width: bounds.width,
+        height: bounds.height
+      },
+        {
+        padding: 0.04,
+        duration: glide
+      }
+      );
+      }}
+      >
         <Maximize size={16} aria-hidden="true" />
       </button>
     </div>
@@ -292,7 +369,13 @@ export function Controls({ glide, bounds, following, setFollowing }: { glide: nu
 }
 
 /** One tab stop; the arrow keys move through the steps, and Enter opens a step's details. */
-export function JourneyList({ view, find, now, onFocusStep, onSelect }: { view: JourneyView; find: Lookup; now: number; onFocusStep: (id: string | undefined) => void; onSelect: (id: string) => void }) {
+export function JourneyList({ view, find, now, onFocusStep, onSelect }: {
+  view: JourneyView;
+  find: Lookup;
+  now: number;
+  onFocusStep: (id: string | undefined) => void;
+  onSelect: (id: string) => void
+}) {
   const [active, setActive] = useState<number>();
   const live = Math.max(0, view.nodes.findIndex((node) => node.state === "now" || node.state === "you"));
   const tabStop = Math.min(active ?? live, view.nodes.length - 1);

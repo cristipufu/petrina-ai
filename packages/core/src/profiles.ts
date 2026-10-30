@@ -81,21 +81,36 @@ export function profileModelName(profile: Pick<AgentProfile, "toolId" | "modelId
 export function profileReferences(state: Pick<State, "tasks" | "routines" | "backgroundAgents">, id: string): string[] {
   const tasks = state.tasks.filter(task => !["done", "cancelled", "pr-open"].includes(task.state) && (
     task.maintenance?.profile.id === id || task.agent?.profileId === id || task.helpers?.some(agent => agent.profileId === id) || task.hunt?.voterProfiles?.includes(id) || task.hunt?.panel?.seats.some(seat => seat.profileId === id) ||
-    [...(task.repositories ?? []), ...(task.repository ? [task.repository] : []), task].some(work => work.conversation?.profileId === id || work.builderSession?.profileId === id) ||
+    [
+      ...(task.repositories ?? []),
+      ...(task.repository ? [task.repository] : []),
+      task
+    ].some(work => work.conversation?.profileId === id || work.builderSession?.profileId === id) ||
     task.plan?.stages.some(stage => [...stage.profileIds, ...stage.reviewerProfileIds ?? []].includes(id)) ||
     task.plan?.products?.some(product => product.builderProfileId === id || product.reviewerProfileIds.includes(id))
   )).map(task => `task “${task.title}”`);
-  return [...tasks, ...(state.backgroundAgents ?? []).filter(agent => agent.profileId === id).map(agent => agent.label), ...(state.routines ?? []).filter(routine => routine.profileId === id).map(routine => `routine “${routine.name}”`)];
+  return [
+    ...tasks,
+    ...(state.backgroundAgents ?? []).filter(agent => agent.profileId === id).map(agent => agent.label),
+    ...(state.routines ?? []).filter(routine => routine.profileId === id).map(routine => `routine “${routine.name}”`)
+  ];
 }
 
 export function assertProfileUnused(state: Pick<State, "tasks" | "routines" | "backgroundAgents">, id: string): void {
   const references = profileReferences(state, id);
-  if (references.length) throw new Error(`Reassign ${references.slice(0, 3).join(", ")}${references.length > 3 ? ` and ${references.length - 3} more` : ""} before changing this profile.`);
+  if (references.length) throw new Error(`Reassign ${references.slice(
+    0,
+    3
+  ).join(", ")}${references.length > 3 ? ` and ${references.length - 3} more` : ""} before changing this profile.`);
 }
 
 export function saveProfile(state: import("./flow.js").DeepMutable<State>, draft: ProfileDraft, choices: ProfileChoices, id: string, previousId?: string): string {
   const previous = previousId ? state.profiles.find(profile => profile.id === previousId) : undefined;
-  const same = (profile: AgentProfile) => profileConfiguration(profile) === JSON.stringify([draft.toolId, draft.modelId, draft.effort]) && Boolean(profile.standby) === Boolean(draft.standby);
+  const same = (profile: AgentProfile) => profileConfiguration(profile) === JSON.stringify([
+    draft.toolId,
+    draft.modelId,
+    draft.effort
+  ]) && Boolean(profile.standby) === Boolean(draft.standby);
   // A lost reply can be retried with the same supplied identity, including a versioned edit.
   const existing = state.profiles.find(profile => profile.id === id);
   if (existing && same(existing) && (!previousId || previousId === id || state.retiredProfiles?.some(profile => profile.id === previousId))) return existing.id;
@@ -105,9 +120,24 @@ export function saveProfile(state: import("./flow.js").DeepMutable<State>, draft
   const model = choices.models.find(model => model.id === draft.modelId);
   if (choices.toolId !== draft.toolId || choices.modelId !== draft.modelId || !model || !choices.efforts.includes(draft.effort)) throw new Error("Choose a model and effort supported by this tool. Refresh its choices and try again.");
   if (existing || state.retiredProfiles?.some(profile => profile.id === id)) throw new Error("This profile identity is already used. Reopen the editor.");
-  if (state.profiles.some(profile => profile.id !== previousId && profileConfiguration(profile) === JSON.stringify([draft.toolId, draft.modelId, draft.effort]))) throw new Error("A profile with this tool, model and effort already exists.");
+  if (state.profiles.some(profile => profile.id !== previousId && profileConfiguration(profile) === JSON.stringify([
+    draft.toolId,
+    draft.modelId,
+    draft.effort
+  ]))) throw new Error("A profile with this tool, model and effort already exists.");
   if (draft.standby && !state.profiles.some(profile => profile.id !== previousId && !profile.standby)) throw new Error("Keep at least one profile available to the planner.");
-  const next: AgentProfile = { id, toolId: draft.toolId, modelId: model.id, model: profileModelName({ toolId: draft.toolId, modelId: model.id, model: model.name }), effort: draft.effort, ...(draft.standby ? { standby: true } : {}) };
+  const next: AgentProfile = {
+    id,
+    toolId: draft.toolId,
+    modelId: model.id,
+    model: profileModelName({
+    toolId: draft.toolId,
+    modelId: model.id,
+    model: model.name
+  }),
+    effort: draft.effort,
+    ...(draft.standby ? { standby: true } : {})
+  };
   if (previous) {
     state.retiredProfiles = [...state.retiredProfiles ?? [], previous];
     state.profiles = state.profiles.filter(profile => profile.id !== previousId);
@@ -132,5 +162,13 @@ export function demoProfileChoices(toolId: string, modelId?: string): ProfileCho
   const profiles = DEFAULT_PROFILES.filter(profile => profile.toolId === toolId);
   const models = [...new Map(profiles.map(profile => [profile.modelId!, { id: profile.modelId!, name: profileModelName(profile) }])).values()];
   const selected = modelId ?? models[0]?.id ?? "";
-  return { toolId, models, modelId: selected, efforts: [...new Set([...profiles.filter(profile => profile.modelId === selected).map(profile => profile.effort), ...(toolId === "claude-code" ? ["medium" as const] : [])])] };
+  return {
+    toolId,
+    models,
+    modelId: selected,
+    efforts: [...new Set([
+    ...profiles.filter(profile => profile.modelId === selected).map(profile => profile.effort),
+    ...(toolId === "claude-code" ? ["medium" as const] : [])
+  ])]
+  };
 }

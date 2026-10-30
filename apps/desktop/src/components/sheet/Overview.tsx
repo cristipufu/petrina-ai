@@ -2,7 +2,20 @@
 
 import { useState } from "react";
 import { Monitor, User } from "lucide-react";
-import { builderCheckSummary, checkProblem, occurrenceText, SCREEN_WORDS, mainLine, nextLine, screenWait, timeLeft, workedSoFar, type Role, type State, type Task } from "@petrina/core";
+import {
+  builderCheckSummary,
+  checkProblem,
+  occurrenceText,
+  SCREEN_WORDS,
+  mainLine,
+  nextLine,
+  screenWait,
+  timeLeft,
+  workedSoFar,
+  type Role,
+  type State,
+  type Task
+} from "@petrina/core";
 import { deliveryText, duration, profileText, type Lookup } from "../../lib";
 import { failureText, sim } from "../../engine";
 import { RoleAvatar } from "../bits";
@@ -63,7 +76,17 @@ function nowLines(task: Task, state: State): { first: string; time?: string; sec
   return { first: task.statusLine, ...(time ? { time } : {}), ...(waitingOnYou && task.todo && task.todo !== task.statusLine ? { second: task.todo } : {}) };
 }
 
-export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, onOpenTask, onDependencies, separateFlow = false }: { task: Task; state: State; find: Lookup; onAboutNumbers: () => void; onReadSession: (stepId: string, name: string) => void; onPlan: () => void; onOpenTask?: (taskId: string) => void; onDependencies?: (task: Task) => void; separateFlow?: boolean }) {
+export function Overview({ task, state, find, onAboutNumbers, onReadSession, onPlan, onOpenTask, onDependencies, separateFlow = false }: {
+  task: Task;
+  state: State;
+  find: Lookup;
+  onAboutNumbers: () => void;
+  onReadSession: (stepId: string, name: string) => void;
+  onPlan: () => void;
+  onOpenTask?: (taskId: string) => void;
+  onDependencies?: (task: Task) => void;
+  separateFlow?: boolean
+}) {
   const [all, setAll] = useState(false);
   // Waiting for the screen, the agent that asked is still the one this step is about.
   const role = find.role(task.agent?.roleId ?? task.screen?.roleId);
@@ -76,10 +99,33 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
 
   return (
     <>
-      {task.maintenance && <section className="sheet-section reading"><h2>Scheduled routine</h2><p>{task.maintenance.routineName}</p><p>{occurrenceText(task.maintenance.scheduledAt, task.maintenance.zone)}</p>{task.maintenance.catchUp && <p>{task.maintenance.catchUp}</p>}<p>{task.maintenance.role.name} · {profileText(task.maintenance.profile, find, true)}</p>{task.maintenance.noProductChanges && <p>Completed · No product changes</p>}{task.maintenance.settingsDecision && <p>Requested: {task.maintenance.settingsDecision.requested}<br />Reported: {task.maintenance.settingsDecision.actual}<br />{task.maintenance.settingsDecision.choice === "keep" ? "You kept this run with its reported settings." : task.maintenance.settingsDecision.choice === "stop" ? "You stopped this run." : "Waiting for your decision in Inbox."}</p>}</section>}
-      {task.combinedInto && <section className="sheet-section reading"><h2>Combined request</h2><p>This request is part of <TaskLink taskId={task.combinedInto} find={find} onOpen={onOpenTask}>the combined task</TaskLink>.</p></section>}
-      {task.combinedFrom?.length && <section className="sheet-section reading"><h2>Original requests</h2><ul>{task.combinedFrom.map((source) => <li key={source.id}><TaskLink taskId={source.id} find={find} onOpen={onOpenTask}>{source.title}</TaskLink></li>)}</ul></section>}
-      {!separateFlow && <Journey key={task.id} task={task} state={state} find={find} onReadSession={onReadSession} onPlan={onPlan} {...(onOpenTask ? { onOpenTask } : {})} />}
+      {task.maintenance && <section className="sheet-section reading"><h2>Scheduled routine</h2><p>{task.maintenance.routineName}</p><p>{occurrenceText(
+        task.maintenance.scheduledAt,
+        task.maintenance.zone
+      )}</p>{task.maintenance.catchUp && <p>{task.maintenance.catchUp}</p>}<p>{task.maintenance.role.name} · {profileText(
+        task.maintenance.profile,
+        find,
+        true
+      )}</p>{task.maintenance.noProductChanges && <p>Completed · No product changes</p>}{task.maintenance.settingsDecision && <p>Requested: {task.maintenance.settingsDecision.requested}<br />Reported: {task.maintenance.settingsDecision.actual}<br />{task.maintenance.settingsDecision.choice === "keep" ? "You kept this run with its reported settings." : task.maintenance.settingsDecision.choice === "stop" ? "You stopped this run." : "Waiting for your decision in Inbox."}</p>}</section>}
+      {task.combinedInto && <section className="sheet-section reading"><h2>Combined request</h2><p>This request is part of <TaskLink
+        taskId={task.combinedInto}
+        find={find}
+        onOpen={onOpenTask}
+      >the combined task</TaskLink>.</p></section>}
+      {task.combinedFrom?.length && <section className="sheet-section reading"><h2>Original requests</h2><ul>{task.combinedFrom.map((source) => <li key={source.id}><TaskLink
+        taskId={source.id}
+        find={find}
+        onOpen={onOpenTask}
+      >{source.title}</TaskLink></li>)}</ul></section>}
+      {!separateFlow && <Journey
+        key={task.id}
+        task={task}
+        state={state}
+        find={find}
+        onReadSession={onReadSession}
+        onPlan={onPlan}
+        {...(onOpenTask ? { onOpenTask } : {})}
+      />}
 
       {task.followUp && <FollowUpReports task={task} find={find} {...(onOpenTask ? { onOpenTask } : {})} />}
       {task.state === "backlog" && <BacklogRequest key={task.id} task={task} />}
@@ -132,15 +178,35 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
           <h3>{work.source?.product.name ?? work.productId}{work.removed ? " · removed" : ""}</h3><p className="note">{work.source?.product.repo}</p>
           <p className="prose">{work.report?.summary ?? "No changes reported yet"}</p>
           <ul>{work.report?.changes.map((change) => <li key={change}>{change}</li>)}</ul>
-          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : checkProblem({ checks: work.checks }) === "unverified" ? "Unverified" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}{work.checks?.sha ? ` · version ${work.checks.sha.slice(0, 7)}` : ""}</p>
-          <p className="prose">{work.nothingToPublish ? "Nothing to publish" : work.pr ? <a href={work.pr.url} target="_blank" rel="noreferrer">Pull request #{work.pr.number} · {work.pr.state === "open" ? "waiting for merge" : work.pr.state === "merged" ? "merged" : work.landingAccepted ? "closed without merging · resolved by you" : "closed without merging · your decision needed"}</a> : work.release ? <a href={work.release.url} target="_blank" rel="noreferrer">Release {work.release.tag}</a> : work.localUpdate ? `${work.localUpdate.branch}: committed locally${work.localUpdate.pushed ? " and push confirmed" : " · push unfinished"}` : work.shipping?.step ? "Delivery needs checking before retry" : "Delivery waiting"}</p>
+          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : checkProblem({ checks: work.checks }) === "unverified" ? "Unverified" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}{work.checks?.sha ? ` · version ${work.checks.sha.slice(
+            0,
+            7
+          )}` : ""}</p>
+          <p className="prose">{work.nothingToPublish ? "Nothing to publish" : work.pr ? <a
+            href={work.pr.url}
+            target="_blank"
+            rel="noreferrer"
+          >Pull request #{work.pr.number} · {work.pr.state === "open" ? "waiting for merge" : work.pr.state === "merged" ? "merged" : work.landingAccepted ? "closed without merging · resolved by you" : "closed without merging · your decision needed"}</a> : work.release ? <a
+            href={work.release.url}
+            target="_blank"
+            rel="noreferrer"
+          >Release {work.release.tag}</a> : work.localUpdate ? `${work.localUpdate.branch}: committed locally${work.localUpdate.pushed ? " and push confirmed" : " · push unfinished"}` : work.shipping?.step ? "Delivery needs checking before retry" : "Delivery waiting"}</p>
           {work.source && <p className="note">{work.source.destination.repo} · {work.source.destination.branch}</p>}
           {work.releasePreview && <div><p>Release {work.releasePreview.tag} includes everything waiting on the default branch since its previous release.</p><p className="prose">{work.releasePreview.notes}</p></div>}
           {work.companion && <p className="note">{work.companion.state === "done" ? "Companion links finished" : "Companion links need finishing"}</p>}
         </div>)}
-        {!!task.sharedLessons?.length && <><h3>Together</h3>{task.sharedLessons.map((lesson, index) => <p className="note" key={index}>Lesson needs a product assignment: {lesson.text}</p>)}</>}
+        {!!task.sharedLessons?.length && <><h3>Together</h3>{task.sharedLessons.map((
+          lesson,
+          index
+        ) => <p
+          className="note"
+          key={index}
+        >Lesson needs a product assignment: {lesson.text}</p>)}</>}
       </section>}
-      {!!task.brief?.acceptance.length && <section className="sheet-section reading"><h2>Acceptance checklist</h2><AcceptanceChecklist task={task} roleFor={find.role} /></section>}
+      {!!task.brief?.acceptance.length && <section className="sheet-section reading"><h2>Acceptance checklist</h2><AcceptanceChecklist
+        task={task}
+        roleFor={find.role}
+      /></section>}
       <WhatItUsed task={task} state={state} find={find} onAbout={onAboutNumbers} />
       {task.localUpdate && !task.localUpdate.pushed && <p className="note">{task.localUpdate.branch} was updated in the local copy. Its push to GitHub is unfinished; the work is saved.</p>}
 
@@ -173,7 +239,15 @@ function FollowUpReports({ task, find, onOpenTask }: { task: Task; find: Lookup;
       <p className="issue-evidence">Why the change left it as it was: {report.evidence}</p>
       {!!report.reasons?.length && <p className="issue-evidence">Checked as older: {report.reasons.join(" ")}</p>}
       <p className="issue-who">
-        Found by {report.roleId && find.role(report.roleId) ? `${find.role(report.roleId)!.name} on ` : ""}{profileText(find.profile(report.raisedBy), find, true)}. From <TaskLink taskId={report.taskId} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})}>{report.sourceTitle}</TaskLink>
+        Found by {report.roleId && find.role(report.roleId) ? `${find.role(report.roleId)!.name} on ` : ""}{profileText(
+          find.profile(report.raisedBy),
+          find,
+          true
+        )}. From <TaskLink
+          taskId={report.taskId}
+          find={find}
+          {...(onOpenTask ? { onOpen: onOpenTask } : {})}
+        >{report.sourceTitle}</TaskLink>
       </p>
     </div>)}
     {pictures.map((image) => <ImagePreview key={image.id} taskId={task.id} imageId={image.id} label={image.caption || "Screenshot"} finished={finished} />)}
@@ -187,7 +261,8 @@ function BacklogRequest({ task }: { task: Task }) {
   const [error, setError] = useState("");
   const changed = title.trim() !== task.title || description.trim() !== task.description;
   const save = async (queue: boolean) => {
-    setSaving(true); setError("");
+    setSaving(true);
+    setError("");
     try {
       if (changed) await sim.updateBacklog(task.id, { title, description });
       if (queue) await sim.queueTask(task.id);
@@ -198,7 +273,13 @@ function BacklogRequest({ task }: { task: Task }) {
     <h2>Review the request</h2>
     <p className="quiet-text">Nothing starts from the backlog. Check the request, then queue it when it is ready.</p>
     <label>Task title<input className="input" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} disabled={saving} /></label>
-    <label>Details<textarea className="details" value={description} maxLength={8000} onChange={(event) => setDescription(event.target.value)} disabled={saving} /></label>
+    <label>Details<textarea
+      className="details"
+      value={description}
+      maxLength={8000}
+      onChange={(event) => setDescription(event.target.value)}
+      disabled={saving}
+    /></label>
     {error && <p className="note bad" role="alert">{error}</p>}
     <div className="row" style={{ gap: 8 }}>
       <button className="btn outline" disabled={!changed || !title.trim() || saving} onClick={() => void save(false)}>Save changes</button>

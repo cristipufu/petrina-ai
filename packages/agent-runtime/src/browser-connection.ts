@@ -71,7 +71,14 @@ export async function connectBrowser(root: string) {
       let transport = id ? sessions.get(id) : undefined;
       if (id && !transport) return new Response("Session ended", { status: 404 });
       if (!transport) {
-        transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, enableJsonResponse: true, onsessioninitialized: (id) => { sessions.set(id, transport!); } });
+        transport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: randomUUID,
+          enableJsonResponse: true,
+          onsessioninitialized: (id) => { sessions.set(
+          id,
+          transport!
+        ); }
+        });
         const server = proxy();
         proxies.add(server);
         await server.connect(transport);

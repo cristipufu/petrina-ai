@@ -105,10 +105,21 @@ export class Store {
       this.db.transaction(() => {
         this.history.put([...state.tasks.filter((task) => finishedTask(task) && (!dirty || dirty.has(task.id) || omit.has(task.id))), ...changedArchive]);
         for (const task of active) if (!dirty || dirty.has(task.id) || !this.activeIds.has(task.id)) {
-          this.db.query("INSERT INTO active_tasks(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body WHERE body IS NOT excluded.body").run(task.id, JSON.stringify(task));
+          this.db.query("INSERT INTO active_tasks(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body WHERE body IS NOT excluded.body").run(
+            task.id,
+            JSON.stringify(task)
+          );
         }
         for (const id of this.activeIds) if (!ids.has(id)) this.db.query("DELETE FROM active_tasks WHERE id=?").run(id);
-        this.db.query("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at WHERE kv.value IS NOT excluded.value").run("state", JSON.stringify({ ...current, tasks: [], taskIds: active.map((task) => task.id) }), Date.now());
+        this.db.query("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at WHERE kv.value IS NOT excluded.value").run(
+          "state",
+          JSON.stringify({
+          ...current,
+          tasks: [],
+          taskIds: active.map((task) => task.id)
+        }),
+          Date.now()
+        );
       }).immediate();
       this.activeIds = ids;
     } catch (error) {
@@ -152,7 +163,10 @@ export class Store {
         if (!active || finishedTask(task)) this.history.put([updated]);
         this.saveExtraValidationOwnership(records, sequence);
       }).immediate();
-    } catch (error) { this.history.reloadMetadata(); throw error; }
+    } catch (error) {
+      this.history.reloadMetadata();
+      throw error;
+    }
   }
 
   /** The product and its finished history disappear together with the approved current snapshot. */

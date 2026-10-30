@@ -16,15 +16,29 @@ type MutableTask = DeepMutable<TaskState>;
 type Execution = DeepMutable<Pick<RepositoryState, "stepAttempts" | "editAttempt" | "conversation" | "sideStep">>;
 
 /** One request shape for coordinator-created real and scripted tasks. */
-export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: { id: Id; timelineId: Id; now: number; priority: number; area?: string }, find: (id: Id) => DependencyNode | undefined = () => undefined): MutableTask {
-  const selected = input.worksOn ?? (input.productId ? [{ productId: input.productId, startFrom: input.startFrom ?? { kind: "default" as const }, delivery: input.delivery ?? products.find((entry) => entry.id === input.productId)?.delivery ?? "pull-request" }] : []);
+export function createTaskState(input: NewTaskInput, products: readonly Product[], seed: {
+  id: Id;
+  timelineId: Id;
+  now: number;
+  priority: number;
+  area?: string
+}, find: (id: Id) => DependencyNode | undefined = () => undefined): MutableTask {
+  const selected = input.worksOn ?? (input.productId ? [{
+    productId: input.productId,
+    startFrom: input.startFrom ?? { kind: "default" as const },
+    delivery: input.delivery ?? products.find((entry) => entry.id === input.productId)?.delivery ?? "pull-request"
+  }] : []);
   if (selected.some((choice) => !products.some((entry) => entry.id === choice.productId))) throw new Error("Choose registered products.");
   if (new Set(selected.map((entry) => entry.productId)).size !== selected.length) throw new Error("Choose each product once.");
   const product = products.find((entry) => entry.id === (selected[0]?.productId ?? input.productId));
   if (!product && input.productId) throw new Error("Unknown product");
   const title = input.title.trim();
   if (!title) throw new Error("A task needs a title");
-  const choice: WorkChoice = selected[0] ?? { productId: product?.id ?? "", startFrom: input.startFrom ?? { kind: "default" }, delivery: input.delivery ?? product?.delivery ?? "pull-request" };
+  const choice: WorkChoice = selected[0] ?? {
+    productId: product?.id ?? "",
+    startFrom: input.startFrom ?? { kind: "default" },
+    delivery: input.delivery ?? product?.delivery ?? "pull-request"
+  };
   const after = validateTaskDependencies(seed.id, input.after ?? [], (id) => id === seed.id ? { id } : find(id));
   return {
     ...(input.after ? { after } : {}),
@@ -58,7 +72,9 @@ export function editBacklogRequest(task: MutableTask, changes: { title: string; 
   if (task.state !== "backlog") throw new Error("Only backlog requests can be edited before work starts.");
   const title = changes.title.trim();
   if (!title || title.length > 200 || changes.description.length > 8000) throw new Error("Give the task a title and a shorter request.");
-  task.title = title; task.description = changes.description.trim(); task.area = title.toLowerCase();
+  task.title = title;
+  task.description = changes.description.trim();
+  task.area = title.toLowerCase();
 }
 
 /** Used after the complete selection has been validated and any picture copies have succeeded. */
@@ -84,16 +100,30 @@ export function assertTaskDependenciesEditable(task: Pick<TaskState, "state" | "
 }
 
 export function blockingDependencies<T extends TaskState>(task: Pick<TaskState, "after">, find: (id: Id) => T | undefined): T[] {
-  return (task.after ?? []).flatMap((id) => { const other = find(id); return other && blocksDependents(other) ? [other] : []; });
+  return (task.after ?? []).flatMap((id) => {
+    const other = find(id);
+    return other && blocksDependents(other) ? [other] : [];
+  });
 }
 
 export function assignFutureProfile(task: MutableTask, profiles: readonly AgentProfile[], stageId: Id, list: "profileIds" | "reviewerProfileIds", index: number, profileId: Id): string | undefined {
   const at = task.plan?.stages.findIndex((stage) => stage.id === stageId) ?? -1;
-  const stage = task.plan?.stages[at], selected = stage?.[list];
+  const stage = task.plan?.stages[at];
+  const selected = stage?.[list];
   if (!stage || at <= task.stageIndex || !profiles.some((profile) => profile.id === profileId) || !selected || index < 0 || index >= selected.length) return;
   selected[index] = profileId;
   const key = list === "profileIds" ? "assignments" : "reviewerAssignments";
-  stage[key] = selected.map((id, at) => at === index ? { profileId: id, by: "coordinator", reason: "Chosen by you." } : stage[key]?.[at] ?? { profileId: id, by: "engine" });
+  stage[key] = selected.map((
+    id,
+    at
+  ) => at === index ? {
+    profileId: id,
+    by: "coordinator",
+    reason: "Chosen by you."
+  } : stage[key]?.[at] ?? {
+    profileId: id,
+    by: "engine"
+  });
   return stage.title;
 }
 
@@ -103,7 +133,17 @@ export function appendFutureReviewer(task: MutableTask, profiles: readonly Agent
   if (!stage || stage.kind !== "review-chain" || at <= task.stageIndex || !profiles.some((profile) => profile.id === profileId)) return;
   if (stage.roleIds) stage.roleIds = [...stage.profileIds.map((_, index) => reviewerAt(stage as Stage, index)), "code-reviewer"];
   stage.profileIds.push(profileId);
-  stage.assignments = stage.profileIds.map((id, at) => at === stage.profileIds.length - 1 ? { profileId: id, by: "coordinator", reason: "Added to the review by you." } : stage.assignments?.[at] ?? { profileId: id, by: "engine" });
+  stage.assignments = stage.profileIds.map((
+    id,
+    at
+  ) => at === stage.profileIds.length - 1 ? {
+    profileId: id,
+    by: "coordinator",
+    reason: "Added to the review by you."
+  } : stage.assignments?.[at] ?? {
+    profileId: id,
+    by: "engine"
+  });
   return stage.title;
 }
 
@@ -111,14 +151,22 @@ export function appendFutureReviewer(task: MutableTask, profiles: readonly Agent
 export function stopTaskActivity(task: MutableTask): void {
   clearRunningTools(task);
   delete task.toolActivity;
-  delete task.todo; delete task.stepClock;
+  delete task.todo;
+  delete task.stepClock;
   for (const work of Object.values(task.hunt?.work ?? {})) {
-    delete work.todo; delete work.activity; delete work.toolActivity; delete work.clock; delete work.waiting;
+    delete work.todo;
+    delete work.activity;
+    delete work.toolActivity;
+    delete work.clock;
+    delete work.waiting;
   }
 }
 
 export function clearTaskStep(task: MutableTask, execution: Execution): void {
-  delete task.stepNotes; delete execution.stepAttempts; delete execution.conversation; delete execution.editAttempt;
+  delete task.stepNotes;
+  delete execution.stepAttempts;
+  delete execution.conversation;
+  delete execution.editAttempt;
   stopTaskActivity(task);
 }
 
@@ -129,11 +177,16 @@ export function finishTaskStep(task: MutableTask, execution: Execution, now: num
 
 export function pauseTaskState(task: MutableTask, execution: Execution, now: number): boolean {
   if (!["running", "needs-you", "waiting"].includes(task.state)) return false;
-  task.state = "paused"; task.holdsSlot = false; task.statusLine = "Paused by you";
-  delete task.agent; delete task.helpers; delete execution.conversation;
+  task.state = "paused";
+  task.holdsSlot = false;
+  task.statusLine = "Paused by you";
+  delete task.agent;
+  delete task.helpers;
+  delete execution.conversation;
   delete task.reviewSessions;
   if (execution.sideStep) delete execution.sideStep.conversation;
-  stopTaskActivity(task); stopCheckProgress(task, now);
+  stopTaskActivity(task);
+  stopCheckProgress(task, now);
   return true;
 }
 
@@ -146,14 +199,20 @@ export function resumeTaskState(task: MutableTask, hasGate: boolean): boolean {
 
 export function cancelTaskState(task: MutableTask, execution: Execution, now: number): void {
   cancelRuntimeWait(task, now);
-  task.state = "cancelled"; task.column = "done"; task.holdsSlot = false;
-  task.finishedAt = now; task.statusLine = "Cancelled";
-  delete task.agent; delete task.helpers; delete execution.conversation;
+  task.state = "cancelled";
+  task.column = "done";
+  task.holdsSlot = false;
+  task.finishedAt = now;
+  task.statusLine = "Cancelled";
+  delete task.agent;
+  delete task.helpers;
+  delete execution.conversation;
   delete task.reviewSessions;
   delete task.reviewFreshReasons;
   delete task.reviewDecision;
   delete execution.sideStep;
   delete execution.editAttempt;
-  stopTaskActivity(task); stopCheckProgress(task, now);
+  stopTaskActivity(task);
+  stopCheckProgress(task, now);
   endOpenStep(task, { outcome: openStep(task)?.kind === "agent" ? JOURNEY_WORDS.stopped : JOURNEY_WORDS.cancelled, end: "cancelled" }, now);
 }

@@ -28,10 +28,14 @@ if (import.meta.main) {
   const owned = createTestRun();
   const settlements = runSettlements();
   const controller = new AbortController();
-  const onInt = () => controller.abort("SIGINT"), onTerm = () => controller.abort("SIGTERM");
-  process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
+  const onInt = () => controller.abort("SIGINT");
+  const onTerm = () => controller.abort("SIGTERM");
+  process.on("SIGINT", onInt);
+  process.on("SIGTERM", onTerm);
   try {
-    const args = process.argv.slice(2), selection = testSelection(args), cwd = resolve(selection.cwd ?? process.cwd());
+    const args = process.argv.slice(2);
+    const selection = testSelection(args);
+    const cwd = resolve(selection.cwd ?? process.cwd());
     const inspected = await Promise.allSettled(selection.paths.map(async path => {
       const entry = await stat(resolve(cwd, path));
       if (!entry.isFile() && !entry.isDirectory()) throw new Error("not a file or directory");
@@ -49,7 +53,8 @@ if (import.meta.main) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = controller.signal.aborted ? controller.signal.reason === "SIGINT" ? 130 : 143 : 1;
   } finally {
-    process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
+    process.off("SIGINT", onInt);
+    process.off("SIGTERM", onTerm);
     if (!await settlements.dispose(owned)) {
       console.error(`Test command settlement was not confirmed; private files retained at ${owned.env.TMPDIR}`);
       if (!controller.signal.aborted) process.exitCode = 1;

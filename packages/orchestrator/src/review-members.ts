@@ -10,12 +10,23 @@ export interface ReviewMemberCatalog {
 }
 
 /** Exact planned/remaining places shared by driver selection and the native review adapter. */
-export function plannedReviewPlaces(task: RuntimeTask, stage: Stage, catalog: Pick<ReviewMemberCatalog, "roles" | "profile">): { key: string; profileId: Id }[] {
+export function plannedReviewPlaces(task: RuntimeTask, stage: Stage, catalog: Pick<ReviewMemberCatalog, "roles" | "profile">): {
+  key: string;
+  profileId: Id
+}[] {
   const scope = executionFor(task);
   const planned = stage.profileIds.map((profileId, index) => ({ key: String(index), profileId }));
-  return scope.work.portReview ? [planned[portReviewerIndex(repositoryView(scope), stage.profileIds, id => catalog.profile(id)?.toolId, catalog.roles())]!] : planned;
+  return scope.work.portReview ? [planned[portReviewerIndex(
+    repositoryView(scope),
+    stage.profileIds,
+    id => catalog.profile(id)?.toolId,
+    catalog.roles()
+  )]!] : planned;
 }
-export function pendingReviewPlaces(task: RuntimeTask, stage: Stage, catalog: Pick<ReviewMemberCatalog, "roles" | "profile">): { key: string; profileId: Id }[] {
+export function pendingReviewPlaces(task: RuntimeTask, stage: Stage, catalog: Pick<ReviewMemberCatalog, "roles" | "profile">): {
+  key: string;
+  profileId: Id
+}[] {
   const scope = executionFor(task);
   const reported = task.hunt?.stageId === stage.id && task.hunt.round === (task.rounds[stage.id] ?? 1) ? task.hunt.reported : {};
   if (scope.work.portReview && Object.keys(reported).length) return [];

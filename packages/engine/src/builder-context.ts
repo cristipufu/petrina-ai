@@ -12,6 +12,10 @@ const nativePackets: ContextPacketStorage = {
 };
 
 /** Native immutable-packet binding; policy and continuation reduction have no filesystem dependency. */
-export function builderContext(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous?: BuilderContext, options: { design?: boolean; knownSections?: readonly string[]; findings?: readonly Finding[] } = {}, storage: ContextPacketStorage = nativePackets): ReturnType<typeof builderContextInput> {
+export function builderContext(dataDir: string, task: Task, role: Role, sessionId: string, sections: readonly Section[], previous?: BuilderContext, options: {
+  design?: boolean;
+  knownSections?: readonly string[];
+  findings?: readonly Finding[]
+} = {}, storage: ContextPacketStorage = nativePackets): ReturnType<typeof builderContextInput> {
   return builderContextInput(dataDir, task, role, sessionId, sections, previous, options, storage);
 }

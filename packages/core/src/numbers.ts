@@ -188,7 +188,11 @@ export function codexLimits(response: unknown, reportedAt: number): UsageReport[
     if (!snapshot || typeof snapshot !== "object") continue;
     const name = (snapshot as { limitName?: unknown }).limitName;
     for (const slot of ["primary", "secondary"] as const) {
-      const window = (snapshot as Record<string, unknown>)[slot] as { usedPercent?: unknown; windowDurationMins?: unknown; resetsAt?: unknown } | null | undefined;
+      const window = (snapshot as Record<string, unknown>)[slot] as {
+        usedPercent?: unknown;
+        windowDurationMins?: unknown;
+        resetsAt?: unknown
+      } | null | undefined;
       if (!window || typeof window !== "object") continue;
       const percent = typeof window.usedPercent === "number" && Number.isFinite(window.usedPercent) ? window.usedPercent : undefined;
       const minutes = typeof window.windowDurationMins === "number" ? window.windowDurationMins : undefined;

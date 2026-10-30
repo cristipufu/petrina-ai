@@ -12,7 +12,8 @@ export async function keepApprovedLearnings(records: LearningMergeRecords | unde
     if (!base || !main || !own || main.mode !== base.mode || own.mode !== base.mode) return undefined;
     // A version that does not read back as it is (not UTF-8) could not be kept exactly.
     if ([base, main, own].some((file) => file.text.includes("\uFFFD"))) return undefined;
-    const theirs = addedLessons(base.text, main.text), ours = addedLessons(base.text, own.text);
+    const theirs = addedLessons(base.text, main.text);
+    const ours = addedLessons(base.text, own.text);
     if (!theirs?.length || !ours?.length) return undefined;
     // The starting point and main's history as the commits record them, whatever Git's commit index says.
     if ((await effects.objectMergeBase(ref, onto)) !== fork) return undefined;
@@ -21,7 +22,10 @@ export async function keepApprovedLearnings(records: LearningMergeRecords | unde
     const product = records.current();
     const receipts = [...(product.learningReceipts ?? [])];
     const accepted = [...(product.learnings ?? []), ...receipts];
-    const wrote = (text: string, here: boolean) => accepted.some((line) => line.text === text && line.writtenOn !== undefined && (line.writtenOn === taskId) === here);
+    const wrote = (
+      text: string,
+      here: boolean
+    ) => accepted.some((line) => line.text === text && line.writtenOn !== undefined && (line.writtenOn === taskId) === here);
     if (!theirs.every((text) => wrote(text, false)) || !ours.every((text) => wrote(text, true))) return undefined;
     const added: string[] = [];
     const present: string[] = [];

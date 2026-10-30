@@ -1,4 +1,16 @@
-import { runtimeWaitHolds, onScreen, SCREEN_HOUR_MS, SCREEN_WORDS, screenAllowed, screenMode, screenQueue, screenWait, type ConversationNote, type Id, type ScreenMode } from "@petrina/core";
+import {
+  runtimeWaitHolds,
+  onScreen,
+  SCREEN_HOUR_MS,
+  SCREEN_WORDS,
+  screenAllowed,
+  screenMode,
+  screenQueue,
+  screenWait,
+  type ConversationNote,
+  type Id,
+  type ScreenMode
+} from "@petrina/core";
 import { executionFor, type RepositoryContext } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
 import type { ScreenClock, ScreenGroup, ScreenHost } from "./ports/screen.js";
@@ -8,7 +20,12 @@ export class ScreenArbitration {
   private timer: (() => void) | undefined;
   private releaseTimer: (() => void) | undefined;
   constructor(private readonly host: ScreenHost, private readonly clock: ScreenClock, readonly groups = new Map<Id, ScreenGroup>()) {}
-  stop(): void { this.timer?.(); this.releaseTimer?.(); this.timer = undefined; this.releaseTimer = undefined; }
+  stop(): void {
+    this.timer?.();
+    this.releaseTimer?.();
+    this.timer = undefined;
+    this.releaseTimer = undefined;
+  }
 
   setScreenUse(mode: ScreenMode, hourMs = SCREEN_HOUR_MS): void {
     this.host.state().pool.screen = mode === "hour" ? { mode, until: this.clock.now() + hourMs } : { mode };
@@ -120,11 +137,24 @@ export class ScreenArbitration {
       const item = state.inbox.find((entry) => entry.taskId === task.id && entry.kind === "screen");
       if (wait === "ask" && !item) {
         const request = task.screen!;
-        state.inbox.push({ id: this.host.inboxId(), taskId: task.id, kind: "screen", title: SCREEN_WORDS.needs(request.reason), body: SCREEN_WORDS.body, at: request.at, blocking: false, roleId: request.roleId, profileId: request.profileId });
+        state.inbox.push({
+          id: this.host.inboxId(),
+          taskId: task.id,
+          kind: "screen",
+          title: SCREEN_WORDS.needs(request.reason),
+          body: SCREEN_WORDS.body,
+          at: request.at,
+          blocking: false,
+          roleId: request.roleId,
+          profileId: request.profileId
+        });
       } else if (wait !== "ask" && item) {
         state.inbox = state.inbox.filter((entry) => entry !== item);
       }
-      if (runtimeWaitHolds(task) && task.state === "waiting") { task.statusLine = this.host.waitLine(task); continue; }
+      if (runtimeWaitHolds(task) && task.state === "waiting") {
+        task.statusLine = this.host.waitLine(task);
+        continue;
+      }
       if (wait === "ask") task.statusLine = SCREEN_WORDS.needs(task.screen!.reason);
       else if (wait === "turn") task.statusLine = SCREEN_WORDS.turn;
       // Its turn on the screen: it waits for a slot like any other task (the scheduler says which).
@@ -145,7 +175,14 @@ export class ScreenArbitration {
     const next = pending.find(([, request]) => byTask || request.allowed) ?? pending[0];
     if (!next || next[0] === task.screen?.member) return;
     const [member, request] = next;
-    task.screen = { member, reason: request.reason, at: request.at, roleId: request.conversation.roleId, profileId: request.conversation.profileId, ...(request.allowed ? { allowed: true } : {}) };
+    task.screen = {
+      member,
+      reason: request.reason,
+      at: request.at,
+      roleId: request.conversation.roleId,
+      profileId: request.conversation.profileId,
+      ...(request.allowed ? { allowed: true } : {})
+    };
     executionFor(task).work.conversation = request.conversation;
   }
 

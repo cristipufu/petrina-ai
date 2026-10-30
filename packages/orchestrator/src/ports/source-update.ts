@@ -31,7 +31,16 @@ export interface SourceUpdateEffects {
   sourceContains(productPath: string, head: string, base: string): Promise<boolean>;
   fetchDefault(scope: RepositoryContext, signal: AbortSignal): Promise<SourceFetch>;
   fetchSource(scope: RepositoryContext, signal: AbortSignal): Promise<SourceVersion>;
-  keptLearnings(scope: RepositoryContext, fork: string, onto: string, merged: { tree: string; conflicts: readonly string[] }, ref: string): Promise<LearningMergeResult | undefined>;
+  keptLearnings(
+    scope: RepositoryContext,
+    fork: string,
+    onto: string,
+    merged: {
+    tree: string;
+    conflicts: readonly string[]
+  },
+    ref: string
+  ): Promise<LearningMergeResult | undefined>;
 }
 export interface SourceUpdateHost {
   role(id: string, task: RuntimeTask): Role | undefined;

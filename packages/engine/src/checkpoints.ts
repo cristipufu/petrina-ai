@@ -12,7 +12,12 @@ export class Checkpoints {
 
   approve(itemId: Id): void {
     const kind = this.k.s.inbox.find((entry) => entry.id === itemId)?.kind;
-    if (kind && !["plan", "design", "delivery", "disagreement"].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
+    if (kind && ![
+      "plan",
+      "design",
+      "delivery",
+      "disagreement"
+    ].includes(kind)) throw new Error(`That is a ${kind} request. Answer it in your inbox; it has not been removed.`);
     const pending = this.k.s.inbox.find((entry) => entry.id === itemId);
     const pendingTask = pending && this.k.task(pending.taskId);
     if (pending?.kind === "delivery" && pendingTask) assertCheckApproval(pendingTask);
@@ -82,7 +87,19 @@ export class Checkpoints {
     const call = item.kind === "disagreement";
     this.k.log(task, "you", call ? CALL_WORDS.made(note) : `You asked for changes: ${note}`);
     this.k.say(task, "you", note);
-    endYouStep(task, call ? { outcome: JOURNEY_WORDS.madeCall, reason: JOURNEY_WORDS.yourCall, tone: "back" } : { outcome: JOURNEY_WORDS.changes, reason: JOURNEY_WORDS.changesAsked, tone: "back" }, Date.now());
+    endYouStep(
+      task,
+      call ? {
+      outcome: JOURNEY_WORDS.madeCall,
+      reason: JOURNEY_WORDS.yourCall,
+      tone: "back"
+    } : {
+      outcome: JOURNEY_WORDS.changes,
+      reason: JOURNEY_WORDS.changesAsked,
+      tone: "back"
+    },
+      Date.now()
+    );
     const id = this.k.id(task.id);
     // A review decision is asked after the flow moved past its review: the note belongs to that review, not the next stage,
     // and so does the same check raised again below. What an older check never recorded stays unknown.

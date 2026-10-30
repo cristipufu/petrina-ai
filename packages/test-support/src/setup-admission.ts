@@ -14,7 +14,10 @@ export class SetupSteps {
     signal?.throwIfAborted();
     const release = await new Promise<() => void>((resolve, reject) => {
       const entry = {
-        go: (release: () => void) => { signal?.removeEventListener("abort", entry.stop); resolve(release); },
+        go: (release: () => void) => {
+          signal?.removeEventListener("abort", entry.stop);
+          resolve(release);
+        },
         stop: () => {
           const index = this.line.indexOf(entry);
           if (index >= 0) this.line.splice(index, 1);
@@ -39,7 +42,10 @@ export class SetupSteps {
     // step grants the next turn; the timer and immediate leave a native poll between admissions.
     this.defer(() => {
       const entry = this.line.shift();
-      if (!entry) { this.busy = false; return; }
+      if (!entry) {
+        this.busy = false;
+        return;
+      }
       let released = false;
       entry.go(() => {
         if (released) return;

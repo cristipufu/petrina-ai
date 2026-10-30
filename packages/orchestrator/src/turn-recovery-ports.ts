@@ -44,7 +44,15 @@ export interface CapacityRecoveryHost {
 export interface TurnRecoveryHost {
   now(): number;
   catalog: Pick<AgentAdmissionCatalog, "profile" | "role"> & {
-    choose(request: { profileId: Id; roleId: Id; reviewerKey?: string }, scope: RepositoryContext, room?: (toolId: Id, profile: AgentProfile) => boolean): ProfileSelectionResult | undefined;
+    choose(
+      request: {
+      profileId: Id;
+      roleId: Id;
+      reviewerKey?: string
+    },
+      scope: RepositoryContext,
+      room?: (toolId: Id, profile: AgentProfile) => boolean
+    ): ProfileSelectionResult | undefined;
   };
   readiness: Pick<AgentAdmissionReadiness, "hold" | "resolveHeld" | "resolve">;
   admissionsClosed(task: RuntimeTask): boolean;

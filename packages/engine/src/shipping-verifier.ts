@@ -32,12 +32,21 @@ export class ShippingVerifier {
     if (cancelled) return ours.find((pr) => pr.state === "open") ?? ours.find((pr) => pr.base === defaultBranch && pr.commit === tested);
     let match: github.PullRequestInfo | undefined;
     for (const pr of ours) {
-      if (await this.matchesPullRequest(scope, pr, tested, defaultBranch)) { match = pr; break; }
+      if (await this.matchesPullRequest(scope, pr, tested, defaultBranch)) {
+        match = pr;
+        break;
+      }
     }
     const other = ours.find((pr) => pr !== match);
     if (other) {
       throw new Error(
-        `GitHub already has pull request #${other.number} from this task's branch, but it is not this work (${other.base !== defaultBranch ? `it goes into ${other.base}` : `it is at ${other.commit.slice(0, 7)}, not ${tested.slice(0, 7)}`}). Petrina published nothing more. Look at it on GitHub, then retry or cancel.`,
+        `GitHub already has pull request #${other.number} from this task's branch, but it is not this work (${other.base !== defaultBranch ? `it goes into ${other.base}` : `it is at ${other.commit.slice(
+          0,
+          7
+        )}, not ${tested.slice(
+          0,
+          7
+        )}`}). Petrina published nothing more. Look at it on GitHub, then retry or cancel.`,
       );
     }
     return match;
@@ -73,7 +82,10 @@ export class ShippingVerifier {
     if (at === sha) return true;
     const product = this.k.repositoryOf(scope)!;
     const fetched = await this.connections.serial(product.id, () => git.fetchBranch(product.path!, remote, product.defaultBranch ?? "main"));
-    if (!fetched.ok) throw new Unreachable(`Petrina could not check ${product.defaultBranch ?? "main"} on GitHub (${this.connections.why(scope, fetched)}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
+    if (!fetched.ok) throw new Unreachable(`Petrina could not check ${product.defaultBranch ?? "main"} on GitHub (${this.connections.why(
+      scope,
+      fetched
+    )}), so it publishes nothing more until it can. Retry when GitHub is reachable.`);
     return git.contains(product.path!, fetched.sha, sha);
   }
 
@@ -93,15 +105,26 @@ export class ShippingVerifier {
     const status = await git.worktreeBranchStatus(root, false).catch(() => undefined);
     if (status?.branch === branch) {
       const at = status.head;
-      if (!at || (at !== tested && !(await git.contains(root, at, tested)))) throw new Error(`${branch} in the main copy does not have the tested work. Retry to check again.`);
+      if (!at || (at !== tested && !(await git.contains(
+        root,
+        at,
+        tested
+      )))) throw new Error(`${branch} in the main copy does not have the tested work. Retry to check again.`);
       if (status.trackedChanged) throw new Error(`${branch} has the tested work, but the files in the main copy at ${root} do not match it. Look at the main copy.`);
       return at;
     }
     const at = await git.revParse(root, `refs/heads/${branch}`);
-    if (!at || (at !== tested && !(await git.contains(root, at, tested)))) throw new Error(`${branch} in the main copy does not have the tested work. Retry to check again.`);
+    if (!at || (at !== tested && !(await git.contains(
+      root,
+      at,
+      tested
+    )))) throw new Error(`${branch} in the main copy does not have the tested work. Retry to check again.`);
     if (!status) {
       const here = (await git.checkedOut(root, branch)).some((place) => realPath(place) === realPath(root));
-      if (here && ((await git.head(root)) !== at || (await git.changes(root, true)).length)) throw new Error(`${branch} has the tested work, but the files in the main copy at ${root} do not match it. Look at the main copy.`);
+      if (here && ((await git.head(root)) !== at || (await git.changes(
+        root,
+        true
+      )).length)) throw new Error(`${branch} has the tested work, but the files in the main copy at ${root} do not match it. Look at the main copy.`);
     }
     return at;
   }
@@ -131,7 +154,15 @@ export class ShippingVerifier {
     if (pr.head === tested) return true;
     const product = this.k.repositoryOf(scope)!;
     const ref = `refs/petrina/evidence/${task.id}`;
-    const result = await this.connections.serial(product.id, () => git.fetchRef(product.path!, this.connections.savedRemote(scope), `refs/pull/${pr.number}/head`, ref));
+    const result = await this.connections.serial(
+      product.id,
+      () => git.fetchRef(
+      product.path!,
+      this.connections.savedRemote(scope),
+      `refs/pull/${pr.number}/head`,
+      ref
+    )
+    );
     if (!result.ok) throw new Unreachable(`Could not confirm the tested work in PR #${pr.number}. Retry to check again; no further publishing will happen.`);
     if (result.sha !== pr.head) throw new Unreachable(`PR #${pr.number} changed while Petrina was checking it. Retry to confirm which work reached it.`);
     return git.contains(product.path!, result.sha, tested);
@@ -153,14 +184,20 @@ export class ShippingVerifier {
     if (tip === repository.shipping?.base) return false;
     const ref = `refs/petrina/deliveries/${task.id}`;
     const fetched = await this.connections.serial(repository.productId, () => git.fetchRef(root, remote, `refs/heads/${branch}`, ref));
-    if (!fetched.ok) throw new Unreachable(`Could not confirm the tested work at its destination (${this.connections.why(scope, fetched)}). Retry to check again.`);
+    if (!fetched.ok) throw new Unreachable(`Could not confirm the tested work at its destination (${this.connections.why(
+      scope,
+      fetched
+    )}). Retry to check again.`);
     return git.contains(root, fetched.sha, tested);
   }
 
   async sourceCurrent(scope: RepositoryContext, signal: AbortSignal): Promise<boolean> {
     const { work: repository } = scope;
     const connection = await this.connections.connection(scope, signal);
-    if (!connection.ok) { if (connection.missing && repository.delivery === "local") return true; throw new Error(connection.reason); }
+    if (!connection.ok) {
+      if (connection.missing && repository.delivery === "local") return true;
+      throw new Error(connection.reason);
+    }
     const branch = repository.source?.start.branch ?? this.k.repositoryOf(scope)?.defaultBranch ?? "main";
     const tip = await this.remoteTip(scope, connection.remote, branch);
     if (!tip) throw new Error(`${branch} is no longer available on GitHub. The work is preserved and nothing more was published.`);
@@ -185,7 +222,21 @@ export class ShippingVerifier {
         if (await this.prContains(scope, pr, tested)) return { found: true, text: `Updated PR #${pr.number}`, evidence: { kind: "pr", pr, updated: true } };
         const remote = this.destinationRemote(scope);
         const at = await this.remoteTip(scope, remote, pr.branch);
-        if (await this.remoteContains(scope, remote, pr.branch, at, tested)) return { found: true, text: `Updated PR #${pr.number}`, evidence: { kind: "pr", pr, updated: true } };
+        if (await this.remoteContains(
+          scope,
+          remote,
+          pr.branch,
+          at,
+          tested
+        )) return {
+          found: true,
+          text: `Updated PR #${pr.number}`,
+          evidence: {
+          kind: "pr",
+          pr,
+          updated: true
+        }
+        };
         if (pr.state !== "open") throw new Error(`PR #${pr.number} is ${pr.state}. The task's work is preserved; nothing more will be published.`);
         if (!at) throw new Error(`The approved pull request working branch is unavailable. The task's work is preserved.`);
         return { found: false, text: `PR #${pr.number} does not contain the tested work yet.` };
@@ -203,12 +254,33 @@ export class ShippingVerifier {
         if (refs.tag !== tested) {
           // Before Petrina's push, someone else's release makes this version stale: publishing gets it ready again.
           if (!shipping.pushed) return { found: false, text: `GitHub has a release ${shipping.tag} that is not this work.` };
-          return { found: "other", text: `GitHub has a release ${shipping.tag}, but its tag is not at the tested commit ${tested.slice(0, 7)}. Look at it on GitHub.` };
+          return {
+            found: "other",
+            text: `GitHub has a release ${shipping.tag}, but its tag is not at the tested commit ${tested.slice(
+            0,
+            7
+          )}. Look at it on GitHub.`
+          };
         }
         return { found: true, text: `release ${release.tag}`, evidence: { kind: "release", release } };
       }
       const at = await git.revParse(product.path!, `refs/heads/${branch}`);
-      if (at && (at === tested || (await git.contains(product.path!, at, tested)))) return { found: true, text: `${branch} has the work (${tested.slice(0, 7)})`, evidence: { kind: "local", branch, tested } };
+      if (at && (at === tested || (await git.contains(
+        product.path!,
+        at,
+        tested
+      )))) return {
+        found: true,
+        text: `${branch} has the work (${tested.slice(
+        0,
+        7
+      )})`,
+        evidence: {
+        kind: "local",
+        branch,
+        tested
+      }
+      };
       return { found: false, text: `${branch} does not have the work yet.` };
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);

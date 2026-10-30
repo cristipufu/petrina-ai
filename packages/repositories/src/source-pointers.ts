@@ -12,7 +12,10 @@ export async function currentSourcePointers(task: Task, pointers: readonly Sourc
     const path = copies.find((work) => work.productId === pointer.productId)?.worktree;
     if (!path || /[\r\n\0]/.test(pointer.path)) continue;
     let head = heads.get(path);
-    if (!head) { head = git.head(path).catch(() => undefined); heads.set(path, head); }
+    if (!head) {
+      head = git.head(path).catch(() => undefined);
+      heads.set(path, head);
+    }
     if (await head !== pointer.revision.toLowerCase()) continue;
     const key = `${pointer.productId}:${pointer.path}`;
     if (seen.has(key)) continue;
@@ -27,7 +30,15 @@ export async function currentSourcePointers(task: Task, pointers: readonly Sourc
       group.forEach(({ pointer }, index) => { if (fast[index] !== undefined) present.add(pointer); });
       return;
     }
-    const checked = await git.run(["git", "cat-file", "--batch-check=%(objecttype)"], path, group.map(({ pointer }) => `${pointer.revision}:${pointer.path}\n`).join("")).catch(() => undefined);
+    const checked = await git.run(
+      [
+      "git",
+      "cat-file",
+      "--batch-check=%(objecttype)"
+    ],
+      path,
+      group.map(({ pointer }) => `${pointer.revision}:${pointer.path}\n`).join("")
+    ).catch(() => undefined);
     if (checked?.code !== 0) return;
     const types = checked.stdout.split("\n");
     group.forEach(({ pointer }, index) => { if (/^(?:blob|tree|commit|tag)$/.test(types[index] ?? "")) present.add(pointer); });

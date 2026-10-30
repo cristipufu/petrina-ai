@@ -26,7 +26,11 @@ export function routeAcceptance(host: AcceptanceRoutingHost, scope: RepositoryCo
     if (!final && addDeliveryCheck(host, task)) {
       if (!planned) host.note(scope, "milestone", "Added your delivery check: acceptance still fails, so delivery waits for your decision");
       const reviews = task.plan!.stages.some((entry, index) => index > task.stageIndex && entry.kind === "review-chain");
-      host.note(scope, "warn", `Acceptance still fails: the builder returns are unavailable or used up. ${reviews ? "The remaining reviews run first, then" : "Next,"} the decision goes to you at your delivery check`);
+      host.note(
+        scope,
+        "warn",
+        `Acceptance still fails: the builder returns are unavailable or used up. ${reviews ? "The remaining reviews run first, then" : "Next,"} the decision goes to you at your delivery check`
+      );
       task.stageIndex += 1;
       task.sub = 0;
       host.commitNow(task);

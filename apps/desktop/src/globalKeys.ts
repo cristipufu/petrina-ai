@@ -40,7 +40,8 @@ export function useGlobalKeys(keys: GlobalKeys): void {
       const target = event.target as HTMLElement;
       const key = event.key.toLocaleLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "k") {
-        event.preventDefault(); event.stopImmediatePropagation();
+        event.preventDefault();
+        event.stopImmediatePropagation();
         keys.togglePalette();
         return;
       }
@@ -50,35 +51,81 @@ export function useGlobalKeys(keys: GlobalKeys): void {
       // Inline product editors discard their draft (or close removal confirmation) themselves.
       if (event.key === "Escape" && target.closest(".product-editor")) return;
       // Usage history owns inspection keys and returning from its focused readings.
-      const inspectingHistory = target.closest(".limit-history-plot") && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Enter", "Escape"].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey;
+      const inspectingHistory = target.closest(".limit-history-plot") && [
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "Home",
+        "End",
+        "Enter",
+        "Escape"
+      ].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey;
       const leavingReadings = event.key === "Escape" && target.closest(".limit-history-readings-view");
       if (!keys.sheetOpen && (inspectingHistory || leavingReadings)) return;
       if (event.key === "Escape") {
-        event.preventDefault(); event.stopImmediatePropagation();
+        event.preventDefault();
+        event.stopImmediatePropagation();
         if (isTyping(target)) target.blur();
         else if (keys.sheetOpen) keys.closeSheet();
         else if (keys.area === "inbox") keys.leaveInbox();
         return;
       }
-      if ((event.metaKey || event.ctrlKey) && key === "n") { event.preventDefault(); keys.newTask(); return; }
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key === ",") { event.preventDefault(); keys.openSettings(); return; }
+      if ((event.metaKey || event.ctrlKey) && key === "n") {
+        event.preventDefault();
+        keys.newTask();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key === ",") {
+        event.preventDefault();
+        keys.openSettings();
+        return;
+      }
       if (isTyping(target) || event.metaKey || event.ctrlKey) return;
       if (event.altKey && (key === "arrowup" || key === "arrowdown")) {
-        if (keys.focusedTask) { event.preventDefault(); keys.move(keys.focusedTask, key === "arrowup" ? -1 : 1); } return;
+        if (keys.focusedTask) {
+          event.preventDefault();
+          keys.move(keys.focusedTask, key === "arrowup" ? -1 : 1);
+        }
+        return;
       }
       if (key === "enter" && !target.closest("button, a, [role=button], [role=radio]")) {
-        if (keys.area === "board" && keys.boardId) { event.preventDefault(); keys.openBoard(keys.boardId); }
-        else if (keys.area === "inbox" && keys.inboxId) { event.preventDefault(); keys.openItem(keys.inboxId); }
+        if (keys.area === "board" && keys.boardId) {
+          event.preventDefault();
+          keys.openBoard(keys.boardId);
+        }
+        else if (keys.area === "inbox" && keys.inboxId) {
+          event.preventDefault();
+          keys.openItem(keys.inboxId);
+        }
         return;
       }
       if (event.altKey || !keys.singleKeys) return;
       if (event.repeat && ["p", "i", "m", "?"].includes(key)) return;
-      if (key === "i") { event.preventDefault(); keys.inboxKey(); }
-      else if (key === "b" || key === "a" || key === "l") { event.preventDefault(); keys.go(key === "b" ? "board" : key === "a" ? "agents" : "library"); }
-      else if (key === "?") { event.preventDefault(); keys.showShortcuts(); }
-      else if ((key === "j" || key === "k") && keys.area) { event.preventDefault(); keys.walk(key === "j" ? 1 : -1); }
-      else if (key === "p" && keys.focusedTask) { event.preventDefault(); keys.pause(keys.focusedTask); }
-      else if (key === "m" && keys.focusedTask) { event.preventDefault(); keys.message(keys.focusedTask); }
+      if (key === "i") {
+        event.preventDefault();
+        keys.inboxKey();
+      }
+      else if (key === "b" || key === "a" || key === "l") {
+        event.preventDefault();
+        keys.go(key === "b" ? "board" : key === "a" ? "agents" : "library");
+      }
+      else if (key === "?") {
+        event.preventDefault();
+        keys.showShortcuts();
+      }
+      else if ((key === "j" || key === "k") && keys.area) {
+        event.preventDefault();
+        keys.walk(key === "j" ? 1 : -1);
+      }
+      else if (key === "p" && keys.focusedTask) {
+        event.preventDefault();
+        keys.pause(keys.focusedTask);
+      }
+      else if (key === "m" && keys.focusedTask) {
+        event.preventDefault();
+        keys.message(keys.focusedTask);
+      }
     };
     // Capture gives Escape one owner before nested dialogs or text controls see it.
     window.addEventListener("keydown", onKey, true);

@@ -2,7 +2,19 @@ import type { UsageInfo } from "./failures.js";
 import { claudeWindow } from "@petrina/core";
 
 const USAGE_STATUS = new Set(["allowed", "allowed_warning", "rejected"]);
-const DISABLED_OVERAGE = new Set(["overage_not_provisioned", "org_level_disabled", "org_level_disabled_until", "out_of_credits", "seat_tier_level_disabled", "member_level_disabled", "seat_tier_zero_credit_limit", "group_zero_credit_limit", "member_zero_credit_limit", "org_service_level_disabled", "no_limits_configured"]);
+const DISABLED_OVERAGE = new Set([
+  "overage_not_provisioned",
+  "org_level_disabled",
+  "org_level_disabled_until",
+  "out_of_credits",
+  "seat_tier_level_disabled",
+  "member_level_disabled",
+  "seat_tier_zero_credit_limit",
+  "group_zero_credit_limit",
+  "member_zero_credit_limit",
+  "org_service_level_disabled",
+  "no_limits_configured"
+]);
 
 const validShare = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 const seconds = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value > 0 ? value * 1000 : undefined;

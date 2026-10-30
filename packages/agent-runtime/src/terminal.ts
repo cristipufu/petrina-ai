@@ -18,7 +18,17 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionState } from "@petrina/core";
 
-import { terminalEnv, launchPlan as prepareLaunchPlan, toolArgs as prepareToolArgs, type Platform, type Probe, type FoundTerminal, type LaunchPlan, type LaunchInput, type AskMode } from "./terminal-plan.js";
+import {
+  terminalEnv,
+  launchPlan as prepareLaunchPlan,
+  toolArgs as prepareToolArgs,
+  type Platform,
+  type Probe,
+  type FoundTerminal,
+  type LaunchPlan,
+  type LaunchInput,
+  type AskMode
+} from "./terminal-plan.js";
 export { detectTerminals, pickTerminal, terminalEnv, UnsafeValue } from "./terminal-plan.js";
 export type { Platform, Probe, FoundTerminal, LaunchPlan, LaunchInput, AskMode } from "./terminal-plan.js";
 
@@ -157,7 +167,14 @@ export async function askMode(path: string): Promise<AskMode> {
 async function startTime(pid: number, platform: Platform): Promise<string | undefined> {
   const command =
     platform === "win32"
-      ? ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).StartTime.ToUniversalTime().Ticks`]
+      ? [
+        "powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).StartTime.ToUniversalTime().Ticks`
+      ]
       : ["ps", "-o", "lstart=", "-p", String(pid)];
   return (await terminalOutput(command) ?? "").trim() || undefined;
 }

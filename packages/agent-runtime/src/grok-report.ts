@@ -8,7 +8,10 @@ const number = (value: unknown): number | undefined => typeof value === "number"
 function countsOf(value: unknown): TokenCounts | undefined {
   const raw = object(value);
   if (!raw) return undefined;
-  const input = number(raw.inputTokens), output = number(raw.outputTokens), cacheRead = number(raw.cachedReadTokens), cacheWrite = number(raw.cacheCreationTokens);
+  const input = number(raw.inputTokens);
+  const output = number(raw.outputTokens);
+  const cacheRead = number(raw.cachedReadTokens);
+  const cacheWrite = number(raw.cacheCreationTokens);
   if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined || input < cacheRead + cacheWrite) return undefined;
   const reasoning = number(raw.reasoningTokens);
   return { input: input - cacheRead - cacheWrite, output, cacheRead, cacheWrite, total: input + output, ...(reasoning !== undefined ? { reasoning } : {}) };
@@ -44,7 +47,13 @@ export function grokReports(response: unknown): UsageInfo[] {
   const period = object(config.currentPeriod);
   const end = typeof period?.end === "string" ? Date.parse(period.end) : NaN;
   const kind = period?.type === "USAGE_PERIOD_TYPE_WEEKLY" ? "seven_day" : period?.type === "USAGE_PERIOD_TYPE_MONTHLY" ? "monthly" : "limit";
-  return [{ toolId: "grok", kind, utilization: percent / 100, status: percent >= 100 ? "rejected" : percent >= 90 ? "allowed_warning" : "allowed", ...(Number.isFinite(end) ? { resetsAt: end } : {}) }];
+  return [{
+    toolId: "grok",
+    kind,
+    utilization: percent / 100,
+    status: percent >= 100 ? "rejected" : percent >= 90 ? "allowed_warning" : "allowed",
+    ...(Number.isFinite(end) ? { resetsAt: end } : {})
+  }];
 }
 
 /** Grok's ACP tool metadata, interpreted before provider-neutral activity formatting. */

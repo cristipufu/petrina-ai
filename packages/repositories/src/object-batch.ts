@@ -35,10 +35,12 @@ export async function readObjects(path: string, requests: readonly string[]): Pr
 export async function plainFilesAt(path: string, refs: readonly string[], name: string): Promise<({ mode: string; text: string } | undefined)[]> {
   if (!name || name.startsWith("-") || name.includes("/") || name.includes("\0")) return refs.map(() => undefined);
   const valid = refs.map((ref, index) => ({ ref, index })).filter(({ ref }) => ref && !ref.startsWith("-") && !ref.includes("\0"));
-  const trees = await readObjects(path, valid.map(({ ref }) => `${ref}^{tree}`)), wanted = Buffer.from(name);
+  const trees = await readObjects(path, valid.map(({ ref }) => `${ref}^{tree}`));
+  const wanted = Buffer.from(name);
   const files = trees.flatMap((tree, index) => {
     if (!tree) return [];
-    const entries = treeEntries(tree).filter(entry => entry.name.equals(wanted)), entry = entries[0];
+    const entries = treeEntries(tree).filter(entry => entry.name.equals(wanted));
+    const entry = entries[0];
     if (entries.length !== 1 || !entry || (entry.mode & 0o170000) !== 0o100000) return [];
     return [{ index: valid[index]!.index, id: entry.id, mode: entry.mode & 0o100 ? "100755" : "100644" }];
   });

@@ -2,7 +2,10 @@ import type { DeepMutable } from "./flow.js";
 import type { Role, Task } from "./model.js";
 import type { ProofDecision, ProofRequest } from "./task-model.js";
 
-export const proofOwner = (task: Pick<Task, "plan">, roles: readonly Role[]) => task.plan?.stages.find(stage => stage.kind === "do" && roles.find(role => role.id === stage.roleId)?.result === "checks");
+export const proofOwner = (
+  task: Pick<Task, "plan">,
+  roles: readonly Role[]
+) => task.plan?.stages.find(stage => stage.kind === "do" && roles.find(role => role.id === stage.roleId)?.result === "checks");
 
 export function sameVersions(a: Readonly<Record<string, string>> | undefined, b: Readonly<Record<string, string>> | undefined, ids: readonly string[] = Object.keys(a ?? {})): boolean {
   return ids.length > 0 && ids.every(id => !!a?.[id] && a[id] !== "unavailable" && a[id] === b?.[id]);
@@ -38,11 +41,21 @@ export function proofTestNeeded(task: Pick<Task, "proofRequests" | "proofRefresh
 }
 
 export function proofDecision(task: Pick<Task, "proofRequests" | "proofRefreshBlocked">, versions: Readonly<Record<string, string>>): ProofDecision {
-  return { versions: { ...versions }, statuses: Object.fromEntries((task.proofRequests ?? []).map(request => [request.id, request.status])), ...(task.proofRefreshBlocked ? { refreshBlocked: true } : {}) };
+  return {
+    versions: { ...versions },
+    statuses: Object.fromEntries((task.proofRequests ?? []).map(request => [
+    request.id,
+    request.status
+  ])),
+    ...(task.proofRefreshBlocked ? { refreshBlocked: true } : {})
+  };
 }
 
 export function sameProofDecision(a: ProofDecision | undefined, b: ProofDecision): boolean {
-  return !!a && a.refreshBlocked === b.refreshBlocked && Object.keys(a.versions).length === Object.keys(b.versions).length && sameVersions(a.versions, b.versions) && Object.keys(a.statuses).length === Object.keys(b.statuses).length && Object.entries(a.statuses).every(([id, status]) => status === b.statuses[id]);
+  return !!a && a.refreshBlocked === b.refreshBlocked && Object.keys(a.versions).length === Object.keys(b.versions).length && sameVersions(
+    a.versions,
+    b.versions
+  ) && Object.keys(a.statuses).length === Object.keys(b.statuses).length && Object.entries(a.statuses).every(([id, status]) => status === b.statuses[id]);
 }
 
 export function proofGap(task: Pick<Task, "proofRequests" | "repositories" | "repository" | "delivery" | "proofRefreshBlocked">): string | undefined {
@@ -59,6 +72,13 @@ export function proofGap(task: Pick<Task, "proofRequests" | "repositories" | "re
 
 export function proofContext(requests: readonly ProofRequest[]): string {
   const versions = (values: Readonly<Record<string, string>>) => Object.entries(values).map(([id, version]) => `${id}: ${version}`).join(", ");
-  const words = { pending: "Pending final acceptance testing", "already-current": "Already proved on this version", proved: "Proved on this version", failed: "Failed", unverified: "Could not be verified", stale: "Proof is on an earlier version" };
+  const words = {
+    pending: "Pending final acceptance testing",
+    "already-current": "Already proved on this version",
+    proved: "Proved on this version",
+    failed: "Failed",
+    unverified: "Could not be verified",
+    stale: "Proof is on an earlier version"
+  };
   return requests.map(request => `${request.id}: ${request.text}\nProducts: ${request.productIds.join(", ")}; requested by ${request.requestedBy.roleId} (${request.requestedBy.profileId}), round ${request.requestedBy.round}, place ${request.requestedBy.seat}, step ${request.requestedBy.stageId}; owner: final acceptance testing (${request.ownerStageId}).\nReason: ${request.reason}\nReviewed versions: ${versions(request.reviewedVersions)}\nStatus: ${words[request.status]}${request.proof ? `; Tester step ${request.proof.stepId}, versions ${versions(request.proof.versions)}${request.proof.evidence ? `; ${request.proof.evidence}` : ""}${request.proof.reason ? `; ${request.proof.reason}` : ""}` : ""}`).join("\n\n");
 }

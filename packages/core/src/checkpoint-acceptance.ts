@@ -5,7 +5,8 @@ import { roleForTask } from "./roles.js";
 import type { AcceptanceGap, Id, JourneyStep, Role, Task } from "./model.js";
 import type { DeepMutable } from "./flow.js";
 
-const CHECK_LIMIT = 8, ATTEMPT_LIMIT = 4;
+const CHECK_LIMIT = 8;
+const ATTEMPT_LIMIT = 4;
 const clip = (text: string, limit: number) => {
   const chars = Array.from(text);
   return { text: chars.slice(0, limit).join(""), shortened: chars.length > limit };
@@ -35,12 +36,21 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
       return versions && Object.keys(versions).length ? work.productId in versions : !later.buildProductId || later.buildProductId === work.productId;
     });
     const built = edit?.buildVersions ?? edit?.agentResults?.findLast((entry) => entry.roleId === edit.roleId)?.versions;
-    if (edit && (edit.endedAt === undefined || !built?.[work.productId] || built[work.productId] === "unavailable")) return answer("unknown", "A later editing step has no finished contents snapshot for this product.");
-    if (edit && built?.[work.productId] !== tree && (!latest?.tree || latest.tree === "unavailable" || latest.current !== true)) return answer("changed", "A later completed edit records different contents for this product.");
+    if (edit && (edit.endedAt === undefined || !built?.[work.productId] || built[work.productId] === "unavailable")) return answer(
+      "unknown",
+      "A later editing step has no finished contents snapshot for this product."
+    );
+    if (edit && built?.[work.productId] !== tree && (!latest?.tree || latest.tree === "unavailable" || latest.current !== true)) return answer(
+      "changed",
+      "A later completed edit records different contents for this product."
+    );
     if (!latest?.tree || latest.tree === "unavailable") return answer("unknown", "No checked contents were saved for this product.");
     // A non-current run can reflect changed commands or incomplete proof, not changed contents.
     if (latest.current !== true) return answer("unknown", "The saved checks do not establish the current contents of this product.");
-    if (latest.tree === tree && (!edit || built?.[work.productId] === tree)) return answer("same-contents", "The testing run and current saved checks record the same contents; any later edit also records those contents.");
+    if (latest.tree === tree && (!edit || built?.[work.productId] === tree)) return answer(
+      "same-contents",
+      "The testing run and current saved checks record the same contents; any later edit also records those contents."
+    );
     // The task-wide patch belongs to this run only when its complete version map agrees.
     // The checked patch must likewise be bound to the latest checks, never an older approval.
     const boundTest = step.acceptancePatch && step.acceptancePatch === task.testedPatch && testers.findLast((entry) => entry.endedAt !== undefined) === step && tested && Object.keys(tested).length > 0 && task.testedVersions &&
@@ -49,7 +59,14 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
     const boundCheck = work.checkedSha && work.checkedSha === latest.sha;
     if (!task.repositories && latest.tree !== tree && boundTest && boundCheck && task.testedPatch && work.checkedPatch &&
       (!edit || built?.[work.productId] === latest.tree)) {
-      if (task.testedPatch === work.checkedPatch) return { ...answer("same-change", "Same change, the main code underneath moved: the tested change matches the checked change, bound to this run and the latest checks."), testedPatch: task.testedPatch, checkedPatch: work.checkedPatch };
+      if (task.testedPatch === work.checkedPatch) return {
+        ...answer(
+        "same-change",
+        "Same change, the main code underneath moved: the tested change matches the checked change, bound to this run and the latest checks."
+      ),
+        testedPatch: task.testedPatch,
+        checkedPatch: work.checkedPatch
+      };
       return answer("changed", "The saved tested change differs from the change bound to the latest checks.");
     }
     if (edit && built?.[work.productId] !== tree) return answer("changed", "A later completed edit records different contents for this product.");
@@ -58,9 +75,19 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
   });
   const sorted = checks.map((check, index) => ({ check, index })).sort((a, b) => Number(a.check.result === "pass") - Number(b.check.result === "pass"));
   const listed = sorted.slice(0, CHECK_LIMIT).map(({ check, index }) => {
-    const text = clip(check.text, 240), reason = check.reason === undefined ? undefined : clip(check.reason, 400);
+    const text = clip(check.text, 240);
+    const reason = check.reason === undefined ? undefined : clip(check.reason, 400);
     const evidence = !reason && check.result !== "pass" && check.evidence ? clip(check.evidence, 400) : undefined;
-    return { index, text: text.text, result: check.result, kind: task.brief?.acceptance.some((item) => item.text === check.text) ? "requirement" : "additional", ...(reason ? { reason: reason.text } : {}), ...(evidence ? { evidence: evidence.text } : {}), evidenceRecorded: !!check.evidence, shortened: text.shortened || reason?.shortened === true || evidence?.shortened === true };
+    return {
+      index,
+      text: text.text,
+      result: check.result,
+      kind: task.brief?.acceptance.some((item) => item.text === check.text) ? "requirement" : "additional",
+      ...(reason ? { reason: reason.text } : {}),
+      ...(evidence ? { evidence: evidence.text } : {}),
+      evidenceRecorded: !!check.evidence,
+      shortened: text.shortened || reason?.shortened === true || evidence?.shortened === true
+    };
   });
   const otherRuns = testers.filter((entry) => entry !== step).reverse();
   const seat = step && report && resultSeatOf(step, report, roles, task);
@@ -83,19 +110,55 @@ export function checkpointAcceptance(task: Task, roles: readonly Role[]) {
     evidence: {
       state: checks.length ? "recorded" : "unavailable",
       ...(!checks.length ? { reason: missing } : {}),
-      counts: { passed: checks.filter((check) => check.result === "pass").length, failed: checks.filter((check) => check.result === "fail").length, couldNotVerify: checks.filter((check) => check.result === "blocked").length },
-      ...(restored ? { restored: { reason: restorationReason(restored), products: restored.products.map((entry) => ({ productId: entry.productId, commits: !!entry.commits, edits: !!entry.edits, files: entry.files?.slice(0, 5) ?? [], omittedFiles: Math.max(0, (entry.files?.length ?? 0) - 5) })) } } : {}),
+      counts: {
+        passed: checks.filter((check) => check.result === "pass").length,
+        failed: checks.filter((check) => check.result === "fail").length,
+        couldNotVerify: checks.filter((check) => check.result === "blocked").length
+      },
+      ...(restored ? { restored: {
+        reason: restorationReason(restored),
+        products: restored.products.map((entry) => ({
+        productId: entry.productId,
+        commits: !!entry.commits,
+        edits: !!entry.edits,
+        files: entry.files?.slice(0, 5) ?? [],
+        omittedFiles: Math.max(
+        0,
+        (entry.files?.length ?? 0) - 5
+      )
+      }))
+      } } : {}),
       checks: listed, omittedChecks: checks.length - listed.length,
       shortened: checks.length > listed.length || listed.some((entry) => entry.shortened),
       ...(step ? {
         nodeId: step.id, read: nodeRead(step.id),
-        ...(report ? { report: { operation: "journey.result", taskId: task.id, nodeId: step.id, index: reportIndex, ...(seat ? { seat } : {}) } } : { reportUnavailable: "No original participant report was retained on this step." }),
-        ...(inputAttempt !== undefined ? { inputs: { operation: "journey.input", taskId: task.id, nodeId: step.id, seat, index: inputAttempt } } : { inputsUnavailable: "No exact input reference for this participant report was retained. Any saved instructions remain on the step." }),
+        ...(report ? { report: {
+          operation: "journey.result",
+          taskId: task.id,
+          nodeId: step.id,
+          index: reportIndex,
+          ...(seat ? { seat } : {})
+        } } : { reportUnavailable: "No original participant report was retained on this step." }),
+        ...(inputAttempt !== undefined ? { inputs: {
+          operation: "journey.input",
+          taskId: task.id,
+          nodeId: step.id,
+          seat,
+          index: inputAttempt
+        } } : { inputsUnavailable: "No exact input reference for this participant report was retained. Any saved instructions remain on the step." }),
       } : {}),
       products,
       otherRuns: otherRuns.slice(0, ATTEMPT_LIMIT).map((entry) => {
         const name = clip(task.plan?.stages.find((stage) => stage.id === entry.stageId)?.title ?? roleFor(entry.roleId)?.name ?? "Acceptance testing", 120);
-        return { nodeId: entry.id, name: name.text, shortened: name.shortened, round: entry.round, ...(step ? { position: task.journey!.indexOf(entry) > run.index ? "later" : "earlier" } : {}), state: entry.endedAt === undefined ? "unfinished" : entry.acceptanceChecks?.length ? "recorded" : "no-results", read: nodeRead(entry.id) };
+        return {
+          nodeId: entry.id,
+          name: name.text,
+          shortened: name.shortened,
+          round: entry.round,
+          ...(step ? { position: task.journey!.indexOf(entry) > run.index ? "later" : "earlier" } : {}),
+          state: entry.endedAt === undefined ? "unfinished" : entry.acceptanceChecks?.length ? "recorded" : "no-results",
+          read: nodeRead(entry.id)
+        };
       }),
       omittedRuns: Math.max(0, otherRuns.length - ATTEMPT_LIMIT),
       otherRunsShortened: otherRuns.length > ATTEMPT_LIMIT,

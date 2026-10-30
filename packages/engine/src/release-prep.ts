@@ -2,7 +2,17 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as git from "@petrina/repositories/git";
-import { declaredVersion, isVersionFile, lockWithVersion, MAIN_VERSION_FILES, nextVersion, onlyVersionChanged, ownCrates, parseVersion, withVersion } from "./version.js";
+import {
+  declaredVersion,
+  isVersionFile,
+  lockWithVersion,
+  MAIN_VERSION_FILES,
+  nextVersion,
+  onlyVersionChanged,
+  ownCrates,
+  parseVersion,
+  withVersion
+} from "./version.js";
 import { type Kernel, type MutableStage, RELEASE_MANAGER_PROFILE } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import { type Connections, Unreachable } from "./connection.js";
@@ -28,9 +38,25 @@ export class ReleasePrep {
     try {
       await this.chooseVersion(scope, signal);
       const log = await this.sincePreviousRelease(scope, signal);
-      const result = await this.turns.turn(scope, "release-manager", stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE, () => [log], ReleaseNotesResult, signal, { initialHead: start });
+      const result = await this.turns.turn(
+        scope,
+        "release-manager",
+        stage.profileIds[0] ?? RELEASE_MANAGER_PROFILE,
+        () => [log],
+        ReleaseNotesResult,
+        signal,
+        { initialHead: start }
+      );
       const shipping = repository.shipping!;
-      repository.releasePreview = { start, base: repository.baseSha, version: shipping.version!, tag: shipping.tag!, after: shipping.after!, notes: result.notes, summary: result.summary };
+      repository.releasePreview = {
+        start,
+        base: repository.baseSha,
+        version: shipping.version!,
+        tag: shipping.tag!,
+        after: shipping.after!,
+        notes: result.notes,
+        summary: result.summary
+      };
     } finally {
       delete repository.shipping;
     }
@@ -62,7 +88,10 @@ export class ReleasePrep {
     const title = from
       ? `Every commit on ${branch} since ${shipping.after}, oldest first (${commits.length})`
       : `${shipping.after ? `The commit of ${shipping.after} is not in this copy, so: the` : "The first release:"} ${capped ? `${MAX_LOG} most recent commits` : "every commit"} on ${branch}, oldest first${capped ? " (older ones are left out)" : ` (${commits.length})`}`;
-    return { title, body: commits.map((commit) => `### ${commit.message.split("\n")[0]}\n${commit.message.split("\n").slice(1).join("\n").trim()}`.trim()).join("\n\n") || "(none)" };
+    return {
+      title,
+      body: commits.map((commit) => `### ${commit.message.split("\n")[0]}\n${commit.message.split("\n").slice(1).join("\n").trim()}`.trim()).join("\n\n") || "(none)"
+    };
   }
 
   /**
@@ -115,7 +144,10 @@ export class ReleasePrep {
     const targets = new Map<string, Promise<string | undefined>>();
     const targetAt = (file: string) => {
       let read = targets.get(file);
-      if (!read) { read = existsSync(join(worktree, file)) ? git.fileAt(worktree, tested, file) : Promise.resolve(undefined); targets.set(file, read); }
+      if (!read) {
+        read = existsSync(join(worktree, file)) ? git.fileAt(worktree, tested, file) : Promise.resolve(undefined);
+        targets.set(file, read);
+      }
       return read;
     };
     const [invalid, declaredAfter] = await Promise.all([
@@ -174,7 +206,14 @@ export class ReleasePrep {
   }
 
   /** What the product's main version files say at a commit: those that state a version, and those Petrina cannot read (no `version`). */
-  private async declaredVersions(path: string, sha: string, read = (file: string) => existsSync(join(path, file)) ? git.fileAt(path, sha, file) : Promise.resolve(undefined)): Promise<DeclaredVersion[]> {
+  private async declaredVersions(path: string, sha: string, read = (file: string) => existsSync(join(
+    path,
+    file
+  )) ? git.fileAt(
+    path,
+    sha,
+    file
+  ) : Promise.resolve(undefined)): Promise<DeclaredVersion[]> {
     const contents = await Promise.all(MAIN_VERSION_FILES.map(read));
     return MAIN_VERSION_FILES.flatMap((file, index) => {
       const text = contents[index];

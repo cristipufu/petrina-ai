@@ -46,7 +46,14 @@ const MAX_ENTRIES = 400;
  * Only reads files: nothing runs inside these folders, and links are never followed. Stops after
  * `budgetMs` with what it found so far.
  */
-export async function findClones(options: { home?: string; folders?: readonly string[]; platform?: NodeJS.Platform; skip?: (path: string) => boolean; limit?: number; budgetMs?: number } = {}): Promise<Clone[]> {
+export async function findClones(options: {
+  home?: string;
+  folders?: readonly string[];
+  platform?: NodeJS.Platform;
+  skip?: (path: string) => boolean;
+  limit?: number;
+  budgetMs?: number
+} = {}): Promise<Clone[]> {
   const home = options.home ?? homedir();
   const deadline = Date.now() + (options.budgetMs ?? 2_000);
   const seen = new Set<string>();

@@ -15,11 +15,15 @@ export function refuseFolder(folder: string) {
     return Object.assign(new Error(`EPERM: operation not permitted, '${text}'`), { code: "EPERM", path: text });
   };
   const spies: { mockRestore(): void }[] = [];
-  const restore = () => { for (const spy of spies.reverse()) spy.mockRestore(); spies.length = 0; };
+  const restore = () => {
+    for (const spy of spies.reverse()) spy.mockRestore();
+    spies.length = 0;
+  };
   try {
     for (const name of ["mkdir", "mkdtemp", "writeFile", "rm"] as const) {
       const original = files[name] as (...args: unknown[]) => Promise<unknown>;
-      const spy = spyOn(files, name); spies.push(spy);
+      const spy = spyOn(files, name);
+      spies.push(spy);
       spy.mockImplementation((async (...args: unknown[]) => {
         const error = refused(args[0]);
         if (error) throw error;
@@ -28,7 +32,8 @@ export function refuseFolder(folder: string) {
     }
     for (const name of ["mkdirSync", "mkdtempSync", "writeFileSync", "rmSync"] as const) {
       const original = fs[name] as (...args: unknown[]) => unknown;
-      const spy = spyOn(fs, name); spies.push(spy);
+      const spy = spyOn(fs, name);
+      spies.push(spy);
       spy.mockImplementation(((...args: unknown[]) => {
         const error = refused(args[0]);
         if (error) throw error;
@@ -36,5 +41,8 @@ export function refuseFolder(folder: string) {
       }) as never);
     }
     return { attempts, restore };
-  } catch (error) { restore(); throw error; }
+  } catch (error) {
+    restore();
+    throw error;
+  }
 }

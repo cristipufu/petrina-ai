@@ -5,7 +5,17 @@ import { keepApprovedLearnings, LearningOffers, type RepositoryContext } from "@
 // Agents pass lessons on with their results, the coordinator accepts or declines them at the delivery check,
 // and accepted ones reach AGENTS.md with a delivery.
 
-import { AGENTS_FILE, cleanPoint, hasPoint, LEARNINGS_INTRO as INTRO, LEARNINGS_SECTION as SECTION, type DeepMutable, type GuideLine, type Id, type Product } from "@petrina/core";
+import {
+  AGENTS_FILE,
+  cleanPoint,
+  hasPoint,
+  LEARNINGS_INTRO as INTRO,
+  LEARNINGS_SECTION as SECTION,
+  type DeepMutable,
+  type GuideLine,
+  type Id,
+  type Product
+} from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { plainFilesAt } from "@petrina/repositories/object-batch";
 import { addToSection, localPoints } from "./points.js";
@@ -38,7 +48,10 @@ export class Learnings {
     const { task, work: repository } = scope;
     const product = this.k.productOf(scope);
     if (!product?.learnings?.length || !repository.worktree) return;
-    const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
+    const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || [
+      "cancelled",
+      "failed"
+    ].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
     let due: DeepMutable<GuideLine>[];
     try {
       const file = localPoints(repository.worktree, AGENTS_FILE);
@@ -49,7 +62,10 @@ export class Learnings {
       this.k.log(scope, "warn", `${AGENTS_FILE} was not updated: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    await git.commitChanges(repository.worktree, `Learnings: ${due.length === 1 ? "one more lesson" : `${due.length} more lessons`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina with the coordinator's OK.`);
+    await git.commitChanges(
+      repository.worktree,
+      `Learnings: ${due.length === 1 ? "one more lesson" : `${due.length} more lessons`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina with the coordinator's OK.`
+    );
     await this.k.rememberVersion(scope);
     for (const line of due) line.writtenOn = task.id;
     this.k.log(scope, "done", `Added to ${AGENTS_FILE}: ${due.map((line) => line.text).join("; ")}`);
@@ -90,7 +106,10 @@ export interface KeptLearnings {
  * for anything else or unproven, including a lesson main had since the starting point, or took in, and removed,
  * and any part of that history Git cannot read. `ref`: the task's version merged onto `onto`.
  */
-export async function keptLearnings(product: Pick<Product, "learnings" | "learningReceipts"> | undefined, taskId: Id, worktree: string, fork: string, onto: string, merged: { tree: string; conflicts: readonly string[] }, ref = "HEAD"): Promise<KeptLearnings | undefined> {
+export async function keptLearnings(product: Pick<Product, "learnings" | "learningReceipts"> | undefined, taskId: Id, worktree: string, fork: string, onto: string, merged: {
+  tree: string;
+  conflicts: readonly string[]
+}, ref = "HEAD"): Promise<KeptLearnings | undefined> {
   const versions = [fork, onto, ref];
   let instructions: ReturnType<typeof plainFilesAt> | undefined;
   return keepApprovedLearnings(product ? { current: () => product } : undefined, { taskId, fork, onto, merged, ref }, {

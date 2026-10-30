@@ -14,15 +14,24 @@ export function namedCheckFailures(output: string): { name: string; file?: strin
   for (const raw of output.split(/\r?\n/)) {
     const line = raw.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").replace(/^@[^|]+\|\s*/, "").trim();
     // Bun's final summary repeats failures after unrelated files have run.
-    if (/^\d+ tests? (?:failed|skipped):$/.test(line)) { file = undefined; continue; }
+    if (/^\d+ tests? (?:failed|skipped):$/.test(line)) {
+      file = undefined;
+      continue;
+    }
     const path = line.match(/^((?:[\w@. -]+\/)*[\w. -]+\.(?:test|spec)\.[\w.]+):?$/);
-    if (path) { file = path[1]!.replace(/^\.\//, ""); continue; }
+    if (path) {
+      file = path[1]!.replace(/^\.\//, "");
+      continue;
+    }
     const match = line.match(/^\(fail\)\s+(.+)$/i) ?? line.match(/^FAIL\s+(.+)$/);
     if (!match) continue;
     let name = match[1]!.replace(/(?:\s*\[[\d.]+\s*(?:ms|s)\]|\s*\([\d.]+\s*(?:ms|s)\)|\s{2,}[\d.]+\s*(?:ms|s))\s*$/, "").trim();
     let namedFile = file;
     const vitest = name.match(/^(\S+\.(?:test|spec)\.[\w.]+)\s*>\s*(.+)$/);
-    if (vitest) { namedFile = vitest[1]!.replace(/^\.\//, ""); name = vitest[2]!; }
+    if (vitest) {
+      namedFile = vitest[1]!.replace(/^\.\//, "");
+      name = vitest[2]!;
+    }
     name = name.replace(/\s*>\s*/g, " > ").replace(/\s+/g, " ");
     if (!/^.+ > .+$/.test(name) || name.length > 800 || (namedFile?.length ?? 0) > 200) continue;
     // A fileless summary must not duplicate or weaken known inline file identities.
@@ -47,7 +56,19 @@ export function projectCheckEvidence(task: TaskState, productId: string): CheckE
   const work = (task.repositories ?? (task.repository ? [task.repository] : [])).find((work) => work.productId === productId);
   if (!work) return;
   return { id: task.id, state: task.state, held: task.held, delivery: work.confirmedDelivery,
-    journey: (task.journey ?? []).slice(-EVIDENCE_STEP_LIMIT).map(({ id, kind, startedAt, endedAt, end, productChecks, checkAttempts, checkRepairs, checkReviews, buildVersions, buildProductId }) => ({ id, kind, startedAt, endedAt, end,
+    journey: (task.journey ?? []).slice(-EVIDENCE_STEP_LIMIT).map(({
+      id,
+      kind,
+      startedAt,
+      endedAt,
+      end,
+      productChecks,
+      checkAttempts,
+      checkRepairs,
+      checkReviews,
+      buildVersions,
+      buildProductId
+    }) => ({ id, kind, startedAt, endedAt, end,
       productChecks: productChecks?.filter((entry) => entry.productId === productId).slice(-32),
       checkAttempts: checkAttempts?.filter((entry) => entry.productId === productId).slice(-8),
       checkRepairs: checkRepairs?.filter((entry) => entry.productId === productId).slice(-8),
@@ -75,7 +96,10 @@ export function assignedCheckFailures(scope: { task: TaskState; work: Repository
   const { task, work } = scope;
   const ref = work.checks?.provenance;
   if (!task.fixing || !ref) return [];
-  return failures((task.journey ?? []).slice(-EVIDENCE_STEP_LIMIT), work.productId).filter((failure) => failure.nodeId === ref.nodeId && failure.attempt.id === ref.attemptId
+  return failures(
+    (task.journey ?? []).slice(-EVIDENCE_STEP_LIMIT),
+    work.productId
+  ).filter((failure) => failure.nodeId === ref.nodeId && failure.attempt.id === ref.attemptId
     && task.findings.some((finding) => finding.id === failure.check.findingId && finding.raisedBy === "petrina" && finding.status === "open" && (!task.repositories || finding.productIds?.includes(work.productId))));
 }
 
@@ -120,9 +144,25 @@ export function relatedCheckCandidates(own: readonly CheckFailureReference[], pe
         if (latestRepair !== step || supersededFailure) continue;
         const current = active && !delivery && (!latestBuild || latestBuild.end === "done" && latestBuild.buildVersions?.[productId] === repair.tree);
         if (!current && !delivery) continue;
-        const checked = steps.some((entry) => entry.end === "done" && entry.endedAt !== undefined && entry.checkAttempts?.some((attempt) => attempt.productId === productId && attempt.tree === repair.tree && attempt.definition === repair.definition && attempt.passed && same(attempt.commands, repair.commands)));
+        const checked = steps.some((entry) => entry.end === "done" && entry.endedAt !== undefined && entry.checkAttempts?.some((attempt) => attempt.productId === productId && attempt.tree === repair.tree && attempt.definition === repair.definition && attempt.passed && same(
+          attempt.commands,
+          repair.commands
+        )));
         const reviewed = steps.some((entry) => entry.end === "done" && entry.endedAt !== undefined && entry.checkReviews?.some((review) => review.productId === productId && review.tree === repair.tree));
-        candidates.push({ taskId: peer.id, nodeId: step.id, at: step.endedAt, failure, repair, names: [...names].slice(0, 2), status: reviewed ? "reviewed" : checked ? "checked" : "claimed", ...(delivery ? { delivery } : {}), active: current });
+        candidates.push({
+          taskId: peer.id,
+          nodeId: step.id,
+          at: step.endedAt,
+          failure,
+          repair,
+          names: [...names].slice(
+          0,
+          2
+        ),
+          status: reviewed ? "reviewed" : checked ? "checked" : "claimed",
+          ...(delivery ? { delivery } : {}),
+          active: current
+        });
       }
     }
   }

@@ -18,18 +18,38 @@ export class AcceptancePreflight {
       if (current.repositories) current.activeProductId = work.productId;
       const deferred = !!work.conversation;
       const testerFinishing = () => this.host.role(work.conversation?.roleId ?? "", current)?.result === "checks";
-      if (!deferred && await this.effects.upToDate(scope, signal) === "conflict") { conflict = true; break; }
+      if (!deferred && await this.effects.upToDate(scope, signal) === "conflict") {
+        conflict = true;
+        break;
+      }
       let required = await this.effects.ensureChecks(scope, signal);
       if (deferred && !testerFinishing()) {
         const update = await this.effects.upToDate(scope, signal);
-        if (update === "conflict") { conflict = true; break; }
+        if (update === "conflict") {
+          conflict = true;
+          break;
+        }
         if (update === "moved") required = await this.effects.ensureChecks(scope, signal);
       }
       try {
-        const result = await this.effects.failing(scope, signal, required, async () => testerFinishing() || await this.effects.upToDate(scope, signal) !== "conflict");
+        const result = await this.effects.failing(
+          scope,
+          signal,
+          required,
+          async () => testerFinishing() || await this.effects.upToDate(
+          scope,
+          signal
+        ) !== "conflict"
+        );
         failed = result.kind !== "passed" || failed;
         if (result.kind === "product-failed") eligibleProducts.add(result.productId);
-      } catch (error) { if (this.effects.preparationChanged(error)) { conflict = true; break; } throw error; }
+      } catch (error) {
+        if (this.effects.preparationChanged(error)) {
+        conflict = true;
+        break;
+      }
+        throw error;
+      }
 
     }
     if (conflict) return { kind: "repeat" };

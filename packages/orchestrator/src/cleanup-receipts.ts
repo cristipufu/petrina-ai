@@ -6,8 +6,12 @@ interface CleanupBlocker {
   failure?: Failure;
 }
 function completion() {
-  let resolve!: () => void, reject!: (error: unknown) => void;
-  const promise = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((done, failed) => {
+    resolve = done;
+    reject = failed;
+  });
   return { promise, resolve, reject };
 }
 interface Receipt {
@@ -56,8 +60,14 @@ export class CleanupReceipts {
   private settle(receipt: Receipt): void {
     const failure = this.failure(receipt);
     receipt.pending = !!receipt.stop && !receipt.stopSettled;
-    if (failure) { this.active.add(receipt); receipt.done.reject(failure.error); }
-    else { this.active.delete(receipt); receipt.done.resolve(); }
+    if (failure) {
+      this.active.add(receipt);
+      receipt.done.reject(failure.error);
+    }
+    else {
+      this.active.delete(receipt);
+      receipt.done.resolve();
+    }
   }
 
   /** The adapter's completion confirms all native ownership, including a failed opening. */

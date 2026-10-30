@@ -43,7 +43,10 @@ export function prepareDeliveryReturn(host: RepairHost, scope: RepositoryContext
       const products = task.repositories.filter((work) => !repositoryPublished(work)).map((work) => work.productId);
       const lead = task.leadProductId;
       if (lead && products.includes(lead)) products.splice(0, 0, ...products.splice(products.indexOf(lead), 1));
-      if (!products.length) { task.stageIndex = input.fromCheck; return "decision"; }
+      if (!products.length) {
+        task.stageIndex = input.fromCheck;
+        return "decision";
+      }
       task.repair = { products, index: 0, returnStage: task.stageIndex + 1, kind: "review" };
       task.activeProductId = products[0]!;
       task.fixing = true;

@@ -148,8 +148,22 @@ export function createAcpConnection(params: {
     if ("id" in message || !state.turn || state.quiet || state.promptId === undefined || state.sessionId === undefined) return;
     const msgParams = message.params as { sessionId?: unknown; update?: unknown } | undefined;
     if (msgParams?.sessionId !== state.sessionId) return;
-    const update = message.method === acp.methods.client.session.update ? msgParams.update as { sessionUpdate?: unknown; content?: { type?: unknown; text?: unknown } } | undefined : undefined;
-    const notice: SessionNotice = update ? { kind: "update", sessionId: state.sessionId, update } : { kind: "extension", method: message.method, params: msgParams };
+    const update = message.method === acp.methods.client.session.update ? msgParams.update as {
+      sessionUpdate?: unknown;
+      content?: {
+      type?: unknown;
+      text?: unknown
+    }
+    } | undefined : undefined;
+    const notice: SessionNotice = update ? {
+      kind: "update",
+      sessionId: state.sessionId,
+      update
+    } : {
+      kind: "extension",
+      method: message.method,
+      params: msgParams
+    };
     const read = adapter.interruptions?.notice?.(notice);
     if (read) {
       if ("stopped" in read) return retryOver();
@@ -278,7 +292,13 @@ export function createAcpConnection(params: {
             const known = tools.known(update.toolCallId) ?? {};
             const merged = { ...known, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== null && value !== undefined)) };
             tools.update(update, false);
-            if (state.activeToolCall === update.toolCallId && [update.title, update.kind, update.rawInput, update.locations, update._meta].some((value) => value !== null && value !== undefined)) publishTool(merged);
+            if (state.activeToolCall === update.toolCallId && [
+              update.title,
+              update.kind,
+              update.rawInput,
+              update.locations,
+              update._meta
+            ].some((value) => value !== null && value !== undefined)) publishTool(merged);
             break;
           }
           case "plan": {

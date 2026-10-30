@@ -2,510 +2,15 @@
 // Tasks are fast-forwarded through the real simulator, so their histories (and the work
 // log behind every usage number) are consistent.
 
-import { AFTER_WORDS, syncWait } from "./journey.js";
-import { DEFAULT_PROFILES, KNOWN_TOOLS } from "./library.js";
-import { libraryRoles, NO_ROLE_CHANGES } from "./roles.js";
-import { followUpDescription, followUpTitle } from "./follow-ups.js";
-import { findingCount } from "./findings.js";
-import type { CheckRun, CheckSetupAttempt, JourneyProductCheck, DeliveryMode, Finding, Id, InboxItem, JourneyStep, Product, State, Task, TaskKind, UsageReport } from "./model.js";
-import { Simulator, type SimOpenWork, type SimQuirk, type Trigger, type Triggers } from "./sim.js";
-import { askMomentId, MemoryWorkLog } from "./worklog.js";
-import type { Clone } from "./setup.js";
-
-export const DEMO_PRODUCTS: readonly Product[] = [
-  {
-    id: "shop",
-    name: "Shop",
-    repo: "acme/shop",
-    tone: "blue",
-    delivery: "pull-request",
-    approveDelivery: true,
-    checks: [
-      { name: "Type check", argv: ["bun", "run", "typecheck"], why: "CI runs it on every pull request" },
-      { name: "Tests", argv: ["bun", "run", "test"], why: "CI runs it on every pull request" },
-      { name: "Build", argv: ["bun", "run", "build"], why: "The release workflow builds before it ships" },
-    ],
-    checksBy: "finder",
-  },
-  { id: "notes", name: "Notes", repo: "acme/notes", tone: "green", delivery: "release", approveDelivery: true },
-  { id: "site", name: "Site", repo: "acme/site", tone: "orange", delivery: "local", approveDelivery: false },
-];
-
-// Question choices list the agent's own recommendation first, as real agents are told to.
-export const DEMO_TRIGGERS: Triggers = {
-  "guest-checkout|builder|1|2": {
-    kind: "permission",
-    title: "Add a new package: Stripe.js",
-    body: "Card payments for guests need Stripe's official browser library.",
-    detail: "npm install @stripe/stripe-js",
-  },
-  "dark-mode|architect|1|1": {
-    kind: "question",
-    title: "Should dark mode follow the system setting, or be a manual toggle?",
-    body: "Following the system is what most apps do. A toggle gives people control.",
-    options: ["Both, starting from the system setting", "Follow the system", "Manual toggle"],
-  },
-  "export-pdf|builder|1|1": {
-    kind: "permission",
-    title: "Add a new package: pdf-lib",
-    body: "Creates PDF files in the app without a server.",
-    detail: "npm install pdf-lib",
-  },
-  "export-pdf|builder|1|3": {
-    kind: "question",
-    title: "Should exported PDFs include images?",
-    options: ["Yes, compressed", "Yes, full size", "No images"],
-  },
-  "onboarding|architect|1|2": {
-    kind: "question",
-    title: "Can people skip the onboarding checklist?",
-    body: "Skipping lowers friction, but fewer people finish setup.",
-    options: ["Yes, after the first step", "Yes, any time", "No"],
-  },
-  "tag-search|builder|1|2": {
-    kind: "permission",
-    title: "Change the database: add a tags index",
-    body: "Search by tag needs an index to stay fast with many notes.",
-    detail: "bun run db:migrate add-tags-index",
-  },
-  // A builder checking a Mac app window: everything else is done offscreen, this needs the real screen.
-  "quick-note|builder|1|3": {
-    kind: "screen",
-    title: "Click the menu bar icon and check the quick note window opens in front, takes focus and closes with Esc",
-  },
-};
-
-/** Demo tasks whose architects end up disagreeing, so the coordinator can make the call. */
-const DEMO_DISAGREE: readonly string[] = ["gift-cards"];
-
-/** Demo tasks whose working copy could not be removed at the first try, so the board shows Petrina trying again. */
-const DEMO_LOCKED: readonly string[] = ["sentry"];
-
-interface Spec {
-  id: string;
-  productId: string;
-  title: string;
-  description: string;
-  area: string;
-  kind: TaskKind;
-  approvePlan?: boolean;
-  delivery?: DeliveryMode;
-  approveDelivery?: boolean;
-}
-
-const SPECS: readonly Spec[] = [
-  { id: "guest-checkout", productId: "shop", title: "Guest checkout", description: "Let people buy without creating an account. Ask for an email so they get the receipt.", area: "guest checkout", kind: "feature" },
-  { id: "login-loop", productId: "shop", title: "Fix login loop on Safari", description: "Some Safari users get sent back to the login page after signing in.", area: "login", kind: "bug" },
-  { id: "dark-mode", productId: "notes", title: "Dark mode", description: "A dark theme for the whole app.", area: "dark mode", kind: "feature" },
-  { id: "weekly-digest", productId: "notes", title: "Weekly email digest", description: "Every Monday, email people a summary of the notes they changed last week.", area: "the digest", kind: "feature", approvePlan: true },
-  { id: "pricing-refresh", productId: "shop", title: "Refresh the pricing page", description: "New plan names and the yearly discount.", area: "pricing", kind: "chore" },
-  { id: "sentry", productId: "shop", title: "Report errors to Sentry", description: "Send crashes and slow pages to Sentry.", area: "error reporting", kind: "chore" },
-  { id: "footer-typo", productId: "site", title: "Fix the footer links", description: "Two footer links go to old pages.", area: "footer", kind: "bug" },
-  { id: "export-pdf", productId: "notes", title: "Export notes to PDF", description: "A button that exports a note, or a whole folder, as a PDF.", area: "PDF export", kind: "feature" },
-  { id: "onboarding", productId: "shop", title: "Onboarding checklist", description: "A short checklist for new store owners: add a product, set up payments, share the store.", area: "onboarding", kind: "new" },
-  { id: "tag-search", productId: "notes", title: "Search by tag", description: "Type #tag in search to see every note with that tag.", area: "tag search", kind: "feature" },
-  { id: "stripe-retries", productId: "shop", title: "Retry failed Stripe webhooks", description: "When a webhook fails, retry it a few times before giving up.", area: "webhooks", kind: "bug" },
-  { id: "gift-cards", productId: "shop", title: "Gift cards", description: "Sell gift cards people can send by email and spend at checkout.", area: "gift cards", kind: "feature" },
-  { id: "quick-note", productId: "notes", title: "Quick note window opens behind others", description: "On the Mac app, the quick note window from the menu bar sometimes opens behind other windows.", area: "the quick note window", kind: "bug" },
-];
-
-const MINUTE = 60_000;
-const TICK = 40_000;
-
-/** Codex is close to its weekly limit, so Petrina starts fewer agents on it, and Claude Code has room: the usage the demo shows. */
-function demoUsage(now: number): NonNullable<State["pool"]["usage"]> {
-  return [
-    { toolId: "claude-code", kind: "seven_day", status: "allowed", utilization: 0.62, resetsAt: now + 3 * 24 * 60 * MINUTE, at: now },
-    { toolId: "claude-code", kind: "five_hour", status: "allowed", utilization: 0.35, resetsAt: now + 90 * MINUTE, at: now },
-    { toolId: "codex", kind: "codex:primary", status: "allowed", utilization: 0.84, windowMinutes: 10_080, resetsAt: now + 2 * 24 * 60 * MINUTE, at: now },
-  ];
-}
-
-function baseState(now: number, tasks: Task[] = [], inbox: InboxItem[] = []): State {
-  return {
-    now,
-    seq: 0,
-    products: DEMO_PRODUCTS,
-    roles: libraryRoles(NO_ROLE_CHANGES),
-    tools: [...KNOWN_TOOLS,
-      { id: "grok", name: "Grok", command: ["grok"], status: "not-installed", models: ["Grok 4.7"] },
-      { id: "antigravity", name: "Antigravity", command: ["agy"], status: "not-installed", models: ["Gemini 4 Argon"] },
-    ],
-    profiles: DEFAULT_PROFILES,
-    tasks,
-    inbox,
-    pool: { limit: 5, paused: false, toolCaps: { "claude-code": 3, codex: 2 }, usage: demoUsage(now) },
-    planner: "sonnet-medium",
-  };
-}
-
-/** One Backlog card for two differently worded older reports, and one report Petrina could not match. */
-function attachSampleFollowUps(tasks: Task[], products: readonly Product[], now: number): void {
-  const source = tasks.find((task) => task.state === "done");
-  if (!source || tasks.some((task) => task.id === "footer-follow-up")) return;
-  const about = "The About link in the footer opens a retired page.";
-  const other = "Choosing About in the footer still lands on the old about page.";
-  const steps = "Open the site and choose About in the footer.";
-  const evidence = "The same retired page opened on the previous version.";
-  const finding = (id: string, text: string, raisedBy: string, roleId: string, tracking: NonNullable<Finding["tracking"]>): Finding => ({
-    id,
-    text,
-    severity: "pre-existing",
-    status: "open",
-    raisedBy,
-    roleId,
-    confirmedBy: [],
-    steps,
-    evidence,
-    productIds: [source.productId],
-    tracking,
-  });
-  const first = finding(`${source.id}-about`, about, "opus-high", "code-reviewer", { taskId: "footer-follow-up" });
-  first.votes = [
-    { by: "grok-high", toolId: "grok", verdict: "real", reason: "The footer still opens a retired page." },
-    { by: "opus-high", toolId: "claude-code", verdict: "pre-existing", reason: evidence },
-    { by: "sol-xhigh", toolId: "codex", verdict: "pre-existing", reason: "Reproduced the same problem before this change." },
-    { by: "argon-high", toolId: "antigravity", verdict: "pre-existing", reason: "The changed page and the earlier page both have this problem." },
-  ];
-  first.verification = { by: "opus-high", verdict: "pre-existing", reason: evidence, at: now };
-  const second = finding(`${source.id}-about-again`, other, "sol-xhigh", "security-reviewer", { taskId: "footer-follow-up" });
-  const missed = finding(`${source.id}-year`, "The copyright line is a year behind.", "opus-high", "code-reviewer", { reason: "unmatched" });
-  source.findings = [...source.findings, first, second, missed];
-  const review = source.journey?.find(step => step.result?.findingsSettled);
-  if (review?.result) {
-    review.result = { ...review.result, findings: [...(review.result.findings ?? []), JSON.parse(JSON.stringify(first)) as Finding], findingChanges: {
-      raised: [...(review.result.findingChanges?.raised ?? []), first.id],
-      fixed: review.result.findingChanges?.fixed ?? [], dismissed: review.result.findingChanges?.dismissed ?? [],
-    } };
-    review.outcome = findingCount(review.result.findings!.filter(finding => finding.status === "open"));
-  }
-  const reports = [first, second].map((entry) => ({
-    taskId: source.id,
-    findingId: entry.id,
-    sourceTitle: source.title,
-    text: entry.text,
-    steps: entry.steps!,
-    evidence: entry.evidence!,
-    raisedBy: entry.raisedBy,
-    ...(entry.roleId ? { roleId: entry.roleId } : {}),
-    productIds: [...(entry.productIds ?? [])],
-    at: now,
-  }));
-  const names = [products.find((product) => product.id === source.productId)?.name ?? source.productId];
-  const card = queuedTask({
-    id: "footer-follow-up",
-    productId: source.productId,
-    title: followUpTitle(about),
-    description: followUpDescription(reports.map((report) => ({ ...report, images: [] })), names),
-    area: "footer",
-    kind: "bug",
-  }, tasks.length, now, products);
-  tasks.push({
-    ...card,
-    state: "backlog",
-    column: "backlog",
-    statusLine: "Review the request before queueing",
-    timeline: [{ id: "footer-follow-up-kept", at: now, text: "Kept as future work", tone: "status" }],
-    followUp: { reports },
-  });
-}
-
-function queuedTask(spec: Spec, priority: number, now: number, products: readonly Product[] = DEMO_PRODUCTS): Task {
-  const product = products.find((entry) => entry.id === spec.productId);
-  return {
-    ...spec,
-    delivery: spec.delivery ?? product?.delivery ?? "pull-request",
-    approveDelivery: spec.approveDelivery ?? product?.approveDelivery ?? true,
-    priority,
-    held: false,
-    state: "queued",
-    column: "queue",
-    holdsSlot: false,
-    approvePlan: spec.approvePlan ?? false,
-    stageIndex: -1,
-    rounds: {},
-    sub: 0,
-    fixing: false,
-    statusLine: "In the queue",
-    createdAt: now,
-    timeline: [{ id: `${spec.id}-0`, at: now, text: "You added it to the queue", tone: "you" }],
-    session: [],
-    queued: [],
-    objections: [],
-    findings: [],
-  };
-}
-
-interface Placed {
-  task: Task;
-  inbox: InboxItem[];
-  log: MemoryWorkLog;
-  open: SimOpenWork;
-}
-
-/** How long the simulated coordinator takes to answer, in ticks: a few minutes for questions, longer for checkpoints. */
-function patience(item: InboxItem): number {
-  const seed = [...item.id].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
-  return item.kind === "question" || item.kind === "permission" ? 1 + (seed % 7) : 3 + (seed % 22);
-}
-
-/**
- * Run one task alone through the simulator until `until` holds, settling everything that
- * needs the coordinator on the way (first option, allow once, approve), after a believable pause.
- */
-function fastForward(
-  spec: Spec,
-  until: (task: Task, inbox: readonly InboxItem[]) => boolean,
-  triggers: Triggers = DEMO_TRIGGERS,
-  products: readonly Product[] = DEMO_PRODUCTS,
-  quirks: Readonly<Record<string, SimQuirk>> = {},
-  interruptAt?: number,
-  tickMs: number = TICK,
-): Placed {
-  const start = 0;
-  const log = new MemoryWorkLog(start);
-  const sim = new Simulator({ ...baseState(start, [queuedTask(spec, 0, start, products)]), products }, { triggers, prMergeAfter: 3, tickMs, log, quirks, disagree: DEMO_DISAGREE, lockedCopies: DEMO_LOCKED });
-  const seen = new Map<string, number>();
-  for (let tick = 0; tick < 600; tick += 1) {
-    sim.tick();
-    const state = sim.getState();
-    const task = state.tasks[0]!;
-    if (until(task, state.inbox)) return { task, inbox: [...state.inbox], log, open: sim.openWork() };
-    if (tick === interruptAt && task.state === "running") sim.sendMessage(task.id, "Keep the change small, please.", "interrupt");
-    for (const item of state.inbox) {
-      const first = seen.get(item.id) ?? tick;
-      seen.set(item.id, first);
-      if (tick - first < patience(item)) continue;
-      if (item.kind === "question") sim.answer(item.id, item.options?.[0] ?? "Yes");
-      else if (item.kind === "permission") sim.allow(item.id, "once");
-      else sim.approve(item.id);
-    }
-    // A task waiting for the coordinator only moves the clock, so the wait is one jump to the next answer
-    // instead of a step per tick. Every time in the result is the same; building the demos is much faster.
-    const after = sim.getState();
-    if (after.tasks[0]!.state !== "needs-you" || after.inbox.length === 0) continue;
-    const due = Math.min(...after.inbox.map((item) => (seen.get(item.id) ?? tick + 1) + patience(item)));
-    if (due - 1 > tick) {
-      sim.tick(after.now + (due - 1 - tick) * tickMs);
-      tick = due - 1;
-    }
-  }
-  throw new Error(`demo task ${spec.id} never reached its target state`);
-}
-
-/** Move a fast-forwarded task in time so it ends `ago` milliseconds before `now`. */
-function shift(placed: Placed, now: number, ago: number, priority: number): Placed {
-  const { task, inbox } = placed;
-  const endedAt = Math.max(task.timeline.at(-1)?.at ?? 0, ...inbox.map((item) => item.at));
-  const delta = now - ago - endedAt;
-  const at = (value: number) => value + delta;
-  const shiftRun = (run: CheckRun): CheckRun => ({ ...run, ...(run.startedAt !== undefined ? { startedAt: at(run.startedAt) } : {}), ...(run.endedAt !== undefined ? { endedAt: at(run.endedAt) } : {}) });
-  const shiftSetup = (attempt: CheckSetupAttempt): CheckSetupAttempt => ({ ...attempt, queuedAt: at(attempt.queuedAt),
-    ...(attempt.startedAt !== undefined ? { startedAt: at(attempt.startedAt) } : {}), ...(attempt.endedAt !== undefined ? { endedAt: at(attempt.endedAt) } : {}),
-    results: attempt.results.map(result => ({ ...result, run: shiftRun(result.run) })) });
-  const shiftEvidence = (check: JourneyProductCheck): JourneyProductCheck => ({ ...check, ...(check.queuedAt !== undefined ? { queuedAt: at(check.queuedAt) } : {}), ...(check.startedAt !== undefined ? { startedAt: at(check.startedAt) } : {}), ...(check.endedAt !== undefined ? { endedAt: at(check.endedAt) } : {}), ...(check.reusedAt !== undefined ? { reusedAt: at(check.reusedAt) } : {}), ...(check.run ? { run: shiftRun(check.run) } : {}) });
-  // Each fast-forward has its own id counter. Rename pending requests in both the inbox and log.
-  const shiftedInbox = inbox.map((item) => ({ ...item, id: `${task.id}:${item.id}`, at: at(item.at) }));
-  const requestIds = new Map(inbox.map((item, index) => [askMomentId(task.id, item.id), askMomentId(task.id, shiftedInbox[index]!.id)]));
-  placed.log.shift(task.id, delta, requestIds);
-  return {
-    task: {
-      ...task,
-      priority,
-      createdAt: at(task.createdAt) - 5 * MINUTE,
-      ...(task.startedAt !== undefined ? { startedAt: at(task.startedAt) } : {}),
-      ...(task.finishedAt !== undefined ? { finishedAt: at(task.finishedAt) } : {}),
-      ...(task.agent ? { agent: { ...task.agent, since: at(task.agent.since) } } : {}),
-      ...(task.stepClock?.since !== undefined ? { stepClock: { ...task.stepClock, since: at(task.stepClock.since) } } : {}),
-      ...(task.steps ? { steps: task.steps.map((record) => ({ ...record, at: at(record.at) })) } : {}),
-      ...(task.pr ? { pr: { ...task.pr, openedAt: at(task.pr.openedAt) } } : {}),
-      ...(task.cleanup?.removedAt !== undefined ? { cleanup: { ...task.cleanup, removedAt: at(task.cleanup.removedAt) } } : {}),
-      ...(task.checks ? { checks: { ...task.checks, at: at(task.checks.at), results: task.checks.results.map(shiftRun) } } : {}),
-      ...(task.checkSetup ? { checkSetup: shiftSetup(task.checkSetup) } : {}),
-      ...(task.checkSetupInvalidated ? { checkSetupInvalidated: { ...task.checkSetupInvalidated, at: at(task.checkSetupInvalidated.at) } } : {}),
-      ...(task.screen ? { screen: { ...task.screen, at: at(task.screen.at) } } : {}),
-      timeline: task.timeline.map((entry) => ({ ...entry, at: at(entry.at) })),
-      session: task.session.map((line) => ({ ...line, at: at(line.at) })),
-      ...(task.journey
-        ? {
-            journey: task.journey.map((step) => ({
-              ...step,
-              startedAt: at(step.startedAt),
-              ...(step.endedAt !== undefined ? { endedAt: at(step.endedAt) } : {}),
-              ...(step.productChecks ? { productChecks: step.productChecks.map(shiftEvidence) } : {}),
-              ...(step.checkSetups ? { checkSetups: step.checkSetups.map(shiftSetup) } : {}),
-              // A question or request is its inbox item, renamed below like the item.
-              ...(step.asks ? { asks: step.asks.map((ask) => ({ ...ask, id: `${task.id}:${ask.id}`, at: at(ask.at), ...(ask.endedAt !== undefined ? { endedAt: at(ask.endedAt) } : {}) })) } : {}),
-            })),
-          }
-        : {}),
-    },
-    inbox: shiftedInbox,
-    log: placed.log,
-    open: shiftOpen(placed.open, delta),
-  };
-}
-
-function shiftOpen(open: SimOpenWork, delta: number): SimOpenWork {
-  return {
-    turns: open.turns.map(([taskId, turn]) => [taskId, { ...turn, startedAt: turn.startedAt + delta, ...(turn.waitingSince !== undefined ? { waitingSince: turn.waitingSince + delta } : {}) }]),
-    stages: open.stages.map(([taskId, stage]) => [taskId, { ...stage, startedAt: stage.startedAt + delta }]),
-    runs: open.runs,
-    pullRequests: open.pullRequests,
-  };
-}
-
-/** A queued task that starts after `on` lands: it says so, and its journey starts with the wait. */
-function waitingFor(task: Task, on: Task, at: number): Task {
-  const draft: Task & { journey: JourneyStep[] } = { ...task, after: [on.id], journey: [] };
-  syncWait(draft, [on], (id) => (id === on.id ? on : undefined), at);
-  const said = { id: `${task.id}-after`, at, text: AFTER_WORDS.starts([on.title]), tone: "you" as const, step: draft.journey[0]!.id };
-  return { ...draft, statusLine: AFTER_WORDS.waiting([on.title]), timeline: [...task.timeline, said] };
-}
-
-const byId = (id: string): Spec => {
-  const spec = SPECS.find((entry) => entry.id === id);
-  if (!spec) throw new Error(`unknown demo task ${id}`);
-  return spec;
-};
-
-// ── History: thirty days of work, so every number in the app has something to show ──────
-
-const DAY = 24 * 60 * MINUTE;
-
-/** Collects the board, the inbox and the work log while a demo is put together. */
-class DemoBuilder {
-  readonly tasks: Task[] = [];
-  readonly inbox: InboxItem[] = [];
-  readonly log: MemoryWorkLog;
-  private open: SimOpenWork = { turns: [], stages: [], runs: [], pullRequests: [] };
-
-  constructor(readonly now: number, readonly since: number) {
-    this.log = new MemoryWorkLog(since);
-  }
-
-  place(placed: Placed, now: number, ago: number, priority: number): Task {
-    const shifted = shift(placed, now, ago, priority);
-    this.tasks.push(shifted.task);
-    this.inbox.push(...shifted.inbox);
-    this.log.absorb(shifted.log);
-    this.open = { turns: [...this.open.turns, ...shifted.open.turns], stages: [...this.open.stages, ...shifted.open.stages], runs: [...this.open.runs, ...shifted.open.runs], pullRequests: [...this.open.pullRequests, ...shifted.open.pullRequests] };
-    return shifted.task;
-  }
-
-  openWork(): SimOpenWork {
-    return this.open;
-  }
-
-  /** Take a placed task off the board, keeping its entries in the log. */
-  drop(taskId: Id): void {
-    this.tasks.splice(this.tasks.findIndex((task) => task.id === taskId), 1);
-    for (let index = this.inbox.length - 1; index >= 0; index -= 1) if (this.inbox[index]!.taskId === taskId) this.inbox.splice(index, 1);
-  }
-}
-
-const HISTORY_WORK: readonly { title: string; area: string; kind: TaskKind; description: string }[] = [
-  { title: "Saved carts", area: "saved carts", kind: "feature", description: "Keep a cart for a week so people can come back to it." },
-  { title: "Fix slow first load", area: "first load", kind: "bug", description: "The first page takes four seconds on phones." },
-  { title: "Yearly plans", area: "yearly plans", kind: "feature", description: "Offer a yearly plan with two months free." },
-  { title: "Update the brand colours", area: "brand colours", kind: "chore", description: "Use the new palette everywhere." },
-  { title: "Fix broken CSV export", area: "CSV export", kind: "bug", description: "Exports cut off after a thousand rows." },
-  { title: "Team invites", area: "team invites", kind: "feature", description: "Invite teammates by email with a role." },
-  { title: "Tidy the settings page", area: "settings", kind: "chore", description: "Group the settings and drop the ones nobody uses." },
-  { title: "Fix timezone bug in reports", area: "reports", kind: "bug", description: "Reports use UTC instead of the account's timezone." },
-  { title: "Welcome email", area: "the welcome email", kind: "new", description: "A friendly first email with three tips." },
-  { title: "Refund flow", area: "refunds", kind: "feature", description: "Let support refund an order in two clicks." },
-  { title: "Fix the broken avatar upload", area: "avatars", kind: "bug", description: "Large photos fail without a message." },
-  { title: "Faster search results", area: "search", kind: "chore", description: "Cache the most common searches." },
-];
-
-/** What the removed demo product was called, so its history still has a name. */
-const REMOVED: Product = { id: "legacy", name: "Legacy app", repo: "acme/legacy-app", tone: "slate", delivery: "pull-request", approveDelivery: true };
-
-/**
- * Fill the log with history: one to three finished tasks a day for the 29 days before today,
- * across both tools. Tracking "began" 24 days ago, so the oldest tasks ran before Petrina
- * kept track and one straddles the start. A few tasks are cancelled, a few agents ran on
- * other settings, and a removed product still has its share.
- */
-function addHistory(builder: DemoBuilder, products: readonly Product[], quirks: Record<string, SimQuirk>): void {
-  const today = new Date(builder.now);
-  today.setHours(0, 0, 0, 0);
-  let index = 0;
-  for (let daysAgo = 29; daysAgo >= 1; daysAgo -= 1) {
-    const perDay = 1 + ((daysAgo * 7) % 3);
-    for (let k = 0; k < perDay; k += 1) {
-      index += 1;
-      const work = HISTORY_WORK[(daysAgo * 5 + k * 3) % HISTORY_WORK.length]!;
-      const removedEra = daysAgo >= 14 && (daysAgo + k) % 4 === 0;
-      const product = removedEra ? REMOVED : products[(daysAgo * 3 + k) % products.length]!;
-      const id = `h${index}`;
-      const spec: Spec = { id, productId: product.id, title: work.title, description: work.description, area: work.area, kind: work.kind, approveDelivery: product.approveDelivery ?? true, delivery: product.delivery ?? "pull-request" };
-      // The quirks that make every caveat in the app show up somewhere.
-      const quirk = (role: string, value: SimQuirk) => (quirks[`${id}|${role}`] = { ...quirks[`${id}|${role}`], ...value });
-      if (index % 6 === 0) quirk("builder", { toolId: "codex", helpers: 1 + (index % 2) });
-      if (index % 5 === 0) quirk("code-reviewer", { toolId: "codex", helpers: 1 });
-      if (index % 9 === 0) quirk("code-reviewer", { toolId: "codex", ran: { model: "gpt-6.1", name: "gpt-6.1", effort: "medium" } });
-      if (index % 11 === 5) quirk("code-reviewer", { toolId: "codex", changedTo: { model: "gpt-6.1-mini" } });
-      if (index % 13 === 0) quirk("planner", { toolId: "claude-code", noBreakdown: true });
-      if (index % 17 === 0) quirk("architect", { notConfirmed: true });
-      if (index % 19 === 0) quirk("release-manager", { toolId: "claude-code", changedTo: { model: "Sonnet 5.5" } });
-      if (index % 4 === 1) quirk("builder", { toolId: "claude-code", extraModel: "claude-haiku-5-5" });
-      // Agents stop to ask now and then, so not all of a stage's time is agent work.
-      const triggers: Record<string, Trigger> = { ...DEMO_TRIGGERS };
-      if (index % 3 === 0) triggers[`${id}|architect|1|1`] = { kind: "question", title: `Should ${work.area} be on for everyone at once?`, options: ["Yes", "Opt-in first"] };
-      if (index % 3 === 1) triggers[`${id}|builder|1|2`] = { kind: "permission", title: "Add a new package", detail: "npm install date-fns" };
-      if (index % 4 === 2) triggers[`${id}|code-reviewer|1|1`] = { kind: "question", title: "Is the old export still used?", options: ["Yes", "No"] };
-      const cancelled = index % 10 === 7;
-      const placed = fastForward(spec, cancelled ? (task) => task.column === "building" && (task.agent?.step ?? 0) >= 2 : (task) => task.state === "done", triggers, [...products, REMOVED], quirks, index % 8 === 3 ? 4 : undefined, 150_000);
-      if (cancelled) {
-        // Cancelled mid-build: that turn ends without a token report.
-        const sim = new Simulator({ ...baseState(placed.task.timeline.at(-1)?.at ?? 0, [placed.task]), products: [...products, REMOVED] }, { log: placed.log, open: placed.open, quirks });
-        sim.cancel(id);
-        placed.task = sim.getState().tasks[0]!;
-        placed.open = { turns: [], stages: [], runs: [], pullRequests: [] };
-      }
-      const endAt = today.getTime() - daysAgo * DAY + (10 + k * 3) * 60 * MINUTE + ((index * 37) % 50) * MINUTE;
-      // One task straddles the moment tracking began.
-      const straddle = index === 9;
-      const end = straddle ? builder.since + 25 * MINUTE : endAt;
-      const task = builder.place(placed, builder.now, builder.now - end, 1000 + index);
-      if ((task.startedAt ?? task.createdAt) < builder.since) {
-        builder.log.forget(task.id, builder.since);
-        builder.log.markUntracked(task.id, task.productId);
-      }
-      if (index % 7 === 0 && !cancelled) sprinkleTrouble(builder.log, task, index);
-      // Removing a product took its tasks off the board; only its history stays, in the work log.
-      if (removedEra) builder.drop(task.id);
-    }
-  }
-}
-
-/** A failure and a retry, or a result an agent had to redo, inside a finished task's build. */
-function sprinkleTrouble(log: MemoryWorkLog, task: Task, index: number): void {
-  const build = log.turns({ taskId: task.id }).find((turn) => turn.roleId === "builder");
-  if (!build) return;
-  const base = { taskId: task.id, productId: task.productId, stageId: build.stageId, stageTitle: build.stageTitle, stageKind: build.stageKind, round: build.round, roleId: build.roleId, toolId: build.toolId, profileId: build.profileId };
-  const reasons = ["limit", "agent-stopped", "unusable"] as const;
-  log.addMoment({ ...base, id: `${task.id}-fail`, at: build.startedAt + 30_000, kind: "failure", outcome: reasons[index % reasons.length]! });
-  log.addMoment({ ...base, id: `${task.id}-retry`, at: build.startedAt + 60_000, kind: "retry" });
-  log.addMoment({ ...base, id: `${task.id}-redo`, at: (build.endedAt ?? build.startedAt) - 20_000, kind: "redo" });
-}
-
-function trackingStart(now: number): number {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  return start.getTime() - 24 * DAY;
-}
-
-export interface Demo {
-  state: State;
-  triggers: Triggers;
-  /** The work log the demo starts with, and the work still open in it. */
-  log: MemoryWorkLog;
-  open: SimOpenWork;
-  quirks: Readonly<Record<string, SimQuirk>>;
-}
+import type { InboxItem, Product, State, Task, TaskKind } from "./model.js";
+import type { SimQuirk, Trigger } from "./sim.js";
+import { MemoryWorkLog } from "./worklog.js";
+import {
+  addHistory, attachSampleFollowUps, baseState, byId, demoClones, demoUsage, fastForward,
+  queuedTask, recordProducts, recordUsageHistory, remembered, trackingStart, waitingFor,
+  DEMO_PRODUCTS, DEMO_TRIGGERS, DemoBuilder, MINUTE, type Demo, type Spec,
+} from "./demo-builder.js";
+export { demoClones, DEMO_PRODUCTS, DEMO_TRIGGERS, type Demo };
 
 /** Quirks on the board's own tasks: helpers, a second model, a settings mismatch, a turn without tokens. */
 const DEMO_QUIRKS: Readonly<Record<string, SimQuirk>> = {
@@ -524,7 +29,23 @@ function buildDemo(now: number): Demo {
   const since = trackingStart(now);
   const builder = new DemoBuilder(now, since);
   const quirks: Record<string, SimQuirk> = { ...DEMO_QUIRKS };
-  const place = (id: string, ago: number, until: (task: Task, inbox: readonly InboxItem[]) => boolean, priority: number) => builder.place(fastForward(byId(id), until, DEMO_TRIGGERS, DEMO_PRODUCTS, quirks), now, ago, priority);
+  const place = (
+    id: string,
+    ago: number,
+    until: (task: Task, inbox: readonly InboxItem[]) => boolean,
+    priority: number
+  ) => builder.place(
+    fastForward(
+    byId(id),
+    until,
+    DEMO_TRIGGERS,
+    DEMO_PRODUCTS,
+    quirks
+  ),
+    now,
+    ago,
+    priority
+  );
 
   addHistory(builder, DEMO_PRODUCTS, quirks);
   place("guest-checkout", 2 * MINUTE, (_task, items) => items.some((item) => item.kind === "permission"), 100);
@@ -576,7 +97,15 @@ function buildDemo(now: number): Demo {
     const task = queuedTask(byId(id), priority, now - (40 - priority * 7) * MINUTE);
     // Search by tag builds on the dark theme, so it waits for Dark mode to land.
     const darkMode = builder.tasks.find((entry) => entry.id === "dark-mode")!;
-    builder.tasks.push(id === "stripe-retries" ? { ...task, held: true, statusLine: "On hold" } : id === "tag-search" ? waitingFor(task, darkMode, task.createdAt + MINUTE) : task);
+    builder.tasks.push(id === "stripe-retries" ? {
+      ...task,
+      held: true,
+      statusLine: "On hold"
+    } : id === "tag-search" ? waitingFor(
+      task,
+      darkMode,
+      task.createdAt + MINUTE
+    ) : task);
   });
 
   recordProducts(builder.log, DEMO_PRODUCTS, now);
@@ -585,57 +114,6 @@ function buildDemo(now: number): Demo {
   const state: State = { ...baseState(now, builder.tasks, builder.inbox), seq: 10_000, work: { version: 1, since } };
   return { state, triggers: DEMO_TRIGGERS, log: builder.log, open: builder.openWork(), quirks };
 }
-
-/** The permanent product list: every demo product, plus the removed one. */
-function recordProducts(log: MemoryWorkLog, products: readonly Product[], now: number): void {
-  for (const product of products) log.recordProduct({ id: product.id, name: product.name, repo: product.repo, addedAt: now - 40 * DAY });
-  log.recordProduct({ id: REMOVED.id, name: REMOVED.name, repo: REMOVED.repo, addedAt: now - 60 * DAY, removedAt: now - 12 * DAY });
-}
-
-/**
- * Thirty days of readings of each tool's limits, ending on the pool's current reports: every
- * window fills up over its length and drops at each reset. Claude Code's weekly window climbs
- * high each week, its 5-hour window saws through the day, and Codex's weekly window stays low.
- */
-function recordUsageHistory(log: MemoryWorkLog, now: number): void {
-  const peaks: Record<string, readonly number[]> = { seven_day: [0.93, 0.78, 0.88, 0.71], five_hour: [0.55, 0.3, 0.7, 0.45, 0.6, 0.35, 0.5, 0.65, 0.4, 0.58], "codex:primary": [0.41, 0.27, 0.35, 0.22] };
-  const readings: UsageReport[] = [];
-  for (const current of demoUsage(now)) {
-    const length = current.kind === "five_hour" ? 5 * 60 * MINUTE : 7 * DAY;
-    const every = current.kind === "five_hour" ? 30 * MINUTE : 6 * 60 * MINUTE;
-    const from = current.kind === "five_hour" ? now - 2 * DAY : now - 30 * DAY;
-    const resetsAt = current.resetsAt!;
-    for (let at = from; at < now; at += every) {
-      // Which window the time falls in, counted back from the current one, and how far into it.
-      const back = Math.ceil((resetsAt - at) / length) - 1;
-      const start = resetsAt - (back + 1) * length;
-      const peak = back === 0 ? current.utilization! / ((now - start) / length) : peaks[current.kind]![back % peaks[current.kind]!.length]!;
-      const used = Math.round(peak * Math.pow((at - start) / length, 0.9) * 100) / 100;
-      // Keep the sample's provider status independent of how full its window is.
-      readings.push({ ...current, utilization: used, resetsAt: start + length, at });
-    }
-  }
-  for (const reading of readings.sort((a, b) => a.at - b.at)) log.recordUsage(reading);
-}
-
-// ── Built once ────────────────────────────────────────────────────────────────────────
-
-/** Demos already built, by kind and time. Building one fast-forwards dozens of tasks, and tests ask for the same one again and again. */
-const built = new Map<string, Demo>();
-
-/** A demo built once per kind and time. Each caller gets its own copy, free to change. */
-function remembered(key: string, build: () => Demo): Demo {
-  let demo = built.get(key);
-  if (!demo) {
-    demo = build();
-    if (built.size >= 4) built.clear();
-    built.set(key, demo);
-  }
-  return { state: plain(demo.state), triggers: plain(demo.triggers), log: demo.log.copy(), open: plain(demo.open), quirks: plain(demo.quirks) };
-}
-
-/** A full copy of plain data. A JSON round trip, as the simulator copies its state: it works the same everywhere. */
-const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 /** The demo board as it looks when the app opens at `now`. */
 export function createDemoState(now: number): State {
@@ -726,12 +204,7 @@ function buildPortfolioDemo(now: number): Demo {
     const id = `p${index}`;
     const kind: TaskKind = target === "design-running" || target === "design-gate" || target === "question" ? "feature" : work.kind;
     const spec: Spec = {
-      id,
-      productId: product.id,
-      title: work.title,
-      description: work.description,
-      area: work.area,
-      kind,
+      id, productId: product.id, title: work.title, description: work.description, area: work.area, kind,
       approvePlan: target === "plan-gate" || (target === "done" && kind === "new"),
       // A full journey: plan and design checks, a send-back, and release notes before Petrina publishes.
       ...(target === "done" && kind === "new" ? { delivery: "release" as const } : {}),
@@ -741,10 +214,23 @@ function buildPortfolioDemo(now: number): Demo {
     };
 
     if (target === "question") {
-      triggers[`${id}|architect|1|1`] = { kind: "question", title: `Should ${work.area} be on for everyone, or opt-in first?`, options: ["Opt-in first, then everyone", "Everyone", "Opt-in only"] };
+      triggers[`${id}|architect|1|1`] = {
+        kind: "question",
+        title: `Should ${work.area} be on for everyone, or opt-in first?`,
+        options: [
+        "Opt-in first, then everyone",
+        "Everyone",
+        "Opt-in only"
+      ]
+      };
     }
     if (target === "permission") {
-      triggers[`${id}|builder|1|2`] = { kind: "permission", title: "Add a new package: date-fns", body: "Formatting dates in the user's timezone.", detail: "npm install date-fns" };
+      triggers[`${id}|builder|1|2`] = {
+        kind: "permission",
+        title: "Add a new package: date-fns",
+        body: "Formatting dates in the user's timezone.",
+        detail: "npm install date-fns"
+      };
     }
     if (target === "screen") {
       triggers[`${id}|builder|1|2`] = { kind: "screen", title: "Open the app on screen and check the first page appears without a blank flash" };
@@ -766,11 +252,29 @@ function buildPortfolioDemo(now: number): Demo {
   recordUsageHistory(builder.log, now);
   attachSampleFollowUps(tasks, products, now);
   return {
-    state: { ...baseState(now, tasks, builder.inbox), products, seq: 10_000, pool: { limit: 8, paused: false, toolCaps: { "claude-code": 5, codex: 4 }, usage: demoUsage(now) }, work: { version: 1, since } },
-    triggers,
-    log: builder.log,
-    open: builder.openWork(),
-    quirks,
+    state: {
+      ...baseState(
+      now,
+      tasks,
+      builder.inbox
+    ),
+      products,
+      seq: 10_000,
+      pool: {
+      limit: 8,
+      paused: false,
+      toolCaps: {
+      "claude-code": 5,
+      codex: 4
+    },
+      usage: demoUsage(now)
+    },
+      work: {
+      version: 1,
+      since
+    }
+    },
+    triggers, log: builder.log, open: builder.openWork(), quirks,
   };
 }
 
@@ -782,12 +286,9 @@ export function createFirstRunDemo(now: number): Demo {
   const state = baseState(now);
   return {
     state: {
-      ...state,
-      products: [],
-      pool: { ...state.pool, usage: [], limited: [] },
+      ...state, products: [], pool: { ...state.pool, usage: [], limited: [] },
       setup: {
-        done: false,
-        platform: "darwin",
+        done: false, platform: "darwin",
         checks: [
           { id: "claude-code", status: "ready", at: now },
           { id: "codex", status: "not-installed", at: now },
@@ -797,14 +298,7 @@ export function createFirstRunDemo(now: number): Demo {
         ],
       },
     },
-    triggers: DEMO_TRIGGERS,
-    log: new MemoryWorkLog(now),
-    open: { turns: [], stages: [], runs: [], pullRequests: [] },
-    quirks: {},
+    triggers: DEMO_TRIGGERS, log: new MemoryWorkLog(now),
+    open: { turns: [], stages: [], runs: [], pullRequests: [] }, quirks: {},
   };
-}
-
-/** The clones first run's demo "finds": the demo products, newest first. */
-export function demoClones(now: number): Clone[] {
-  return DEMO_PRODUCTS.map((product, index) => ({ path: `~/code/${product.repo.split("/")[1]}`, repo: product.repo, changedAt: now - index * 3_600_000 }));
 }

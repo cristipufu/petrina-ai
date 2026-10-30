@@ -38,7 +38,10 @@ export function compactFindings(input: ReviewInput): string {
 export function compactCards(input: ReviewInput): string {
   const history = input.history!;
   return `${input.cards.map(card => history.cards.includes(card.id)
-    ? `- ${card.id}: ${card.title}\n  Products: ${card.productIds?.join(", ") || "not recorded"}.\n  ${card.problem.slice(0, CARD_OPENING)}\n  ${card.problem.length - CARD_OPENING} characters remain; full entry: cards[${JSON.stringify(card.id)}].`
+    ? `- ${card.id}: ${card.title}\n  Products: ${card.productIds?.join(", ") || "not recorded"}.\n  ${card.problem.slice(
+      0,
+      CARD_OPENING
+    )}\n  ${card.problem.length - CARD_OPENING} characters remain; full entry: cards[${JSON.stringify(card.id)}].`
     : `- ${card.id}: ${card.title}\n  ${card.problem}`).join("\n")}\nIf this is the same bug as one of these cards, set "sameBug" to that card's id. If it is none of them, set "sameBug" to "none".`;
 }
 

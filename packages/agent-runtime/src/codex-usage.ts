@@ -42,7 +42,19 @@ export interface ReadOptions extends UsageProcessOptions {
 export async function readCodexUsage(options: ReadOptions): Promise<UsageInfo[]> {
   const [program, ...args] = options.command ?? CODEX_USAGE_COMMAND;
   const timeoutMs = options.timeoutMs ?? CODEX_USAGE_TIMEOUT_MS;
-  return withUsageProcess(options, () => spawn(program!, args, { stdio: ["pipe", "pipe", "pipe"], env: options.env, windowsHide: true }), async (child, signal) => {
+  return withUsageProcess(options, () => spawn(
+    program!,
+    args,
+    {
+    stdio: [
+    "pipe",
+    "pipe",
+    "pipe"
+  ],
+    env: options.env,
+    windowsHide: true
+  }
+  ), async (child, signal) => {
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
     const failAll = (error: Error) => {
       for (const waiter of pending.values()) waiter.reject(error);
@@ -75,18 +87,25 @@ export async function readCodexUsage(options: ReadOptions): Promise<UsageInfo[]>
       stderr = `${stderr}${chunk.toString()}`.slice(-2000);
     });
     child.stdin!.on("error", () => undefined);
-    child.on("error", (error: NodeJS.ErrnoException) => failAll(error.code === "ENOENT" ? new Error(`Codex is not installed: no \`${program}\` on PATH`) : error));
+    child.on(
+      "error",
+      (error: NodeJS.ErrnoException) => failAll(error.code === "ENOENT" ? new Error(`Codex is not installed: no \`${program}\` on PATH`) : error)
+    );
     const stopped = (code: number | null) => {
       const last = stderr.trim().split("\n").at(-1);
       failAll(new Error(`Codex's app-server stopped (exit ${code ?? "signal"})${last ? `: ${last}` : ""}`));
     };
-    child.on("exit", stopped); child.on("close", stopped);
+    child.on("exit", stopped);
+    child.on("close", stopped);
     const abort = () => failAll(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
     let next = 1;
     const request = (method: string, params?: unknown) =>
       new Promise<unknown>((resolve, reject) => {
-        if (signal.aborted) { reject(signal.reason); return; }
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
         const id = next++;
         pending.set(id, { resolve, reject });
         // JSON lines without the jsonrpc field, as the adapter writes them; the app-server answers the same way.
@@ -128,6 +147,17 @@ export interface CodexUsageOptions {
 /** Reads Codex's usage for the engine, one read at a time, and says once per reason when it cannot. */
 export class CodexUsage extends UsageReader {
   constructor(options: CodexUsageOptions) {
-    super({ name: "Codex", record: options.record, log: options.log, ...(options.changed ? { changed: options.changed } : {}), read: context => readCodexUsage({ command: options.command, env: options.env(), ...context, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) }) });
+    super({
+      name: "Codex",
+      record: options.record,
+      log: options.log,
+      ...(options.changed ? { changed: options.changed } : {}),
+      read: context => readCodexUsage({
+      command: options.command,
+      env: options.env(),
+      ...context,
+      ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {})
+    })
+    });
   }
 }

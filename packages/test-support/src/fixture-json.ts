@@ -5,7 +5,10 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 export function readFixtureJsonLines<T = unknown>(path: string): T[] {
   let body: string;
   try { body = readFileSync(path, "utf8"); }
-  catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return []; throw error; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return [];
+    throw error;
+  }
   const end = body.lastIndexOf("\n");
   if (end < 0) return [];
   // A complete malformed record must fail; only the not-yet-terminated tail is pending.

@@ -21,11 +21,25 @@ export type CheckOutcome = ReportedCheck & (
 function recordedExecution(execution: CheckExecution): boolean {
   return typeof execution.started === "boolean" && typeof execution.timedOut === "boolean" && typeof execution.cancelled === "boolean"
     && ["incomplete", "eof", "read-error"].includes(execution.stdout) && ["incomplete", "eof", "read-error"].includes(execution.stderr)
-    && ["not-requested", "confirmed", "unconfirmed"].includes(execution.cleanup) && ["not-requested", "confirmed", "unconfirmed"].includes(execution.outputCleanup)
+    && [
+      "not-requested",
+      "confirmed",
+      "unconfirmed"
+    ].includes(execution.cleanup) && [
+      "not-requested",
+      "confirmed",
+      "unconfirmed"
+    ].includes(execution.outputCleanup)
     && !!execution.exit && ["unreported", "reported", "rejected", "invalid"].includes(execution.exit.status)
     && (execution.exit.status === "reported" ? Number.isSafeInteger(execution.exit.code) && execution.exit.code! >= 0 : execution.exit.code === undefined)
     && (execution.exit.signal === undefined || typeof execution.exit.signal === "string" && execution.exit.signal.length > 0)
-    && (execution.failure === undefined || execution.failure !== null && typeof execution.failure === "object" && ["start", "observer", "read", "output", "exit"].includes(execution.failure.kind) && typeof execution.failure.message === "string");
+    && (execution.failure === undefined || execution.failure !== null && typeof execution.failure === "object" && [
+      "start",
+      "observer",
+      "read",
+      "output",
+      "exit"
+    ].includes(execution.failure.kind) && typeof execution.failure.message === "string");
 }
 
 /** Process/pipe settlement is independent of verdict precedence and of saved environment identity. */

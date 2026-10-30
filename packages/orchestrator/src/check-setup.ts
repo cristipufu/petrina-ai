@@ -11,7 +11,10 @@ export class CheckSetup {
   constructor(private readonly host: CheckSetupHost) {}
 
   async observe(request: CheckSetupRequest, signal: AbortSignal): Promise<CheckSetupAttempt> {
-    let attempt: CheckSetupAttempt = { ...request, input: { ...request.input }, requirements: request.requirements.map(requirement => ({ ...requirement, argv: [...requirement.argv] })),
+    let attempt: CheckSetupAttempt = { ...request, input: { ...request.input }, requirements: request.requirements.map(requirement => ({
+      ...requirement,
+      argv: [...requirement.argv]
+    })),
       lifecycle: "running", startedAt: this.host.now(), results: [] };
     const errors: unknown[] = [];
     let activity: "none" | "commands" = "none";
@@ -22,12 +25,18 @@ export class CheckSetup {
       else {
         const observed = this.host.executor();
         if (observed.kind === "unavailable") attempt.observationFailure = { kind: "executor", message: observed.message };
-        else if (!isCheckExecutorFacts(observed.facts)) attempt.observationFailure = { kind: "executor", message: "The setup executor was not observed completely" };
+        else if (!isCheckExecutorFacts(observed.facts)) attempt.observationFailure = {
+          kind: "executor",
+          message: "The setup executor was not observed completely"
+        };
         else {
           attempt.executor = structuredClone(observed.facts);
           publish();
           for (const requirement of attempt.requirements) {
-            if (signal.aborted) { attempt.lifecycle = "stopped"; break; }
+            if (signal.aborted) {
+              attempt.lifecycle = "stopped";
+              break;
+            }
             attempt.runningRequirementId = requirement.id;
             publish();
             const priorActivity = activity;
@@ -64,7 +73,10 @@ export class CheckSetup {
     attempt.endedAt = this.host.now();
     if (!signal.aborted && checkSetupOutcome(attempt).kind === "verified") try { attempt.identity = this.host.identity(structuredClone(attempt)); }
     catch (error) { attempt.observationFailure = { kind: "identity", message: detail(error) }; }
-    if (signal.aborted) { attempt.lifecycle = "stopped"; delete attempt.identity; }
+    if (signal.aborted) {
+      attempt.lifecycle = "stopped";
+      delete attempt.identity;
+    }
     try { publish(); } catch (error) { errors.push(error); }
     if (errors.length === 1) throw errors[0];
     if (errors.length) throw new AggregateError(errors, "The setup observation or its cleanup could not complete");

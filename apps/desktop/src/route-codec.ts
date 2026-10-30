@@ -3,7 +3,16 @@ import { HISTORY_STATUSES, type HistoryStatus, type Page, type TaskList } from "
 import type { HistoryPosition } from "./components/History";
 import type { SheetTab } from "./components/TaskCard";
 
-export const PAGE_NAMES: Record<Page, string> = { board: "Board", history: "History", products: "Products", routines: "Routines", agents: "Agents", analytics: "Analytics", library: "Library", settings: "Settings" };
+export const PAGE_NAMES: Record<Page, string> = {
+  board: "Board",
+  history: "History",
+  products: "Products",
+  routines: "Routines",
+  agents: "Agents",
+  analytics: "Analytics",
+  library: "Library",
+  settings: "Settings"
+};
 const TABS: readonly SheetTab[] = ["overview", "plan", "design", "review", "session"];
 const OWN_PARAMS = ["product", "from", "node", "attempt", "historyCursor", "historyQuery", "historyPrevious", "historyStatus", "routine"];
 
@@ -28,7 +37,12 @@ export function readRoute(address: URL): AppRoute {
     const previous = address.searchParams.getAll("historyPrevious");
     const chosenStatus = address.searchParams.get("historyStatus");
     const status = chosenStatus && Object.hasOwn(HISTORY_STATUSES, chosenStatus) ? chosenStatus as HistoryStatus : undefined;
-    return cursor || query || status || previous.length ? { history: { ...(status ? { status } : {}), ...(cursor ? { cursor } : {}), ...(query ? { query } : {}), ...(previous.length ? { previous } : {}) } } : {};
+    return cursor || query || status || previous.length ? { history: {
+      ...(status ? { status } : {}),
+      ...(cursor ? { cursor } : {}),
+      ...(query ? { query } : {}),
+      ...(previous.length ? { previous } : {})
+    } } : {};
   };
   let parts: string[];
   try { parts = address.pathname.split("/").filter(Boolean).map(decodeURIComponent); }
@@ -40,7 +54,24 @@ export function readRoute(address: URL): AppRoute {
     const view = from && Object.hasOwn(PAGE_NAMES, from) ? from as Page : "board";
     const stepId = address.searchParams.get("node");
     const attemptId = address.searchParams.get("attempt");
-    return { ...base, view, ...(view === "history" ? historyState() : {}), ...(view === "routines" && address.searchParams.get("routine") ? { routineRuns: { id: address.searchParams.get("routine")!, ...historyState() } } : {}), sheet: { taskId: id, tab: detail as SheetTab || "overview", list: view === "board" ? "board" : view === "history" || view === "routines" && !!address.searchParams.get("routine") ? "history" : undefined, ...(stepId ? { stepId, ...(attemptId ? { attemptId } : {}) } : {}) } };
+    return {
+      ...base,
+      view,
+      ...(view === "history" ? historyState() : {}),
+      ...(view === "routines" && address.searchParams.get("routine") ? { routineRuns: {
+      id: address.searchParams.get("routine")!,
+      ...historyState()
+    } } : {}),
+      sheet: {
+      taskId: id,
+      tab: detail as SheetTab || "overview",
+      list: view === "board" ? "board" : view === "history" || view === "routines" && !!address.searchParams.get("routine") ? "history" : undefined,
+      ...(stepId ? {
+      stepId,
+      ...(attemptId ? { attemptId } : {})
+    } : {})
+    }
+    };
   }
   if (page && Object.hasOwn(PAGE_NAMES, page)) {
     const route = { ...base, view: page as Page, ...(page === "history" ? historyState() : {}) };

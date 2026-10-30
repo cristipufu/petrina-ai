@@ -14,6 +14,8 @@
     "open": "bun packages/engine/src/cli.ts open --dev",
     "tauri": "bun run --cwd apps/desktop tauri",
     "build": "bun run --cwd apps/desktop build",
+    "format": "bun packages/engine/test/quality/format-cli.ts --write",
+    "format:check": "bun packages/engine/test/quality/format-cli.ts --check",
     "typecheck": "bun run --parallel --workspaces typecheck",
     "test": "bun packages/engine/test/quality/full-run.ts",
     "test:conventions": "bun packages/engine/test/quality/repository.ts conventions",
@@ -22,6 +24,7 @@
     "test:install-browser": "bun packages/agent-runtime/node_modules/@playwright/mcp/cli.js install-browser --no-shell chromium",
     "test:affected": "bun packages/engine/test/quality/affected-run.ts",
     "test:resources": "bun packages/engine/test/quality/resources.ts",
-    "test:resources:ledger": "bun packages/engine/test/quality/resource-ledger.ts"
+    "test:resources:ledger": "bun packages/engine/test/quality/resource-ledger.ts",
+    "test:resources:check": "bun packages/engine/test/quality/resource-ledger.ts --check"
   }
 }

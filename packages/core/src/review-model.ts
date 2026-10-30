@@ -291,7 +291,14 @@ export interface DesignBrief {
   summary: string;
   forUsers: readonly string[];
   areas: readonly string[];
-  acceptance: readonly { text: string; productIds?: readonly Id[]; versions?: Readonly<Record<Id, string>>; met?: boolean; verification?: "passed" | "failed" | "blocked" | "stale"; reason?: string }[];
+  acceptance: readonly {
+    text: string;
+    productIds?: readonly Id[];
+    versions?: Readonly<Record<Id, string>>;
+    met?: boolean;
+    verification?: "passed" | "failed" | "blocked" | "stale";
+    reason?: string
+  }[];
   risks: readonly string[];
 }
 
@@ -416,7 +423,14 @@ export interface Hunt {
   /** The profile reserved or actually used at each position, kept after reporting and across restarts. */
   profiles?: Readonly<Record<Id, Id>>;
   /** Parallel agents that asked for the screen: their copies and conversations survive the wait. */
-  screenTurns?: Readonly<Record<string, { reason: string; at: number; copy: string; copies?: Readonly<Record<Id, string>>; conversation: ConversationNote; allowed?: boolean }>>;
+  screenTurns?: Readonly<Record<string, {
+    reason: string;
+    at: number;
+    copy: string;
+    copies?: Readonly<Record<Id, string>>;
+    conversation: ConversationNote;
+    allowed?: boolean
+  }>>;
   /** Per actual voter profile, whether it finished the round's findings. Older records used planned profiles. */
   voted?: Readonly<Record<Id, true>>;
   /** Older rounds' required ballot seats, one per tool, kept with their majority rule until they finish. */

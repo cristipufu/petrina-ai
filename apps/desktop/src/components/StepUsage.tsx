@@ -20,12 +20,27 @@ export function StepUsage({ node, task, state, find }: { node: JourneyNode; task
       {empty ? <p className="note">{empty}</p> : view && <>
         <p className="step-usage-total"><span>Total</span><strong className="num"><FigureText figure={view.tokens} kind="tokens" /></strong></p>
         <dl className="step-usage-parts">
-          {TOKEN_PARTS.map(({ key, label }) => <div key={key}><dt>{label}</dt><dd className="num"><FigureText figure={view.detail[key]} kind="tokens" bare missing="not reported" /></dd></div>)}
+          {TOKEN_PARTS.map(({
+            key,
+            label
+          }) => <div key={key}><dt>{label}</dt><dd className="num"><FigureText
+            figure={view.detail[key]}
+            kind="tokens"
+            bare
+            missing="not reported"
+          /></dd></div>)}
         </dl>
         {view.breakdownIncomplete && <p className="note">The tool did not report every part of the breakdown.</p>}
         {view.runs.length > 1 && <ul className="step-usage-runs" aria-label="Agent starts">
           {view.runs.map(run => <li key={run.key}>
-            <div className="step-usage-run-head"><span>{roleForTask(state.roles, run.roleId, task)?.name ?? run.roleId}{run.seat !== undefined ? ` · Seat ${run.seat}` : ""} · Start {run.start}</span><span className="num"><FigureText figure={run.tokens} kind="tokens" /></span></div>
+            <div className="step-usage-run-head"><span>{roleForTask(
+              state.roles,
+              run.roleId,
+              task
+            )?.name ?? run.roleId}{run.seat !== undefined ? ` · Seat ${run.seat}` : ""} · Start {run.start}</span><span className="num"><FigureText
+              figure={run.tokens}
+              kind="tokens"
+            /></span></div>
             <p className="note">{find.tool(run.toolId)?.name ?? run.toolId} · {run.model}</p>
             <ModelSplit models={run.models} />
           </li>)}

@@ -25,6 +25,9 @@ export async function startsNewProgram(ms: number, run: typeof runCommand = runC
     if (observation.kind === "rejected") throw observation.error;
     if (observation.result.code !== 0) throw new Error(`The new program exited with code ${observation.result.code}.`);
   } catch (cause) {
-    throw new Error(`This machine could not complete a newly written program within ${ms / 1000} seconds. ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    throw new Error(
+      `This machine could not complete a newly written program within ${ms / 1000} seconds. ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
+    );
   } finally { await settlements.dispose({ close: () => removeDir(dir) }); }
 }

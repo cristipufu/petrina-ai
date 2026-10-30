@@ -30,13 +30,18 @@ export class UsageReader {
     if (this.reading) return this.reading;
     if (this.cleanups.size) return Promise.resolve();
     if (Date.now() - this.at < gap) return Promise.resolve();
-    this.at = Date.now(); this.status = { at: this.at, state: "reading" };
-    const controller = this.controller = new AbortController(), done = Promise.withResolvers<void>();
+    this.at = Date.now();
+    this.status = { at: this.at, state: "reading" };
+    const controller = this.controller = new AbortController();
+    const done = Promise.withResolvers<void>();
     // Publish the entire read before provider callbacks or host notification can reenter stop/refresh.
     this.reading = done.promise;
     void done.promise.catch(() => undefined);
     void this.read(controller).then(done.resolve, done.reject);
-    void done.promise.then(() => { if (this.reading === done.promise) this.reading = undefined; }, () => { if (this.reading === done.promise) this.reading = undefined; });
+    void done.promise.then(
+      () => { if (this.reading === done.promise) this.reading = undefined; },
+      () => { if (this.reading === done.promise) this.reading = undefined; }
+    );
     this.options.changed?.();
     return done.promise;
   }
@@ -48,7 +53,13 @@ export class UsageReader {
         if (this.cleanups.has(cleanup)) return;
         const entry = { pending: true } as { failure?: { error: unknown }; pending: boolean };
         this.cleanups.set(cleanup, entry);
-        void cleanup.then(() => { entry.pending = false; this.cleanups.delete(cleanup); }, error => { entry.pending = false; entry.failure = { error }; });
+        void cleanup.then(() => {
+          entry.pending = false;
+          this.cleanups.delete(cleanup);
+        }, error => {
+          entry.pending = false;
+          entry.failure = { error };
+        });
       } });
       await this.settledCleanups();
       this.failure = undefined;
@@ -70,7 +81,8 @@ export class UsageReader {
     for (;;) {
       const pending = [...this.cleanups.keys()].filter(work => !seen.has(work));
       if (!pending.length) break;
-      pending.forEach(work => seen.add(work)); await Promise.allSettled(pending);
+      pending.forEach(work => seen.add(work));
+      await Promise.allSettled(pending);
     }
     const failures = [...this.cleanups.values()].flatMap(entry => entry.failure ? [entry.failure.error] : []);
     if (failures.length === 1) throw failures[0];
@@ -79,7 +91,8 @@ export class UsageReader {
 
   stop(): Promise<void> {
     if (this.closing) return this.closing;
-    const done = Promise.withResolvers<void>(); this.closing = done.promise;
+    const done = Promise.withResolvers<void>();
+    this.closing = done.promise;
     void done.promise.catch(() => undefined);
     this.stopped = true;
     const read = this.reading;

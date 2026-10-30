@@ -17,7 +17,13 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     liveInput: steering(true),
     parseLimitError: claudeLimit,
     interruptions: claudeInterruptions,
-    parseUsageUpdate: meta => ({ reports: claudeReports("claude-code", meta), ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {}) }),
+    parseUsageUpdate: meta => ({
+      reports: claudeReports(
+      "claude-code",
+      meta
+    ),
+      ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {})
+    }),
     prepareSessionMeta: async (meta, { cwd, browser }) => {
       if (!browser) return meta;
       const claude = meta.claudeCode as { options?: Record<string, unknown> } | undefined;
@@ -42,7 +48,13 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     parseLimitError: codexLimit,
     interruptions: codexInterruptions,
     prepareEnv: env => {
-      env.CODEX_CONFIG = JSON.stringify({ ...JSON.parse(env.CODEX_CONFIG ?? "{}"), ...Object.fromEntries(BACKGROUND_FEATURES.map(feature => [`features.${feature}`, false])) });
+      env.CODEX_CONFIG = JSON.stringify({
+        ...JSON.parse(env.CODEX_CONFIG ?? "{}"),
+        ...Object.fromEntries(BACKGROUND_FEATURES.map(feature => [
+        `features.${feature}`,
+        false
+      ]))
+      });
       env.DISABLE_MCP_CONFIG_FILTERING = "true";
       // A nested launch may inherit another working copy's wrapper. Retain its
       // real target; wrapping CODEX_PATH again would launch wrappers recursively.

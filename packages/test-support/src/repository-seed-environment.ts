@@ -5,7 +5,21 @@ import { testGitEnv } from "./test-git-env.js";
 
 export const REPOSITORY_SEEDS = "PETRINA_TEST_REPOSITORY_SEEDS";
 const LIMIT = 64 * 1024;
-const INPUTS = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "EMAIL"]);
+const INPUTS = new Set([
+  "PATH",
+  "PATHEXT",
+  "SYSTEMROOT",
+  "WINDIR",
+  "COMSPEC",
+  "HOME",
+  "USERPROFILE",
+  "XDG_CONFIG_HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "EMAIL"
+]);
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Config and completion records are small; unknown or oversized input disables sharing. */
@@ -42,18 +56,32 @@ function inputs(environment: NodeJS.ProcessEnv) {
 
 /** Every runner/nested environment owns its cache; preparation reads immutable config snapshots. */
 export function provisionRepositorySeeds(folder: string, env: NodeJS.ProcessEnv): string {
-  const root = join(folder, "repository-seeds"), current = inputs(env);
+  const root = join(folder, "repository-seeds");
+  const current = inputs(env);
   if (!current.identity || current.global === undefined || current.system === undefined) throw new Error("Repository seeds require the runner's explicit private Git configuration");
   mkdirSync(root, { mode: 0o700 });
   writeFileSync(join(root, "global.gitconfig"), current.global, { mode: 0o600 });
   writeFileSync(join(root, "system.gitconfig"), current.system, { mode: 0o600 });
-  writeFileSync(join(root, "environment.json"), JSON.stringify({ version: 1, identity: current.identity, global: digest(current.global), system: digest(current.system) }), { mode: 0o600 });
+  writeFileSync(
+    join(
+    root,
+    "environment.json"
+  ),
+    JSON.stringify({
+    version: 1,
+    identity: current.identity,
+    global: digest(current.global),
+    system: digest(current.system)
+  }),
+    { mode: 0o600 }
+  );
   return root;
 }
 
 /** Resolve anew before consulting the module cache: changed config or PATH cannot reuse an earlier promise. */
 export function repositorySeedEnvironment(environment: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; identity?: string; shared?: string } {
-  const current = inputs(environment), root = environment[REPOSITORY_SEEDS];
+  const current = inputs(environment);
+  const root = environment[REPOSITORY_SEEDS];
   // Fallback Git reads live config files. Without immutable snapshots a cached promise
   // could retain a repository built after those files changed under an older identity.
   const local = { env: current.env };
@@ -62,7 +90,8 @@ export function repositorySeedEnvironment(environment: NodeJS.ProcessEnv): { env
     const text = seedRecord(join(root, "environment.json"));
     if (!text) return local;
     const saved = JSON.parse(text) as { version?: unknown; identity?: unknown; global?: unknown; system?: unknown };
-    const global = seedRecord(join(root, "global.gitconfig")), system = seedRecord(join(root, "system.gitconfig"));
+    const global = seedRecord(join(root, "global.gitconfig"));
+    const system = seedRecord(join(root, "system.gitconfig"));
     if (saved.version !== 1 || saved.identity !== current.identity || global === undefined || system === undefined
       || saved.global !== digest(global) || saved.system !== digest(system)) return local;
     return { identity: current.identity, shared: root,

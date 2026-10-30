@@ -15,7 +15,10 @@ export class ProfileChoiceReader {
   constructor(private readonly k: ProfileHost) {
     this.controller = new ProfileChoiceController({
       now: () => Date.now(), stopped: () => this.k.stopped,
-      arm: (expired, milliseconds) => { const timer = setTimeout(expired, milliseconds); return () => clearTimeout(timer); },
+      arm: (expired, milliseconds) => {
+        const timer = setTimeout(expired, milliseconds);
+        return () => clearTimeout(timer);
+      },
       probe: (toolId, modelId, signal, onGone) => this.probe(toolId, modelId, signal, onGone),
     });
   }
@@ -25,7 +28,12 @@ export class ProfileChoiceReader {
   private async probe(toolId: string, modelId: string | undefined, signal: AbortSignal, onGone: (gone: Promise<void>) => void): Promise<ProfileChoices> {
     if (!ADAPTERS[toolId]) throw new Error("Choose an installed coding tool.");
     if (this.k.options.profileChoices) return this.k.options.profileChoices(toolId, modelId);
-    const profile = this.k.s.profiles.find(profile => profile.toolId === toolId) ?? { id: "configuration", toolId, model: "Configuration", effort: "high" as const };
+    const profile = this.k.s.profiles.find(profile => profile.toolId === toolId) ?? {
+      id: "configuration",
+      toolId,
+      model: "Configuration",
+      effort: "high" as const
+    };
     const cwd = join(this.k.dataDir, "checks", "profiles", toolId);
     await mkdir(cwd, { recursive: true });
     const controller = new AbortController();
@@ -40,6 +48,9 @@ export class ProfileChoiceReader {
     } catch (error) {
       if (controller.signal.aborted) throw new Error("This tool did not report its profile choices within 30 seconds. Try Refresh choices.");
       throw error;
-    } finally { clearTimeout(timer); await run?.stop(); }
+    } finally {
+      clearTimeout(timer);
+      await run?.stop();
+    }
   }
 }

@@ -4,10 +4,32 @@ import { executionFor, repositoryView } from "@petrina/orchestrator";
 // launcher scripts and terminals are in terminal.ts.
 
 import { join } from "node:path";
-import { runtimeWaitHolds, lastIndexWhere, TAKE_OVER_TOOLS, TAKE_OVER_WORDS, takeOverBlock, toolName, type HandBackPreview, type Id, type Launched, type Task } from "@petrina/core";
+import {
+  runtimeWaitHolds,
+  lastIndexWhere,
+  TAKE_OVER_TOOLS,
+  TAKE_OVER_WORDS,
+  takeOverBlock,
+  toolName,
+  type HandBackPreview,
+  type Id,
+  type Launched,
+  type Task
+} from "@petrina/core";
 import * as git from "@petrina/repositories/git";
 import { handBackNote } from "./prompts.js";
-import { askMode, clearEnded, type FoundTerminal, launchPlan, type LaunchInput, openTerminal, pickTerminal, removeLauncher, sessionState, writeLauncher } from "@petrina/agent-runtime/terminal";
+import {
+  askMode,
+  clearEnded,
+  type FoundTerminal,
+  launchPlan,
+  type LaunchInput,
+  openTerminal,
+  pickTerminal,
+  removeLauncher,
+  sessionState,
+  writeLauncher
+} from "@petrina/agent-runtime/terminal";
 import { ADAPTERS } from "@petrina/agent-runtime/tools";
 import { Kernel, type RuntimeTask } from "./kernel.js";
 
@@ -51,7 +73,16 @@ export class TakeOver {
       try { await settled; } catch (error) { driverFailure = { error }; }
       try { await this.k.agentCleanup.wait(taskId); }
       catch (cleanup) {
-        if (driverFailure && !Object.is(driverFailure.error, cleanup)) throw new AggregateError([driverFailure.error, cleanup], "The agent stopped with an error and its cleanup was not confirmed");
+        if (driverFailure && !Object.is(
+          driverFailure.error,
+          cleanup
+        )) throw new AggregateError(
+          [
+          driverFailure.error,
+          cleanup
+        ],
+          "The agent stopped with an error and its cleanup was not confirmed"
+        );
         throw cleanup;
       }
       if (driverFailure) throw driverFailure.error;
@@ -72,7 +103,13 @@ export class TakeOver {
           const files = (await git.changedSince(worktree, before)).map((entry) => entry.file);
           let sha: string | undefined;
           let tree: string | undefined;
-          if (files.length && await git.commitChanges(worktree, `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(role.id, profile.id)}`)) {
+          if (files.length && await git.commitChanges(
+            worktree,
+            `${current.title} (unfinished work)\n\nThe ${role.name}'s unfinished work, saved by Petrina before the coordinator took over in their terminal. The ${role.name} finishes it after the hand back.\n\nSaved by Petrina: ${this.k.describe(
+            role.id,
+            profile.id
+          )}`
+          )) {
             const committed = await git.commitVersion(worktree);
             sha = committed.head ?? await git.head(worktree);
             tree = committed.tree;
@@ -87,11 +124,31 @@ export class TakeOver {
           await this.k.undoReadOnly(current, role.id, worktree);
           head = await git.head(worktree);
         }
-        const repositoryCopies = conversation.repositoryCopies ? Object.fromEntries(await Promise.all(Object.entries(conversation.repositoryCopies).map(async ([id, path]) => [id, { path, head: path === worktree ? head : await git.head(path) }]))) : undefined;
-        current.driving = { ...(repositoryCopies ? { repositoryCopies } : {}), since: Date.now(), roleId: role.id, profileId: profile.id, toolId: profile.toolId, head, ...(saved ? { saved } : {}) };
+        const repositoryCopies = conversation.repositoryCopies ? Object.fromEntries(await Promise.all(Object.entries(conversation.repositoryCopies).map(async ([id, path]) => [
+          id,
+          {
+          path,
+          head: path === worktree ? head : await git.head(path)
+        }
+        ]))) : undefined;
+        current.driving = {
+          ...(repositoryCopies ? { repositoryCopies } : {}),
+          since: Date.now(),
+          roleId: role.id,
+          profileId: profile.id,
+          toolId: profile.toolId,
+          head,
+          ...(saved ? { saved } : {})
+        };
       } catch (error) {
         // The agent has stopped, but the working copy is not ready for the coordinator: the agent carries on instead.
-        this.k.log(current, "warn", `Could not get the working copy ready for you, so the ${role.name} carries on: ${error instanceof Error ? error.message : String(error)}`, role.id, profile.id);
+        this.k.log(
+          current,
+          "warn",
+          `Could not get the working copy ready for you, so the ${role.name} carries on: ${error instanceof Error ? error.message : String(error)}`,
+          role.id,
+          profile.id
+        );
         this.backToWork(current);
         throw new Error(`Petrina couldn't save the ${role.name}'s work before you took over, so the ${role.name} carries on. ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -105,7 +162,13 @@ export class TakeOver {
       this.k.raise(current, "driving", `Hand back “${current.title}” when you're done`, false, {
         body: `${tool.name} is open in your terminal on the ${role.name}'s conversation. Close it there, then hand back: the ${role.name} carries on from what you did.`,
       });
-      if (saved) this.k.log(current, "milestone", `Saved the ${role.name}'s unfinished work as one commit (${saved.files.length} file${saved.files.length === 1 ? "" : "s"})`, role.id, profile.id);
+      if (saved) this.k.log(
+        current,
+        "milestone",
+        `Saved the ${role.name}'s unfinished work as one commit (${saved.files.length} file${saved.files.length === 1 ? "" : "s"})`,
+        role.id,
+        profile.id
+      );
       this.k.log(current, "you", `You took over the ${role.name} in your terminal`, role.id, profile.id);
       this.k.say(current, "system", `You took over in your terminal · ${tool.name} on the ${role.name}'s conversation`, role.id, profile.id);
       this.k.commitNow();
@@ -201,15 +264,40 @@ export class TakeOver {
       const problem = this.branchProblem(task, await git.workingState(worktree));
       if (problem) throw new Error(problem);
       const role = this.k.role(driving.roleId)!;
-      const [commits, files, status] = await Promise.all([git.commitsSince(worktree, driving.head), git.changedSince(worktree, driving.head), git.worktreeStatus(worktree)]);
+      const [commits, files, status] = await Promise.all([
+        git.commitsSince(
+        worktree,
+        driving.head
+      ),
+        git.changedSince(
+        worktree,
+        driving.head
+      ),
+        git.worktreeStatus(worktree)
+      ]);
       let leftovers: string | undefined;
       let leftoverTree: string | undefined;
-      if (!status.clean && await git.commitChanges(worktree, `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.k.describe(role.id, driving.profileId)}`)) {
+      if (!status.clean && await git.commitChanges(
+        worktree,
+        `${task.title} (changes made by hand)\n\nMade by the coordinator in their own terminal while driving the ${role.name}, and saved by Petrina at the hand back.\n\nDriven by hand: ${this.k.describe(
+        role.id,
+        driving.profileId
+      )}`
+      )) {
         const committed = await git.commitVersion(worktree);
         leftovers = committed.head ?? await git.head(worktree);
         leftoverTree = committed.tree;
       }
-      const text = handBackNote({ role: role.name, tool, took: Date.now() - driving.since, ...(driving.saved ? { saved: driving.saved.files } : {}), commits, files, leftovers: leftovers !== undefined, note });
+      const text = handBackNote({
+        role: role.name,
+        tool,
+        took: Date.now() - driving.since,
+        ...(driving.saved ? { saved: driving.saved.files } : {}),
+        commits,
+        files,
+        leftovers: leftovers !== undefined,
+        note
+      });
       const head = leftovers ?? status.head;
       if (!head) throw new Error("The working copy has no saved commit. Restore it in your terminal, then hand back again.");
 
@@ -229,7 +317,17 @@ export class TakeOver {
           ]);
           const merged = await git.mergeTree(work.worktree, parent, copyHead);
           if (!merged || merged.conflicts.length) throw new Error(`Your changes to ${work.source!.product.name} overlap with its task copy. Resolve them in the snapshot, then hand back again.`);
-          return { work, head: copyHead, tree: merged.tree, sha: await git.commitTree(work.worktree, merged.tree, parent, `${task.title} (changes made by hand)`) };
+          return {
+            work,
+            head: copyHead,
+            tree: merged.tree,
+            sha: await git.commitTree(
+            work.worktree,
+            merged.tree,
+            parent,
+            `${task.title} (changes made by hand)`
+          )
+          };
         }));
         const prepared = inspected.filter(entry => entry !== undefined);
         // Validate every product before advancing task copies. Keep the old snapshot anchors
@@ -251,7 +349,13 @@ export class TakeOver {
       }
       // A reviewer works detached from the task's branch. Keep the coordinator's edits in both:
       // its conversation continues in its own copy, and the task's later checks and reviews see them.
-      let primaryRemembered: { head: string; tree: string } | undefined = worktree === scope!.work.worktree && leftovers && leftoverTree ? { head: leftovers, tree: leftoverTree } : undefined;
+      let primaryRemembered: {
+        head: string;
+        tree: string
+      } | undefined = worktree === scope!.work.worktree && leftovers && leftoverTree ? {
+        head: leftovers,
+        tree: leftoverTree
+      } : undefined;
       if (files.length && worktree !== scope!.work.worktree && (!task.repositories || !driving.repositoryCopies)) {
         const parent = await git.head(scope!.work.worktree!);
         const merged = await git.mergeTree(scope!.work.worktree!, parent, head);
@@ -302,7 +406,13 @@ export class TakeOver {
     const inspected = await Promise.all(changedProducts.map(async (productId) => {
       const scope = executionFor(task, productId);
       const known = knownHeads?.[productId];
-      const [problems, sha] = await Promise.all([git.tamperCheck(scope.work.worktree!, scope.work.baseSha ?? scope.work.base!), known ? Promise.resolve(known) : git.head(scope.work.worktree!)]);
+      const [problems, sha] = await Promise.all([
+        git.tamperCheck(
+        scope.work.worktree!,
+        scope.work.baseSha ?? scope.work.base!
+      ),
+        known ? Promise.resolve(known) : git.head(scope.work.worktree!)
+      ]);
       return { scope, problems, sha };
     }));
     for (const { scope, problems, sha } of inspected) {
@@ -310,16 +420,34 @@ export class TakeOver {
       scope.work.tamper = { at: Date.now(), sha, problems };
       for (const problem of problems) {
         if (!task.findings.some((finding) => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(productId)))) {
-          task.findings.push({ ...(task.repositories ? { productIds: [productId] } : {}), id: this.k.id(task.id), text: problem, severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+          task.findings.push({
+            ...(task.repositories ? { productIds: [productId] } : {}),
+            id: this.k.id(task.id),
+            text: problem,
+            severity: "blocking",
+            raisedBy: "petrina",
+            confirmedBy: [],
+            status: "open"
+          });
         }
       }
-      this.k.log(scope, problems.length ? "warn" : "done", problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped");
+      this.k.log(
+        scope,
+        problems.length ? "warn" : "done",
+        problems.length ? `Tests check on your changes: ${problems.length} problem${problems.length === 1 ? "" : "s"}` : "Tests check on your changes passed: no tests removed or skipped"
+      );
 
     }
     task.handChanges = true;
     const stages = task.plan?.stages ?? [];
     if (stages.some((stage, index) => index > task.stageIndex && stage.kind === "review-chain")) return;
-    const chain = stages[task.stageIndex]?.kind === "review-chain" ? task.stageIndex : lastIndexWhere(stages, (stage, index) => index < task.stageIndex && stage.kind === "review-chain");
+    const chain = stages[task.stageIndex]?.kind === "review-chain" ? task.stageIndex : lastIndexWhere(
+      stages,
+      (
+      stage,
+      index
+    ) => index < task.stageIndex && stage.kind === "review-chain"
+    );
     if (chain >= 0) task.rereview = stages[chain]!.id;
   }
 

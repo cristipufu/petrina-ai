@@ -7,10 +7,51 @@ export { reviewRound, stepBack, freshBuilderRethink } from "@petrina/core";
 // library); a role without an entry (one the coordinator made) is told its purpose and hands back notes.
 // What Petrina does with a result lives with the stage that runs the role, not here.
 
-import { z } from "zod";
-import { ACCEPTANCE_EVIDENCE_RULE, BUILT_IN_ROLES, DESIGN_OBJECTION_RULE, FINDING_REVIEW_RULES, hintProducts, NOTES_HANDOFF_RULE, owedAcceptanceTest, REPAIR_RULE, followingCall, VERIFIER_RULES, type Role, type Task } from "@petrina/core";
+import type { z } from "zod";
+import {
+  ACCEPTANCE_EVIDENCE_RULE,
+  BUILT_IN_ROLES,
+  DESIGN_OBJECTION_RULE,
+  FINDING_REVIEW_RULES,
+  hintProducts,
+  NOTES_HANDOFF_RULE,
+  owedAcceptanceTest,
+  REPAIR_RULE,
+  followingCall,
+  VERIFIER_RULES,
+  type Role,
+  type Task
+} from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
-import { WorkChoiceSchema } from "./source-schema.js";
+import {
+  BriefResult,
+  BuildResult,
+  CheckFinderResult,
+  GuideResult,
+  NotesResult,
+  ObjectionsResult,
+  PlanResult,
+  ReleaseNotesResult,
+  ReviewResult,
+  TestResult,
+  TEXT_LIMITS,
+  VerifyResult,
+} from "./role-schemas.js";
+
+export {
+  BriefResult,
+  BuildResult,
+  CheckFinderResult,
+  GuideResult,
+  NotesResult,
+  ObjectionsResult,
+  PlanResult,
+  ReleaseNotesResult,
+  ReviewResult,
+  TestResult,
+  TEXT_LIMITS,
+  VerifyResult,
+} from "./role-schemas.js";
 
 const acceptanceStart = ({ task }: PromptContext) => {
   const owed = owedAcceptanceTest(task);
@@ -18,9 +59,6 @@ const acceptanceStart = ({ task }: PromptContext) => {
     : owed ? "This acceptance run checks the builder's repair of an earlier run that did not pass, before review. Try every item again on the current code; use the earlier evidence index to inspect what changed, and do not reuse old passes as this run's results. "
     : "";
 };
-
-/** Optional navigation: the engine keeps each valid entry, so malformed hints never cost an otherwise usable result. */
-const SourcePointers = z.unknown().optional();
 
 const quoted = (ids: readonly string[]) => ids.map((id) => JSON.stringify(id)).join(", ");
 /** Hints name products by exact registered id: Petrina never translates a repository address or a name into one. */
@@ -35,151 +73,19 @@ const designResearchRule = (task: Task) => {
   return `${sourcePointerRule(ids)} When revising a design, start with the current objections and reconsider assumptions they contradict. Use verified source pointers to revisit relevant code; do not repeat broad discovery solely because this is a fresh conversation. These references are incomplete, not an endorsement of the earlier design. Investigate freely when they do not answer the objection.`;
 };
 
-export const PlanResult = z.object({
-  sourcePointers: SourcePointers,
-  worksOn: z.array(WorkChoiceSchema).max(20).optional(),
-  leadProductId: z.string().optional(),
-  rationale: z.string().min(3),
-  stages: z
-    .array(
-      z.object({
-        kind: z.enum(["do", "converge", "review-chain", "gate"]),
-        title: z.string().min(1).max(60),
-        roleId: z.string(),
-        profileIds: z.array(z.string()).default([]),
-        profileReasons: z.array(z.string().trim().min(3).max(300)).max(12).optional(),
-        roleIds: z.array(z.string()).max(12).optional(),
-        reviewerRoleId: z.string().optional(),
-        reviewerProfileIds: z.array(z.string()).optional(),
-        reviewerProfileReasons: z.array(z.string().trim().min(3).max(300)).max(12).optional(),
-        maxRounds: z.number().int().min(1).max(5).optional(),
-        gate: z.enum(["plan", "design"]).optional(),
-      }).superRefine((stage, ctx) => {
-        if (stage.profileReasons && stage.profileReasons.length !== stage.profileIds.length) ctx.addIssue({ code: "custom", path: ["profileReasons"], message: "Give one profile reason for each profileIds entry." });
-        if (stage.reviewerProfileReasons && stage.reviewerProfileReasons.length !== (stage.reviewerProfileIds?.length ?? 0)) ctx.addIssue({ code: "custom", path: ["reviewerProfileReasons"], message: "Give one reviewer reason for each reviewerProfileIds entry." });
-      }),
-    )
-    .min(1)
-    .max(12),
-  risk: z.object({ level: z.enum(["low", "medium", "high"]), why: z.string().trim().min(3).max(300) }).optional(),
-});
-
-export const BriefResult = z.object({
-  sourcePointers: SourcePointers,
-  summary: z.string().min(3),
-  forUsers: z.array(z.string()).default([]),
-  areas: z.array(z.string()).default([]),
-  acceptance: z.array(z.string()).min(1),
-  risks: z.array(z.string()).default([]),
-  // A blank answer is no answer: it goes back to the architect to fill in.
-  answers: z.array(z.object({ id: z.string(), status: z.enum(["accepted", "rejected"]), answer: z.string().trim().min(1), byCall: z.boolean().default(false) })).default([]),
-});
-
-const ReportImages = z.array(z.object({ path: z.string().trim().min(1), caption: z.string().trim().min(1) })).max(12).optional();
-
-export const ObjectionsResult = z.object({
-  images: ReportImages,
-  objections: z.array(z.object({ text: z.string().min(3), blocking: z.boolean() })).default([]),
-});
-
-export const NotesResult = z.object({
-  complete: z.boolean().optional(),
-  images: ReportImages,
-  summary: z.string().min(3),
-  notes: z.array(z.string()).default([]),
-});
-
-/** What an agent learned about working in the repository, offered to the coordinator for AGENTS.md. */
-const LEARNED = z.array(z.union([z.string(), z.object({ productId: z.string(), text: z.string() })])).max(5).default([]);
-
-export const BuildResult = z.object({
-  complete: z.boolean().optional(),
-  images: ReportImages,
-  summary: z.string().min(3),
-  // One line for the commit that carries the whole change, in the repository's own style.
-  title: z.string().trim().min(3).max(120).optional(),
-  changes: z.array(z.string()).default([]),
-  tests: z.string().optional(),
-  // In a fix round: one answer per finding, by id.
-  answers: z.array(z.object({ id: z.string(), fixed: z.boolean(), text: z.string().min(3) })).default([]),
-  learnings: LEARNED,
-  // A pull request's description, as Petrina publishes it.
-  description: z.string().optional(),
-});
-
-/** GitHub's limits on what Petrina publishes. A pull request's description leaves room for Petrina's own part. */
-export const TEXT_LIMITS = { title: 256, description: 60_000, body: 65_536, notes: 125_000 } as const;
-
-/** The Release Manager's one job: a release's notes, across everything since the previous release. It changes no files. */
-export const ReleaseNotesResult = z.object({
-  summary: z.string().min(3),
-  notes: z.string(),
-});
-
-export const CheckFinderResult = z.object({
-  summary: z.string().min(3),
-  checks: z
-    .array(z.object({ name: z.string().trim().min(2).max(40), argv: z.array(z.string().min(1)).min(1).max(40), why: z.string().trim().min(3).max(200) }))
-    .min(1)
-    .max(8),
-});
-
-export const GuideResult = z.object({
-  missed: z.boolean(),
-  line: z.string().trim().max(240).default(""),
-  why: z.string().trim().min(3).max(400),
-});
-
-const AcceptanceCheckResult = z.union([
-  z.object({ productIds: z.array(z.string()).optional(), text: z.string(), result: z.enum(["pass", "fail", "blocked"]), reason: z.string().optional(), evidence: z.string().trim().min(3).max(1200).optional() }),
-  // Older saved agent sessions may still hand back the original pass/fail shape.
-  z.object({ text: z.string(), pass: z.boolean(), evidence: z.string().trim().min(3).max(1200).optional() }).transform(({ text, pass, evidence }) => ({ text, evidence, productIds: undefined as string[] | undefined, result: pass ? "pass" as const : "fail" as const })),
-]).refine((check) => check.result !== "blocked" || Boolean(check.reason?.trim()), "A blocked acceptance check needs a reason");
-
-export const TestResult = z.object({
-  images: ReportImages,
-  summary: z.string().min(3),
-  checks: z.array(AcceptanceCheckResult).default([]),
-  proofAnswers: z.array(z.object({ id: z.string(), result: z.enum(["pass", "fail", "blocked"]), evidence: z.string().trim().min(3).max(1200).optional(), reason: z.string().trim().optional() })).default([]),
-  learnings: LEARNED,
-});
-
-export const ReviewResult = z.object({
-  images: ReportImages,
-  verdict: z.enum(["pass", "fail"]),
-  proofRequests: z.array(z.object({ text: z.string().trim().min(3), reason: z.string().trim().min(3), productIds: z.array(z.string()).min(1), checklistText: z.string().optional() })).default([]),
-  findings: z
-    .array(
-      z.object({
-        text: z.string().min(3),
-        productIds: z.array(z.string()).optional(),
-        where: z.string().optional(),
-        severity: z.enum(["important", "nit", "pre-existing"]),
-        evidence: z.string().optional(),
-        /** How to reproduce a confirmed older follow-up. */
-        steps: z.string().optional(),
-        /** An open follow-up card this is, or "none" when it is none of the cards shown. */
-        sameBug: z.string().optional(),
-      }),
-    )
-    .default([]),
-  confirms: z.array(z.union([z.string(), z.object({ id: z.string(), evidence: z.string().trim().min(1) })])).default([]),
-  // A dispute always says why: the coordinator reads it next to the finding.
-  disputes: z.array(z.object({ id: z.string(), reason: z.string().min(10) })).default([]),
-  resolves: z.array(z.object({ id: z.string(), evidence: z.string().trim().min(10) })).default([]),
-  learnings: LEARNED,
-}).transform(({ confirms, ...result }) => ({
-  ...result,
-  confirms: [...new Set(confirms.map((entry) => typeof entry === "string" ? entry : entry.id))],
-  confirmationEvidence: Object.fromEntries(confirms.flatMap((entry) => typeof entry === "string" ? [] : [[entry.id, entry.evidence]])) as Record<string, string>,
-}));
-
-export const VerifyResult = z.object({
-  verdicts: z.array(z.object({ id: z.string(), verdict: z.enum(["real", "not-a-bug", "nit", "pre-existing"]), reason: z.string().min(10) })).min(1),
-});
-
 /** The parts of what an agent is shown besides its instructions, in the order they appear. */
-export const CONTEXT_PARTS = ["notes", "brief", "design-notes", "objections", "checks", "findings-to-answer", "guide-points", "report", "check-results", "findings"] as const;
+export const CONTEXT_PARTS = [
+  "notes",
+  "brief",
+  "design-notes",
+  "objections",
+  "checks",
+  "findings-to-answer",
+  "guide-points",
+  "report",
+  "check-results",
+  "findings"
+] as const;
 export type ContextPart = (typeof CONTEXT_PARTS)[number];
 
 export interface RoleContract {
@@ -209,12 +115,24 @@ const LEARN = `Only propose verified, durable rules for working in this reposito
 /** A reviewer's job when the builder ported an already reviewed change onto a main that moved: the port, not the change. */
 function portClause(port: NonNullable<Task["portReview"]>, prepared = false): string {
   if (prepared) return `\nMain moved on and the builder ported this change onto it by hand, resolving conflicts in: ${port.files.join(", ")}. Review only the port of the already reviewed change, using the prepared port comparison and resolved files. Inspect the full code when needed to prove what the port changes. Raise nothing about code the port did not touch.`;
-  return `\nMain moved on and the builder ported this change onto it by hand, resolving conflicts in: ${port.files.join(", ")}. The change itself was reviewed already (its version ${port.head.slice(0, 7)} on ${port.from.slice(0, 7)}). Review only the port: run \`git range-diff ${port.from}..${port.head} ${port.onto}..HEAD\` to see exactly what the port changed in the change, and read each resolved file against main's version (\`git diff ${port.onto} -- <file>\`). Raise nothing about code the port did not touch.`;
+  return `\nMain moved on and the builder ported this change onto it by hand, resolving conflicts in: ${port.files.join(", ")}. The change itself was reviewed already (its version ${port.head.slice(
+    0,
+    7
+  )} on ${port.from.slice(
+    0,
+    7
+  )}). Review only the port: run \`git range-diff ${port.from}..${port.head} ${port.onto}..HEAD\` to see exactly what the port changed in the change, and read each resolved file against main's version (\`git diff ${port.onto} -- <file>\`). Raise nothing about code the port did not touch.`;
 }
 
 /** Each repository in a shared task has its own working copy, base, guide, and last reviewed commit. */
 function reviewScope(task: Task, base: string, branch: string, useCodeReviewBaseline = true, prepared = false): string {
-  if (prepared) return `${task.repositories && reviewRound(task) > 1 ? `This is review round ${reviewRound(task)}. ` : ""}Review ${task.repositories ? "every product in the complete approved map" : `the change on branch ${branch}`} using the exact commits and comparisons in the prepared review material below. Read that material and the relevant code before reporting.${task.repositories ? ` Name every affected product on each finding. ${GUIDE_RULE(base, true)}${task.repositories.map((work) => `\nFor ${work.source?.product.name ?? work.productId}: ${work.portReview ? portClause(work.portReview, true).trim() : useCodeReviewBaseline && work.reviewedSha ? "Review the incremental comparison and whether the earlier findings are fixed. If your saved base advanced, also follow the base-update section and review the complete comparison and relevant incoming changes." : "Review the complete change."}`).join("")}` : ""}`;
+  if (prepared) return `${task.repositories && reviewRound(task) > 1 ? `This is review round ${reviewRound(task)}. ` : ""}Review ${task.repositories ? "every product in the complete approved map" : `the change on branch ${branch}`} using the exact commits and comparisons in the prepared review material below. Read that material and the relevant code before reporting.${task.repositories ? ` Name every affected product on each finding. ${GUIDE_RULE(
+    base,
+    true
+  )}${task.repositories.map((work) => `\nFor ${work.source?.product.name ?? work.productId}: ${work.portReview ? portClause(
+    work.portReview,
+    true
+  ).trim() : useCodeReviewBaseline && work.reviewedSha ? "Review the incremental comparison and whether the earlier findings are fixed. If your saved base advanced, also follow the base-update section and review the complete comparison and relevant incoming changes." : "Review the complete change."}`).join("")}` : ""}`;
   if (!task.repositories) return `Review the change on branch ${branch}: run \`git diff ${base}...HEAD\` to see it.`;
   const repositories = task.repositories.map((work) => {
     const name = work.source?.product.name ?? work.productId;
@@ -261,7 +179,10 @@ function designReviewRuntime(task: Task): string {
   const stage = task.plan?.stages[task.stageIndex];
   const round = stage ? task.rounds[stage.id] ?? 1 : 1;
   const revision = round > 1 ? `Design review round ${round}${stage?.maxRounds ? ` of ${stage.maxRounds}` : ""}: first check the Architect's answers to your prior objections and the revised rules. Reuse established facts about unchanged code; do not repeat broad discovery without a concrete reason. Inspect beyond those changes when needed to find a new contradiction or failure. Do not reopen a resolved objection unless current evidence shows why its answer still fails.` : "";
-  return [revision, task.objections.some((objection) => objection.call !== undefined) ? "Objections settled by the coordinator's call are final: do not raise them again." : ""].filter(Boolean).join("\n");
+  return [
+    revision,
+    task.objections.some((objection) => objection.call !== undefined) ? "Objections settled by the coordinator's call are final: do not raise them again." : ""
+  ].filter(Boolean).join("\n");
 }
 
 export const ROLE_CONTRACTS: Readonly<Record<string, RoleContract>> = {
@@ -324,7 +245,13 @@ Rules:
     result: BriefResult,
     reads: ["notes", "brief", "objections"],
     shape: (ctx) => (followingCall(ctx.task) ? `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "sourcePointers": [], "answers": [{"id": "<objection id the call decides>", "status": "accepted", "byCall": true, "answer": "What you changed in the brief to follow the call"}, {"id": "<objection id the call does not speak to>", "status": "rejected", "byCall": false, "answer": "What you changed, or why not"}]}` : `{"summary": "How it should work, in plain language", "forUsers": ["What changes for users"], "areas": ["Parts of the product"], "acceptance": ["How the coordinator will know it is done"], "risks": ["What could go wrong"], "sourcePointers": [], "answers": [{"id": "<objection id>", "status": "accepted", "answer": "What you changed, or why not"}]}`),
-    withInstructions: ({ task, role }, wording) => followingCall(task) ? `${wording}\n\n${callInstructions(role.canEdit)}` : `${wording}\nIf objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason. Rejecting an objection that would grow the task beyond what was asked is a good reason.`,
+    withInstructions: (
+      {
+      task,
+      role
+    },
+      wording
+    ) => followingCall(task) ? `${wording}\n\n${callInstructions(role.canEdit)}` : `${wording}\nIf objections are listed below, answer every one by its id: accept it and change the design, or reject it with a reason. Rejecting an objection that would grow the task beyond what was asked is a good reason.`,
     instructions: ({ task, role }) => {
       if (followingCall(task)) return callInstructions(role.canEdit);
       return `Design how this should work, for users and in the product. Read the code you need. ${role.canEdit ? "Hand back the design brief." : "Do not change any files: your output is the design brief."}
@@ -411,14 +338,38 @@ Do not change any files.`;
     result: ReviewResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results", "findings"],
     shape: ({ task }) => `{"verdict": "pass", "findings": [{${task.repositories ? '"productIds": ["<every affected product id>"], ' : ""}"text": "What is unsafe, in plain language", "where": "file:line", "severity": "important", "evidence": "How someone could misuse it", "steps": "How to see it again", "sameBug": "<open follow-up card id, or none>"}], "confirms": [{"id": "<id only if that specific problem is still present in the current code; omit if fixed>", "evidence": "The exact current failing case, expected and observed result; a nearby passing control when relevant"}], "disputes": [{"id": "<id of an earlier finding you think is wrong>", "reason": "Why it is wrong, with evidence"}], "resolves": [{"id": "<supplied pre-existing finding id you proved repaired>", "evidence": "Original reproduction, current passing result and nearby controls proving the incidental repair; omission and general passing tests are not proof. Report a distinct remaining variant separately in findings"}], "learnings": ["Something about working in this repository a future agent should know, if anything"]}`,
-    withInstructions: ({ task, base, branch, preparedReview, role }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, contractFor(role).incrementalReview === true, preparedReview)}${task.repositories ? "" : task.portReview ? portClause(task.portReview, preparedReview) : ""}
+    withInstructions: ({
+      task,
+      base,
+      branch,
+      preparedReview,
+      role
+    }, wording) => `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(
+      task,
+      base,
+      branch,
+      contractFor(role).incrementalReview === true,
+      preparedReview
+    )}${task.repositories ? "" : task.portReview ? portClause(
+      task.portReview,
+      preparedReview
+    ) : ""}
 ${wording}
 ${task.repositories ? "" : GUIDE_RULE(base, preparedReview)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 ${LEARN}
 Do not change any files.`,
     instructions: ({ task, base, branch, preparedReview, role }) => {
-      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(task, base, branch, contractFor(role).incrementalReview === true, preparedReview)} Review for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults.${task.repositories ? "" : task.portReview ? portClause(task.portReview, preparedReview) : ""}
+      return `This change was rated high risk${task.risk ? ` (${task.risk.why})` : ""}. ${reviewScope(
+        task,
+        base,
+        branch,
+        contractFor(role).incrementalReview === true,
+        preparedReview
+      )} Review for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults.${task.repositories ? "" : task.portReview ? portClause(
+        task.portReview,
+        preparedReview
+      ) : ""}
 ${task.repositories ? "" : GUIDE_RULE(base, preparedReview)}
 Petrina already ran the product's checks on this exact commit (results below): do not run the full test suite or build again.
 ${BUILT_IN_ROLES.find((entry) => entry.id === "security-reviewer")!.instructions}
@@ -430,7 +381,11 @@ Do not change any files.`;
     result: VerifyResult,
     reads: ["notes", "brief", "guide-points", "report", "check-results"],
     shape: `{"verdicts": [{"id": "<finding id>", "verdict": "real", "reason": "What you checked and what it showed"}]}`,
-    withInstructions: ({ base, branch, preparedReview }, wording) => `Reviewers raised the Important findings below about the change on branch ${branch} (${preparedReview ? "use the prepared complete comparison" : `see \`git diff ${base}...HEAD\``}). The starting version is ${base}.
+    withInstructions: ({
+      base,
+      branch,
+      preparedReview
+    }, wording) => `Reviewers raised the Important findings below about the change on branch ${branch} (${preparedReview ? "use the prepared complete comparison" : `see \`git diff ${base}...HEAD\``}). The starting version is ${base}.
 ${wording}
 Do not change any files.`,
     instructions: ctx => ROLE_CONTRACTS.verifier!.withInstructions!(ctx, ctx.role.instructions),
@@ -500,7 +455,10 @@ export function contractFor(role: Role): RoleContract {
   return { ...contract, instructions: (ctx) => {
     const text = instructions(ctx) + (role.category === "maintenance" ? '\nSet "complete" to true only after completing the bounded investigation. Return false for an incomplete investigation and explain what prevented completion. Distinguish findings from missing evidence.\n' : "");
     const designRuntime = role.result === "objections" ? designReviewRuntime(ctx.task) : "";
-    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "votes" ? VERIFIER_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [DESIGN_OBJECTION_RULE, ...(designRuntime ? [designRuntime] : [])] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : role.result === "check-discovery" ? [COMPLETE_CHECKS_RULE] : [];
+    const rules = role.result === "findings" ? FINDING_REVIEW_RULES : role.result === "votes" ? VERIFIER_RULES : role.result === "build" ? [REPAIR_RULE] : role.result === "brief" ? [designResearchRule(ctx.task)] : role.result === "objections" ? [
+      DESIGN_OBJECTION_RULE,
+      ...(designRuntime ? [designRuntime] : [])
+    ] : role.result === "notes" ? [NOTES_HANDOFF_RULE] : role.result === "check-discovery" ? [COMPLETE_CHECKS_RULE] : [];
     const missing = rules.filter((rule) => !text.includes(rule));
     return missing.length ? `${text}\n${missing.join("\n")}` : text;
   } };
@@ -508,8 +466,14 @@ export function contractFor(role: Role): RoleContract {
 
 export function shapeFor(contract: RoleContract, ctx: PromptContext): string {
   let shape = typeof contract.shape === "function" ? contract.shape(ctx) : contract.shape;
-  if (ctx.role.result === "findings" && ctx.task.plan?.stages.some(stage => stage.kind === "do" && ctx.roles?.find(role => role.id === stage.roleId)?.result === "checks")) shape = shape.replace(/}\s*$/, ', "proofRequests": [{"text": "What must be proved on the final version", "productIds": ["<affected product id>"], "reason": "Why this proof is required", "checklistText": "<optional exact saved checklist text>"}]}');
-  if (ctx.role.result === "checks" && ctx.task.proofRequests?.length) shape = shape.replace(/}\s*$/, ', "proofAnswers": [{"id": "<proof request id>", "result": "pass", "evidence": "The scenario and observed result", "reason": "What prevented verification when blocked"}]}');
+  if (ctx.role.result === "findings" && ctx.task.plan?.stages.some(stage => stage.kind === "do" && ctx.roles?.find(role => role.id === stage.roleId)?.result === "checks")) shape = shape.replace(
+    /}\s*$/,
+    ', "proofRequests": [{"text": "What must be proved on the final version", "productIds": ["<affected product id>"], "reason": "Why this proof is required", "checklistText": "<optional exact saved checklist text>"}]}'
+  );
+  if (ctx.role.result === "checks" && ctx.task.proofRequests?.length) shape = shape.replace(
+    /}\s*$/,
+    ', "proofAnswers": [{"id": "<proof request id>", "result": "pass", "evidence": "The scenario and observed result", "reason": "What prevented verification when blocked"}]}'
+  );
   if (ctx.role.category === "maintenance") shape = shape.replace(/}\s*$/, ', "complete": true}');
   return ["notes", "objections", "build", "checks", "findings"].includes(ctx.role.result)
     ? shape.replace(/}\s*$/, ', "images": [{"path": "A chosen browser capture", "caption": "What the picture demonstrates, in plain language"}]}')

@@ -1,18 +1,69 @@
 import { engineConstructionBoundaries } from "./engine-construction.js";
+import {
+  FROZEN_PRODUCTION_LINE_CEILINGS,
+  MAX_PRODUCTION_LINE_WIDTH,
+  productionFormattingViolations,
+} from "./format.js";
 import { childFixtureBoundaries, layerBoundaries, packageBoundaries } from "./layers.js";
 import { sourceCandidates } from "./source-paths.js";
 import { sourceFacts } from "./source.js";
-import { isSource, isTest } from "./test-paths.js";
+import { isSource, isTest, workspaceOf } from "./test-paths.js";
 import { TEST_WORKSPACES } from "./workspaces.js";
+
+export { FROZEN_PRODUCTION_LINE_CEILINGS, MAX_PRODUCTION_LINE_WIDTH };
+export const MAX_PRODUCTION_LINES = 650;
+
+/** Contravariant Error constructor signature in the test rejection helper (`new (...args: any[]) => Error`). */
+const ALLOWED_PRODUCTION_ANY: Readonly<Record<string, number>> = {
+  "packages/test-support/src/rejections.ts": 1,
+};
+
+const countLines = (source: string): number =>
+  source === "" ? 0 : source.replace(/\r?\n$/, "").split(/\r?\n/).length;
 
 export function conventions(files: ReadonlyMap<string, string>): string[] {
   const errors: string[] = [];
   for (const [file, source] of files) {
+    if (!isSource(file)) continue;
+    const workspace = workspaceOf(file);
+    const production = !!workspace && file.startsWith(`${workspace}/src/`) && !isTest(file);
     const engine = file.startsWith("packages/engine/test/");
     const native = TEST_WORKSPACES.some(
-      (workspace) => workspace.runner === "bun" && file.startsWith(`${workspace.path}/test/`),
+      (entry) => entry.runner === "bun" && file.startsWith(`${entry.path}/test/`),
     );
-    if ((!native && !isTest(file)) || !isSource(file)) continue;
+    if (!production && !native && !isTest(file)) continue;
+
+    if (production) {
+      const lines = countLines(source);
+      const ceiling = FROZEN_PRODUCTION_LINE_CEILINGS[file] ?? MAX_PRODUCTION_LINES;
+      if (lines > ceiling) {
+        errors.push(
+          `${file}: ${lines} lines exceeds the ${ceiling}-line production module ceiling; split cohesive responsibilities into focused modules`,
+        );
+      }
+      if (!file.endsWith(".d.ts")) {
+        let facts;
+        try {
+          facts = sourceFacts(source, file);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          errors.push(`${file}: cannot parse production source: ${detail}`);
+          continue;
+        }
+        const allowedAny = ALLOWED_PRODUCTION_ANY[file] ?? 0;
+        if (facts.anyTypes.length > allowedAny) {
+          for (const line of facts.anyTypes.slice(allowedAny)) {
+            errors.push(
+              `${file}:${line}: avoid 'any' in production source; use 'unknown', concrete domain types, or generic constraints`,
+            );
+          }
+        }
+        for (const violation of productionFormattingViolations(source, file)) {
+          errors.push(`${file}:${violation.line}: ${violation.reason}`);
+        }
+      }
+      continue;
+    }
 
     let facts;
     try {

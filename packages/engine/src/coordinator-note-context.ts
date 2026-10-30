@@ -4,7 +4,10 @@ import { COORDINATOR_NOTES_RULE, coordinatorNoteStep, renderCoordinatorNote, typ
 
 export interface ContextOmission { title: string; digest: string; noteId?: string }
 
-const noteHash = (note: NonNullable<Section["coordinatorNotes"]>[number]) => createHash("sha256").update(JSON.stringify({ text: note.text, origin: note.origin })).digest("hex");
+const noteHash = (note: NonNullable<Section["coordinatorNotes"]>[number]) => createHash("sha256").update(JSON.stringify({
+  text: note.text,
+  origin: note.origin
+})).digest("hex");
 
 /** Identity comes only from recorded ids and exact content, never rendered prose or similarity. */
 export function coordinatorNoteHashes(sections: readonly Section[]): BuilderContext["noteHashes"] {
@@ -34,12 +37,19 @@ export function restoreRevisedCoordinatorNotes(sections: readonly Section[], pre
     }
     if (notes.every((note, index) => note === section.coordinatorNotes![index])) return section;
     const background = notes.filter(note => note.background && !note.earlierCarried);
-    return { ...section, coordinatorNotes: notes, body: background.length ? `${COORDINATOR_NOTES_RULE}\n\n${background.map(renderCoordinatorNote).join("\n\n")}` : "" };
+    return {
+      ...section,
+      coordinatorNotes: notes,
+      body: background.length ? `${COORDINATOR_NOTES_RULE}\n\n${background.map(renderCoordinatorNote).join("\n\n")}` : ""
+    };
   });
 }
 
 /** Undefined retains the original notes; no returned sections means unchanged. */
-export function continuedCoordinatorNotes(section: Section, previous: BuilderContext, hashes: NonNullable<BuilderContext["noteHashes"]>, sameSection: boolean): { sections: Section[]; omitted: ContextOmission[] } | undefined {
+export function continuedCoordinatorNotes(section: Section, previous: BuilderContext, hashes: NonNullable<BuilderContext["noteHashes"]>, sameSection: boolean): {
+  sections: Section[];
+  omitted: ContextOmission[]
+} | undefined {
   if (!previous.noteHashes) return undefined;
   const notes = section.coordinatorNotes!;
   const unchanged = notes.filter(note => previous.noteHashes![note.id!] === hashes[note.id!]);
@@ -50,7 +60,16 @@ export function continuedCoordinatorNotes(section: Section, previous: BuilderCon
   // Sending all-new notes saves nothing. Withdrawals must still be explicit, including the last note.
   if (!unchangedBackground.length) {
     if (!removed.length) return undefined;
-    return { omitted: [], sections: [...(section.body ? [{ ...section }] : []), { title: "Coordinator notes no longer applying", body: `No longer applying: ${removed.join(", ")}.` }] };
+    return {
+      omitted: [],
+      sections: [
+      ...(section.body ? [{ ...section }] : []),
+      {
+      title: "Coordinator notes no longer applying",
+      body: `No longer applying: ${removed.join(", ")}.`
+    }
+    ]
+    };
   }
   const changed = notes.filter(note => note.background && !note.earlierCarried && previous.noteHashes![note.id!] !== hashes[note.id!]);
   const index = notes.map((note, i) => {
@@ -58,5 +77,11 @@ export function continuedCoordinatorNotes(section: Section, previous: BuilderCon
     const state = note.earlierCarried ? "already carried in earlier-attempt guidance; full text in the saved complete context" : !note.background ? "waiting as a coordinator message" : prior === hashes[note.id!] ? "unchanged in the saved complete context" : `full text below (${prior === undefined ? "new" : "changed"})`;
     return `${i + 1}. ${note.id}: ${coordinatorNoteStep(note)} — ${state}.`;
   }).join("\n");
-  return { omitted, sections: [{ title: section.title, body: `${COORDINATOR_NOTES_RULE}\n\nEvery current note, oldest to newest (unchanged text remains in the complete current context packet above):\n${index}${removed.length ? `\nNo longer applying: ${removed.join(", ")}.` : ""}${changed.length ? `\n\n${changed.map(renderCoordinatorNote).join("\n\n")}` : ""}` }] };
+  return {
+    omitted,
+    sections: [{
+    title: section.title,
+    body: `${COORDINATOR_NOTES_RULE}\n\nEvery current note, oldest to newest (unchanged text remains in the complete current context packet above):\n${index}${removed.length ? `\nNo longer applying: ${removed.join(", ")}.` : ""}${changed.length ? `\n\n${changed.map(renderCoordinatorNote).join("\n\n")}` : ""}`
+  }]
+  };
 }

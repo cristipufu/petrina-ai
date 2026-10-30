@@ -248,7 +248,23 @@ export interface WorkLogReader {
 export interface TaskTally { tally: Tally; untracked: boolean }
 
 export function emptyTally(): Tally {
-  return { turns: 0, reported: 0, noTokens: 0, lost: 0, tokens: 0, timed: 0, workMs: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, hasInput: 0, hasCacheRead: 0, hasCacheWrite: 0, hasOutput: 0 };
+  return {
+    turns: 0,
+    reported: 0,
+    noTokens: 0,
+    lost: 0,
+    tokens: 0,
+    timed: 0,
+    workMs: 0,
+    input: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    output: 0,
+    hasInput: 0,
+    hasCacheRead: 0,
+    hasCacheWrite: 0,
+    hasOutput: 0
+  };
 }
 
 /** Add one turn to a tally. A running turn counts nowhere until it ends. */
@@ -326,7 +342,17 @@ export interface TurnReport {
  *   model it names. A reroute marks the line; a Codex helper agent started during the turn marks the
  *   turn "main agent only".
  */
-export function turnTokens(input: { toolId: Id; report?: TurnReport; model?: string; rerouted?: boolean; helpers?: number }): { tokens?: TokenCounts; lines: Omit<TokenLine, "turnId">[]; mainOnly: boolean } {
+export function turnTokens(input: {
+  toolId: Id;
+  report?: TurnReport;
+  model?: string;
+  rerouted?: boolean;
+  helpers?: number
+}): {
+  tokens?: TokenCounts;
+  lines: Omit<TokenLine, "turnId">[];
+  mainOnly: boolean
+} {
   const { toolId, report, model, rerouted = false, helpers = 0 } = input;
   const claude = toolId === "claude-code";
   // Claude bills thinking inside output and never breaks it out, so it reports no reasoning figure.
@@ -338,7 +364,10 @@ export function turnTokens(input: { toolId: Id; report?: TurnReport; model?: str
     }
     return withTotal(kept);
   };
-  const rows = (report?.models ?? []).map((row) => ({ model: row.model, counts: clean(row.counts) })).filter((row) => row.counts.total !== undefined && row.counts.total > 0);
+  const rows = (report?.models ?? []).map((row) => ({
+    model: row.model,
+    counts: clean(row.counts)
+  })).filter((row) => row.counts.total !== undefined && row.counts.total > 0);
   const mainOnlyForTool = !claude && helpers > 0;
   if (rows.length > 0) {
     const lines = rows.map((row) => ({ model: row.model, ...row.counts, ...(rerouted && !claude ? { changed: true } : {}) }));
@@ -519,7 +548,12 @@ export class MemoryWorkLog implements WorkLogReader {
   }
 
   turns(filter: TurnFilter): WorkTurn[] {
-    return this.turnList.filter((turn) => matches(turnAt(turn), turn.taskId, turn.productId, filter) && (filter.stageId === undefined || turn.stageId === filter.stageId) && (filter.round === undefined || turn.round === filter.round));
+    return this.turnList.filter((turn) => matches(
+      turnAt(turn),
+      turn.taskId,
+      turn.productId,
+      filter
+    ) && (filter.stageId === undefined || turn.stageId === filter.stageId) && (filter.round === undefined || turn.round === filter.round));
   }
 
   lines(filter: TurnFilter): TokenLine[] {
@@ -528,7 +562,12 @@ export class MemoryWorkLog implements WorkLogReader {
   }
 
   moments(filter: MomentFilter): WorkMoment[] {
-    return this.momentList.filter((moment) => matches(moment.at, moment.taskId, moment.productId, filter) && (filter.stageId === undefined || moment.stageId === filter.stageId) && (filter.round === undefined || moment.round === filter.round) && (!filter.kinds || filter.kinds.includes(moment.kind)));
+    return this.momentList.filter((moment) => matches(
+      moment.at,
+      moment.taskId,
+      moment.productId,
+      filter
+    ) && (filter.stageId === undefined || moment.stageId === filter.stageId) && (filter.round === undefined || moment.round === filter.round) && (!filter.kinds || filter.kinds.includes(moment.kind)));
   }
 
   productTallies(): Map<Id, Tally> {

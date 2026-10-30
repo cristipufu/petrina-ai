@@ -1,5 +1,20 @@
-import { runtimeWaitHolds, pickStarts, slotUses, routeMessages, finishMessageGroup, type ActiveAgent, type AgentProfile, type DeepMutable, type Id } from "@petrina/core";
-import type { ParallelAdmissionHost, ParallelAdmissionDependencies, ParallelAdmissionRequest, ParallelSeatSelection as SeatSelection } from "./ports/parallel-admission.js";
+import {
+  runtimeWaitHolds,
+  pickStarts,
+  slotUses,
+  routeMessages,
+  finishMessageGroup,
+  type ActiveAgent,
+  type AgentProfile,
+  type DeepMutable,
+  type Id
+} from "@petrina/core";
+import type {
+  ParallelAdmissionHost,
+  ParallelAdmissionDependencies,
+  ParallelAdmissionRequest,
+  ParallelSeatSelection as SeatSelection
+} from "./ports/parallel-admission.js";
 import type { SelectionReadiness as ReadinessNeed } from "./profile-selection.js";
 
 type AdmissionWait = ReturnType<ParallelAdmissionDependencies["errors"]["waitingFor"]>;
@@ -34,7 +49,8 @@ export class ParallelAdmissionGroup {
     const waits = new Map<string, AdmissionWait>();
     // Members whose working copies exist: a member coming back reuses its own.
     const made = new Set<string>();
-    let failed = false, failure: unknown;
+    let failed = false;
+    let failure: unknown;
     let closing = false;
     let wake: (() => void) | undefined;
     const wait = (key: string, waiting: AdmissionWait) => {
@@ -50,7 +66,10 @@ export class ParallelAdmissionGroup {
       if (signal.aborted) return;
       this.host.selectScreen(task);
       if (task.screen?.member) scope.work.conversation ??= task.hunt?.screenTurns?.[task.screen.member]?.conversation;
-      const agents = [...running.entries()].filter(([key]) => !yielded.has(key)).sort(([a], [b]) => Number(b === task.screen?.member) - Number(a === task.screen?.member)).map(([, entry]) => entry.agent);
+      const agents = [...running.entries()].filter(([key]) => !yielded.has(key)).sort((
+        [a],
+        [b]
+      ) => Number(b === task.screen?.member) - Number(a === task.screen?.member)).map(([, entry]) => entry.agent);
       const [waitingOn, decision] = [...deciding.entries()][0] ?? [];
       if (agents.length) {
         task.holdsSlot = true;
@@ -91,7 +110,9 @@ export class ParallelAdmissionGroup {
     // retry counts and conversations to continue.
     const finishScreenStep = (key: string) => {
       const peers = <T extends { member?: string }>(entries: T[] | undefined) => entries?.filter((entry) => entry.member !== undefined && entry.member !== key) ?? [];
-      const resume = peers(task.capacityResume), retries = peers(task.capacityRetries), waiting = peers(task.capacityPaused);
+      const resume = peers(task.capacityResume);
+      const retries = peers(task.capacityRetries);
+      const waiting = peers(task.capacityPaused);
       this.host.finishStep(task);
       if (resume.length) task.capacityResume = resume;
       if (retries.length) task.capacityRetries = retries;
@@ -132,7 +153,10 @@ export class ParallelAdmissionGroup {
             // A full model waits aside to rejoin. A member that holds the screen keeps its own path.
             if (asideFor(member.key, waiting) && !continuing && task.screen?.member !== member.key) paused.add(member.key);
           } else if (problem.kind !== "screen") {
-            if (!failed) { failed = true; failure = error; }
+            if (!failed) {
+              failed = true;
+              failure = error;
+            }
             // Stop question and permission waits too, so cleanup cannot wait on a dead peer.
             stop.abort();
           }
@@ -170,10 +194,22 @@ export class ParallelAdmissionGroup {
     /** Who would start for this member now, by the usual choice, or why it waits and whether only its saved tool's readiness stands in the way. */
     const admission = (member: (typeof members)[number]) => {
       const room = roomFor(member.key);
-      const choice = this.catalog.choose({ profileId: member.profileId, roleId: member.roleId, ...(member.reviewerKey !== undefined ? { reviewerKey: member.reviewerKey } : {}) }, task, room);
+      const choice = this.catalog.choose(
+        {
+        profileId: member.profileId,
+        roleId: member.roleId,
+        ...(member.reviewerKey !== undefined ? { reviewerKey: member.reviewerKey } : {})
+      },
+        task,
+        room
+      );
       if (choice?.kind === "none") return { room, waiting: this.errors.waitingFor(choice.waiting), readiness: choice.readiness };
       const seat = choice?.profile.id ?? member.profileId;
-      const selection: SeatSelection | undefined = choice ? { ...(choice.reason ? { selectionReason: choice.reason } : {}), ...(choice.freshReason ? { freshReason: choice.freshReason } : {}), ...(choice.readiness ? { readiness: choice.readiness } : {}) } : undefined;
+      const selection: SeatSelection | undefined = choice ? {
+        ...(choice.reason ? { selectionReason: choice.reason } : {}),
+        ...(choice.freshReason ? { freshReason: choice.freshReason } : {}),
+        ...(choice.readiness ? { readiness: choice.readiness } : {})
+      } : undefined;
       return { room, seat, profile: this.catalog.profile(seat)!, selection };
     };
     /**
@@ -244,7 +280,10 @@ export class ParallelAdmissionGroup {
     this.ownership.groups.set(task.id, {
       continue: continueScreen,
       running: (key) => running.has(key),
-      yield: (key) => { yielded.add(key); show(); },
+      yield: (key) => {
+        yielded.add(key);
+        show();
+      },
       recipients: () => members.filter((member) => !accepted.has(member.key)).map((member) => member.key),
       finished: (key) => { accepted.add(key); },
       // The scheduler weighs a member whose wait ended against other work in progress, then brings it back.
@@ -262,7 +301,10 @@ export class ParallelAdmissionGroup {
       else start();
       while (running.size || deciding.size) {
         // A member reopened while its peers work, or a settled readiness decision, must also be able to wake this group.
-        await Promise.race([...running.values()].map((entry) => entry.done).concat([...deciding.values()].map((entry) => entry.done), new Promise<void>((resolve) => { wake = resolve; })));
+        await Promise.race([...running.values()].map((entry) => entry.done).concat(
+          [...deciding.values()].map((entry) => entry.done),
+          new Promise<void>((resolve) => { wake = resolve; })
+        ));
         if (failed || signal.aborted) break;
         start();
       }

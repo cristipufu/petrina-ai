@@ -3,7 +3,10 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Relative links use one copy; absolute links may name another current task copy. Nothing is retained. */
-export async function readTaskImage(worktree: string | undefined, imagePath: string, absoluteRoots: readonly string[] = []): Promise<{ mime: string; data: string }> {
+export async function readTaskImage(worktree: string | undefined, imagePath: string, absoluteRoots: readonly string[] = []): Promise<{
+  mime: string;
+  data: string
+}> {
   if (!worktree && !absoluteRoots.length) throw new Error("This screenshot is no longer available: the task has no working copy.");
   if (!imagePath || imagePath.includes("\0")) throw new Error("This screenshot's location is not valid.");
   let location = imagePath;
@@ -63,7 +66,11 @@ function imageFormat(data: Buffer): { mime: string; width: number; height: numbe
   if (data.length >= 25 && data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP") {
     const kind = data.toString("ascii", 12, 16);
     if (kind === "VP8X" && data.length >= 30) return { mime: "image/webp", width: data.readUIntLE(24, 3) + 1, height: data.readUIntLE(27, 3) + 1 };
-    if (kind === "VP8 " && data.length >= 30 && data[23] === 0x9d && data[24] === 0x01 && data[25] === 0x2a) return { mime: "image/webp", width: data.readUInt16LE(26) & 0x3fff, height: data.readUInt16LE(28) & 0x3fff };
+    if (kind === "VP8 " && data.length >= 30 && data[23] === 0x9d && data[24] === 0x01 && data[25] === 0x2a) return {
+      mime: "image/webp",
+      width: data.readUInt16LE(26) & 0x3fff,
+      height: data.readUInt16LE(28) & 0x3fff
+    };
     if (kind === "VP8L" && data[20] === 0x2f) {
       const packed = data.readUInt32LE(21);
       return { mime: "image/webp", width: (packed & 0x3fff) + 1, height: ((packed >>> 14) & 0x3fff) + 1 };

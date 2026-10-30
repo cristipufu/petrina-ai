@@ -13,7 +13,8 @@ export class StepOwnership {
   constructor(private readonly host: StepOwnershipHost) {}
 
   started(task: RuntimeTask): boolean {
-    const step = openStep(task), stage = task.plan?.stages[task.stageIndex];
+    const step = openStep(task);
+    const stage = task.plan?.stages[task.stageIndex];
     // A parallel seat is admitted before its copy is made; readiness placeholders do not qualify.
     const group = this.host.group(task.id);
     const reserved = group?.recipients().some(member => group.running(member));

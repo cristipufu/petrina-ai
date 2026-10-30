@@ -46,7 +46,11 @@ export class Connections {
       if (signal.aborted) throw new Aborted();
       const product = this.k.repositoryOf(scope);
       const name = product?.name ?? "This product";
-      if (!product?.path || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(product.repo) || product.repo.startsWith("local/")) return { ok: false, reason: `${name} has no GitHub repository`, missing: true };
+      if (!product?.path || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(product.repo) || product.repo.startsWith("local/")) return {
+        ok: false,
+        reason: `${name} has no GitHub repository`,
+        missing: true
+      };
       if (product.remote) return this.remoteFor(product, product.remote);
       // Another task may have completed the existing product-address confirmation while this
       // task waited. Fill only an address that was missing; never replace a pinned address.
@@ -120,7 +124,13 @@ export class Connections {
     if (!git.sameRepo(address, product.repo)) return { ok: false, reason: `${product.name}'s address ${address} is not ${product.repo} on GitHub` };
     // Older GitHub clones may use HTTP or the read-only git protocol; use HTTPS for both fetch and
     // delivery rather than enabling those transports, keeping the saved repository and origin unchanged.
-    return { ok: true, remote: (this.k.options.remotes?.[product.repo] ?? this.k.options.remote) ? { url: (this.k.options.remotes?.[product.repo] ?? this.k.options.remote)!, local: true } : { url: /^(?:http|git):\/\//i.test(address) ? `https://github.com/${product.repo}.git` : address } };
+    return {
+      ok: true,
+      remote: (this.k.options.remotes?.[product.repo] ?? this.k.options.remote) ? {
+      url: (this.k.options.remotes?.[product.repo] ?? this.k.options.remote)!,
+      local: true
+    } : { url: /^(?:http|git):\/\//i.test(address) ? `https://github.com/${product.repo}.git` : address }
+    };
   }
 
   /** Show the coordinator the address the clone has now; the answer is kept. A connection that cannot be used comes back as is. */
@@ -144,7 +154,10 @@ export class Connections {
     if (!live) return undefined;
     if (answer === CONFIRM_ADDRESS || /^\s*yes\b/i.test(answer)) {
       live.remote = address;
-      if (repository.source) { repository.source.product.remote = address; repository.source.destination.remote ??= address; }
+      if (repository.source) {
+        repository.source.product.remote = address;
+        repository.source.destination.remote ??= address;
+      }
       if (repository.workProduct) repository.workProduct.remote = address;
       delete live.remoteRefused;
     } else {

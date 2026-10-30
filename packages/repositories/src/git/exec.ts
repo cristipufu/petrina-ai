@@ -98,7 +98,19 @@ function gitEnv(credentials: boolean, options: { local?: boolean; ownHooks?: boo
   const settings = [...hooks, ["core.fsmonitor", "false"] as const, ...transport];
   // Replace objects could make a commit Petrina pinned show different content, and a grafts file (info/grafts,
   // read in place of one that never exists) different parents, hiding commits from history Petrina checks.
-  return { ...withGitConfig(base, settings), GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: join(emptyDir("grafts"), "none"), ...(credentials ? { GH_PROMPT_DISABLED: "1" } : {}) };
+  return {
+    ...withGitConfig(
+    base,
+    settings
+  ),
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_GRAFT_FILE: join(
+    emptyDir("grafts"),
+    "none"
+  ),
+    ...(credentials ? { GH_PROMPT_DISABLED: "1" } : {})
+  };
 }
 
 /** The hooks git runs when it commits, in the order it runs them. */
@@ -115,7 +127,10 @@ export function systemCode(error: unknown): string | undefined {
 
 /** Only an absent file is evidence of a missing program; unreadable files are not. */
 function absent(path: string): boolean {
-  try { statSync(path); return false; }
+  try {
+    statSync(path);
+    return false;
+  }
   catch (error) { return ["ENOENT", "ENOTDIR"].includes(systemCode(error) ?? ""); }
 }
 
@@ -125,7 +140,10 @@ function launchFailure(error: unknown, command: string | undefined, cwd: string)
   if (code === "ENOENT" || code === "ENOTDIR") {
     const message = error instanceof Error ? error.message : String(error);
     const file = command && (command.includes("/") || (process.platform === "win32" && command.includes("\\")));
-    if ((file && absent(resolve(cwd, command))) || (!file && code === "ENOENT" && message.startsWith("Executable not found in $PATH:"))) return "missing-executable";
+    if ((file && absent(resolve(
+      cwd,
+      command
+    ))) || (!file && code === "ENOENT" && message.startsWith("Executable not found in $PATH:"))) return "missing-executable";
     try { if (!statSync(cwd).isDirectory()) return "working-directory"; }
     catch (cause) { if (["ENOENT", "ENOTDIR"].includes(systemCode(cause) ?? "")) return "working-directory"; }
   }
@@ -149,10 +167,28 @@ export type RunStart = (command: readonly string[], options: {
   windowsHide: true;
 }) => ReturnType<typeof Bun.spawn>;
 
-export async function run(cmd: readonly string[], cwd: string, input?: string, options: { credentials?: boolean; local?: boolean; timeoutMs?: number; ownHooks?: boolean; index?: string; rawOutput?: boolean; binaryOutput?: boolean; start?: RunStart } = {}): Promise<RunResult> {
+export async function run(cmd: readonly string[], cwd: string, input?: string, options: {
+  credentials?: boolean;
+  local?: boolean;
+  timeoutMs?: number;
+  ownHooks?: boolean;
+  index?: string;
+  rawOutput?: boolean;
+  binaryOutput?: boolean;
+  start?: RunStart
+} = {}): Promise<RunResult> {
   let env: NodeJS.ProcessEnv;
   try {
-    env = { ...gitEnv(options.credentials === true, { local: options.local === true, ownHooks: options.ownHooks === true }), ...(options.index ? { GIT_INDEX_FILE: options.index } : {}) };
+    env = {
+      ...gitEnv(
+      options.credentials === true,
+      {
+      local: options.local === true,
+      ownHooks: options.ownHooks === true
+    }
+    ),
+      ...(options.index ? { GIT_INDEX_FILE: options.index } : {})
+    };
   } catch (error) {
     return neverStarted(error, "temporary-directory");
   }
@@ -212,7 +248,16 @@ export async function run(cmd: readonly string[], cwd: string, input?: string, o
     }
     for (const reader of readers) void reader.cancel().catch(() => undefined);
     const reason = first === "lost" ? EXIT_UNREPORTED : first === "output-incomplete" ? OUTPUT_INCOMPLETE : typeof first === "object" ? `${OUTPUT_UNREADABLE}: ${String(first.error)}` : "timed out";
-    return { code: 124, stdout: out(), stderr: [captured[1]!.trim(), reason].filter(Boolean).join("\n"), timedOut: true, ...(first === "lost" ? { exitUnreported: true } : {}) };
+    return {
+      code: 124,
+      stdout: out(),
+      stderr: [
+      captured[1]!.trim(),
+      reason
+    ].filter(Boolean).join("\n"),
+      timedOut: true,
+      ...(first === "lost" ? { exitUnreported: true } : {})
+    };
   }
   return { code: first.code, stdout: out(), stderr: captured[1]!.trim(), ...(options.binaryOutput ? { stdoutBytes: Buffer.concat(bytes) } : {}) };
 }
@@ -223,7 +268,16 @@ export async function must(cmd: readonly string[], cwd: string, input?: string):
   return result.stdout;
 }
 
-export const commandFailure = (result: RunResult): { ok: false; error: string } => ({ ok: false, error: (result.stderr || result.stdout || `exit ${result.code}`).slice(0, 300) });
+export const commandFailure = (result: RunResult): {
+  ok: false;
+  error: string
+} => ({
+  ok: false,
+  error: (result.stderr || result.stdout || `exit ${result.code}`).slice(
+  0,
+  300
+)
+});
 
 /**
  * Git trips over a worktree another one is still creating ("failed to read .git/worktrees/…/commondir"),

@@ -18,7 +18,11 @@ export const CHECKS: readonly CheckId[] = ["claude-code", "codex", "grok", "anti
 const clock: ToolCheckClock = {
   now: () => Date.now(),
   wait: (ms, signal) => new Promise(resolve => {
-    const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
     const timer = setTimeout(finish, ms);
     signal.addEventListener("abort", finish, { once: true });
     if (signal.aborted) finish();
@@ -37,7 +41,10 @@ export class ToolChecks {
     this.checks = new ToolCheckCoordinator({
       stopped: () => k.stopped,
       current: id => checkOf(k.s.setup?.checks, id),
-      publish: check => { this.put(check.id, check); k.commit(); },
+      publish: check => {
+        this.put(check.id, check);
+        k.commit();
+      },
     }, k.options.toolProbe ?? new NativeToolProbe(k), clock);
   }
 

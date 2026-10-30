@@ -33,6 +33,8 @@ export interface SourceFacts {
   childPrograms: ChildProgram[];
   /** Actual Engine constructor provenance, including lexical aliases; never cleanup authority. */
   engineConstructions: EngineConstruction[];
+  /** Explicit TypeScript `any` type keywords (`TSAnyKeyword`). */
+  anyTypes: number[];
 }
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
@@ -102,6 +104,7 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     effectAccess: [],
     childPrograms: [],
     engineConstructions: [],
+    anyTypes: [],
   };
   const ast = parse(source, {
     sourceType: "unambiguous",
@@ -228,6 +231,9 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
           ...(mocks.dependencies.has(value) ? { unmocked: true as const } : {}),
         });
       }
+    }
+    if (value.type === "TSAnyKeyword") {
+      facts.anyTypes.push(line(value));
     }
     if (value.type === "TSImportType") {
       const path = text(value.source);

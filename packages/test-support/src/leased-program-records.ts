@@ -22,7 +22,8 @@ export async function createLeasedProgramRecords(folder: string) {
   return {
     /** The renderer receives the expression for this launch's immutable identity, not a saved PID authority. */
     write(name: string, kind: string, body: (identity: string) => string, options: { beforeRecord?: string } = {}): string {
-      const file = join(folder, name), jsonModule = import.meta.resolve("./fixture-json.ts");
+      const file = join(folder, name);
+      const jsonModule = import.meta.resolve("./fixture-json.ts");
       writeFileSync(file, lease.program(`
 const { writeFixtureJson: publishProgramRecord } = await import(${JSON.stringify(jsonModule)});
 const fixtureProgramIdentity = { id: crypto.randomUUID(), pid: process.pid, kind: ${JSON.stringify(kind)} };
@@ -33,7 +34,13 @@ ${body("fixtureProgramIdentity")}`));
       return file;
     },
     records(): LeasedProgramRecord[] {
-      return readdirSync(folder).filter(file => file.endsWith(".record.json")).map(file => JSON.parse(readFileSync(join(folder, file), "utf8")) as LeasedProgramRecord);
+      return readdirSync(folder).filter(file => file.endsWith(".record.json")).map(file => JSON.parse(readFileSync(
+        join(
+        folder,
+        file
+      ),
+        "utf8"
+      )) as LeasedProgramRecord);
     },
     /** Request lease shutdown only. The caller still owns actual command/native exit and output confirmation. */
     close: () => lease.close(),

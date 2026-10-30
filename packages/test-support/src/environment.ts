@@ -19,7 +19,11 @@ const INHERITED = new Set([
 /** The one configuration used by fixture Git and by the engine's own Git in fresh clones. */
 export function writeTestGitConfig(folder: string): string {
   const file = join(folder, "gitconfig");
-  writeFileSync(file, `[user]\n\tname = ${TEST_GIT_IDENTITY.name}\n\temail = ${TEST_GIT_IDENTITY.email}\n[init]\n\tdefaultBranch = main\n[core]\n\tautocrlf = false\n\teol = lf\n[commit]\n\tgpgSign = false\n[tag]\n\tgpgSign = false\n`, { mode: 0o600 });
+  writeFileSync(
+    file,
+    `[user]\n\tname = ${TEST_GIT_IDENTITY.name}\n\temail = ${TEST_GIT_IDENTITY.email}\n[init]\n\tdefaultBranch = main\n[core]\n\tautocrlf = false\n\teol = lf\n[commit]\n\tgpgSign = false\n[tag]\n\tgpgSign = false\n`,
+    { mode: 0o600 }
+  );
   return file;
 }
 
@@ -42,10 +46,14 @@ export function testEnvironment(folder: string, browsers: string, inherited: Nod
     if (INHERITED.has(key.toUpperCase()) || /^PETRINA_TEST_/.test(key)
       || inherited.PETRINA_CONTAINER_CHECK && /^(DOCKER|CONTAINER|PODMAN)_/.test(key)) env[key] = value;
   }
-  const home = join(folder, "home"), config = join(home, ".config"), cache = join(home, ".cache");
-  const local = join(home, "AppData", "Local"), roaming = join(home, "AppData", "Roaming");
+  const home = join(folder, "home");
+  const config = join(home, ".config");
+  const cache = join(home, ".cache");
+  const local = join(home, "AppData", "Local");
+  const roaming = join(home, "AppData", "Roaming");
   for (const path of [home, config, cache, local, roaming]) mkdirSync(path, { recursive: true, mode: 0o700 });
-  const empty = join(folder, "empty-gitconfig"); writeFileSync(empty, "", { mode: 0o600 });
+  const empty = join(folder, "empty-gitconfig");
+  writeFileSync(empty, "", { mode: 0o600 });
   Object.assign(env, {
     HOME: home, USERPROFILE: home, APPDATA: roaming, LOCALAPPDATA: local,
     XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache, XDG_DATA_HOME: join(home, ".local", "share"),
@@ -53,7 +61,8 @@ export function testEnvironment(folder: string, browsers: string, inherited: Nod
     GIT_CONFIG_GLOBAL: writeTestGitConfig(folder), GIT_CONFIG_SYSTEM: empty, GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", NO_COLOR: "1",
   });
-  const provisioned = browserCache(inherited), isolated = browserCache(env);
+  const provisioned = browserCache(inherited);
+  const isolated = browserCache(env);
   if (existsSync(provisioned)) {
     mkdirSync(dirname(isolated), { recursive: true });
     fixtureFiles.directoryLink(fixtureFiles.canonical(provisioned), isolated);
@@ -68,7 +77,9 @@ export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const folder = mkdtempSync(join(parent, "petrina-tests-"));
   const journal = join(folder, "fixture-journal");
-  let browsers: string | undefined, prepared = false, closed = false;
+  let browsers: string | undefined;
+  let prepared = false;
+  let closed = false;
   const remove = () => {
     const errors: unknown[] = [];
     for (const root of [folder, browsers]) if (root) {
@@ -81,7 +92,8 @@ export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
   const close = (): boolean => {
     if (closed) return true;
     if (fixtureRetention(journal).kind !== "clear") return false;
-    remove(); closed = true;
+    remove();
+    closed = true;
     return true;
   };
   try {
@@ -89,7 +101,8 @@ export function createTestRun(): { env: NodeJS.ProcessEnv; close(): boolean } {
     registerFixtureRoot(folder);
     browsers = mkdtempSync(join(shortTempParent(process.platform, folder), "pb-"));
     registerFixtureRoot(browsers);
-    createFixtureJournal(journal); prepared = true;
+    createFixtureJournal(journal);
+    prepared = true;
     const env = testEnvironment(folder, browsers);
     env[FIXTURE_JOURNAL] = journal;
     return { env, close };

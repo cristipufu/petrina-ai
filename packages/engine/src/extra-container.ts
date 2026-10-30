@@ -27,11 +27,15 @@ export function containerCommand(argv: readonly string[], timeout: number, disco
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error) reject(error); else resolve(output.trim());
+      if (error) reject(error);
+      else resolve(output.trim());
     };
     const child = execFile(argv[0]!, [...argv.slice(1)], { env: containerEnv(discovery), timeout, maxBuffer: 1024 * 1024, windowsHide: true },
       (error, output) => finish(error, output));
-    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(new Error("The local container service did not answer in time.")); }, timeout);
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(new Error("The local container service did not answer in time."));
+    }, timeout);
   });
 }
 
@@ -145,7 +149,8 @@ export class ExtraContainer {
     // Even if client confirmation fails, stop the labelled workload. Its absence alone
     // cannot release capacity: an unconfirmed client could still create work afterwards.
     const clientClean = record.startedAt === undefined || await this.stopClient(record);
-    let containerClean = true, removalPending = false;
+    let containerClean = true;
+    let removalPending = false;
     if (record.container && record.startedAt !== undefined) {
       try {
         if ((await this.labelled(record)).length) {
@@ -161,7 +166,10 @@ export class ExtraContainer {
       removalPending ? `Removal of container ${record.containerName} is still unconfirmed after its stop/removal request. Check that container in the local container service; Petrina will retry confirmation.`
         : `Petrina could not confirm container ${record.containerName} stopped. Make the local container service available, or stop that container; Petrina will retry confirmation.`].filter(Boolean).join(" ");
     if (!clientClean || !containerClean) return false;
-    try { await this.k.files.removeTree(record.snapshot); return true; }
+    try {
+      await this.k.files.removeTree(record.snapshot);
+      return true;
+    }
     catch {
       record.cleanupDetail = "The workload stopped, but Petrina could not remove its saved copy. Make the extra-validation copy folder accessible so Petrina can remove it.";
       return false;

@@ -33,7 +33,12 @@ export interface AgentAdmissionErrors {
   sourceRefresh(): Error;
   screenWait(): Error;
   usage(words: string): Error;
-  classify(error: unknown): { kind: "abort" | "screen" | "source-refresh" } | { kind: "usage"; error: Error; words: string; capacity: boolean } | { kind: "failure" };
+  classify(error: unknown): { kind: "abort" | "screen" | "source-refresh" } | {
+    kind: "usage";
+    error: Error;
+    words: string;
+    capacity: boolean
+  } | { kind: "failure" };
   waitingFor(words: string): { error: Error; words: string; capacity: boolean };
 }
 

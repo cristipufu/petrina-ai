@@ -69,7 +69,14 @@ export async function repoInfo(path: string): Promise<RepoInfo> {
     const segments = match?.[2]?.split("/").filter(Boolean) ?? [];
     const name = segments.at(-1) ?? root.split("/").at(-1) ?? "repo";
     const owner = segments.slice(0, -1).join("/") || "local";
-    return { root, owner, name, defaultBranch: fastBranch, ...(remote ? { remote } : {}), github: !local && remote !== undefined && githubRepoOf(remote) !== undefined };
+    return {
+      root,
+      owner,
+      name,
+      defaultBranch: fastBranch,
+      ...(remote ? { remote } : {}),
+      github: !local && remote !== undefined && githubRepoOf(remote) !== undefined
+    };
   }
   const root = await must(["git", "rev-parse", "--show-toplevel"], path);
   const [remote, branch] = await Promise.all([
@@ -82,7 +89,15 @@ export async function repoInfo(path: string): Promise<RepoInfo> {
   const name = segments.at(-1) ?? root.split("/").at(-1) ?? "repo";
   const owner = segments.slice(0, -1).join("/") || "local";
   const head = branch.stdout;
-  const defaultBranch = head.startsWith("origin/") ? head.slice("origin/".length) : (await run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root)).stdout || "main";
+  const defaultBranch = head.startsWith("origin/") ? head.slice("origin/".length) : (await run(
+    [
+    "git",
+    "rev-parse",
+    "--abbrev-ref",
+    "HEAD"
+  ],
+    root
+  )).stdout || "main";
   return { root, owner, name, defaultBranch, ...(remote ? { remote } : {}), github: !local && remote !== undefined && githubRepoOf(remote) !== undefined };
 }
 
@@ -477,7 +492,22 @@ export async function remoteRefs(root: string, remote: Remote, refs: readonly st
   if (risky.length) return { ok: false, error: `the repository's git settings include ${risky.slice(0, 3).join(", ")}` };
   const fast = fastLocalRemoteRefs(root, remote, refs);
   if (fast) return { ok: true, value: fast };
-  const listed = await run(["git", "ls-remote", "--", remote.url, ...refs], root, undefined, { credentials: true, local: remote.local === true, timeoutMs: FETCH_TIMEOUT_MS });
+  const listed = await run(
+    [
+    "git",
+    "ls-remote",
+    "--",
+    remote.url,
+    ...refs
+  ],
+    root,
+    undefined,
+    {
+    credentials: true,
+    local: remote.local === true,
+    timeoutMs: FETCH_TIMEOUT_MS
+  }
+  );
   if (listed.code !== 0) return commandFailure(listed);
   const found = new Map<string, string>();
   for (const line of listed.stdout.split("\n").filter(Boolean)) {
@@ -501,7 +531,18 @@ export async function push(root: string, remote: Remote, updates: readonly { sha
   if (risky.length) return { ok: false, error: `the repository's git settings include ${risky.slice(0, 3).join(", ")}` };
   if (fastLocalPush(root, remote, updates)) return { ok: true, value: undefined };
   const pushed = await run(
-    ["git", "push", "--quiet", "--no-verify", "--no-follow-tags", "--recurse-submodules=no", ...(atomic ? ["--atomic"] : []), "--", remote.url, ...updates.map((update) => `${update.sha}:${update.ref}`)],
+    [
+      "git",
+      "push",
+      "--quiet",
+      "--no-verify",
+      "--no-follow-tags",
+      "--recurse-submodules=no",
+      ...(atomic ? ["--atomic"] : []),
+      "--",
+      remote.url,
+      ...updates.map((update) => `${update.sha}:${update.ref}`)
+    ],
     root,
     undefined,
     { credentials: true, local: remote.local === true, timeoutMs: 5 * 60_000 },

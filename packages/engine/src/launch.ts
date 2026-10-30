@@ -66,7 +66,13 @@ export async function launch(options: LaunchOptions): Promise<void> {
   const lifecycleStore = new LifecycleStore(home);
   const prior = lifecycleStore.current;
   const recovery = app && !process.env.PETRINA_LIFECYCLE_REPLACEMENT;
-  const unfinishedHandoff = (op: typeof prior) => op && (["stop", "restart"].includes(op.kind) || op.phase === "starting") && !["completed", "failed"].includes(op.phase);
+  const unfinishedHandoff = (op: typeof prior) => op && ([
+    "stop",
+    "restart"
+  ].includes(op.kind) || op.phase === "starting") && ![
+    "completed",
+    "failed"
+  ].includes(op.phase);
   const followHandoff = async () => {
     // The shell's old child may have exited before its requested replacement starts. This
     // recovery process follows a live replacement. Only confirmed loss of ownership and its
@@ -116,7 +122,15 @@ export async function launch(options: LaunchOptions): Promise<void> {
   if (claim.kind !== "free") {
     // Stepping aside: the log belongs to the engine that holds the folder.
     log.discard();
-    if (app) tell(claim.kind === "running" ? { type: "running", owned: false, url: claim.connection.url, token: claim.connection.token } : { type: "error", message: `${BUSY}.` });
+    if (app) tell(claim.kind === "running" ? {
+      type: "running",
+      owned: false,
+      url: claim.connection.url,
+      token: claim.connection.token
+    } : {
+      type: "error",
+      message: `${BUSY}.`
+    });
     else process.stderr.write(claim.kind === "running" ? `${ALREADY_RUNNING}\n` : `${BUSY}.\n`);
     process.exit(app && claim.kind === "running" ? 0 : 1);
   }
@@ -136,7 +150,13 @@ export async function launch(options: LaunchOptions): Promise<void> {
   if (recoverFailedHandoff || (!app && latest && (["completed", "failed"].includes(latest.phase)))) {
     // Recovery and explicit legacy `serve` keep the failed/finished receipt. Reserve the new
     // start while holding ownership so every reconnect discovers the same engine.
-    lifecycleStore.begin("start", { requestId: `${app ? "recovery" : "serve"}-${randomBytes(12).toString("hex")}` }, latest!.scheduling, undefined, process.pid);
+    lifecycleStore.begin(
+      "start",
+      { requestId: `${app ? "recovery" : "serve"}-${randomBytes(12).toString("hex")}` },
+      latest!.scheduling,
+      undefined,
+      process.pid
+    );
   }
   // Taking ownership also transfers an offline caller's reservation to this engine.
   lifecycleStore.noteLauncher(process.pid);
@@ -231,7 +251,15 @@ export async function launch(options: LaunchOptions): Promise<void> {
       process.exit(0);
     }, app ? signalDesktopHandoff : undefined);
     const token = ((!options.newKey || process.env.PETRINA_LIFECYCLE_REPLACEMENT) && previousToken(home)) || randomBytes(24).toString("base64url");
-    server = serve(engine, { port: Number(process.env.PETRINA_RECONNECT_PORT) || (app ? 0 : (options.port ?? 4317)), token, lifecycle, ...(options.ui ? { ui: options.ui } : {}) });
+    server = serve(
+      engine,
+      {
+      port: Number(process.env.PETRINA_RECONNECT_PORT) || (app ? 0 : (options.port ?? 4317)),
+      token,
+      lifecycle,
+      ...(options.ui ? { ui: options.ui } : {})
+    }
+    );
     const connection: Connection = { url: `ws://127.0.0.1:${server.port}/ws`, api: `http://127.0.0.1:${server.port}`, token, pid: process.pid };
     // Scripts keep reading engine.json, whoever started the engine.
     writeConnection(home, connection);

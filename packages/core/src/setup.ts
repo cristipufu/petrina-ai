@@ -149,9 +149,19 @@ export function fixFor(id: CheckId, status: CheckStatus, platform: Platform): Fi
         guide: guides.install,
       };
     case "logged-out":
-      return { sentence: `${name} is installed but not logged in, so run this in ${terminal} to log in, then come back to Petrina.`, command: login ?? pick(INSTALL[id], platform), guide: guides.login ?? guides.install };
+      return {
+        sentence: `${name} is installed but not logged in, so run this in ${terminal} to log in, then come back to Petrina.`,
+        command: login ?? pick(
+        INSTALL[id],
+        platform
+      ),
+        guide: guides.login ?? guides.install
+      };
     case "unknown":
-      return { sentence: `Petrina couldn't confirm ${name} was ready; open Details to see why, then choose Check again.`, guide: guides.login ?? guides.install };
+      return {
+        sentence: `Petrina couldn't confirm ${name} was ready; open Details to see why, then choose Check again.`,
+        guide: guides.login ?? guides.install
+      };
   }
 }
 
@@ -229,7 +239,10 @@ export function toolsGate(checks: readonly ToolCheck[] | undefined): { ok: boole
     notes.push(
       unsure.length
         ? `Petrina couldn't confirm ${list(unsure.map(name))}, so agents will review each other's work on ${only} alone until ${unsure.length === 1 ? name(unsure[0]!) : "one of them"} checks out as Ready.`
-        : `Only ${only} is set up, so agents will review each other's work on the same tool, and setting up ${list(others.map(name), "or")} gives a second opinion.`,
+        : `Only ${only} is set up, so agents will review each other's work on the same tool, and setting up ${list(
+          others.map(name),
+          "or"
+        )} gives a second opinion.`,
     );
   }
   if (!ready.length) notes.push(`Petrina couldn't confirm ${list(agents.map(name))}, so it will try ${agents.length === 1 ? "it" : "them"} and tell you if ${agents.length === 1 ? "it can't" : "one can't"} start.`);
@@ -252,7 +265,10 @@ export function firstTaskTip(state: State): { text: string; toInbox: boolean } |
   if (!setup || setup.tipDismissed || !task || ["done", "cancelled", "pr-open"].includes(task.state)) return undefined;
   const asks = (kind: InboxItem["kind"]) => state.inbox.some((item) => item.taskId === task.id && item.kind === kind);
   const title = `“${task.title}”`;
-  if (task.state === "failed" || asks("stuck")) return { text: `${title} is stuck. Needs you says why and how to fix it, and Retry picks it up from there.`, toInbox: true };
+  if (task.state === "failed" || asks("stuck")) return {
+    text: `${title} is stuck. Needs you says why and how to fix it, and Retry picks it up from there.`,
+    toInbox: true
+  };
   if (!task.approvePlan) return { text: `The squad has started on ${title}. Follow its plan on the card: each step lights up as it starts.`, toInbox: false };
   if (asks("plan")) return { text: `The plan for ${title} is waiting in Needs you for your approval. Nothing starts until you approve it.`, toInbox: true };
   if (task.stageIndex >= 0) return { text: `You approved the plan for ${title}. Follow it on the card: each step lights up as it starts.`, toInbox: false };

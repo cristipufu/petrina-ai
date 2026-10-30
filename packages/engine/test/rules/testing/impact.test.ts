@@ -28,7 +28,7 @@ it("follows transitive exports and cycles deterministically, including changed t
 });
 
 originalDescribe("affected-test observation", () => {
-for (const path of ["bun.lock", "packages/core/tsconfig.json", "packages/core/test/helpers.ts", "packages/core/src/deleted.ts", "packages/core/src/new-uncovered.ts", "packages/engine/src/cli.ts"]) it(`falls back to the full suite for ${path}`, () => {
+for (const path of ["bun.lock", "tsconfig.base.json", "packages/core/tsconfig.json", "packages/core/test/helpers.ts", "packages/core/src/deleted.ts", "packages/core/src/new-uncovered.ts", "packages/engine/src/cli.ts"]) it(`falls back to the full suite for ${path}`, () => {
     const files = fixture();
     if (!path.includes("deleted")) files.set(path, "");
     expect(affected(files, [path]).selected).toEqual(["packages/core/test/a.test.ts", "packages/core/test/b.test.ts"]);

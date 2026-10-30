@@ -28,7 +28,10 @@ export type ProductCheckSettingWork = DeepMutable<Pick<RepositoryState, "product
 export function configureProductChecks(product: DeepMutable<Pick<Product, "id" | "checks" | "checksBy" | "checksFingerprint" | "checksSeen">> | undefined,
   checks: readonly { name: string; command: string }[] | null, executions: Iterable<ProductCheckSettingWork>): void {
   if (!product) throw new Error("This product is no longer in Petrina.");
-  const parsed = checks === null ? [] : checks.map((check) => ({ name: check.name.trim(), argv: parseCommand(check.command) })).filter((check) => check.name && check.argv.length);
+  const parsed = checks === null ? [] : checks.map((check) => ({
+    name: check.name.trim(),
+    argv: parseCommand(check.command)
+  })).filter((check) => check.name && check.argv.length);
   if (checks !== null && !parsed.length) throw new Error("Give at least one check, as a name and a command.");
   for (const work of executions) {
     if (work.productId === product.id && work.checks) work.checks.current = false;
@@ -60,7 +63,9 @@ export function configureProductCheckSetup(product: DeepMutable<Pick<Product, "i
     if (work.productId !== product.id || repositoryPublished(work)) continue;
     work.checkSetupInvalidated = { id: effects.id(taskId), kind: "requirements-changed", at: effects.now(), revision };
     if (work.checks) work.checks.current = false;
-    delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
+    delete work.approvedSha;
+    delete work.approvedPatch;
+    delete work.approvedFor;
   }
   return true;
 }
@@ -78,10 +83,19 @@ export function productName(name: string, products: readonly Product[], except?:
 
 export function validateProductSettings(settings: ProductSettings, products: readonly Product[], except?: Id): ProductSettings {
   const name = productName(settings.name, products, except);
-  if (!["pull-request", "release", "local"].includes(settings.delivery) || typeof settings.approveDelivery !== "boolean") throw new Error("Choose what happens when work is ready.");
+  if (![
+    "pull-request",
+    "release",
+    "local"
+  ].includes(settings.delivery) || typeof settings.approveDelivery !== "boolean") throw new Error("Choose what happens when work is ready.");
   if (settings.shipLowRisk !== undefined && typeof settings.shipLowRisk !== "boolean") throw new Error("Choose whether low-risk work ships without asking.");
   // Left out, the low-risk setting stays as it is.
-  return { name, delivery: settings.delivery, approveDelivery: settings.approveDelivery, ...(settings.shipLowRisk !== undefined ? { shipLowRisk: settings.shipLowRisk } : {}) };
+  return {
+    name,
+    delivery: settings.delivery,
+    approveDelivery: settings.approveDelivery,
+    ...(settings.shipLowRisk !== undefined ? { shipLowRisk: settings.shipLowRisk } : {})
+  };
 }
 
 export function productHistory(tasks: readonly Task[], productId: Id): { unfinished: number; finished: number } {

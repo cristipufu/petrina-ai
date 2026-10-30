@@ -48,7 +48,10 @@ export function idleSleepEffects(options: {
 }): IdleSleepEffects {
   return {
     available: () => options.platform() === "darwin",
-    acquire: () => { const invocation = idleSleepCommand(options.platform(), options.pid())!; return options.spawn(invocation.command, invocation.args); },
+    acquire: () => {
+      const invocation = idleSleepCommand(options.platform(), options.pid())!;
+      return options.spawn(invocation.command, invocation.args);
+    },
     ...(options.observe ? { observe: (active: boolean) => options.observe!(active) } : {}),
   };
 }

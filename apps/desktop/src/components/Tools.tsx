@@ -19,7 +19,10 @@ export function shownChecks(checks: readonly ToolCheck[] | undefined): ToolCheck
 export function useCheckOnEnter(active: boolean): void {
   const entered = useRef(false);
   useEffect(() => {
-    if (!active) { entered.current = false; return; }
+    if (!active) {
+      entered.current = false;
+      return;
+    }
     // React's development effect replay is still the same visit to this screen.
     if (entered.current) return;
     entered.current = true;

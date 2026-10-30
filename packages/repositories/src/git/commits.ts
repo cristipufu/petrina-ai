@@ -131,7 +131,18 @@ export async function observeFold(path: string): Promise<FoldObservation> {
   if (!captured) {
     try {
       // Raw parents, never the optional commit graph, prove an existing single task commit.
-      const [head, tree, parents, ...body] = (await must(["git", "-c", "core.commitGraph=false", "show", "--no-patch", "--format=%H%n%T%n%P%n%B", "HEAD"], path)).split("\n");
+      const [head, tree, parents, ...body] = (await must(
+        [
+        "git",
+        "-c",
+        "core.commitGraph=false",
+        "show",
+        "--no-patch",
+        "--format=%H%n%T%n%P%n%B",
+        "HEAD"
+      ],
+        path
+      )).split("\n");
       if (!head || !tree || !isSha(head) || !isSha(tree)) throw new Error("The task's current commit could not be read");
       const recordedParents = parents ? parents.split(" ") : [];
       if (recordedParents.some(parent => !isSha(parent))) throw new Error("The task's current commit could not be read");
@@ -238,7 +249,10 @@ async function moveLocalBranch(root: string, branch: string, from: string, to: s
   }
   let installed = false;
   try {
-    if (((await currentBranch(root)) === branch) !== checkedOutHere) return { ok: false, error: `the main copy switched branches at that moment, so ${branch} stays where it was` };
+    if (((await currentBranch(root)) === branch) !== checkedOutHere) return {
+      ok: false,
+      error: `the main copy switched branches at that moment, so ${branch} stays where it was`
+    };
     if (!isSpawnIntercepted() && dirs && /^[0-9a-f]{40}$/i.test(from) && /^[0-9a-f]{40}$/i.test(to) && isSimpleValidBranchName(branch) && isPlainSha1CommonDir(dirs.commonDir)) {
       const fromLower = from.toLowerCase();
       const toLower = to.toLowerCase();

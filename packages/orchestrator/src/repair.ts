@@ -8,14 +8,24 @@ import type { RepairHost } from "./ports/repair.js";
  * decision to continue still `covered` name no owner. `final`: an acceptance repair of testing the delivery check started,
  * which returns to that final testing and then the check.
  */
-export function beginRepair(k: RepairHost, task: RuntimeTask, kind: "checks" | "acceptance" | "review", returnStage: number, { covered = new Set<string>(), final = false, eligibleProducts }: { covered?: ReadonlySet<string>; final?: boolean; eligibleProducts?: ReadonlySet<string> } = {}): boolean {
+export function beginRepair(k: RepairHost, task: RuntimeTask, kind: "checks" | "acceptance" | "review", returnStage: number, { covered = new Set<string>(), final = false, eligibleProducts }: {
+  covered?: ReadonlySet<string>;
+  final?: boolean;
+  eligibleProducts?: ReadonlySet<string>
+} = {}): boolean {
   if (!task.repositories) return false;
 
   const open = task.findings.filter((finding) => finding.status === "open" && finding.severity === "blocking" && !covered.has(finding.id));
   // A check repair visits only products whose checks fail: their episode, and its allowance, stay open until a
   // genuine pass. Petrina's other findings, such as a deleted test, go through review with everything else.
   // Acceptance failures whose returns are used up wait for the coordinator: they send no product back.
-  const affected = repairOrder(task as Task, open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : !exhaustedAcceptanceFailure(task as Task, finding)));
+  const affected = repairOrder(
+    task as Task,
+    open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : !exhaustedAcceptanceFailure(
+    task as Task,
+    finding
+  ))
+  );
   const field = kind === "checks" ? "checkReturns" : kind === "acceptance" ? "acceptanceReturns" : undefined;
   // An unavailable owner keeps its findings for the coordinator, without consuming another owner's tries.
   const products = affected.filter((id) => {

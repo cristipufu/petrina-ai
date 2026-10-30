@@ -19,7 +19,10 @@ export type HistoryItem = Pick<Task, "id" | "productId" | "title" | "kind" | "st
   cleanup?: Pick<Cleanup, "markedDone">;
   productIds?: readonly Id[];
   products?: readonly { id: Id; name: string }[];
-  deliveries?: readonly (Pick<Task, "productId" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & { nothingToPublish?: boolean; cleanup?: Pick<Cleanup, "markedDone"> })[];
+  deliveries?: readonly (Pick<Task, "productId" | "delivery" | "pr" | "release" | "landed" | "localUpdate"> & {
+    nothingToPublish?: boolean;
+    cleanup?: Pick<Cleanup, "markedDone">
+  })[];
 };
 /** Final outcomes, based on delivery evidence rather than the broad done/cancelled state. */
 export const HISTORY_STATUSES = {
@@ -45,7 +48,17 @@ export function historyStatus(item: HistoryItem): HistoryStatus {
 }
 /** Missing fields in a saved companion delivery must never inherit the lead's evidence. */
 export function historyDeliveryItem(item: HistoryItem, work: NonNullable<HistoryItem["deliveries"]>[number]): HistoryItem {
-  return { ...item, productId: work.productId, delivery: work.delivery, pr: work.pr, release: work.release, landed: work.landed, localUpdate: work.localUpdate, cleanup: work.cleanup, deliveries: undefined };
+  return {
+    ...item,
+    productId: work.productId,
+    delivery: work.delivery,
+    pr: work.pr,
+    release: work.release,
+    landed: work.landed,
+    localUpdate: work.localUpdate,
+    cleanup: work.cleanup,
+    deliveries: undefined
+  };
 }
 export interface HistoryPage { items: readonly HistoryItem[]; nextCursor?: string; total: number }
 /** Attach just this page's whole-task totals, independent of its product filter. */
@@ -77,12 +90,59 @@ export function historyItem(task: Task): HistoryItem {
   task = displayTask(task);
   const { id, productId, title, kind, state, createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, combinedInto } = task;
   const productIds = taskProductIds(task);
-  const products = task.repositories?.map((work) => ({ id: work.productId, name: work.source?.product.name ?? work.workProduct?.name ?? work.productId })) ?? task.workRows?.map((row) => ({ id: row.source?.product.id ?? row.choice.productId, name: row.source?.product.name ?? row.choice.productId })) ?? productIds.map((id) => ({ id, name: id }));
+  const products = task.repositories?.map((work) => ({
+    id: work.productId,
+    name: work.source?.product.name ?? work.workProduct?.name ?? work.productId
+  })) ?? task.workRows?.map((row) => ({
+    id: row.source?.product.id ?? row.choice.productId,
+    name: row.source?.product.name ?? row.choice.productId
+  })) ?? productIds.map((id) => ({
+    id,
+    name: id
+  }));
   const deliveries = task.repositories?.map((work) => {
     const { productId, delivery, pr, release, landed, localUpdate, nothingToPublish } = work;
-    return { productId, delivery, pr, release, landed, localUpdate, nothingToPublish, ...(markedDoneUnconfirmed(task, work) ? { cleanup: { markedDone: true } } : {}) };
+    return {
+      productId,
+      delivery,
+      pr,
+      release,
+      landed,
+      localUpdate,
+      nothingToPublish,
+      ...(markedDoneUnconfirmed(
+      task,
+      work
+    ) ? { cleanup: { markedDone: true } } : {})
+    };
   });
-  return { blocksDependents: blocksDependents(task), id, productId, title, kind, state: state as HistoryItem["state"], createdAt, finishedAt, statusLine, delivery, pr, release, landed, localUpdate, ...(task.maintenance?.noProductChanges ? { maintenance: { noProductChanges: true } } : {}), ...(!task.repositories && markedDoneUnconfirmed(task, task) ? { cleanup: { markedDone: true } } : {}), ...(combinedInto ? { combinedInto } : {}), ...(task.repositories || productIds.length > 1 ? { productIds, products, deliveries } : {}) };
+  return {
+    blocksDependents: blocksDependents(task),
+    id,
+    productId,
+    title,
+    kind,
+    state: state as HistoryItem["state"],
+    createdAt,
+    finishedAt,
+    statusLine,
+    delivery,
+    pr,
+    release,
+    landed,
+    localUpdate,
+    ...(task.maintenance?.noProductChanges ? { maintenance: { noProductChanges: true } } : {}),
+    ...(!task.repositories && markedDoneUnconfirmed(
+    task,
+    task
+  ) ? { cleanup: { markedDone: true } } : {}),
+    ...(combinedInto ? { combinedInto } : {}),
+    ...(task.repositories || productIds.length > 1 ? {
+    productIds,
+    products,
+    deliveries
+  } : {})
+  };
 }
 export function historyCursor(item: Pick<Task, "id" | "finishedAt" | "createdAt">): string {
   return encodeURIComponent(JSON.stringify([historyAt(item), item.id]));
@@ -90,7 +150,10 @@ export function historyCursor(item: Pick<Task, "id" | "finishedAt" | "createdAt"
 export function readHistoryCursor(cursor: string): { at: number; id: Id } {
   try {
     const pair: unknown = JSON.parse(decodeURIComponent(cursor));
-    if (Array.isArray(pair) && pair.length === 2 && typeof pair[0] === "number" && Number.isFinite(pair[0]) && typeof pair[1] === "string") return { at: pair[0], id: pair[1] };
+    if (Array.isArray(pair) && pair.length === 2 && typeof pair[0] === "number" && Number.isFinite(pair[0]) && typeof pair[1] === "string") return {
+      at: pair[0],
+      id: pair[1]
+    };
   } catch { /* A malformed bookmark is reported in plain words. */ }
   throw new Error("This history page is unavailable. Start from the first page.");
 }
@@ -98,7 +161,13 @@ export function readHistoryCursor(cursor: string): { at: number; id: Id } {
 /** The simulator has its small scripted history in memory; the real engine uses an indexed query. */
 export function demoHistoryPage(state: Pick<State, "tasks" | "products">, request: HistoryQuery): HistoryPage {
   const cursor = request.cursor ? readHistoryCursor(request.cursor) : undefined;
-  const matches = state.tasks.filter((task) => finishedTask(task) && (!request.routineId || task.maintenance?.routineId === request.routineId) && (!request.productId || involvesProduct(task, request.productId)) && (!request.taskId || task.id === request.taskId) && (!request.states || request.states.includes(task.state as "done" | "cancelled")) && (request.held === undefined || task.held === request.held) && (!request.status || historyStatus(historyItem(task)) === request.status) && historyMatches(task.title, request.query ?? ""));
+  const matches = state.tasks.filter((task) => finishedTask(task) && (!request.routineId || task.maintenance?.routineId === request.routineId) && (!request.productId || involvesProduct(
+    task,
+    request.productId
+  )) && (!request.taskId || task.id === request.taskId) && (!request.states || request.states.includes(task.state as "done" | "cancelled")) && (request.held === undefined || task.held === request.held) && (!request.status || historyStatus(historyItem(task)) === request.status) && historyMatches(
+    task.title,
+    request.query ?? ""
+  ));
   const after = matches.filter((task) => !cursor || historyAt(task) < cursor.at || (historyAt(task) === cursor.at && task.id < cursor.id));
   after.sort((a, b) => historyAt(b) - historyAt(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   const size = Math.max(1, Math.min(100, Math.floor(request.limit ?? 24)));

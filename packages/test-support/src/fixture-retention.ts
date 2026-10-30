@@ -46,7 +46,10 @@ export function fixtureRetention(folder: string): FixtureRetention {
       if (!value || typeof value !== "object" || Object.keys(value).length !== 2 || !("version" in value) || value.version !== 1 ||
         !("root" in value) || typeof value.root !== "string" || !isAbsolute(value.root) || value.root.includes("\0") ||
         createHash("sha256").update(value.root).digest("hex") + ".json" !== name) throw new Error("Fixture journal root is malformed");
-      try { lstatSync(value.root); roots.push(value.root); }
+      try {
+        lstatSync(value.root);
+        roots.push(value.root);
+      }
       catch (error) { if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") throw error; }
     }
     return roots.length ? { kind: "retained", roots } : { kind: "clear" };

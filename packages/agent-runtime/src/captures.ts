@@ -176,7 +176,10 @@ function writePath(file: unknown): string | undefined {
 }
 
 /** Decode before copying. State carries opaque references, never paths or image bytes. */
-export async function preserveCaptures(root: string, storage: string, images: readonly { path: string; caption: string }[], signal?: AbortSignal): Promise<ReportImage[]> {
+export async function preserveCaptures(root: string, storage: string, images: readonly {
+  path: string;
+  caption: string
+}[], signal?: AbortSignal): Promise<ReportImage[]> {
   signal?.throwIfAborted();
   if (!images.length) return [];
   const { default: sharp } = await import("sharp");

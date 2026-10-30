@@ -153,7 +153,13 @@ export class EngineClient {
           return { outcome: "invalid", status: "stopped", message: "The engine is stopped. Start it explicitly before changing scheduling." };
         else {
           if (current && !["starting", "completed", "failed"].includes(current.phase))
-            return { outcome: "disconnected", requestId: args.requestId, status: "unresponsive", operation: current, message: "The previous engine process is still alive. Its lifecycle change cannot be confirmed; no replacement was started." };
+            return {
+              outcome: "disconnected",
+              requestId: args.requestId,
+              status: "unresponsive",
+              operation: current,
+              message: "The previous engine process is still alive. Its lifecycle change cannot be confirmed; no replacement was started."
+            };
           // Reserve the spawning caller before it can be interrupted without a connection.
           result = store.begin(name.slice(7), request, scheduling, undefined, process.pid);
           if ((result.operation as { id?: string })?.id === args.requestId) {

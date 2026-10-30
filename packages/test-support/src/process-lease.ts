@@ -33,10 +33,15 @@ export async function createProcessLease(options: ProcessLeaseOptions = {}): Pro
     if (options.guardian !== "node") throw new RangeError("Unknown fixture lease guardian");
     return createGuardianLease((body, port, token) => workerMonitoredProgram(body, port, token, true));
   }
-  const token = crypto.randomUUID(), sockets = new Set<Socket>();
-  let closed = false, closing: Promise<void> | undefined;
+  const token = crypto.randomUUID();
+  const sockets = new Set<Socket>();
+  let closed = false;
+  let closing: Promise<void> | undefined;
   const server = createServer(socket => {
-    if (closed) { socket.destroy(); return; }
+    if (closed) {
+      socket.destroy();
+      return;
+    }
     sockets.add(socket);
     socket.on("error", () => socket.destroy());
     socket.on("close", () => sockets.delete(socket));
@@ -48,12 +53,21 @@ export async function createProcessLease(options: ProcessLeaseOptions = {}): Pro
     });
   });
   await new Promise<void>((resolve, reject) => {
-    const failed = (error: Error) => { server.close(); reject(error); };
+    const failed = (error: Error) => {
+      server.close();
+      reject(error);
+    };
     server.once("error", failed);
-    server.listen(0, "127.0.0.1", () => { server.off("error", failed); resolve(); });
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", failed);
+      resolve();
+    });
   });
   const address = server.address();
-  if (!address || typeof address === "string") { server.close(); throw new Error("The fixture process owner has no loopback address"); }
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("The fixture process owner has no loopback address");
+  }
   const port = address.port;
   return {
     program(body, options) {

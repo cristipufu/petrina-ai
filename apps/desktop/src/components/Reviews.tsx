@@ -13,13 +13,38 @@ const OUTCOMES = [
 ] as const satisfies readonly [keyof FindingStats, string, string][];
 
 const outcomeCells = (findings: FindingStats) => OUTCOMES.map(([key]) => <td key={key} className="c">{findings[key]}</td>);
-const verificationCells = (entry: VerificationOutcomes) => ["completed", "real", "notABug", "nit", "preExisting", "unfinished"].map((key) => <td key={key} className="c">{entry[key as keyof VerificationOutcomes]}</td>);
+const verificationCells = (entry: VerificationOutcomes) => [
+  "completed",
+  "real",
+  "notABug",
+  "nit",
+  "preExisting",
+  "unfinished"
+].map((key) => <td
+  key={key}
+  className="c"
+>{entry[key as keyof VerificationOutcomes]}</td>);
 
 /** How reviews are going: rounds to pass, what became of findings, and how each reviewer's findings held up. */
 export function ReviewsPanel({ tasks, roles, find, history }: { tasks: State["tasks"]; roles: State["roles"]; find: Lookup; history?: ReviewStats }) {
   const stats = combineReviewStats(reviewStats(tasks), ...(history ? [history] : []));
   const { findings } = stats;
-  const roleRows = [...stats.roles, ...roles.filter((role) => role.result === "findings" && !stats.roles.some((entry) => entry.roleId === role.id)).map((role) => ({ roleId: role.id, important: 0, findings: { total: 0, fixed: 0, notABug: 0, unverified: 0, downgraded: 0, kept: 0, open: 0 } }))];
+  const roleRows = [
+    ...stats.roles,
+    ...roles.filter((role) => role.result === "findings" && !stats.roles.some((entry) => entry.roleId === role.id)).map((role) => ({
+    roleId: role.id,
+    important: 0,
+    findings: {
+    total: 0,
+    fixed: 0,
+    notABug: 0,
+    unverified: 0,
+    downgraded: 0,
+    kept: 0,
+    open: 0
+  }
+  }))
+  ];
   if (stats.reviewed === 0 && findings.total === 0) return <div className="empty-state">No review has finished yet. Numbers show here once one has.</div>;
 
   return (
@@ -55,9 +80,27 @@ export function ReviewsPanel({ tasks, roles, find, history }: { tasks: State["ta
         <h3 id="review-role-findings">Findings by review role</h3>
         <div className="portfolio-wrap">
           <table className="portfolio narrow" aria-label="Findings by review role">
-            <thead><tr><th scope="col">Review role</th><th scope="col" className="c">Findings</th><th scope="col" className="c" title="Important when raised">Important</th>{OUTCOMES.map(([key, label, detail]) => <th key={key} scope="col" className="c" title={detail}>{label}</th>)}</tr></thead>
+            <thead><tr><th scope="col">Review role</th><th
+              scope="col"
+              className="c"
+            >Findings</th><th
+              scope="col"
+              className="c"
+              title="Important when raised"
+            >Important</th>{OUTCOMES.map(([key, label, detail]) => <th
+              key={key}
+              scope="col"
+              className="c"
+              title={detail}
+            >{label}</th>)}</tr></thead>
             <tbody>{roleRows.map((entry) => <tr key={entry.roleId}><th scope="row">{find.role(entry.roleId)?.name ?? "Former review role"}</th><td className="c">{entry.findings.total}</td><td className="c">{entry.important}</td>{outcomeCells(entry.findings)}</tr>)}</tbody>
-            <tfoot><tr><th scope="row">All reviewers</th><td className="c">{findings.total}</td><td className="c">{stats.roles.reduce((sum, entry) => sum + entry.important, 0)}</td>{outcomeCells(findings)}</tr></tfoot>
+            <tfoot><tr><th scope="row">All reviewers</th><td className="c">{findings.total}</td><td className="c">{stats.roles.reduce(
+              (
+              sum,
+              entry
+            ) => sum + entry.important,
+              0
+            )}</td>{outcomeCells(findings)}</tr></tfoot>
           </table>
         </div>
         <p className="muted small review-table-note">Downgraded: a nit or an older issue. Kept: the builder gave a reason to leave it.</p>
@@ -112,9 +155,30 @@ function VerifierResults({ stats, find }: { stats: VerifierStats; find: Lookup }
   return <>
     <section className="analytics-subsection" aria-labelledby="verifier-impact">
       <h3 id="verifier-impact">What verifiers changed</h3>
-      <p className="review-impact"><strong>{changed} of {stats.completed} completed checks ({share(changed, stats.completed)})</strong> removed an Important finding as a blocker.</p>
+      <p className="review-impact"><strong>{changed} of {stats.completed} completed checks ({share(
+        changed,
+        stats.completed
+      )})</strong> removed an Important finding as a blocker.</p>
       <div className="portfolio-wrap"><table className="portfolio narrow" aria-label="Verifier outcomes">
-        <thead><tr><th scope="col">Original review role</th><th scope="col" className="c">Checks completed</th><th scope="col" className="c">Confirmed Important</th><th scope="col" className="c">Not a bug</th><th scope="col" className="c">To nit</th><th scope="col" className="c">Pre-existing</th><th scope="col" className="c">No final verdict</th></tr></thead>
+        <thead><tr><th scope="col">Original review role</th><th
+          scope="col"
+          className="c"
+        >Checks completed</th><th
+          scope="col"
+          className="c"
+        >Confirmed Important</th><th
+          scope="col"
+          className="c"
+        >Not a bug</th><th
+          scope="col"
+          className="c"
+        >To nit</th><th
+          scope="col"
+          className="c"
+        >Pre-existing</th><th
+          scope="col"
+          className="c"
+        >No final verdict</th></tr></thead>
         <tbody>{stats.roles.map((entry) => <tr key={entry.roleId}><th scope="row">{find.role(entry.roleId)?.name ?? "Former review role"}</th>{verificationCells(entry)}</tr>)}</tbody>
         <tfoot><tr><th scope="row">All checks</th>{verificationCells(stats)}</tr></tfoot>
       </table></div>
@@ -123,11 +187,39 @@ function VerifierResults({ stats, find }: { stats: VerifierStats; find: Lookup }
     {stats.profiles.length > 0 && <section className="analytics-subsection" aria-labelledby="verifier-votes">
       <h3 id="verifier-votes">Votes by verifier</h3>
       <div className="portfolio-wrap"><table className="portfolio narrow" aria-label="Votes by verifier">
-        <thead><tr><th scope="col">Verifier</th><th scope="col" className="c">Votes</th><th scope="col" className="c">Important</th><th scope="col" className="c">Not a bug</th><th scope="col" className="c">To nit</th><th scope="col" className="c">Pre-existing</th><th scope="col" className="c">Agreed with final verdict</th></tr></thead>
+        <thead><tr><th scope="col">Verifier</th><th
+          scope="col"
+          className="c"
+        >Votes</th><th
+          scope="col"
+          className="c"
+        >Important</th><th
+          scope="col"
+          className="c"
+        >Not a bug</th><th
+          scope="col"
+          className="c"
+        >To nit</th><th
+          scope="col"
+          className="c"
+        >Pre-existing</th><th
+          scope="col"
+          className="c"
+        >Agreed with final verdict</th></tr></thead>
         <tbody>{stats.profiles.map((entry) => {
           const profile = find.profile(entry.profileId);
-          const label = profile?.toolId === entry.toolId ? profileText(profile, find, true) : `${find.tool(entry.toolId)?.name ?? "Former tool"} · model not recorded`;
-          return <tr key={JSON.stringify([entry.profileId, entry.toolId])}><th scope="row">{label}</th><td className="c">{entry.votes}</td><td className="c">{entry.real}</td><td className="c">{entry.notABug}</td><td className="c">{entry.nit}</td><td className="c">{entry.preExisting}</td><td className="c">{entry.decided ? `${entry.matched} of ${entry.decided} (${share(entry.matched, entry.decided)})` : "No final verdict"}</td></tr>;
+          const label = profile?.toolId === entry.toolId ? profileText(
+            profile,
+            find,
+            true
+          ) : `${find.tool(entry.toolId)?.name ?? "Former tool"} · model not recorded`;
+          return <tr key={JSON.stringify([
+            entry.profileId,
+            entry.toolId
+          ])}><th scope="row">{label}</th><td className="c">{entry.votes}</td><td className="c">{entry.real}</td><td className="c">{entry.notABug}</td><td className="c">{entry.nit}</td><td className="c">{entry.preExisting}</td><td className="c">{entry.decided ? `${entry.matched} of ${entry.decided} (${share(
+            entry.matched,
+            entry.decided
+          )})` : "No final verdict"}</td></tr>;
         })}</tbody>
       </table></div>
       <p className="muted small review-table-note">One vote per actual tool per check. Agreement measures consistency with the final group verdict, not whether it was correct.{stats.unattributedVotes ? ` ${stats.unattributedVotes} older vote records have no proven tool and are left out of this comparison.` : ""}</p>

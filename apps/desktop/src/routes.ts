@@ -19,8 +19,23 @@ export function useAppRoute() {
   const readCurrent = () => {
     const route = readRoute(new URL(window.location.href));
     const previous: unknown = window.history.state?.petrinaHistoryPrevious;
-    if (route.view === "history" && Array.isArray(previous) && previous.length && previous.every((cursor) => typeof cursor === "string")) return { ...route, history: { ...route.history, previous: previous.slice(-50) as string[] } };
-    if (route.view === "routines" && route.routineRuns && Array.isArray(previous) && previous.every((cursor) => typeof cursor === "string")) return { ...route, routineRuns: { ...route.routineRuns, history: { ...route.routineRuns.history, previous: previous.slice(-50) as string[] } } };
+    if (route.view === "history" && Array.isArray(previous) && previous.length && previous.every((cursor) => typeof cursor === "string")) return {
+      ...route,
+      history: {
+      ...route.history,
+      previous: previous.slice(-50) as string[]
+    }
+    };
+    if (route.view === "routines" && route.routineRuns && Array.isArray(previous) && previous.every((cursor) => typeof cursor === "string")) return {
+      ...route,
+      routineRuns: {
+      ...route.routineRuns,
+      history: {
+      ...route.routineRuns.history,
+      previous: previous.slice(-50) as string[]
+    }
+    }
+    };
     return route;
   };
   const [route, setRoute] = useState(readCurrent);
@@ -30,13 +45,21 @@ export function useAppRoute() {
     delete next.missing;
     const href = routeHref(next);
     if (href !== window.location.pathname + window.location.search) {
-      window.history[replace ? "replaceState" : "pushState"]({ petrinaHistoryPrevious: (next.view === "history" ? next.history : next.view === "routines" ? next.routineRuns?.history : undefined)?.previous?.slice(-50) ?? [] }, "", href);
+      window.history[replace ? "replaceState" : "pushState"](
+        { petrinaHistoryPrevious: (next.view === "history" ? next.history : next.view === "routines" ? next.routineRuns?.history : undefined)?.previous?.slice(-50) ?? [] },
+        "",
+        href
+      );
     }
     current.current = next;
     setRoute(next);
   }, []);
   useEffect(() => {
-    const follow = () => { const next = readCurrent(); current.current = next; setRoute(next); };
+    const follow = () => {
+      const next = readCurrent();
+      current.current = next;
+      setRoute(next);
+    };
     window.addEventListener("popstate", follow);
     return () => window.removeEventListener("popstate", follow);
   }, []);

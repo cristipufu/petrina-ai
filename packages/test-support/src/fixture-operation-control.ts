@@ -13,18 +13,29 @@ export function fixtureOperationControl() {
     next = 0;
     stopEffect: () => void | Promise<void> = () => {};
     disposeEffect: () => void | Promise<void> = () => {};
-    stop() { this.events.push("stop"); return this.stopEffect(); }
-    dispose() { this.events.push("dispose"); return this.disposeEffect(); }
+    stop() {
+      this.events.push("stop");
+      return this.stopEffect();
+    }
+    dispose() {
+      this.events.push("dispose");
+      return this.disposeEffect();
+    }
     arm(expired: () => void, ms: number) {
       const id = ++this.next;
       this.timers.set(id, { expired, ms });
-      return () => { this.cancelled++; this.timers.delete(id); };
+      return () => {
+        this.cancelled++;
+        this.timers.delete(id);
+      };
     }
   }
-  const effects = new Effects(), owner = new FixtureOperations(effects);
+  const effects = new Effects();
+  const owner = new FixtureOperations(effects);
   return { effects, owner, expire() {
     const entry = [...effects.timers][0];
     if (!entry) throw new Error("No cleanup deadline is armed");
-    effects.timers.delete(entry[0]); entry[1].expired();
+    effects.timers.delete(entry[0]);
+    entry[1].expired();
   } };
 }

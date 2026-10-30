@@ -30,7 +30,16 @@ export class CheckRepairs {
         finding.status = "open";
         finding.severity = "blocking";
         finding.evidence = run.output.slice(-1500);
-      } else task.findings.push({ ...(task.repositories ? { productIds: [repository.productId] } : {}), id: this.host.id(task), text, evidence: run.output.slice(-1500), severity: "blocking", raisedBy: "petrina", confirmedBy: [], status: "open" });
+      } else task.findings.push({
+        ...(task.repositories ? { productIds: [repository.productId] } : {}),
+        id: this.host.id(task),
+        text,
+        evidence: run.output.slice(-1500),
+        severity: "blocking",
+        raisedBy: "petrina",
+        confirmedBy: [],
+        status: "open"
+      });
     }
   }
 
@@ -53,7 +62,11 @@ export class CheckRepairs {
       return rows.some(run => run && (run.execution !== undefined || run.cleanupIncomplete !== undefined) && !checkOwnershipConfirmed(run));
     });
     if (unresolved) {
-      this.host.log(unresolved, "warn", "Check cleanup has not been confirmed; no automatic Builder turn starts until the recorded process and output ownership is resolved");
+      this.host.log(
+        unresolved,
+        "warn",
+        "Check cleanup has not been confirmed; no automatic Builder turn starts until the recorded process and output ownership is resolved"
+      );
       return false;
     }
     if (task.repositories) {
@@ -63,7 +76,10 @@ export class CheckRepairs {
       const here = stages[task.stageIndex];
       const late = here?.gate === "delivery" || this.host.role(here?.roleId ?? "", task)?.result === "delivery";
       const builder = stages.findIndex((entry) => entry.kind === "do" && this.host.role(entry.roleId, task)?.result === "build");
-      const review = late && !task.repositories.some(repositoryPublished) ? stages.findIndex((entry, index) => index > builder && index < task.stageIndex && entry.kind === "review-chain") : -1;
+      const review = late && !task.repositories.some(repositoryPublished) ? stages.findIndex((
+        entry,
+        index
+      ) => index > builder && index < task.stageIndex && entry.kind === "review-chain") : -1;
       if (!beginRepair(this.host, task, "checks", review >= 0 ? review : task.stageIndex, { eligibleProducts })) return false;
       // Through review, the delivery check asks again. A pass returning to shipping keeps the approval, so the
       // changed work is compared with what was approved there and never ships on a withdrawn approval.
@@ -71,7 +87,16 @@ export class CheckRepairs {
       this.host.checkpoint();
       return true;
     }
-    const builder = lastIndexWhere(task.plan?.stages ?? [], (entry, index) => index < task.stageIndex && this.host.role(entry.roleId, task)?.result === "build");
+    const builder = lastIndexWhere(
+      task.plan?.stages ?? [],
+      (
+      entry,
+      index
+    ) => index < task.stageIndex && this.host.role(
+      entry.roleId,
+      task
+    )?.result === "build"
+    );
     if (builder < 0 || (repository.checkReturns ?? 0) >= 2) return false;
     repository.checkReturns = (repository.checkReturns ?? 0) + 1;
     withdrawApproval(repository);

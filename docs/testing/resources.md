@@ -20,6 +20,12 @@ Export every observed test, file, directory and Git caller in ranked JSON tables
 bun run test:resources:ledger .test-results/resources/<run> [output-directory]
 ```
 
+Verify capture completeness, zero unattributed native launches, zero post-exit escaped processes, zero missing child exit observations, and the suite native subprocess launch ceiling (`3,700`):
+
+```sh
+bun run test:resources:check .test-results/resources/<run> [output-directory]
+```
+
 The ledger reconciles case-attributed launches and unattributed hooks against the complete capture, without the summary's top-twenty limit. It reports missing file completions, invalid records and incomplete observations. Directory groups describe locations; grouping by the behavior being tested requires reviewing the cases and their shared fixtures. Rebuilding a ledger starts no tests or product processes. JSON includes Vitest cases with native launch coverage explicitly marked uninstrumented.
 
 | Artifact | What it records |

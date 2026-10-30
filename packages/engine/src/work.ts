@@ -87,7 +87,10 @@ export class Work {
   async runDo(scope: RepositoryContext, stage: MutableStage, signal: AbortSignal): Promise<"continue" | "stop"> {
     const { task, work: repository } = scope;
     const roleId = stage.roleId;
-    const profileId = (task.repositories && this.k.role(stage.roleId, task)?.result === "build" ? task.plan?.products?.find((owner) => owner.productId === repository.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? "opus-xhigh";
+    const profileId = (task.repositories && this.k.role(
+      stage.roleId,
+      task
+    )?.result === "build" ? task.plan?.products?.find((owner) => owner.productId === repository.productId)?.builderProfileId : undefined) ?? stage.profileIds[0] ?? "opus-xhigh";
     let by = profileId;
     const used = (id: string) => (by = id);
     const role = repository.conversation?.roleId === roleId && repository.conversation.role ? repository.conversation.role : this.k.role(roleId, task);
@@ -149,12 +152,36 @@ export class Work {
       testedVersions = accepted.testedVersions;
       if (accepted.next) return accepted.next;
     } else {
-      const result = savedResult !== undefined ? NotesResult.parse(savedResult) : await this.turns.turn(scope, roleId, profileId, sections, NotesResult, signal, { used, check: value => maintenance && typeof value.complete !== "boolean" ? 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.' : undefined });
-      const handed = { ...(task.repositories && role?.canEdit ? { productId: repository.productId } : {}), at: Date.now(), profileId: by, stageId: stage.id, roleId, roleName: repository.conversation?.role?.name ?? role?.name ?? roleId, title: stage.title, summary: result.summary, notes: result.notes };
+      const result = savedResult !== undefined ? NotesResult.parse(savedResult) : await this.turns.turn(
+        scope,
+        roleId,
+        profileId,
+        sections,
+        NotesResult,
+        signal,
+        {
+        used,
+        check: value => maintenance && typeof value.complete !== "boolean" ? 'Return "complete": true for a completed investigation, or false and explain why it is incomplete.' : undefined
+      }
+      );
+      const handed = {
+        ...(task.repositories && role?.canEdit ? { productId: repository.productId } : {}),
+        at: Date.now(),
+        profileId: by,
+        stageId: stage.id,
+        roleId,
+        roleName: repository.conversation?.role?.name ?? role?.name ?? roleId,
+        title: stage.title,
+        summary: result.summary,
+        notes: result.notes
+      };
       task.handedBack = [...(task.handedBack ?? []).filter((entry) => entry.stageId !== stage.id || entry.productId !== handed.productId), handed];
       this.k.participantSay(scope, "agent", [result.summary, ...result.notes.map((note) => `• ${note}`)].join("\n"), roleId, by, undefined);
       this.k.log(scope, "done", `${role?.name ?? roleId} done: ${result.summary}`, roleId, by);
-      if (maintenance && !result.complete) { this.k.commitNow(task); throw new Error(`Maintenance investigation is incomplete: ${result.summary}`); }
+      if (maintenance && !result.complete) {
+        this.k.commitNow(task);
+        throw new Error(`Maintenance investigation is incomplete: ${result.summary}`);
+      }
       endAgentStep(task, { outcome: JOURNEY_WORDS.wroteNotes, reason: JOURNEY_WORDS.notesReady }, Date.now());
     }
     if (role?.result !== "build" && role?.result !== "checks") await this.k.saveRoleEdits(scope, roleId, by);

@@ -42,7 +42,18 @@ export function stoppedProcessStates(list: string | undefined, present: readonly
     if (!complete) return [{ pid: Math.abs(target), state: "unknown", sources: [target < 0 ? "group" : "target"] }];
     if (target > 0) return [{ pid: target, state: parseProcessState(list!, target), sources: ["target"] }];
     const listed = members(-target);
-    return listed.length ? listed.map((pid) => ({ pid, state: parseProcessState(list!, pid), sources: ["group"] })) : [{ pid: -target, state: "absent", sources: ["group"] }];
+    return listed.length ? listed.map((pid) => ({
+      pid,
+      state: parseProcessState(
+      list!,
+      pid
+    ),
+      sources: ["group"]
+    })) : [{
+      pid: -target,
+      state: "absent",
+      sources: ["group"]
+    }];
   });
   return { ended: complete && processes.every(({ state }) => state === "finished"), processes };
 }

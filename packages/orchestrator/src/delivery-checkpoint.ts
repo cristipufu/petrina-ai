@@ -22,14 +22,23 @@ export class DeliveryCheckpoint {
     let sentBack = false;
     for (const scope of checking) {
       const work = scope.work;
-      if (current.repositories) { current.activeProductId = work.productId; if (work.pr || work.release || work.landed) continue; }
+      if (current.repositories) {
+        current.activeProductId = work.productId;
+        if (work.pr || work.release || work.landed) continue;
+      }
       await this.effects.writeGuide(scope);
       await this.effects.writeLearnings(scope);
       // What the coordinator checks is the work as it would land: one commit on top of the latest main.
-      if ((await this.effects.upToDate(scope, signal)) === "conflict") { sentBack = true; break; }
+      if ((await this.effects.upToDate(scope, signal)) === "conflict") {
+        sentBack = true;
+        break;
+      }
       // Right before the coordinator is asked to ship, the checks run again on what would ship.
       const checkResult = await this.effects.checksBeforeDelivery(scope, signal, async () => await this.effects.upToDate(scope, signal) !== "conflict");
-      if (checkResult === "returned") { sentBack = true; break; }
+      if (checkResult === "returned") {
+        sentBack = true;
+        break;
+      }
       if (checkResult === "exhausted" || checkResult === "blocked") {
         this.host.blocked(current);
         return { kind: "stop" };
@@ -59,11 +68,17 @@ export class DeliveryCheckpoint {
     const acceptanceFailed = current.acceptancePassed === false;
     const changes = observed?.changes;
     const mainOnly = hasProofs && sameVersions(current.testedChanges, changes) && !sameVersions(current.testedVersions, versions);
-    const ordinaryRetest = current.testedPatch !== undefined && (acceptanceFailed || (await this.effects.acceptanceVersion(scope, versions)) !== current.testedPatch);
+    const ordinaryRetest = current.testedPatch !== undefined && (acceptanceFailed || (await this.effects.acceptanceVersion(
+      scope,
+      versions
+    )) !== current.testedPatch);
     const requestedRetest = hasProofs && proofTestNeeded(current, mainOnly);
     // One rule with or without requested proof: a reproduced failure keeps its final retest after repair, while
     // required acceptance that could not be verified is never tried again unchanged. Extra probes decide neither.
-    const reproducedFailure = current.journey?.findLast(step => step.kind === "agent" && step.endedAt !== undefined && this.host.role(step.roleId!, current)?.result === "checks")?.acceptanceChecks?.some(check => check.result === "fail");
+    const reproducedFailure = current.journey?.findLast(step => step.kind === "agent" && step.endedAt !== undefined && this.host.role(
+      step.roleId!,
+      current
+    )?.result === "checks")?.acceptanceChecks?.some(check => check.result === "fail");
     const acceptanceExhausted = (acceptanceFailed && current.acceptanceBlocked) || (requiredUnverified(current) && !reproducedFailure && !requestedRetest);
     const bounded = hasProofs && mainOnly && (current.proofRefreshes ?? 0) >= 2;
     if (hasProofs) current.proofRefreshBlocked = bounded && (ordinaryRetest || openProofs(current).some(request => request.status === "stale"));
@@ -71,12 +86,19 @@ export class DeliveryCheckpoint {
       if (hasProofs) {
         delete current.proofRefreshBlocked;
         if (mainOnly) current.proofRefreshes = (current.proofRefreshes ?? 0) + 1;
-        current.proofRetestReason = openProofs(current).some(request => request.status === "pending") ? "requested" : mainOnly ? "main-moved" : current.testedChanges && !sameVersions(current.testedChanges, changes) ? "code-changed" : "requested";
+        current.proofRetestReason = openProofs(current).some(request => request.status === "pending") ? "requested" : mainOnly ? "main-moved" : current.testedChanges && !sameVersions(
+          current.testedChanges,
+          changes
+        ) ? "code-changed" : "requested";
       }
       current.retest = true;
       current.stageIndex = tester;
       current.sub = 0;
-      this.host.note(current, "milestone", hasProofs ? current.proofRetestReason === "main-moved" ? "Final acceptance testing: main moved since the proof was recorded" : current.proofRetestReason === "code-changed" ? "Final acceptance testing: the task's code changed since acceptance testing" : "Final acceptance testing: a reviewer asked for proof on the final code" : "Trying the acceptance list once more on the final code");
+      this.host.note(
+        current,
+        "milestone",
+        hasProofs ? current.proofRetestReason === "main-moved" ? "Final acceptance testing: main moved since the proof was recorded" : current.proofRetestReason === "code-changed" ? "Final acceptance testing: the task's code changed since acceptance testing" : "Final acceptance testing: a reviewer asked for proof on the final code" : "Trying the acceptance list once more on the final code"
+      );
       this.host.checkpoint();
       return { kind: "repeat" };
     }
@@ -88,7 +110,11 @@ export class DeliveryCheckpoint {
         work.approvedPatch = work.checkedPatch;
         work.approvedFor = { by: "task", mode: work.delivery, destination: this.host.destination({ task: current, work }) };
       }
-      this.host.note(current, "milestone", current.proofDeliveryGate && !current.approveDelivery ? `${current.proofRequests?.length ? "Requested proof is current" : "Required acceptance is verified"} and checks passed: shipping without asking you, as this task's settings allow` : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow");
+      this.host.note(
+        current,
+        "milestone",
+        current.proofDeliveryGate && !current.approveDelivery ? `${current.proofRequests?.length ? "Requested proof is current" : "Required acceptance is verified"} and checks passed: shipping without asking you, as this task's settings allow` : "Low risk, checks passed and nothing left to fix: shipping without asking you, as this product's settings allow"
+      );
       current.stageIndex += 1;
       current.sub = 0;
       this.host.checkpoint();

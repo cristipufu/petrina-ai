@@ -23,7 +23,10 @@ const SYSTEM_SETTINGS: Record<Platform, string> = {
  */
 function permissionLine(permission: BrowserPermission): { text: string; tone: "" | "ok" | "warn" } {
   if (desktop) {
-    return { text: `Petrina can't check whether your system allows its notifications. Send a test to find out. If nothing shows up, allow Petrina in ${SYSTEM_SETTINGS[platform()]}.`, tone: "" };
+    return {
+      text: `Petrina can't check whether your system allows its notifications. Send a test to find out. If nothing shows up, allow Petrina in ${SYSTEM_SETTINGS[platform()]}.`,
+      tone: ""
+    };
   }
   switch (permission) {
     case "granted":
@@ -41,9 +44,24 @@ function permissionLine(permission: BrowserPermission): { text: string; tone: ""
 }
 
 /** A switch: a button that is on or off, named by the text next to it. */
-function Switch({ on, onToggle, labelledBy, describedBy, disabled = false }: { on: boolean; onToggle: () => void; labelledBy: string; describedBy: string; disabled?: boolean }) {
+function Switch({ on, onToggle, labelledBy, describedBy, disabled = false }: {
+  on: boolean;
+  onToggle: () => void;
+  labelledBy: string;
+  describedBy: string;
+  disabled?: boolean
+}) {
   return (
-    <button type="button" role="switch" className="switch" aria-checked={on} aria-labelledby={labelledBy} aria-describedby={describedBy} disabled={disabled} onClick={onToggle}>
+    <button
+      type="button"
+      role="switch"
+      className="switch"
+      aria-checked={on}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      disabled={disabled}
+      onClick={onToggle}
+    >
       <span className="knob" aria-hidden="true" />
     </button>
   );

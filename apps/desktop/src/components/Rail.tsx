@@ -21,12 +21,39 @@ const GROUPS = [
 export function Rail({ view, blocking, onGo, hrefFor }: { view: Page; blocking: number; onGo: (page: Page) => void; hrefFor: (page: Page) => string }) {
   return <nav className="rail" aria-label="Sections">
     {GROUPS.map(group => <div key={group.label} className="rail-group" role="group" aria-label={group.label}>
-      {group.items.map(({ page, label, title, Icon }) => <a key={page} href={hrefFor(page)} className={view === page ? "on" : ""} aria-current={view === page ? "page" : undefined} onClick={event => followLink(event, () => onGo(page))} title={title}>
+      {group.items.map(({
+        page,
+        label,
+        title,
+        Icon
+      }) => <a
+        key={page}
+        href={hrefFor(page)}
+        className={view === page ? "on" : ""}
+        aria-current={view === page ? "page" : undefined}
+        onClick={event => followLink(
+        event,
+        () => onGo(page)
+      )}
+        title={title}
+      >
         <Icon size={20} aria-hidden="true" />{label}
         {page === "agents" && blocking > 0 && <span className="badge" aria-label={`${blocking} waiting on you`}>{blocking}</span>}
       </a>)}
     </div>)}
     <div className="rail-end" aria-hidden="true" />
-    <a href={hrefFor("settings")} className={view === "settings" ? "on" : ""} aria-current={view === "settings" ? "page" : undefined} onClick={event => followLink(event, () => onGo("settings"))} title={`Settings (${mod},)`}><Settings size={20} aria-hidden="true" />Settings</a>
+    <a
+      href={hrefFor("settings")}
+      className={view === "settings" ? "on" : ""}
+      aria-current={view === "settings" ? "page" : undefined}
+      onClick={event => followLink(
+      event,
+      () => onGo("settings")
+    )}
+      title={`Settings (${mod},)`}
+    ><Settings
+      size={20}
+      aria-hidden="true"
+    />Settings</a>
   </nav>;
 }

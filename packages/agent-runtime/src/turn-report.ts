@@ -16,7 +16,14 @@ export function genericTurnReport(response: unknown): TurnReport | undefined {
   const { usage, _meta } = response as { usage?: Record<string, unknown> | null; _meta?: { quota?: { model_usage?: unknown } } | null };
   const report: { main?: TokenCounts; models?: { model: string; counts: TokenCounts }[] } = {};
   if (usage && typeof usage === "object") {
-    report.main = defined({ input: count(usage.inputTokens), cacheRead: count(usage.cachedReadTokens), cacheWrite: count(usage.cachedWriteTokens), output: count(usage.outputTokens), reasoning: count(usage.thoughtTokens), total: count(usage.totalTokens) });
+    report.main = defined({
+      input: count(usage.inputTokens),
+      cacheRead: count(usage.cachedReadTokens),
+      cacheWrite: count(usage.cachedWriteTokens),
+      output: count(usage.outputTokens),
+      reasoning: count(usage.thoughtTokens),
+      total: count(usage.totalTokens)
+    });
   }
   const rows = _meta?.quota?.model_usage;
   if (Array.isArray(rows)) {

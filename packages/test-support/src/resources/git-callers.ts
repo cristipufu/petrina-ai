@@ -13,10 +13,12 @@ function isRepositoryGitFrame(frame: string): boolean {
 export function gitCaller(stack: string | undefined, sourceRoot: string): string | undefined {
   const root = sourceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
   if (!root || !stack) return undefined;
-  const prefix = `${root}/`, frames: string[] = [];
+  const prefix = `${root}/`;
+  const frames: string[] = [];
   for (const raw of stack.slice(0, 16_384).split("\n").slice(0, 40)) {
     if (!/^\s*at\s/.test(raw)) continue;
-    const line = raw.replaceAll("\\", "/"), at = line.lastIndexOf(prefix);
+    const line = raw.replaceAll("\\", "/");
+    const at = line.lastIndexOf(prefix);
     if (at < 0) continue;
     const location = line.slice(at + prefix.length).trim();
     const match = /^((?:packages|apps)\/[^/():]+\/(?:src|test)\/[^():\n]+\.[cm]?[jt]sx?):([1-9]\d*):[1-9]\d*\)?$/.exec(location);

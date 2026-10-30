@@ -66,11 +66,17 @@ export function presentStates(list: string | undefined, present: readonly number
  * running work; obtain one bounded group snapshot while waiting. Silence or failed inspection is
  * never proof that a target still answering to a signal has ended.
  */
-export async function waitForProcessesToEnd(targets: readonly number[], ms: number, read: ProcessListRead = readProcessGroups): Promise<{ ended: boolean; processes: ObservedProcess[] }> {
+export async function waitForProcessesToEnd(targets: readonly number[], ms: number, read: ProcessListRead = readProcessGroups): Promise<{
+  ended: boolean;
+  processes: ObservedProcess[]
+}> {
   return confirmStoppedProcesses(targets, ms, {
     now: () => Date.now(), sleep: ms => Bun.sleep(ms), selfPid: process.pid,
     possiblyPresent(target) {
-      try { process.kill(target, 0); return true; }
+      try {
+        process.kill(target, 0);
+        return true;
+      }
       catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
     },
     readGroups: timeout => read(timeout),
@@ -112,7 +118,10 @@ export function lostExit(pid: number, signal: AbortSignal, read: ProcessListRead
     // A read started before this watch could predate the child: only join observations started from here on.
     const since = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const stop = () => { clearTimeout(timer); resolve("stopped"); };
+    const stop = () => {
+      clearTimeout(timer);
+      resolve("stopped");
+    };
     if (signal.aborted) return stop();
     signal.addEventListener("abort", stop, { once: true });
     const pause = (ms: number) => new Promise<void>((wake) => { timer = setTimeout(wake, ms); });

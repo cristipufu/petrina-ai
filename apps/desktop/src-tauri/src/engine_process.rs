@@ -236,6 +236,17 @@ fn failed(mut owner: ChildOwner, mut message: String) -> StartupFailure {
     }
 }
 
+static SPAWN_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serialize process spawns within this process so platforms without atomic `pipe2(O_CLOEXEC)`
+/// cannot leak a sibling thread's newly created pipe descriptor into another child.
+pub(crate) fn spawn_command(command: &mut Command) -> std::io::Result<Child> {
+    let _guard = SPAWN_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    command.spawn()
+}
+
 /// Own the command immediately after spawn, including every failed-start path.
 pub(crate) fn open_command(
     mut command: Command,
@@ -250,7 +261,7 @@ pub(crate) fn open_command(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let child = command.spawn().map_err(|error| StartupFailure {
+    let child = spawn_command(&mut command).map_err(|error| StartupFailure {
         message: format!("Petrina could not start its engine: {error}"),
         remaining: None,
     })?;
@@ -344,6 +355,7 @@ pub(crate) fn stop_for_recovery_with_grace(
         StopResult::Handoff | StopResult::Uncertain(_) => Err(started),
     }
 }
+#[cfg(test)]
 pub(crate) fn stop(mut started: Started) -> Result<(), Started> {
     match stop_owner(started.owner) {
         Ok(()) => Ok(()),

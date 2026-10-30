@@ -11,6 +11,11 @@ export interface AcceptancePreflightHost {
 export interface AcceptancePreflightEffects {
   upToDate(scope: RepositoryContext, signal: AbortSignal): Promise<"current" | "moved" | "conflict">;
   ensureChecks(scope: RepositoryContext, signal: AbortSignal): Promise<readonly ProductCheck[]>;
-  failing(scope: RepositoryContext, signal: AbortSignal, required: readonly ProductCheck[], prepare: () => Promise<boolean>): Promise<Pick<CheckVerification, "kind" | "productId">>;
+  failing(
+    scope: RepositoryContext,
+    signal: AbortSignal,
+    required: readonly ProductCheck[],
+    prepare: () => Promise<boolean>
+  ): Promise<Pick<CheckVerification, "kind" | "productId">>;
   preparationChanged(error: unknown): boolean;
 }

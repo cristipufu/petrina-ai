@@ -30,19 +30,63 @@ export async function saveExactMessage(dataDir: string, taskId: Id, text: string
 }
 
 /** Read one seat's saved input, manifest or update, checking the saved file against its recorded identity. */
-export async function readExactInput(task: Task, roles: readonly Pick<Role, "id" | "name" | "result">[], a: { nodeId: string; seat?: string; index?: number; section: "message" | "manifest" | "update"; update?: number; cursor?: string; limit?: number }): Promise<Result> {
+export async function readExactInput(task: Task, roles: readonly Pick<Role, "id" | "name" | "result">[], a: {
+  nodeId: string;
+  seat?: string;
+  index?: number;
+  section: "message" | "manifest" | "update";
+  update?: number;
+  cursor?: string;
+  limit?: number
+}): Promise<Result> {
   const node = task.journey?.find((step) => step.id === a.nodeId);
   if (!node) return { outcome: "missing", message: "That journey node does not exist." };
   const inputs = (node.agentInputs ?? []).map((input, index) => ({ input, index, seat: seatOf(input, roles, task) }));
   const onSeat = inputs.filter((entry) => !a.seat || entry.seat === a.seat);
-  if (!onSeat.length) return { outcome: "unavailable", message: a.seat ? "No input is recorded for that seat on this node." : "This node recorded no agent input." };
+  if (!onSeat.length) return {
+    outcome: "unavailable",
+    message: a.seat ? "No input is recorded for that seat on this node." : "This node recorded no agent input."
+  };
   const chosen = a.index !== undefined ? onSeat[a.index] : onSeat.at(-1);
   if (!chosen) return { outcome: "missing", message: "That input attempt does not exist on this seat." };
   const { input, index, seat } = chosen;
-  const identity = { seat, index, attempt: onSeat.indexOf(chosen) + 1, roleId: input.roleId, profileId: input.profileId, ...(input.requestedProfileId ? { requestedProfileId: input.requestedProfileId } : {}), mode: input.resumed ? "resumed" : input.mode, at: input.at ?? null, ...(input.sessionId ? { conversation: input.sessionId } : {}) };
+  const identity = {
+    seat,
+    index,
+    attempt: onSeat.indexOf(chosen) + 1,
+    roleId: input.roleId,
+    profileId: input.profileId,
+    ...(input.requestedProfileId ? { requestedProfileId: input.requestedProfileId } : {}),
+    mode: input.resumed ? "resumed" : input.mode,
+    at: input.at ?? null,
+    ...(input.sessionId ? { conversation: input.sessionId } : {})
+  };
   if (a.section === "manifest") {
-    if (!input.manifest) return { outcome: "unavailable", ...identity, message: "This older input recorded no manifest. Its sections remain readable through journey.node.", sections: input.sections.map((section) => ({ name: section.title, size: section.body.length })) };
-    return readText(input.manifest, a, ["journey.input", task.id, a.nodeId, index, "manifest"], { ...identity, entries: input.manifest.length, evidence: "recorded" });
+    if (!input.manifest) return {
+      outcome: "unavailable",
+      ...identity,
+      message: "This older input recorded no manifest. Its sections remain readable through journey.node.",
+      sections: input.sections.map((section) => ({
+      name: section.title,
+      size: section.body.length
+    }))
+    };
+    return readText(
+      input.manifest,
+      a,
+      [
+      "journey.input",
+      task.id,
+      a.nodeId,
+      index,
+      "manifest"
+    ],
+      {
+      ...identity,
+      entries: input.manifest.length,
+      evidence: "recorded"
+    }
+    );
   }
   if (a.section === "update") {
     const updates = input.updates ?? [];
@@ -50,20 +94,91 @@ export async function readExactInput(task: Task, roles: readonly Pick<Role, "id"
     const position = a.update ?? updates.length - 1;
     const update = updates[position];
     if (!update) return { outcome: "missing", ...identity, message: "That update does not exist on this input." };
-    const meta = { ...identity, update: position, reason: update.reason, updatedAt: update.at, ...(update.messageId ? { messageId: update.messageId } : {}), ...(update.delivery ? { delivery: update.delivery } : {}) };
+    const meta = {
+      ...identity,
+      update: position,
+      reason: update.reason,
+      updatedAt: update.at,
+      ...(update.messageId ? { messageId: update.messageId } : {}),
+      ...(update.delivery ? { delivery: update.delivery } : {})
+    };
     if (update.exact) return readSaved(update.exact, a, ["journey.input", task.id, a.nodeId, index, "update", position], meta);
-    return readText(update.text, a, ["journey.input", task.id, a.nodeId, index, "update", position, "record"], { ...meta, source: "journey-record", evidence: "recorded-text" });
+    return readText(
+      update.text,
+      a,
+      [
+      "journey.input",
+      task.id,
+      a.nodeId,
+      index,
+      "update",
+      position,
+      "record"
+    ],
+      {
+      ...meta,
+      source: "journey-record",
+      evidence: "recorded-text"
+    }
+    );
   }
-  if (!input.exact) return { outcome: "unavailable", ...identity, message: "This older input has no saved exact message. The recorded instructions and sections stay readable through journey.node; they are not the complete text as sent." };
-  return readSaved(input.exact, a, ["journey.input", task.id, a.nodeId, index, "message"], { ...identity, ...(input.manifest ? { manifestEntries: input.manifest.length } : {}) });
+  if (!input.exact) return {
+    outcome: "unavailable",
+    ...identity,
+    message: "This older input has no saved exact message. The recorded instructions and sections stay readable through journey.node; they are not the complete text as sent."
+  };
+  return readSaved(
+    input.exact,
+    a,
+    [
+    "journey.input",
+    task.id,
+    a.nodeId,
+    index,
+    "message"
+  ],
+    {
+    ...identity,
+    ...(input.manifest ? { manifestEntries: input.manifest.length } : {})
+  }
+  );
 }
 
 async function readSaved(exact: ExactMessage, a: { cursor?: string; limit?: number }, scope: unknown, extra: Record<string, unknown>): Promise<Result> {
   let text: string;
   try { text = await readFile(exact.file, "utf8"); }
-  catch { return { outcome: "unavailable", ...extra, file: exact.file, digest: exact.digest, size: exact.size, message: "The saved message file is no longer available. Context files follow the task's cleanup; no newer text is substituted." }; }
-  if (digest(text) !== exact.digest) return { outcome: "changed", ...extra, file: exact.file, digest: exact.digest, size: exact.size, message: "The saved message file does not match its recorded identity, so it is not returned." };
-  return readText(text, a, [scope, exact.digest], { ...extra, file: exact.file, digest: exact.digest, size: exact.size, evidence: "exact", source: "saved-file" });
+  catch { return {
+    outcome: "unavailable",
+    ...extra,
+    file: exact.file,
+    digest: exact.digest,
+    size: exact.size,
+    message: "The saved message file is no longer available. Context files follow the task's cleanup; no newer text is substituted."
+  }; }
+  if (digest(text) !== exact.digest) return {
+    outcome: "changed",
+    ...extra,
+    file: exact.file,
+    digest: exact.digest,
+    size: exact.size,
+    message: "The saved message file does not match its recorded identity, so it is not returned."
+  };
+  return readText(
+    text,
+    a,
+    [
+    scope,
+    exact.digest
+  ],
+    {
+    ...extra,
+    file: exact.file,
+    digest: exact.digest,
+    size: exact.size,
+    evidence: "exact",
+    source: "saved-file"
+  }
+  );
 }
 
 export type { JourneyAgentInput };

@@ -84,9 +84,27 @@ export function slotUses(state: State): SlotUse[] {
   return [...state.tasks
     .filter((task) => task.holdsSlot)
     .flatMap((task) => [
-      { taskId: task.id, toolId: (task.agent && toolOf.get(task.agent.profileId)) ?? "unknown", ...(task.agent ? { roleId: task.agent.roleId, profileId: task.agent.profileId } : {}) },
-      ...(task.helpers ?? []).map((helper) => ({ taskId: task.id, toolId: toolOf.get(helper.profileId) ?? "unknown", roleId: helper.roleId, profileId: helper.profileId })),
-    ]), ...(state.backgroundAgents ?? []).map((agent) => ({ taskId: agent.id, toolId: toolOf.get(agent.profileId) ?? "unknown", roleId: agent.roleId, profileId: agent.profileId, label: agent.label }))].map(use => {
+      {
+        taskId: task.id,
+        toolId: (task.agent && toolOf.get(task.agent.profileId)) ?? "unknown",
+        ...(task.agent ? {
+        roleId: task.agent.roleId,
+        profileId: task.agent.profileId
+      } : {})
+      },
+      ...(task.helpers ?? []).map((helper) => ({
+        taskId: task.id,
+        toolId: toolOf.get(helper.profileId) ?? "unknown",
+        roleId: helper.roleId,
+        profileId: helper.profileId
+      })),
+    ]), ...(state.backgroundAgents ?? []).map((agent) => ({
+      taskId: agent.id,
+      toolId: toolOf.get(agent.profileId) ?? "unknown",
+      roleId: agent.roleId,
+      profileId: agent.profileId,
+      label: agent.label
+    }))].map(use => {
       const profile = use.profileId ? profiles.get(use.profileId) : undefined;
       return { ...use, ...(profile ? { model: profile.model, ...(profile.modelId ? { modelId: profile.modelId } : {}) } : {}) };
     });

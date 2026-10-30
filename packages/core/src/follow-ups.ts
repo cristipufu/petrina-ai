@@ -127,7 +127,11 @@ const CAP = 24;
 
 /** Products a task is about. */
 export function productsOn(task: Pick<Task, "productId" | "repositories" | "selectedProducts">): Id[] {
-  return [...new Set([task.productId, ...(task.repositories?.map((work) => work.productId) ?? []), ...(task.selectedProducts?.map((choice) => choice.productId) ?? [])].filter((id) => id.length > 0))];
+  return [...new Set([
+    task.productId,
+    ...(task.repositories?.map((work) => work.productId) ?? []),
+    ...(task.selectedProducts?.map((choice) => choice.productId) ?? [])
+  ].filter((id) => id.length > 0))];
 }
 
 function cardPhase(state: RunState): OpenFollowUp["phase"] {
@@ -159,7 +163,10 @@ export function followUpCard(task: Task): OpenFollowUp | undefined {
   return {
     id: task.id,
     phase: cardPhase(task.state),
-    productIds: [...new Set([...productsOn(task), ...(!task.followUp || task.followUp.preserveRequest ? [] : task.followUp.reports.flatMap((report) => report.productIds))])],
+    productIds: [...new Set([
+      ...productsOn(task),
+      ...(!task.followUp || task.followUp.preserveRequest ? [] : task.followUp.reports.flatMap((report) => report.productIds))
+    ])],
     title: task.title,
     problem: task.description.trim() || task.title,
     reportKeys: task.followUp?.reports.map((report) => followUpKey(report.taskId, report.findingId)) ?? [],
@@ -355,7 +362,11 @@ function remember(working: Working, cardId: Id, reports: readonly FollowUpCandid
   const pictured = reports.filter((report) => already.has(report.key) && !working.used.has(report.key) && pictureMissing(report));
   const carrying = [...fresh, ...pictured];
   if (!carrying.length) return;
-  const kept = snapshot.keptImages.filter((image) => image.cardId === cardId).map((image) => ({ caption: "", sourceTaskId: image.sourceTaskId, sourceImageId: image.sourceImageId }));
+  const kept = snapshot.keptImages.filter((image) => image.cardId === cardId).map((image) => ({
+    caption: "",
+    sourceTaskId: image.sourceTaskId,
+    sourceImageId: image.sourceImageId
+  }));
   const credits = carrying.map((report) => creditOf(report, kept));
   const products = [...new Set(fresh.flatMap((report) => report.productIds))].filter((id) => !card?.productIds.includes(id));
   const backlog = phase === "backlog";
@@ -489,7 +500,14 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
   }
   pool = pool.filter((report) => !working.used.has(report.key));
   const askOf = (reports: readonly FollowUpCandidate[], cards: readonly OpenFollowUp[]): MatchAsk => ({
-    reports: reports.map((report) => ({ key: report.key, text: report.text, steps: report.steps!.trim(), evidence: report.evidence!.trim(), productIds: report.productIds, raisedBy: report.raisedBy })),
+    reports: reports.map((report) => ({
+      key: report.key,
+      text: report.text,
+      steps: report.steps!.trim(),
+      evidence: report.evidence!.trim(),
+      productIds: report.productIds,
+      raisedBy: report.raisedBy
+    })),
     cards: cards.map((card) => ({ id: card.id, title: card.title, problem: card.problem, productIds: card.productIds })),
   });
   while (pool.length) {
@@ -504,7 +522,13 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
       for (const report of pool) if (report.sourceDone && !report.block) openNew(working, [report]);
       break;
     }
-    const relevant = cardsNow.filter((card) => askReports.some((report) => fitsCard(card, report) && overlaps(card.productIds, report.productIds) && !(excluded.get(report.key) ?? []).includes(card.id)) && !askReports.every((report) => (excluded.get(report.key) ?? []).includes(card.id)));
+    const relevant = cardsNow.filter((card) => askReports.some((report) => fitsCard(
+      card,
+      report
+    ) && overlaps(
+      card.productIds,
+      report.productIds
+    ) && !(excluded.get(report.key) ?? []).includes(card.id)) && !askReports.every((report) => (excluded.get(report.key) ?? []).includes(card.id)));
     let pending = askReports;
     let page = 0;
     let stopped = false;
@@ -561,7 +585,18 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
     pool = pool.filter((report) => !working.used.has(report.key) && !deferred.has(report.key));
   }
 
-  const consumed = new Set([...working.created.flatMap((entry) => entry.keys), ...working.linked.flatMap((entry) => entry.keys), ...working.tracks.map((entry) => followUpKey(entry.taskId, entry.findingId)), ...released.map(entry => followUpKey(entry.taskId, entry.findingId))]);
+  const consumed = new Set([
+    ...working.created.flatMap((entry) => entry.keys),
+    ...working.linked.flatMap((entry) => entry.keys),
+    ...working.tracks.map((entry) => followUpKey(
+    entry.taskId,
+    entry.findingId
+  )),
+    ...released.map(entry => followUpKey(
+    entry.taskId,
+    entry.findingId
+  ))
+  ]);
   for (const group of snapshot.pending) {
     if (group.retry) continue;
     if (group.keys.every((key) => consumed.has(key) || snapshot.reports.some((report) => report.key === key && report.tracking && "taskId" in report.tracking))) continue;
@@ -575,7 +610,19 @@ export async function planFollowUps(snapshot: FollowUpSnapshot, match: (ask: Mat
  * An older tag and a "this change caused it" tag on the same finding stay on the finding,
  * and the finding stays Important until the usual vote settles it.
  */
-export function noteReviewTag(current: { severity: Finding["severity"]; judgments?: Finding["judgments"]; verification?: Finding["verification"] } | undefined, incoming: Finding["severity"], by: Id, at: number): { severity: Finding["severity"]; judgments: { by: Id; severity: Finding["severity"]; at: number }[]; clearVote: boolean } {
+export function noteReviewTag(current: {
+  severity: Finding["severity"];
+  judgments?: Finding["judgments"];
+  verification?: Finding["verification"]
+} | undefined, incoming: Finding["severity"], by: Id, at: number): {
+  severity: Finding["severity"];
+  judgments: {
+  by: Id;
+  severity: Finding["severity"];
+  at: number
+}[];
+  clearVote: boolean
+} {
   const judgments = [...(current?.judgments ?? [])];
   const clash = !!current && ((current.severity === "pre-existing" && incoming === "blocking") || (current.severity === "blocking" && incoming === "pre-existing"));
   if (!current || clash) judgments.push({ by, severity: incoming, at });

@@ -11,7 +11,16 @@ export interface ParallelMember {
   roleId: Id;
   profileId: Id;
   reviewerKey?: string;
-  work(copy: string, room: (toolId: Id, profile: AgentProfile) => boolean, seat: Id, used: (profileId: Id) => void, agent: ActiveAgent, continuing: boolean, signal: AbortSignal, selection?: ParallelSeatSelection): Promise<void>;
+  work(
+    copy: string,
+    room: (toolId: Id, profile: AgentProfile) => boolean,
+    seat: Id,
+    used: (profileId: Id) => void,
+    agent: ActiveAgent,
+    continuing: boolean,
+    signal: AbortSignal,
+    selection?: ParallelSeatSelection
+  ): Promise<void>;
 }
 
 /**

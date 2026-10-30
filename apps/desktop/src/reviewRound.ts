@@ -6,7 +6,10 @@ const object = (value: unknown): Record<string, unknown> | undefined => value !=
 export function reviewOutcome(node: JourneyNode, role?: Role): string | undefined {
   const result = role?.result ?? BUILT_IN_ROLES.find(role => role.id === node.roleId)?.result;
   if (node.kind !== "agent" || node.state !== "done" || result !== "findings" || node.endedAt === undefined) return node.outcome;
-  const open = node.result?.findings ? [...new Map(node.result.findings.map((finding) => [finding.id, finding])).values()].filter((finding) => finding.status === "open") : undefined;
+  const open = node.result?.findings ? [...new Map(node.result.findings.map((finding) => [
+    finding.id,
+    finding
+  ])).values()].filter((finding) => finding.status === "open") : undefined;
   return open && (open.length || node.result?.findingsSettled) ? findingCount(open) : node.outcome;
 }
 
@@ -41,7 +44,14 @@ export function reviewRoundGroups(node: JourneyNode, steps: readonly JourneyStep
       if (!Array.isArray(answers)) continue;
       for (const value of answers) {
         const answer = object(value);
-        if (typeof answer?.id === "string" && typeof answer.fixed === "boolean" && typeof answer.text === "string") claims.set(answer.id, { fixed: answer.fixed, text: answer.text, at: result.at });
+        if (typeof answer?.id === "string" && typeof answer.fixed === "boolean" && typeof answer.text === "string") claims.set(
+          answer.id,
+          {
+          fixed: answer.fixed,
+          text: answer.text,
+          at: result.at
+        }
+        );
       }
     }
     if (step.findingIds?.some((id) => !claims.has(id))) fixedRecorded = false;

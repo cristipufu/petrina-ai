@@ -36,6 +36,10 @@ export function needsPullRequestCheck(task: Task): boolean {
 export function copyNoLongerNeeded(task: Task): boolean {
   task = displayTask(task);
   if (task.repositories) return (task.state === "done" || task.state === "cancelled") && task.repositories.every((work) =>
-    work.nothingToPublish || work.pr?.state !== "open" && !(work.pr?.state === "closed" && !work.landingAccepted) && work.shipping?.step === undefined && !work.shipping?.carriedOver && work.localUpdate?.pushed !== false && !work.cleanup?.foreignPullRequest && !needsPullRequestCheck({ ...task, ...work, repositories: undefined }));
+    work.nothingToPublish || work.pr?.state !== "open" && !(work.pr?.state === "closed" && !work.landingAccepted) && work.shipping?.step === undefined && !work.shipping?.carriedOver && work.localUpdate?.pushed !== false && !work.cleanup?.foreignPullRequest && !needsPullRequestCheck({
+      ...task,
+      ...work,
+      repositories: undefined
+    }));
   return (task.state === "done" || task.state === "cancelled") && task.pr?.state !== "open" && !task.cleanup?.foreignPullRequest && !needsPullRequestCheck(task);
 }

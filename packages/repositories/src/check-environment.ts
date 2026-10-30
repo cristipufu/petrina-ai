@@ -1,6 +1,17 @@
 import { createHash, type Hash } from "node:crypto";
 import { release } from "node:os";
-import { checkSetupOutcome, isCheckExecutorFacts, normalizeCheckPrerequisites, sameCheckPrerequisites, type CheckEnvironmentIdentity, type CheckExecutorFacts, type CheckOutputIdentity, type CheckRun, type CheckSetupAttempt, type ProductCheckSetup } from "@petrina/core";
+import {
+  checkSetupOutcome,
+  isCheckExecutorFacts,
+  normalizeCheckPrerequisites,
+  sameCheckPrerequisites,
+  type CheckEnvironmentIdentity,
+  type CheckExecutorFacts,
+  type CheckOutputIdentity,
+  type CheckRun,
+  type CheckSetupAttempt,
+  type ProductCheckSetup
+} from "@petrina/core";
 
 // Bump these when execution/launch semantics change, not for every build or process restart.
 // launchPolicy describes this adapter's argv/env handling; it is not a claim about caller credentials.
@@ -36,7 +47,19 @@ export function deriveCheckEnvironmentIdentity(attempt: CheckSetupAttempt): Chec
   const outcome = checkSetupOutcome(attempt);
   if (outcome.kind !== "verified") throw new Error("Only a complete setup observation has an environment identity");
   const facts = outcome.executor;
-  const executor = hash([facts.version, facts.adapter, facts.contract, facts.launchPolicy, facts.platform, facts.architecture, facts.osRelease, [facts.runtime.name, facts.runtime.version]]);
+  const executor = hash([
+    facts.version,
+    facts.adapter,
+    facts.contract,
+    facts.launchPolicy,
+    facts.platform,
+    facts.architecture,
+    facts.osRelease,
+    [
+    facts.runtime.name,
+    facts.runtime.version
+  ]
+  ]);
   return { version: 1, contract: attempt.input.contract, executor, prerequisites: attempt.requirements.length ? {
     kind: "declared", observations: hash(outcome.observations.map(({ requirementId, output }) => [requirementId,
       [output.stdout.algorithm, output.stdout.bytes, output.stdout.digest], [output.stderr.algorithm, output.stderr.bytes, output.stderr.digest]])),
@@ -48,7 +71,8 @@ type OutputObservation = Pick<CheckRun, "outputIdentity" | "outputIdentityError"
 /** Hash the existing readers' raw chunks without retaining output or affecting command execution. */
 export function checkOutputCapture() {
   const pipes: Record<keyof CheckOutputIdentity, { hash?: Hash; bytes: number }> = { stdout: { bytes: 0 }, stderr: { bytes: 0 } };
-  let failure: string | undefined, result: OutputObservation | undefined;
+  let failure: string | undefined;
+  let result: OutputObservation | undefined;
   for (const name of ["stdout", "stderr"] as const) {
     try { pipes[name].hash = createHash("sha256"); }
     catch (error) { failure ??= message(error); }
@@ -60,7 +84,8 @@ export function checkOutputCapture() {
       try {
         const length = pipe.bytes + bytes.byteLength;
         if (!Number.isSafeInteger(length)) throw new Error("The check output byte count exceeded its supported range");
-        pipe.hash!.update(bytes); pipe.bytes = length;
+        pipe.hash!.update(bytes);
+        pipe.bytes = length;
       } catch (error) { failure ??= message(error); }
     },
     finish(complete: boolean): OutputObservation {
@@ -68,7 +93,11 @@ export function checkOutputCapture() {
       if (failure !== undefined) return result = { outputIdentityError: failure };
       if (!complete) return result = {};
       try {
-        const identity = (name: keyof CheckOutputIdentity) => ({ algorithm: "sha256" as const, bytes: pipes[name].bytes, digest: pipes[name].hash!.digest("hex") });
+        const identity = (name: keyof CheckOutputIdentity) => ({
+          algorithm: "sha256" as const,
+          bytes: pipes[name].bytes,
+          digest: pipes[name].hash!.digest("hex")
+        });
         return result = { outputIdentity: { stdout: identity("stdout"), stderr: identity("stderr") } };
       } catch (error) { return result = { outputIdentityError: message(error) }; }
     },

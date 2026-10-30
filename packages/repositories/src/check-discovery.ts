@@ -41,7 +41,21 @@ export function detectChecks(root: string): ProductCheck[] {
   }
   if (existsSync(join(root, "Cargo.toml"))) checks.push({ name: "Rust tests", argv: ["cargo", "test"] });
   if (existsSync(join(root, "go.mod"))) checks.push({ name: "Go vet", argv: ["go", "vet", "./..."] }, { name: "Go tests", argv: ["go", "test", "./..."] });
-  if (existsSync(join(root, "pyproject.toml")) || existsSync(join(root, "pytest.ini"))) checks.push({ name: "Python tests", argv: ["python3", "-m", "pytest", "-q"] });
+  if (existsSync(join(
+    root,
+    "pyproject.toml"
+  )) || existsSync(join(
+    root,
+    "pytest.ini"
+  ))) checks.push({
+    name: "Python tests",
+    argv: [
+    "python3",
+    "-m",
+    "pytest",
+    "-q"
+  ]
+  });
   return checks;
 }
 
@@ -49,7 +63,14 @@ export function detectChecks(root: string): ProductCheck[] {
 export const CHECKS_SEEN = 6;
 
 /** The checks for a working copy: the coordinator's, else those found for its CI and build files, else the latest found. */
-export function checksFor(product: { checks?: readonly ProductCheck[]; checksBy?: string; checksSeen?: readonly { fingerprint: string; checks: readonly ProductCheck[] }[] }, root: string): readonly ProductCheck[] {
+export function checksFor(product: {
+  checks?: readonly ProductCheck[];
+  checksBy?: string;
+  checksSeen?: readonly {
+  fingerprint: string;
+  checks: readonly ProductCheck[]
+}[]
+}, root: string): readonly ProductCheck[] {
   if (product.checksBy === "coordinator") return product.checks ?? [];
   const fingerprint = checksFingerprint(root);
   return product.checksSeen?.find((entry) => entry.fingerprint === fingerprint)?.checks ?? product.checks ?? [];

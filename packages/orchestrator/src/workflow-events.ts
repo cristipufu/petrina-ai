@@ -1,4 +1,16 @@
-import { boundWorkflowEvent, eventInvolvesProduct, WORKFLOW_EVENT_BYTES, WORKFLOW_EVENT_KINDS, WorkflowObserver, type Id, type TaskState, type WorkflowContext, type WorkflowEvent, type WorkflowEventDraft, type WorkflowEventKind } from "@petrina/core";
+import {
+  boundWorkflowEvent,
+  eventInvolvesProduct,
+  WORKFLOW_EVENT_BYTES,
+  WORKFLOW_EVENT_KINDS,
+  WorkflowObserver,
+  type Id,
+  type TaskState,
+  type WorkflowContext,
+  type WorkflowEvent,
+  type WorkflowEventDraft,
+  type WorkflowEventKind
+} from "@petrina/core";
 import type { WorkflowEventClock, WorkflowEventCodec, WorkflowEventReadReply, WorkflowEventReply, WorkflowEventsHost } from "./ports/workflow-events.js";
 
 export const EVENT_RETENTION = { events: 10_000, bytes: 16 * 1024 * 1024 };
@@ -50,7 +62,11 @@ export class WorkflowEventLog<Read extends WorkflowEventReadReply> {
   /** Complete compact details are immutable, paged, and expire with this event's retained window. */
   read(eventId: string, args: { cursor?: string; limit?: number }): Read | WorkflowEventReply {
     const saved = this.retained.find(({ event }) => event.id === eventId);
-    if (!saved) return { outcome: "unavailable", reason: eventId.startsWith(`${this.run}:`) ? "replay-expired" : "different-engine-run", message: "That event is outside this engine run's retained window. No newer evidence is substituted." };
+    if (!saved) return {
+      outcome: "unavailable",
+      reason: eventId.startsWith(`${this.run}:`) ? "replay-expired" : "different-engine-run",
+      message: "That event is outside this engine run's retained window. No newer evidence is substituted."
+    };
     return this.codec.readDetails(saved.details, args, ["watch.event", eventId], { eventId, evidence: "recorded" });
   }
 
@@ -72,7 +88,12 @@ export class WorkflowEventLog<Read extends WorkflowEventReadReply> {
   }
 
   /** Matching events after `after`, bounded by count and bytes. The continuation never passes an undelivered match. */
-  collect(scope: EventScope, after: number, limit: number, byteLimit = BATCH_BYTES): { events: WorkflowEvent[]; position: number; more: boolean; shortened: boolean } {
+  collect(scope: EventScope, after: number, limit: number, byteLimit = BATCH_BYTES): {
+    events: WorkflowEvent[];
+    position: number;
+    more: boolean;
+    shortened: boolean
+  } {
     const events: WorkflowEvent[] = [];
     let position = after;
     let bytes = 2;
@@ -95,10 +116,26 @@ export class WorkflowEvents<Read extends WorkflowEventReadReply> {
   private readonly observer = new WorkflowObserver();
   private pendingWaits = 0;
 
-  constructor(private readonly k: WorkflowEventsHost, private readonly codec: WorkflowEventCodec<Read>, private readonly clock: WorkflowEventClock, readonly log: WorkflowEventLog<Read>) {}
+  constructor(
+    private readonly k: WorkflowEventsHost,
+    private readonly codec: WorkflowEventCodec<Read>,
+    private readonly clock: WorkflowEventClock,
+    readonly log: WorkflowEventLog<Read>
+  ) {}
 
   private context(): WorkflowContext {
-    return { roles: this.k.s.roles, profiles: [...this.k.s.profiles, ...(this.k.s.retiredProfiles ?? [])], inbox: this.k.s.inbox, products: this.k.s.products, limited: this.k.s.pool.limited, now: this.clock.now(), findTask: (id) => this.k.s.tasks.find((task) => task.id === id) ?? this.k.taskDetails?.(id) };
+    return {
+      roles: this.k.s.roles,
+      profiles: [
+      ...this.k.s.profiles,
+      ...(this.k.s.retiredProfiles ?? [])
+    ],
+      inbox: this.k.s.inbox,
+      products: this.k.s.products,
+      limited: this.k.s.pool.limited,
+      now: this.clock.now(),
+      findTask: (id) => this.k.s.tasks.find((task) => task.id === id) ?? this.k.taskDetails?.(id)
+    };
   }
 
   /** The engine's starting state produces no events. */
@@ -155,7 +192,13 @@ export class WorkflowEvents<Read extends WorkflowEventReadReply> {
   }
 
   private boundary() {
-    return { run: this.log.run, oldest: this.log.oldest ?? null, newest: this.log.newest || null, retained: this.log.size, ...(this.log.evicted ? { evictedThrough: this.log.evicted } : {}) };
+    return {
+      run: this.log.run,
+      oldest: this.log.oldest ?? null,
+      newest: this.log.newest || null,
+      retained: this.log.size,
+      ...(this.log.evicted ? { evictedThrough: this.log.evicted } : {})
+    };
   }
 
   /** Validate the query's scope and continuation before anything waits. */
@@ -168,13 +211,53 @@ export class WorkflowEvents<Read extends WorkflowEventReadReply> {
     }
     let saved: { run?: unknown; seq?: unknown; scope?: unknown };
     try { saved = this.codec.decodeCursor(query.cursor) as typeof saved; }
-    catch { return refuse({ outcome: "invalid", message: "That cursor could not be read. Use a cursor returned by a workflow-events result, or omit it to observe from now." }); }
-    if (typeof saved !== "object" || saved === null || typeof saved.run !== "string" || typeof saved.seq !== "number" || !Number.isSafeInteger(saved.seq) || saved.seq < 0 || typeof saved.scope !== "object" || saved.scope === null) return refuse({ outcome: "invalid", message: "That cursor is malformed. Use a cursor returned by a workflow-events result." });
-    if (!this.scopeAllows(saved.scope as Record<string, unknown>, scope)) return refuse({ outcome: "invalid", message: "That cursor belongs to a wider or different scope (tasks, product or kinds). Reuse it with the same scope or a narrower one, or start a new observation." });
+    catch { return refuse({
+      outcome: "invalid",
+      message: "That cursor could not be read. Use a cursor returned by a workflow-events result, or omit it to observe from now."
+    }); }
+    if (typeof saved !== "object" || saved === null || typeof saved.run !== "string" || typeof saved.seq !== "number" || !Number.isSafeInteger(saved.seq) || saved.seq < 0 || typeof saved.scope !== "object" || saved.scope === null) return refuse({
+      outcome: "invalid",
+      message: "That cursor is malformed. Use a cursor returned by a workflow-events result."
+    });
+    if (!this.scopeAllows(
+      saved.scope as Record<string, unknown>,
+      scope
+    )) return refuse({
+      outcome: "invalid",
+      message: "That cursor belongs to a wider or different scope (tasks, product or kinds). Reuse it with the same scope or a narrower one, or start a new observation."
+    });
     const seq = saved.seq;
-    if (saved.run !== this.log.run) return refuse({ outcome: "continuity-lost", continuity: "lost", reason: "engine-restarted", message: "The engine restarted since that cursor was issued. Events between the two runs were not recorded; begin a new observation from now, or replay this run's retained events explicitly with from=oldest.", boundary: this.boundary(), cursor: this.cursorFor(scope, this.log.newest), events: [], more: false });
-    if (seq > this.log.newest) return refuse({ outcome: "invalid", message: "That cursor is ahead of this engine run's events. Use a cursor this run returned.", boundary: this.boundary() });
-    if (seq < this.log.evicted) return refuse({ outcome: "continuity-lost", continuity: "lost", reason: "replay-expired", message: "Events after that cursor were evicted from the bounded replay window. Observation is incomplete from there; begin a new observation from now, or replay the oldest retained events explicitly with from=oldest.", boundary: this.boundary(), cursor: this.cursorFor(scope, this.log.newest), events: [], more: false });
+    if (saved.run !== this.log.run) return refuse({
+      outcome: "continuity-lost",
+      continuity: "lost",
+      reason: "engine-restarted",
+      message: "The engine restarted since that cursor was issued. Events between the two runs were not recorded; begin a new observation from now, or replay this run's retained events explicitly with from=oldest.",
+      boundary: this.boundary(),
+      cursor: this.cursorFor(
+      scope,
+      this.log.newest
+    ),
+      events: [],
+      more: false
+    });
+    if (seq > this.log.newest) return refuse({
+      outcome: "invalid",
+      message: "That cursor is ahead of this engine run's events. Use a cursor this run returned.",
+      boundary: this.boundary()
+    });
+    if (seq < this.log.evicted) return refuse({
+      outcome: "continuity-lost",
+      continuity: "lost",
+      reason: "replay-expired",
+      message: "Events after that cursor were evicted from the bounded replay window. Observation is incomplete from there; begin a new observation from now, or replay the oldest retained events explicitly with from=oldest.",
+      boundary: this.boundary(),
+      cursor: this.cursorFor(
+      scope,
+      this.log.newest
+    ),
+      events: [],
+      more: false
+    });
     return { ok: true, after: seq };
   }
 
@@ -196,12 +279,39 @@ export class WorkflowEvents<Read extends WorkflowEventReadReply> {
         if (!expired.ok) return expired.result;
       }
       // Account for the full reply, including its continuation, boundary and shortening metadata.
-      const envelope = { outcome, continuity, events: [], cursor: this.cursorFor(scope, Number.MAX_SAFE_INTEGER), more: true, shortened: true, boundary: this.boundary(), ...extra };
+      const envelope = {
+        outcome,
+        continuity,
+        events: [],
+        cursor: this.cursorFor(
+        scope,
+        Number.MAX_SAFE_INTEGER
+      ),
+        more: true,
+        shortened: true,
+        boundary: this.boundary(),
+        ...extra
+      };
       const found = this.log.collect(scope, after, limit, BATCH_BYTES - this.codec.encodedBytes(envelope));
-      return { outcome, continuity, events: found.events, cursor: this.cursorFor(scope, found.position), more: found.more, ...(found.shortened ? { shortened: true } : {}), boundary: this.boundary(), ...extra };
+      return {
+        outcome,
+        continuity,
+        events: found.events,
+        cursor: this.cursorFor(
+        scope,
+        found.position
+      ),
+        more: found.more,
+        ...(found.shortened ? { shortened: true } : {}),
+        boundary: this.boundary(),
+        ...extra
+      };
     };
     if (this.log.collect(scope, after, 1).events.length) return batch("completed");
-    if (timeoutMs === 0 || this.k.stopped || signal?.aborted) return batch(this.k.stopped ? "disconnected" : "completed", timeoutMs === 0 && !this.k.stopped ? { message: "No new events. Keep this cursor and wait from it." } : {});
+    if (timeoutMs === 0 || this.k.stopped || signal?.aborted) return batch(
+      this.k.stopped ? "disconnected" : "completed",
+      timeoutMs === 0 && !this.k.stopped ? { message: "No new events. Keep this cursor and wait from it." } : {}
+    );
     this.pendingWaits += 1;
     try {
       for (;;) {
@@ -216,8 +326,15 @@ export class WorkflowEvents<Read extends WorkflowEventReadReply> {
             resolve(how);
           };
           const onAbort = () => finish("aborted");
-          const cancel = this.clock.after(Math.max(0, deadline - this.clock.now()), () => { finish("deadline"); return undefined; });
-          const off = this.log.subscribe(() => { if (this.k.stopped || after < this.log.evicted || this.log.collect(scope, after, 1).events.length) finish("event"); });
+          const cancel = this.clock.after(Math.max(0, deadline - this.clock.now()), () => {
+            finish("deadline");
+            return undefined;
+          });
+          const off = this.log.subscribe(() => { if (this.k.stopped || after < this.log.evicted || this.log.collect(
+            scope,
+            after,
+            1
+          ).events.length) finish("event"); });
           signal?.addEventListener("abort", onAbort, { once: true });
           if (signal?.aborted) onAbort();
           else if (this.k.stopped) finish("event");
@@ -225,7 +342,10 @@ export class WorkflowEvents<Read extends WorkflowEventReadReply> {
         if (this.k.stopped) return batch("disconnected", { message: "The engine stopped. Reconnect and begin a new observation; this run's events are gone." });
         if (woke === "aborted") return batch("disconnected", { message: "The wait was cancelled." });
         if (after < this.log.evicted || this.log.collect(scope, after, 1).events.length) return batch("completed");
-        if (woke === "deadline" || this.clock.now() >= deadline) return batch("timed-out", { message: "The deadline ended this wait quietly. Keep this cursor and wait again." });
+        if (woke === "deadline" || this.clock.now() >= deadline) return batch(
+          "timed-out",
+          { message: "The deadline ended this wait quietly. Keep this cursor and wait again." }
+        );
       }
     } finally {
       this.pendingWaits -= 1;

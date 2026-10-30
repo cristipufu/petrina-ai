@@ -27,7 +27,14 @@ export function searchTasks(state: State, query: string): Task[] {
 
 export function boardOrder(tasks: readonly Task[], visible: (task: Task) => boolean, showDone: boolean): string[] {
   const sections = boardSections(tasks, visible);
-  return [...sections["needs-you"], ...sections.working, ...sections.waiting, ...sections.queue, ...sections.backlog, ...(showDone ? sections.done : [])].map((task) => task.id);
+  return [
+    ...sections["needs-you"],
+    ...sections.working,
+    ...sections.waiting,
+    ...sections.queue,
+    ...sections.backlog,
+    ...(showDone ? sections.done : [])
+  ].map((task) => task.id);
 }
 
 /** Agents kept waiting first, then by task priority and age. Quiet screen requests come after everything else. */

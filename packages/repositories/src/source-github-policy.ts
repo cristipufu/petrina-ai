@@ -70,7 +70,16 @@ interface GitHubStatusEntry extends GitHubTimestampedEntry {
 }
 
 export async function sourcePr(repo: string, number: number, readRequest: SourcePrRequest): Promise<SourcePr> {
-  const read = await readRequest(repo, ["pr", "view", String(number), "--json", "number,url,state,title,body,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository"]);
+  const read = await readRequest(
+    repo,
+    [
+    "pr",
+    "view",
+    String(number),
+    "--json",
+    "number,url,state,title,body,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository"
+  ]
+  );
   if (read.code) throw new Error(`Could not read PR #${number} in ${repo}: ${read.stderr || read.stdout}. Retry when it is accessible.`);
   const data = JSON.parse(read.stdout) as GitHubPrPayload;
   const headRepo = data.headRepository?.nameWithOwner ?? (data.headRepositoryOwner?.login && data.headRepository?.name ? `${data.headRepositoryOwner.login}/${data.headRepository.name}` : data.isCrossRepository === false ? repo : undefined);
@@ -89,7 +98,16 @@ export async function sourcePr(repo: string, number: number, readRequest: Source
   ) {
     throw new Error(`GitHub's details for PR #${number} are incomplete, including its working repository or branch. Retry when they are available.`);
   }
-  return { number, url: data.url, state: String(data.state).toLowerCase() as SourcePr["state"], title: data.title, body: data.body, branch: data.headRefName, headRepo, head: data.headRefOid };
+  return {
+    number,
+    url: data.url,
+    state: String(data.state).toLowerCase() as SourcePr["state"],
+    title: data.title,
+    body: data.body,
+    branch: data.headRefName,
+    headRepo,
+    head: data.headRefOid
+  };
 }
 
 /** Every page, with no truncation; pull review comments includes replies across all threads. */
@@ -125,7 +143,13 @@ export async function background(repo: string, pr: SourcePr, readPages: SourcePa
   });
   const author = (entry: GitHubAuthored) => entry.user?.login ?? "Unavailable author";
   const words = (entry: GitHubAuthored) => typeof entry.body === "string" ? entry.body : "Text unavailable";
-  const lines = [`PR #${pr.number}: ${pr.title}`, pr.body || "No description.", `Working branch: ${pr.headRepo} · ${pr.branch}`, `Current version: ${pr.head}`, "Review summaries:"];
+  const lines = [
+    `PR #${pr.number}: ${pr.title}`,
+    pr.body || "No description.",
+    `Working branch: ${pr.headRepo} · ${pr.branch}`,
+    `Current version: ${pr.head}`,
+    "Review summaries:"
+  ];
   for (const review of reviews) lines.push(`- ${author(review)}: ${review.state ?? "State unavailable"}, version ${review.commit_id ?? "unavailable"}\n${words(review)}`);
   if (!reviews.length) lines.push("No reviews.");
   lines.push("Discussion comments:");

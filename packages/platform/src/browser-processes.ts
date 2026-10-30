@@ -26,7 +26,10 @@ export const browserProcesses: BrowserProcessControl = {
     return stdout === undefined ? undefined : processFolderSnapshot(stdout, directory);
   },
   exists(pid) {
-    try { process.kill(pid, 0); return true; }
+    try {
+      process.kill(pid, 0);
+      return true;
+    }
     catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
   },
   forceKill(pids) {

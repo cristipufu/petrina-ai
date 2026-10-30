@@ -37,7 +37,10 @@ export async function installAntigravity(): Promise<void> {
   const staging = await mkdtemp(join(root(), ".install-"));
   try {
     const os = process.platform === "win32" ? "windows" : process.platform;
-    const response = await fetch(`https://dl.google.com/agy-extensions/releases/${platform}/agy-acp-server-${ANTIGRAVITY_VERSION}-${os}-${arch}.zip`, { signal: AbortSignal.timeout(180_000) });
+    const response = await fetch(
+      `https://dl.google.com/agy-extensions/releases/${platform}/agy-acp-server-${ANTIGRAVITY_VERSION}-${os}-${arch}.zip`,
+      { signal: AbortSignal.timeout(180_000) }
+    );
     if (!response.ok) throw new Error(`Google's connector download failed (${response.status}).`);
     const archive = join(staging, "server.zip");
     await Bun.write(archive, response);

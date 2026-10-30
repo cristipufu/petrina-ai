@@ -71,7 +71,14 @@ export class DeliveryMonitor {
     const shipping = scope.work.shipping!;
     const { tested } = shipping.prepared!;
     const refs = await this.effects.releaseRefs(scope);
-    if (refs.tag === tested) this.host.log(task, "status", `${this.host.repository(task)?.defaultBranch ?? "main"} and the tag ${shipping.tag} went out to GitHub at ${tested.slice(0, 7)} while you cancelled it, with no release for that tag`);
+    if (refs.tag === tested) this.host.log(
+      task,
+      "status",
+      `${this.host.repository(task)?.defaultBranch ?? "main"} and the tag ${shipping.tag} went out to GitHub at ${tested.slice(
+      0,
+      7
+    )} while you cancelled it, with no release for that tag`
+    );
   }
 
   /** An uncertain finished delivery: only GitHub can establish whether its copy is free, including after cancellation. */
@@ -100,7 +107,10 @@ export class DeliveryMonitor {
         const checked = repository.cleanup?.checkedDelivery;
         let pr: GitHubPullRequestInfo | undefined;
         if (checked) {
-          for (const candidate of ours) if (await this.effects.matchesPullRequest(scope, candidate, checked.tested, checked.base)) { pr = candidate; break; }
+          for (const candidate of ours) if (await this.effects.matchesPullRequest(scope, candidate, checked.tested, checked.base)) {
+            pr = candidate;
+            break;
+          }
         } else {
           // Older deliveries did not record a checked commit. Keep their existing conservative
           // branch tracking so an open pull request can never lose its working copy.
@@ -113,14 +123,22 @@ export class DeliveryMonitor {
         if (repository.cleanup.error === CLEANUP_WORDS.unconfirmedPr) delete repository.cleanup.error;
         if (foreign) {
           repository.cleanup.foreignPullRequest = { number: foreign.number, url: foreign.url };
-          if (previousForeign?.number !== foreign.number) this.host.log(scope, "warn", `Pull request #${foreign.number} uses this branch but is not the checked work. Its working copy is kept until that pull request closes`);
+          if (previousForeign?.number !== foreign.number) this.host.log(
+            scope,
+            "warn",
+            `Pull request #${foreign.number} uses this branch but is not the checked work. Its working copy is kept until that pull request closes`
+          );
         } else {
           delete repository.cleanup.foreignPullRequest;
           if (previousForeign) this.host.log(scope, "status", `The other pull request #${previousForeign.number} is no longer open on GitHub`);
         }
         if (pr) {
           repository.pr = { number: pr.number, url: pr.url, state: pr.state, openedAt: this.host.now() };
-          this.host.log(scope, "done", pr.state === "open" ? `Pull request #${pr.number} is still open on GitHub, so its working copy is kept` : pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`);
+          this.host.log(
+            scope,
+            "done",
+            pr.state === "open" ? `Pull request #${pr.number} is still open on GitHub, so its working copy is kept` : pr.state === "merged" ? `Merged #${pr.number} on GitHub` : `Closed #${pr.number} without merging`
+          );
         }
       }
       this.host.commit();

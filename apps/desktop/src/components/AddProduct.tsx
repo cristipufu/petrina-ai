@@ -23,7 +23,8 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
   const product = added && state.products.find((entry) => entry.id === added.id);
   const note = product && (added.already || product.delivery === "local");
   const [discard, setDiscard] = useState(false);
-  const close = () => { if (!busy) { if (!added && (path || name)) setDiscard(true); else onClose(); } };
+  const close = () => { if (!busy) { if (!added && (path || name)) setDiscard(true);
+  else onClose(); } };
 
   const done = useRef(onAdded);
   done.current = onAdded;
@@ -75,11 +76,29 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
       </>}>
         <WaitingLine text={waiting} />
         <FormSection title="Repository" description="Choose an existing local clone. Agents work in separate copies, so your clone stays untouched.">
-          <label className="form-field"><span className="field-label">Folder of the local clone</span><input autoFocus className="field" aria-label="Folder of the local clone" aria-describedby={`${id}-folder-help`} placeholder="~/code/my-product" value={path} onChange={event => edit(() => { setPath(event.target.value); setName(suggestProductName(event.target.value)); })} onKeyDown={event => { if (event.key === "Enter") void add(); }} /></label>
+          <label className="form-field"><span className="field-label">Folder of the local clone</span><input
+            autoFocus
+            className="field"
+            aria-label="Folder of the local clone"
+            aria-describedby={`${id}-folder-help`}
+            placeholder="~/code/my-product"
+            value={path}
+            onChange={event => edit(() => {
+            setPath(event.target.value);
+            setName(suggestProductName(event.target.value));
+          })}
+            onKeyDown={event => { if (event.key === "Enter") void add(); }}
+          /></label>
           <p className="hint" id={`${id}-folder-help`}>Paste the folder path from Finder or your terminal.</p>
         </FormSection>
         <FormSection title="Product details" description="The name your squad uses throughout Petrina.">
-          <label className="form-field"><span className="field-label">Name</span><input className="field" value={name} placeholder="My product" onChange={event => edit(() => setName(event.target.value))} onKeyDown={event => { if (event.key === "Enter") void add(); }} /></label>
+          <label className="form-field"><span className="field-label">Name</span><input
+            className="field"
+            value={name}
+            placeholder="My product"
+            onChange={event => edit(() => setName(event.target.value))}
+            onKeyDown={event => { if (event.key === "Enter") void add(); }}
+          /></label>
         </FormSection>
         {!live && <p className="muted" role="status">Waiting for the engine before adding a product.</p>}
         {error && (
@@ -101,7 +120,13 @@ export function AddProductDialog({ waiting, onClose, onAdded }: { waiting?: stri
           </p>
         )}
       </EditorPanel>
-      {discard && <ConfirmDialog title="Discard product changes?" confirm="Discard changes" cancel="Keep editing" onCancel={() => setDiscard(false)} onConfirm={onClose}><p>This product has not been added. Your unsaved choices will be lost.</p></ConfirmDialog>}
+      {discard && <ConfirmDialog
+        title="Discard product changes?"
+        confirm="Discard changes"
+        cancel="Keep editing"
+        onCancel={() => setDiscard(false)}
+        onConfirm={onClose}
+      ><p>This product has not been added. Your unsaved choices will be lost.</p></ConfirmDialog>}
     </>
   );
 }

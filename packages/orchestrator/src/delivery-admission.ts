@@ -50,7 +50,10 @@ export class DeliveryAdmission {
     // Keep every originally requested branch until this shared delivery step ends, including owners already landed.
     const remembered = this.turns.destinationsFor(task.id);
     const keys = remembered ?? local.filter(({ work }) => !work.pr && !work.release && !work.landed && !work.nothingToPublish).map(scope => this.host.destination(scope));
-    if (!keys.length) { this.releaseDeliveryTurn(task.id); return undefined; }
+    if (!keys.length) {
+      this.releaseDeliveryTurn(task.id);
+      return undefined;
+    }
     // Turns are not saved. A restored candidate cannot keep a turn from the previous engine;
     // admitted publications still retain their exact candidate for the ordinary recovery lookup.
     if (!remembered) this.invalidateUnpublishedPreparations(task);
@@ -94,7 +97,8 @@ export class DeliveryAdmission {
 
   /** A driver can yield before its delivery is admitted. That waiter keeps its original request order. */
   finishDeliveryTurn(taskId: Id): void {
-    const task = this.host.task(taskId), stage = task?.plan?.stages[task.stageIndex];
+    const task = this.host.task(taskId);
+    const stage = task?.plan?.stages[task.stageIndex];
     const waiting = this.turns.entries().some(entry => entry.taskId === taskId && !entry.held);
     if (waiting && task?.state === "waiting" && !task.held && !this.host.taskAdmissionsClosed(task)
       && stage?.kind === "do" && this.host.roleResult(stage.roleId, task) === "delivery") return;

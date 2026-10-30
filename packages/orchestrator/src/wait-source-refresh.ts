@@ -54,7 +54,10 @@ export class WaitSourceRefresh {
         await this.effects.clearUnpublishedVersion(scope, true);
         const result = await this.effects.update(scope, signal);
         if (signal.aborted) throw this.host.aborted();
-        if (result === "conflict") { conflict = true; continue; }
+        if (result === "conflict") {
+          conflict = true;
+          continue;
+        }
       }
       wait.refreshProducts = wait.refreshProducts.filter(id => id !== work.productId);
       this.host.checkpoint();

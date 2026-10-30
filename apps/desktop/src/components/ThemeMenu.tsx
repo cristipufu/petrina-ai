@@ -37,7 +37,22 @@ export function ThemeChoices({ theme, onTheme, onPicked, framed = false, label =
           {group.map((entry) => {
             const on = entry.id === theme.id;
             return (
-              <button key={entry.id} id={`${idPrefix}-${entry.id}`} type="button" role="radio" aria-checked={on} className={on ? "theme-choice on" : "theme-choice"} onClick={() => { onTheme(entry); onPicked?.(); }} onKeyDown={(event) => move(event, entry)}>
+              <button
+                key={entry.id}
+                id={`${idPrefix}-${entry.id}`}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                className={on ? "theme-choice on" : "theme-choice"}
+                onClick={() => {
+                onTheme(entry);
+                onPicked?.();
+              }}
+                onKeyDown={(event) => move(
+                event,
+                entry
+              )}
+              >
                 <span className="theme-swatch" style={{ background: entry.colors.accent }} aria-hidden="true" />
                 <span className="theme-copy">
                   <span className="theme-name">{entry.name}</span>
@@ -68,7 +83,15 @@ export function ThemeMenu({ theme, onTheme }: { theme: Theme; onTheme: (theme: T
   }, [open]);
   return (
     <div className="theme-menu" ref={box}>
-      <button type="button" className="btn ghost icon" aria-label={`Theme, ${theme.name}`} aria-haspopup="dialog" aria-expanded={open} title={`Theme, ${theme.name}`} onClick={() => setOpen((value) => !value)}>
+      <button
+        type="button"
+        className="btn ghost icon"
+        aria-label={`Theme, ${theme.name}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={`Theme, ${theme.name}`}
+        onClick={() => setOpen((value) => !value)}
+      >
         {theme.mode === "dark" ? <Moon size={18} /> : <Sun size={18} />}
       </button>
       {open && (

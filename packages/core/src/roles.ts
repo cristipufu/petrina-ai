@@ -6,7 +6,20 @@
 
 import { MAINTENANCE_ROLES } from "./maintenance-roles.js";
 import { BUILT_IN_ROLES } from "./library.js";
-import { ROLE_ICON_CHOICES, TONE_CHOICES, type Column, type Id, type Role, type RoleChanges, type RoleEdit, type RoleIcon, type RoleResult, type Stage, type Task, type Tone } from "./model.js";
+import {
+  ROLE_ICON_CHOICES,
+  TONE_CHOICES,
+  type Column,
+  type Id,
+  type Role,
+  type RoleChanges,
+  type RoleEdit,
+  type RoleIcon,
+  type RoleResult,
+  type Stage,
+  type Task,
+  type Tone
+} from "./model.js";
 
 export const ROLE_LIMITS = { name: 40, purpose: 200, instructions: 4000, handsBack: 300, added: 20 } as const;
 
@@ -166,7 +179,17 @@ export function activeRoles(roles: readonly Role[]): Role[] {
 }
 
 export function draftOf(role: Role): RoleDraft {
-  return { category: role.category ?? "workflow", name: role.name, icon: role.icon, tone: role.tone, purpose: role.purpose, instructions: role.instructions, canEdit: role.canEdit, handsBack: role.handsBack, result: role.result };
+  return {
+    category: role.category ?? "workflow",
+    name: role.name,
+    icon: role.icon,
+    tone: role.tone,
+    purpose: role.purpose,
+    instructions: role.instructions,
+    canEdit: role.canEdit,
+    handsBack: role.handsBack,
+    result: role.result
+  };
 }
 
 /** What is wrong with a draft, field by field, in plain words. Empty when it can be saved. */
@@ -225,7 +248,17 @@ export function editRole(changes: RoleChanges, roleId: Id, draft: RoleDraft): Ro
 }
 
 function clean(draft: RoleDraft): RoleEdit & Pick<Role, "category" | "name" | "icon" | "tone" | "result"> {
-  return { category: draft.category ?? "workflow", name: line(draft.name), icon: draft.icon, tone: draft.tone, purpose: line(draft.purpose), instructions: block(draft.instructions), canEdit: draft.canEdit, handsBack: line(draft.handsBack), result: draft.result };
+  return {
+    category: draft.category ?? "workflow",
+    name: line(draft.name),
+    icon: draft.icon,
+    tone: draft.tone,
+    purpose: line(draft.purpose),
+    instructions: block(draft.instructions),
+    canEdit: draft.canEdit,
+    handsBack: line(draft.handsBack),
+    result: draft.result
+  };
 }
 
 /** An id for a role the coordinator adds: from its name, never one in use, never one a built-in role could take. */
@@ -247,7 +280,10 @@ function newRoleId(name: string, taken: readonly Role[]): Id {
 export function addRole(changes: RoleChanges, draft: RoleDraft): { changes: RoleChanges; roleId: Id } {
   const roles = libraryRoles(changes);
   if (roles.filter((role) => role.added && !role.removed).length >= ROLE_LIMITS.added) throw new Error(`You can add at most ${ROLE_LIMITS.added} roles. Remove one you no longer use first.`);
-  if (draft.category === "maintenance" && !["notes", "build"].includes(draft.result)) throw new Error("Maintenance roles hand back reports or small changes with review.");
+  if (draft.category === "maintenance" && ![
+    "notes",
+    "build"
+  ].includes(draft.result)) throw new Error("Maintenance roles hand back reports or small changes with review.");
   if (draft.category === "maintenance" && draft.canEdit !== (draft.result === "build")) throw new Error("The result kind decides whether a maintenance role may change the product.");
   if (draft.category !== "maintenance" && !ADDED_RESULTS.includes(draft.result)) throw new Error("A role you add hands back notes, or pass-or-fail findings.");
   if (draft.result === "findings" && draft.canEdit) throw new Error("Reviewers never change the work they judge, so they are always read-only.");
@@ -275,7 +311,13 @@ export function resetRole(changes: RoleChanges, roleId: Id): RoleChanges {
 export function removeRole(changes: RoleChanges, roleId: Id, inUse: boolean): RoleChanges {
   const role = findRole(libraryRoles(changes), roleId);
   if (!role.added) throw new Error("Built-in roles can't be removed. You can reset one to Petrina's wording instead.");
-  return { ...changes, added: inUse ? changes.added.map((entry) => (entry.id === roleId ? { ...entry, removed: true } : entry)) : changes.added.filter((entry) => entry.id !== roleId) };
+  return {
+    ...changes,
+    added: inUse ? changes.added.map((entry) => (entry.id === roleId ? {
+    ...entry,
+    removed: true
+  } : entry)) : changes.added.filter((entry) => entry.id !== roleId)
+  };
 }
 
 /** Starting points for a new role. */

@@ -54,7 +54,10 @@ export class GuideKeeper {
     const { task, work: repository } = scope;
     const product = this.k.productOf(scope);
     if (!product?.reviewGuide?.length || !repository.worktree) return;
-    const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || ["cancelled", "failed"].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
+    const free = (line: { writtenOn?: Id }) => !line.writtenOn || line.writtenOn === task.id || [
+      "cancelled",
+      "failed"
+    ].includes(this.k.task(line.writtenOn)?.state ?? "cancelled");
     let due: DeepMutable<GuideLine>[];
     try {
       const file = localPoints(repository.worktree, GUIDE_FILE);
@@ -66,7 +69,10 @@ export class GuideKeeper {
       this.k.log(scope, "warn", `The review guide was not updated: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    await git.commitChanges(repository.worktree, `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`);
+    await git.commitChanges(
+      repository.worktree,
+      `Review guide: ${due.length === 1 ? "one more point" : `${due.length} more points`}\n\n${due.map((line) => `- ${line.text}`).join("\n")}\n\nAdded by Petrina: the coordinator accepted ${due.length === 1 ? "it" : "them"} after reviewers missed something.`
+    );
     await this.k.rememberVersion(scope);
     for (const line of due) line.writtenOn = task.id;
     this.k.log(scope, "done", `Added to ${GUIDE_FILE}: ${due.map((line) => line.text).join("; ")}`);

@@ -6,7 +6,8 @@ export function parseDiffPacket(text: string): { paths: string[]; stat: string; 
   const field = () => {
     const end = text.indexOf("\0", offset);
     if (end < 0) throw new Error("Git returned an incomplete comparison packet");
-    const value = text.slice(offset, end); offset = end + 1;
+    const value = text.slice(offset, end);
+    offset = end + 1;
     return value;
   };
   while (true) {

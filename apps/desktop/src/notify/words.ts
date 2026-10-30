@@ -153,7 +153,10 @@ export function noticeFor(item: InboxItem, state: State): Notice {
   const unsettled = item.kind === "delivery" && (owner?.acceptanceUnverified === true || (owner?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
   const checks = item.kind === "delivery" && owner ? deliveryDecisionProblem(owner) : undefined;
   return {
-    title: checks ? `${who}: checks ${checks === "failing" ? "still failing" : "unverified"}, your call` : unsettled ? `${who}: review rounds ran out with blocking findings open, your call` : NEED[item.kind](who, task),
+    title: checks ? `${who}: checks ${checks === "failing" ? "still failing" : "unverified"}, your call` : unsettled ? `${who}: review rounds ran out with blocking findings open, your call` : NEED[item.kind](
+      who,
+      task
+    ),
     lines: [detail, where].filter((line): line is string => Boolean(line)),
     itemIds: [item.id],
     target: { kind: "item", id: item.id },

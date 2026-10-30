@@ -10,5 +10,8 @@ export function currentStepAssignment(task: Pick<Task, "plan" | "stageIndex">, r
   if (!participates) return [];
   // Profile assignments explain selection, not task scope. Never turn those reasons or the plan's rationale into instructions.
   const title = stage.title?.trim();
-  return [{ title: "Current step assignment", body: `${title ? `Planned step: ${title}` : "No planned step title was recorded."}\nContribute to this step in your assigned role. The full task and approved brief remain authoritative; this step does not replace their requirements or your role's duties.` }];
+  return [{
+    title: "Current step assignment",
+    body: `${title ? `Planned step: ${title}` : "No planned step title was recorded."}\nContribute to this step in your assigned role. The full task and approved brief remain authoritative; this step does not replace their requirements or your role's duties.`
+  }];
 }

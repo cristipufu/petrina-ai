@@ -203,10 +203,38 @@ function momentOf(row: MomentRow): WorkMoment {
   return { ...(JSON.parse(row.data) as object), id: row.id, at: row.at, kind: row.kind as WorkMoment["kind"], taskId: row.task_id, productId: row.product_id };
 }
 
-const opt = <K extends string, V>(key: K, value: V | null | undefined): Partial<Record<K, V>> => (value === null || value === undefined ? {} : ({ [key]: value } as Record<K, V>));
+const opt = <K extends string, V>(
+  key: K,
+  value: V | null | undefined
+): Partial<Record<K, V>> => (value === null || value === undefined ? {} : ({ [key]: value } as Record<K, V>));
 
 function countsOf(row: CountRow): TokenCounts {
-  return { ...opt("input", row.input), ...opt("cacheRead", row.cache_read), ...opt("cacheWrite", row.cache_write), ...opt("output", row.output), ...opt("reasoning", row.reasoning), ...opt("total", row.total) };
+  return {
+    ...opt(
+    "input",
+    row.input
+  ),
+    ...opt(
+    "cacheRead",
+    row.cache_read
+  ),
+    ...opt(
+    "cacheWrite",
+    row.cache_write
+  ),
+    ...opt(
+    "output",
+    row.output
+  ),
+    ...opt(
+    "reasoning",
+    row.reasoning
+  ),
+    ...opt(
+    "total",
+    row.total
+  )
+  };
 }
 
 function turnOf(row: TurnRow): WorkTurn {
@@ -394,14 +422,31 @@ export class WorkLog implements WorkLogReader {
         `INSERT INTO work_tokens (turn_id, model, changed, input, cache_read, cache_write, output, reasoning, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(turn_id, model) DO UPDATE SET input = excluded.input, cache_read = excluded.cache_read, cache_write = excluded.cache_write, output = excluded.output, reasoning = excluded.reasoning, total = excluded.total`,
       );
-      for (const line of lines) insert.run(turnId, line.model, line.changed ? 1 : 0, num(line.input), num(line.cacheRead), num(line.cacheWrite), num(line.output), num(line.reasoning), num(line.total));
+      for (const line of lines) insert.run(
+        turnId,
+        line.model,
+        line.changed ? 1 : 0,
+        num(line.input),
+        num(line.cacheRead),
+        num(line.cacheWrite),
+        num(line.output),
+        num(line.reasoning),
+        num(line.total)
+      );
     })();
   }
 
   addMoment(moment: WorkMoment): void {
     if (this.closed) return;
     const { id, at, kind, taskId, productId, ...rest } = moment;
-    this.db.query("INSERT INTO work_moments (id, at, kind, task_id, product_id, data) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data").run(id, at, kind, taskId, productId, JSON.stringify(rest));
+    this.db.query("INSERT INTO work_moments (id, at, kind, task_id, product_id, data) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data").run(
+      id,
+      at,
+      kind,
+      taskId,
+      productId,
+      JSON.stringify(rest)
+    );
   }
 
   markUntracked(taskId: Id, productId: Id, at: number): void {
@@ -466,7 +511,10 @@ export class WorkLog implements WorkLogReader {
   }
 
   taskIdTaken(id: Id): boolean {
-    return this.db.query<{ n: number }, [string, string]>("SELECT (SELECT COUNT(*) FROM work_turns WHERE task_id = ?) + (SELECT COUNT(*) FROM work_moments WHERE task_id = ?) AS n").get(id, id)!.n > 0;
+    return this.db.query<{ n: number }, [string, string]>("SELECT (SELECT COUNT(*) FROM work_turns WHERE task_id = ?) + (SELECT COUNT(*) FROM work_moments WHERE task_id = ?) AS n").get(
+      id,
+      id
+    )!.n > 0;
   }
 
   /** The highest `task-N` number in the log, so ids keep counting up even if the state is lost. */
@@ -492,11 +540,18 @@ export class WorkLog implements WorkLogReader {
   }
 
   stageRuns(taskId: Id, stageId: Id): number {
-    return this.db.query<{ count: number }, [string, string]>("SELECT COUNT(*) AS count FROM work_moments WHERE task_id = ? AND json_extract(data, '$.stageId') = ? AND kind = 'stage-start'").get(taskId, stageId)!.count;
+    return this.db.query<{ count: number }, [string, string]>("SELECT COUNT(*) AS count FROM work_moments WHERE task_id = ? AND json_extract(data, '$.stageId') = ? AND kind = 'stage-start'").get(
+      taskId,
+      stageId
+    )!.count;
   }
 
   stageWork(taskId: Id, stageId: Id, since: number): number {
-    return this.db.query<{ ms: number | null }, [string, string, number]>("SELECT SUM(work_ms) AS ms FROM work_turns WHERE task_id = ? AND stage_id = ? AND started_at >= ?").get(taskId, stageId, since)!.ms ?? 0;
+    return this.db.query<{ ms: number | null }, [string, string, number]>("SELECT SUM(work_ms) AS ms FROM work_turns WHERE task_id = ? AND stage_id = ? AND started_at >= ?").get(
+      taskId,
+      stageId,
+      since
+    )!.ms ?? 0;
   }
 
   // ── Reading ────────────────────────────────────────────────────────────
@@ -509,7 +564,11 @@ export class WorkLog implements WorkLogReader {
   lines(filter: TurnFilter): TokenLine[] {
     const { sql, params } = where(filter, "t.");
     return this.db
-      .query<CountRow & { turn_id: string; model: string; changed: number }, (string | number)[]>(`SELECT k.* FROM work_tokens k JOIN work_turns t ON t.id = k.turn_id ${sql}`)
+      .query<CountRow & {
+        turn_id: string;
+        model: string;
+        changed: number
+      }, (string | number)[]>(`SELECT k.* FROM work_tokens k JOIN work_turns t ON t.id = k.turn_id ${sql}`)
       .all(...params)
       .map((row) => ({ turnId: row.turn_id, model: row.model, ...(row.changed ? { changed: true } : {}), ...countsOf(row) }));
   }

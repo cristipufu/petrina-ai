@@ -76,7 +76,16 @@ export function inFamily(profile: Pick<AgentProfile, "model" | "modelId">, famil
 /** A tool, or a profile on it: with no model named, every report about the tool counts. */
 type OnTool = Pick<AgentProfile, "toolId"> & Partial<Pick<AgentProfile, "model" | "modelId">>;
 
-export const usageCovers = (entry: { toolId: Id; model?: string | undefined }, profile: OnTool): boolean => entry.toolId === profile.toolId && (!entry.model || profile.model === undefined || inFamily(profile as Pick<AgentProfile, "model" | "modelId">, entry.model));
+export const usageCovers = (
+  entry: {
+  toolId: Id;
+  model?: string | undefined
+},
+  profile: OnTool
+): boolean => entry.toolId === profile.toolId && (!entry.model || profile.model === undefined || inFamily(
+  profile as Pick<AgentProfile, "model" | "modelId">,
+  entry.model
+));
 
 /** The limits still in force at `now`. */
 export function liveLimits(pool: Pool, now: number): readonly UsageLimit[] {
@@ -115,11 +124,17 @@ export function withLimit(limits: readonly UsageLimit[] | undefined, limit: Usag
 
 /** The reports with this one added, replacing the last one for the same tool and kind of limit. */
 export function withReport(reports: readonly UsageReport[] | undefined, report: UsageReport): UsageReport[] {
-  return [...(reports ?? []).filter((entry) => !(entry.toolId === report.toolId && entry.kind === report.kind && (entry.model ?? "") === (report.model ?? ""))), report];
+  return [
+    ...(reports ?? []).filter((entry) => !(entry.toolId === report.toolId && entry.kind === report.kind && (entry.model ?? "") === (report.model ?? ""))),
+    report
+  ];
 }
 
 /** A report that still counts at `now`. */
-export const currentReport = (report: UsageReport, now: number): boolean => (report.resetsAt !== undefined ? report.resetsAt > now : now - report.at < STALE_REPORT_MS);
+export const currentReport = (
+  report: UsageReport,
+  now: number
+): boolean => (report.resetsAt !== undefined ? report.resetsAt > now : now - report.at < STALE_REPORT_MS);
 
 /**
  * How much of its window a report says is used, or undefined when it gives no usable number. Petrina's marks
@@ -133,7 +148,13 @@ export const pastSlowDown = (report: UsageReport): boolean => report.status === 
 
 /** Whether a window covering this profile's model is measured at the near-limit mark. */
 export function nearLimit(pool: Pool, profile: AgentProfile, now: number): boolean {
-  return (pool.usage ?? []).some((report) => report.status !== "rejected" && usageCovers(report, profile) && currentReport(report, now) && (measuredUsage(report) ?? 0) >= NEAR_LIMIT);
+  return (pool.usage ?? []).some((report) => report.status !== "rejected" && usageCovers(
+    report,
+    profile
+  ) && currentReport(
+    report,
+    now
+  ) && (measuredUsage(report) ?? 0) >= NEAR_LIMIT);
 }
 
 /** A tool summary, or only the windows covering a named profile, past the slow-down mark. */
@@ -186,7 +207,16 @@ export function byRoom<T>(items: readonly T[], roomOf: (item: T) => number | und
  * `freshReason`: why a saved design or review conversation was not kept, when the choice starts that participant fresh.
  * `readiness`: the saved conversation's bounded readiness recheck behind this choice.
  */
-export type Choice = { kind: "planned" | "substitute"; profile: AgentProfile; reason?: string; freshReason?: string; readiness?: ReadinessRecheck } | { kind: "none"; waiting: string };
+export type Choice = {
+  kind: "planned" | "substitute";
+  profile: AgentProfile;
+  reason?: string;
+  freshReason?: string;
+  readiness?: ReadinessRecheck
+} | {
+  kind: "none";
+  waiting: string
+};
 
 /**
  * Which profile actually works a step planned for `planned`. The planned one when it is free to work and
@@ -231,7 +261,23 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   // The most independent first, then not near a limit, then the same effort, then the tool with more of its limit
   // left (one that said nothing ties with the roomiest), then the list's order.
   const closest = (profiles: AgentProfile[]) =>
-    byRoom(profiles, (profile) => headroom(pool, profile, now)).sort((a, b) => sameness(a, rules) - sameness(b, rules) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
+    byRoom(
+      profiles,
+      (profile) => headroom(
+      pool,
+      profile,
+      now
+    )
+    ).sort((
+      a,
+      b
+    ) => sameness(
+      a,
+      rules
+    ) - sameness(
+      b,
+      rules
+    ) || Number(near(a)) - Number(near(b)) || Number(b.effort === planned.effort) - Number(a.effort === planned.effort))[0];
 
   if (available(planned)) {
     // A builder may have switched tools since the plan was made. Keep this review independent
@@ -240,7 +286,15 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
     if (independent) return { kind: "substitute", profile: independent, reason: "Selected a more independent tool or model for this review." };
     if (!near(planned) || rules.keep) return { kind: "planned", profile: planned, reason: "The planned profile is available for this step." };
     const equal = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && profile.effort === planned.effort && usable(profile) && !near(profile) && !profile.standby));
-    return equal ? { kind: "substitute", profile: equal, reason: "The planned profile is near a usage limit; selected another tool at the same effort with room available." } : { kind: "planned", profile: planned, reason: "Kept the planned profile; no equivalent alternative has more usable room." };
+    return equal ? {
+      kind: "substitute",
+      profile: equal,
+      reason: "The planned profile is near a usage limit; selected another tool at the same effort with room available."
+    } : {
+      kind: "planned",
+      profile: planned,
+      reason: "Kept the planned profile; no equivalent alternative has more usable room."
+    };
   }
   const sameTool = closest(state.profiles.filter((profile) => profile.id !== planned.id && profile.toolId === planned.toolId && usable(profile)));
   const other = closest(state.profiles.filter((profile) => profile.toolId !== planned.toolId && usable(profile)));
@@ -249,7 +303,11 @@ export function chooseProfile(state: Pick<State, "profiles" | "tools" | "pool">,
   if (pick) {
     const limit = limitOf(pool, planned, now);
     const why = limit ? `The planned profile is unavailable: ${limit.reason}.` : "The planned profile's tool is not ready or its profile is no longer offered.";
-    return { kind: "substitute", profile: pick, reason: `${why} Selected an available profile, preferring review independence, matching effort and usage headroom.` };
+    return {
+      kind: "substitute",
+      profile: pick,
+      reason: `${why} Selected an available profile, preferring review independence, matching effort and usage headroom.`
+    };
   }
   return { kind: "none", waiting: waitingWords(state, now) };
 }
@@ -298,8 +356,23 @@ export function waitingWords(state: Pick<State, "tools" | "pool">, now: number):
   const limits = displayLimits(state.pool, now);
   if (!limits.length) return "Waiting for usage";
   const order = (toolId: Id) => state.tools.findIndex((tool) => tool.id === toolId);
-  if (limits.some((limit) => limit.retry)) return `Waiting for usage: ${[...limits].sort((a, b) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(state, limit.toolId)} ${usagePauseWords(limit, now)}`).join(" · ")}`;
-  const names = [...new Set([...limits].sort((a, b) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(state, limit.toolId)}${limit.model ? ` (${modelWords(limit.model)})` : ""}`))];
+  if (limits.some((limit) => limit.retry)) return `Waiting for usage: ${[...limits].sort((
+    a,
+    b
+  ) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(
+    state,
+    limit.toolId
+  )} ${usagePauseWords(
+    limit,
+    now
+  )}`).join(" · ")}`;
+  const names = [...new Set([...limits].sort((
+    a,
+    b
+  ) => order(a.toolId) - order(b.toolId)).map((limit) => `${toolName(
+    state,
+    limit.toolId
+  )}${limit.model ? ` (${modelWords(limit.model)})` : ""}`))];
   const who = names.length === 1 ? `${names[0]} is` : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} are`;
   return `Waiting for usage: ${who} out until ${untilWords(Math.min(...limits.map((limit) => limit.until)), now)}`;
 }
@@ -336,13 +409,28 @@ export function usageLines(state: Pick<State, "tools" | "pool">, now: number): U
       .filter((report) => measuredUsage(report) !== undefined || report.status !== "allowed")
       .sort((a, b) => priority(b) - priority(a) || fullness(b) - fullness(a))
       .slice(0, 2)
-      .map((report) => `${kindWords(report.kind, report.windowMinutes, report.name)} ${words(report)}${report.resetsAt !== undefined ? `, resets ${untilWords(report.resetsAt, now)}` : ""}`);
+      .map((report) => `${kindWords(
+        report.kind,
+        report.windowMinutes,
+        report.name
+      )} ${words(report)}${report.resetsAt !== undefined ? `, resets ${untilWords(
+        report.resetsAt,
+        now
+      )}` : ""}`);
     const out = displayLimits(state.pool, now)
       .filter((limit) => limit.toolId === tool.id)
       .map((limit) => usagePauseWords(limit, now));
     const holding = !out.length && slowingDown(state.pool, tool.id, now);
     const parts = [...used, ...out, ...(holding ? [HOLDING_BACK] : [])];
-    return { line: { toolId: tool.id, name: tool.name, text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || measuredUsage(report) !== undefined) ? "fine" : "not reported", tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"] }, shown: tool.status === "ready" || parts.length > 0 };
+    return {
+      line: {
+      toolId: tool.id,
+      name: tool.name,
+      text: parts.length ? parts.join(" · ") : reports.some((report) => report.toolId !== "codex" || measuredUsage(report) !== undefined) ? "fine" : "not reported",
+      tone: (out.length ? "out" : holding ? "near" : "fine") as UsageLine["tone"]
+    },
+      shown: tool.status === "ready" || parts.length > 0
+    };
   });
   // A tool that is not here and has said nothing is not listed.
   return lines.filter((entry) => entry.shown).map((entry) => entry.line);

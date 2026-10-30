@@ -127,7 +127,10 @@ export async function followEvents(client: CoordinationClient, args: Record<stri
   let cursor = typeof args.cursor === "string" ? args.cursor : undefined;
   try {
     if (args.timeoutMs === 0) {
-      write(`${JSON.stringify({ outcome: "invalid", message: "Continuous monitoring needs a positive deadline. Omit --timeout-ms for the default wait; use zero for one query." })}\n`);
+      write(`${JSON.stringify({
+        outcome: "invalid",
+        message: "Continuous monitoring needs a positive deadline. Omit --timeout-ms for the default wait; use zero for one query."
+      })}\n`);
       return 2;
     }
     for (;;) {

@@ -15,7 +15,10 @@ export function completionOf(during?: PromiseLike<unknown>) {
     error => finish({ failed: true, error }),
   );
   return { current: () => current, subscribe(listener: () => void) {
-    if (current) { listener(); return () => {}; }
+    if (current) {
+      listener();
+      return () => {};
+    }
     listeners.add(listener);
     return () => { listeners.delete(listener); };
   } };
@@ -38,12 +41,16 @@ export interface ProgressClock {
 export async function waitForProgress<T>(check: () => T | undefined | false | Promise<T | undefined | false>, what: string,
   ms: number, { during }: { during?: PromiseLike<unknown> }, clock: ProgressClock): Promise<T> {
   if (!(Number.isFinite(ms) && ms >= 0)) throw new RangeError("A fixture wait needs a finite, nonnegative timeout");
-  const owner = completionOf(during), ended = Symbol("owner completed"), timedOut = Symbol("wait timed out");
+  const owner = completionOf(during);
+  const ended = Symbol("owner completed");
+  const timedOut = Symbol("wait timed out");
   const started = clock.now();
   for (;;) {
     // Progress is observed first, including already recorded progress after owner completion.
     const checking = check();
-    let unsubscribe = () => {}, cancel = () => {}, stopped = false;
+    let unsubscribe = () => {};
+    let cancel = () => {};
+    let stopped = false;
     const deadline = new Promise<typeof timedOut>(resolve => {
       const expire = () => {
         if (stopped) return;
@@ -60,7 +67,11 @@ export async function waitForProgress<T>(check: () => T | undefined | false | Pr
         unsubscribe = owner.subscribe(() => resolve(ended));
       }));
       value = await Promise.race(contenders);
-    } finally { stopped = true; cancel(); unsubscribe(); }
+    } finally {
+      stopped = true;
+      cancel();
+      unsubscribe();
+    }
     if (value === ended) completedBeforeProgress(owner!.current()!, "The operation completed before " + what);
     if (value === timedOut) throw new Error("Timed out waiting for " + what);
     if (value) return value as T;

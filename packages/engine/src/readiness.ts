@@ -14,7 +14,10 @@ export class Readiness extends SavedParticipantReadiness {
       note: (scope, kind, text) => k.log(scope, kind, text), checkpoint: subject => k.commitNow(subject), schedule: () => k.schedule(),
     }, tools, {
       now: () => Date.now(),
-      after: (ms, done) => { const timer = setTimeout(done, ms); return () => { clearTimeout(timer); }; },
+      after: (ms, done) => {
+        const timer = setTimeout(done, ms);
+        return () => { clearTimeout(timer); };
+      },
     });
   }
 }

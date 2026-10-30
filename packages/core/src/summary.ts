@@ -210,7 +210,11 @@ function canFixReview(state: People, task: Task, stage: Stage, index: number): b
 function decidedChanges(state: People, task: Task): Readonly<Record<Id, string>> {
   const decision = task.reviewDecision;
   if (!decision?.versions || decision.at === undefined || task.handChanges) return {};
-  const built = task.journey?.some((step) => step.kind === "agent" && (step.endedAt ?? -Infinity) > decision.at! && step.builderReturn?.changed !== false && roleForTask(state.roles, step.roleId ?? "", task)?.result === "build");
+  const built = task.journey?.some((step) => step.kind === "agent" && (step.endedAt ?? -Infinity) > decision.at! && step.builderReturn?.changed !== false && roleForTask(
+    state.roles,
+    step.roleId ?? "",
+    task
+  )?.result === "build");
   return built ? {} : decision.versions;
 }
 
@@ -220,7 +224,19 @@ function decidedChanges(state: People, task: Task): Readonly<Record<Id, string>>
  */
 function needsReviewCheck(state: People, task: Task, index: number): boolean {
   const stage = task.plan?.stages[index];
-  return index === task.stageIndex && stage?.kind === "review-chain" && reviewRoundEnd(task, stage, task.rounds[stage.id] ?? 1, state.roles, coveredByDecision(task, decidedChanges(state, task))).kind === "used up";
+  return index === task.stageIndex && stage?.kind === "review-chain" && reviewRoundEnd(
+    task,
+    stage,
+    task.rounds[stage.id] ?? 1,
+    state.roles,
+    coveredByDecision(
+    task,
+    decidedChanges(
+    state,
+    task
+  )
+  )
+  ).kind === "used up";
 }
 
 /**
@@ -245,7 +261,11 @@ function finalTesting(state: People, task: Task): string | undefined {
   // Testing still owed, such as an acceptance repair's own run, comes first.
   if (owedAcceptanceTest(task) || task.testedPatch === undefined || (task.acceptancePassed === false && task.acceptanceBlocked)) return undefined;
   // Required acceptance that could not be verified is never tried again unchanged; a reproduced failure keeps its retest.
-  const reproduced = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && roleForTask(state.roles, step.roleId ?? "", task)?.result === "checks")?.acceptanceChecks?.some((check) => check.result === "fail");
+  const reproduced = task.journey?.findLast((step) => step.kind === "agent" && step.endedAt !== undefined && roleForTask(
+    state.roles,
+    step.roleId ?? "",
+    task
+  )?.result === "checks")?.acceptanceChecks?.some((check) => check.result === "fail");
   if (requiredUnverified(task) && !reproduced) return undefined;
   const tester = task.plan?.stages.find((stage) => stage.kind === "do" && roleForTask(state.roles, stage.roleId, task)?.result === "checks");
   if (!tester) return undefined;
@@ -281,7 +301,13 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
       case "converge": {
         // A design the coordinator's call settled is only updated to follow it: no review round.
         const following = followingCall({ ...task, stageIndex: at }) !== undefined;
-        if (from === 0) steps.push(following ? `design following your call${by(state, stage.profileIds[0])}` : `design${again}${by(state, stage.profileIds[0])}`);
+        if (from === 0) steps.push(following ? `design following your call${by(
+          state,
+          stage.profileIds[0]
+        )}` : `design${again}${by(
+          state,
+          stage.profileIds[0]
+        )}`);
         if (!following) steps.push(`design review${again}${by(state, stage.reviewerProfileIds?.[0])}`);
         break;
       }
@@ -292,7 +318,10 @@ function upcoming(state: People, task: Task, index: number, sub: number, limit =
         const roles = [...new Set(reviewers.map((reviewer) => reviewer.roleId))];
         const roleId = roles[0];
         const name = roles.length > 1 ? "review" : roleId && (WORK[roleId] ?? roleForTask(state.roles, roleId, task)?.name.toLowerCase());
-        if (reviewers.length) steps.push(`${port ? "a review of the port" : `${name || stage.title.toLowerCase()}${again}`}${by(state, ...reviewers.map((reviewer) => reviewer.profileId))}`);
+        if (reviewers.length) steps.push(`${port ? "a review of the port" : `${name || stage.title.toLowerCase()}${again}`}${by(
+          state,
+          ...reviewers.map((reviewer) => reviewer.profileId)
+        )}`);
         if (needsReviewCheck(state, task, at)) steps.push("your call");
         break;
       }
@@ -385,12 +414,28 @@ export function nextSteps(state: People & Pick<State, "inbox">, task: Task): Nex
       return shaped(upcoming(state, task, task.stageIndex, 0));
     case "converge":
       if (task.sub === 0) return shaped(followingCall(task) ? upcoming(state, task, task.stageIndex + 1, 0) : upcoming(state, task, task.stageIndex, 1));
-      return shaped(upcoming(state, task, task.stageIndex + 1, 0), round >= (stage.maxRounds ?? 3) ? "your call if they still disagree" : "another design round if the reviewer objects");
+      return shaped(
+        upcoming(
+        state,
+        task,
+        task.stageIndex + 1,
+        0
+      ),
+        round >= (stage.maxRounds ?? 3) ? "your call if they still disagree" : "another design round if the reviewer objects"
+      );
     case "review-chain": {
       // Every reviewer looks at once, then voters settle what only one tool raised: what follows is the next stage.
       const after = upcoming(state, task, task.stageIndex + 1, 0);
       if (needsReviewCheck(state, task, task.stageIndex)) return shaped(["your call", ...(after[0] === CHECKS.delivery ? after.slice(1) : after)]);
-      return shaped(after, canFixReview(state, task, stage, task.stageIndex) ? "fixes by the builder if blocking issues are found" : "your call if blocking issues are found");
+      return shaped(
+        after,
+        canFixReview(
+        state,
+        task,
+        stage,
+        task.stageIndex
+      ) ? "fixes by the builder if blocking issues are found" : "your call if blocking issues are found"
+      );
     }
     default:
       if (roleForTask(state.roles, stage.roleId, task)?.result === "checks") {

@@ -1,5 +1,15 @@
 // Live projections, bounded archive ownership and revision/persistence bookkeeping.
-import { finishedTask, historyPageUsage, involvesProduct, type HistoryDependency, type Id, type State, type Task, type HistoryQuery, type HistoryPage } from "@petrina/core";
+import {
+  finishedTask,
+  historyPageUsage,
+  involvesProduct,
+  type HistoryDependency,
+  type Id,
+  type State,
+  type Task,
+  type HistoryQuery,
+  type HistoryPage
+} from "@petrina/core";
 import type { Kernel, RuntimeTask } from "./kernel.js";
 import { settledHistoryTask } from "@petrina/storage/store";
 import { executionOf, restoreRepositoryState, taskView, type RepositoryContext } from "@petrina/orchestrator";
@@ -28,7 +38,12 @@ export class StateProjection {
     const current = new Map<string, Task>([...this.archiveCache.values(), ...this.k.s.tasks].map((task) => [task.id, taskView(task) as Task]));
     // Shutdown closes SQLite before detached cleanup finishes. Reads used while waiting for that
     // cleanup keep the last in-memory work; stopping never loads an unbounded history snapshot.
-    const tasks = this.k.stopped ? [] : this.k.store.history.all().map((task) => { const known = current.get(task.id); if (known) return known; restoreRepositoryState(task as RuntimeTask); return taskView(task as RuntimeTask); });
+    const tasks = this.k.stopped ? [] : this.k.store.history.all().map((task) => {
+      const known = current.get(task.id);
+      if (known) return known;
+      restoreRepositoryState(task as RuntimeTask);
+      return taskView(task as RuntimeTask);
+    });
     const ids = new Set(tasks.map((task) => task.id));
     tasks.push(...[...current.values()].filter((task) => !ids.has(task.id)));
     const { history: _history, ...state } = this.k.activeState();
@@ -66,7 +81,14 @@ export class StateProjection {
       hunt: task.hunt ? { ...task.hunt, findingChecks: undefined } : undefined,
     })) as Task[];
     const usageReads: NonNullable<State["pool"]["usageReads"]> = this.k.usageCoordinator.snapshot();
-    const dependencyIds = this.k.stopped ? [] : [...new Set([...this.k.s.inbox.map((item) => item.taskId), ...this.k.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [...(task.after ?? []), ...(task.runtimeWait?.after ?? []), ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])])])];
+    const dependencyIds = this.k.stopped ? [] : [...new Set([
+      ...this.k.s.inbox.map((item) => item.taskId),
+      ...this.k.s.tasks.filter((task) => !finishedTask(task)).flatMap((task) => [
+      ...(task.after ?? []),
+      ...(task.runtimeWait?.after ?? []),
+      ...(task.journey ?? []).flatMap((step) => step.waitsOn?.map((entry) => entry.id) ?? [])
+    ])
+    ])];
     const key = JSON.stringify([this.k.store.history.info().revision, dependencyIds]);
     // Streaming changes do not re-read archived delivery state. Keep only the current
     // dependency set, refreshing it when membership or the history revision changes.
@@ -76,7 +98,18 @@ export class StateProjection {
     }) };
     const dependencies = this.dependencies.items;
     const { extraValidations: _extraOwnership, ...visible } = this.k.activeState();
-    return { ...visible, tasks, ...(Object.keys(usageReads).length ? { pool: { ...this.k.s.pool, usageReads } } : {}), history: { ...this.k.store.history.info(), ...(dependencies.length ? { dependencies } : {}) } };
+    return {
+      ...visible,
+      tasks,
+      ...(Object.keys(usageReads).length ? { pool: {
+      ...this.k.s.pool,
+      usageReads
+    } } : {}),
+      history: {
+      ...this.k.store.history.info(),
+      ...(dependencies.length ? { dependencies } : {})
+    }
+    };
   };
 
   historyPage = (request: HistoryQuery): HistoryPage => {
@@ -86,7 +119,13 @@ export class StateProjection {
     return request.includeUsage ? historyPageUsage(page, this.k.tracking.log) : page;
   };
 
-  taskDetails = (id: Id): Task | undefined => { const task = this.task(id); return task ? { ...taskView(task), detailsRevision: this.detailRevision(id) } : undefined; };
+  taskDetails = (id: Id): Task | undefined => {
+    const task = this.task(id);
+    return task ? {
+    ...taskView(task),
+    detailsRevision: this.detailRevision(id)
+  } : undefined;
+  };
 
   private readonly archiveCache = new Map<Id, RuntimeTask>();
 

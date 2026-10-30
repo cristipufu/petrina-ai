@@ -15,13 +15,22 @@ export class SourceConflicts {
     // On disk before the working copy moves: a restart in between finds the update and opens it again.
     // Only a completed review of this exact code permits the later review to cover the port alone.
     const head = reviewed ? await effects.head() : undefined;
-    repository.updating = { from: observation.from, onto: observation.onto, ...(head ? { head } : {}), files: observation.files, ...(observation.notes.length ? { notes: observation.notes } : {}) };
+    repository.updating = {
+      from: observation.from,
+      onto: observation.onto,
+      ...(head ? { head } : {}),
+      files: observation.files,
+      ...(observation.notes.length ? { notes: observation.notes } : {})
+    };
     if (task.reviewSessions) {
       // Each dropped seat's next start says why it is fresh, even after a pause or restart in between.
       // Seats with no saved conversation (first reviews, or already dropped by an earlier conflict) keep what they had.
       const why = `${sourceName} conflicted with the change${task.repositories ? ` in ${this.host.productName(scope) ?? repository.productId}` : ""}, so the Builder had to port it`;
       const dropped = structuredClone(task.reviewFreshReasons ?? {});
-      for (const [stageId, seats] of Object.entries(task.reviewSessions)) for (const seat of Object.keys(seats)) dropped[stageId] = { ...dropped[stageId], [seat]: why };
+      for (const [stageId, seats] of Object.entries(task.reviewSessions)) for (const seat of Object.keys(seats)) dropped[stageId] = {
+        ...dropped[stageId],
+        [seat]: why
+      };
       task.reviewFreshReasons = dropped;
       delete task.reviewSessions;
       this.host.note(scope, "status", "Reviewer conversations will start fresh because the Builder must port the change after conflicts");
@@ -56,8 +65,24 @@ export class SourceConflicts {
     await effects.open();
     const files = observation.files.length === 1 ? "1 file conflicts" : `${observation.files.length} files conflict`;
     // A moment of Petrina's own on the journey: why the builder gets the work back.
-    petrinaMoment(task, "update", { outcome: JOURNEY_WORDS.mainMoved(observation.files.length, sourceName), reason: JOURNEY_WORDS.conflicts(sourceName), tone: "back" }, this.host.now());
-    this.host.note(scope, "warn", `${sourceName === "main" ? "Main" : sourceName} moved on (${commits}) and ${files} with this work, so the builder brings it up to date`);
+    petrinaMoment(
+      task,
+      "update",
+      {
+      outcome: JOURNEY_WORDS.mainMoved(
+      observation.files.length,
+      sourceName
+    ),
+      reason: JOURNEY_WORDS.conflicts(sourceName),
+      tone: "back"
+    },
+      this.host.now()
+    );
+    this.host.note(
+      scope,
+      "warn",
+      `${sourceName === "main" ? "Main" : sourceName} moved on (${commits}) and ${files} with this work, so the builder brings it up to date`
+    );
     this.host.changed();
     return "conflict";
   }

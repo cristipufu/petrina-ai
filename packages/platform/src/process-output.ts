@@ -39,9 +39,12 @@ export async function readOwnedProcessOutput(options: ProcessOutputOptions): Pro
   }
   if (options.graceMs + options.forceMs > 2_147_483_647) throw new RangeError("Process output cancellation needs a bounded deadline.");
   const deadline: ProcessDeadline = (expired, ms) => options.arm(expired, ms);
-  let child: OutputProcess | undefined, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  let output: string | undefined, cancelRead = () => {};
-  let errored = Promise.resolve(false), abort: (() => void) | undefined;
+  let child: OutputProcess | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let output: string | undefined;
+  let cancelRead = () => {};
+  let errored = Promise.resolve(false);
+  let abort: (() => void) | undefined;
   try {
     child = options.start();
     const exited = child.exited;

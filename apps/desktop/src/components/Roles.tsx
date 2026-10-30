@@ -44,9 +44,23 @@ export function RolesSection({ state, onOpen }: { state: State; onOpen: (target:
           <RoleCard key={role.id} role={role} onOpen={() => onOpen({ roleId: role.id })} />
         ))}
       </div>
-      <div className="section-row"><h2 className="section-title">Maintenance roles</h2><button className="btn outline" disabled={full} onClick={() => onOpen({ start: "blank", category: "maintenance" })}><Plus size={16} aria-hidden="true" />Add a maintenance role</button></div>
+      <div className="section-row"><h2 className="section-title">Maintenance roles</h2><button
+        className="btn outline"
+        disabled={full}
+        onClick={() => onOpen({
+        start: "blank",
+        category: "maintenance"
+      })}
+      ><Plus
+        size={16}
+        aria-hidden="true"
+      />Add a maintenance role</button></div>
       <p className="note section-note">These roles run only from routines. They stay out of ordinary plans.</p>
-      <div className="grid">{roles.filter(role => role.category === "maintenance").map(role => <RoleCard key={role.id} role={role} onOpen={() => onOpen({ roleId: role.id })} />)}</div>
+      <div className="grid">{roles.filter(role => role.category === "maintenance").map(role => <RoleCard
+        key={role.id}
+        role={role}
+        onOpen={() => onOpen({ roleId: role.id })}
+      />)}</div>
     </section>
   );
 }
@@ -159,7 +173,10 @@ const ORDER: readonly RoleField[] = ["name", "purpose", "instructions", "handsBa
  */
 export function RolePanel({ state, target, onClose }: { state: State; target: RolePanelTarget; onClose: () => void }) {
   const role = "roleId" in target ? state.roles.find((entry) => entry.id === target.roleId && !entry.removed) : undefined;
-  const [initial] = useState<RoleDraft>(() => (role ? draftOf(role) : { ...ROLE_STARTS.find((start) => "start" in target && start.id === target.start)!.draft, ...("category" in target ? { category: target.category } : {}) }));
+  const [initial] = useState<RoleDraft>(() => (role ? draftOf(role) : {
+    ...ROLE_STARTS.find((start) => "start" in target && start.id === target.start)!.draft,
+    ...("category" in target ? { category: target.category } : {})
+  }));
   const [draft, setDraft] = useState(initial);
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -169,7 +186,8 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
   const viewOnly = role?.result === "delivery";
   const naming = !role || role.added;
   const dirty = !viewOnly && JSON.stringify(draft) !== JSON.stringify(initial);
-  const requestClose = () => { if (!busy) { if (dirty) setAsking("discard"); else onClose(); } };
+  const requestClose = () => { if (!busy) { if (dirty) setAsking("discard");
+  else onClose(); } };
   // The role went away meanwhile (removed in another window): there is nothing left to edit.
   const gone = "roleId" in target && !role;
   useEffect(() => {
@@ -238,7 +256,17 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
             {hint}
           </p>
         )}
-        {rows === 1 ? <input className="field" autoComplete="off" autoFocus={naming} {...common} /> : <textarea className="field area" rows={rows} autoFocus={!naming && field === "purpose"} {...common} />}
+        {rows === 1 ? <input
+          className="field"
+          autoComplete="off"
+          autoFocus={naming}
+          {...common}
+        /> : <textarea
+          className="field area"
+          rows={rows}
+          autoFocus={!naming && field === "purpose"}
+          {...common}
+        />}
         {count > limit(field) * 0.8 && !wrong && (
           <p className="hint num">
             {count.toLocaleString("en-US")} of {limit(field).toLocaleString("en-US")} characters
@@ -267,7 +295,10 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
   return (
     <>
       <EditorPanel title={role?.name ?? "New role"} caption={role ? crumb : undefined} onClose={requestClose} busy={busy} onKeyDown={onKeyDown} bodyClassName="role-form" icon={<span className={`avatar tone-${draft.tone}`}><Icon size={20} /></span>}
-        description={viewOnly ? <p className="lock-note"><Lock size={16} aria-hidden="true" />The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.</p> : undefined}
+        description={viewOnly ? <p className="lock-note"><Lock
+          size={16}
+          aria-hidden="true"
+        />The Release Manager writes release notes. Petrina handles delivery itself. It can't be edited here.</p> : undefined}
         footer={<>
           {error && (
             <p className="error-text panel-error" role="alert">
@@ -321,7 +352,16 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                           {ROLE_ICON_CHOICES.map((icon) => {
                             const Choice = ROLE_ICONS[icon];
                             return (
-                              <button key={icon} type="button" role="radio" aria-checked={draft.icon === icon} aria-label={ICON_NAME[icon]} title={ICON_NAME[icon]} className={`pick ${draft.icon === icon ? "on" : ""}`} onClick={() => set({ icon })}>
+                              <button
+                                key={icon}
+                                type="button"
+                                role="radio"
+                                aria-checked={draft.icon === icon}
+                                aria-label={ICON_NAME[icon]}
+                                title={ICON_NAME[icon]}
+                                className={`pick ${draft.icon === icon ? "on" : ""}`}
+                                onClick={() => set({ icon })}
+                              >
                                 <Choice size={18} aria-hidden="true" />
                               </button>
                             );
@@ -334,7 +374,16 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                         </span>
                         <div className="picks" role="radiogroup" aria-labelledby={`${id}-tone`}>
                           {TONE_CHOICES.map((tone) => (
-                            <button key={tone} type="button" role="radio" aria-checked={draft.tone === tone} aria-label={TONE_NAME[tone]} title={TONE_NAME[tone]} className={`pick swatch tone-${tone} ${draft.tone === tone ? "on" : ""}`} onClick={() => set({ tone })}>
+                            <button
+                              key={tone}
+                              type="button"
+                              role="radio"
+                              aria-checked={draft.tone === tone}
+                              aria-label={TONE_NAME[tone]}
+                              title={TONE_NAME[tone]}
+                              className={`pick swatch tone-${tone} ${draft.tone === tone ? "on" : ""}`}
+                              onClick={() => set({ tone })}
+                            >
                               <i aria-hidden="true" />
                             </button>
                           ))}
@@ -343,15 +392,31 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                     </div>
                   </>
                 )}
-                {text("purpose", "What it's for", draft.category === "maintenance" ? "Helps you choose this role for a routine." : "The planner reads this to decide when to bring the role in.", 2)}
-                {text("instructions", "How it works", "What the agent is told. Petrina adds the task, your notes, how to hand back the result and what it may change.", 8)}
+                {text(
+                  "purpose",
+                  "What it's for",
+                  draft.category === "maintenance" ? "Helps you choose this role for a routine." : "The planner reads this to decide when to bring the role in.",
+                  2
+                )}
+                {text(
+                  "instructions",
+                  "How it works",
+                  "What the agent is told. Petrina adds the task, your notes, how to hand back the result and what it may change.",
+                  8
+                )}
 
                 {draft.category !== "maintenance" && <fieldset className="form-field" aria-describedby={`${id}-access-note${lock ? ` ${id}-access-lock` : ""}`}>
                   <legend>What it may change</legend>
                   <div className="options-list">
                     {ACCESS.map((option) => (
                       <label key={option.label} className={`option ${lock ? "locked" : ""}`}>
-                        <input type="radio" name={`${id}-access`} checked={draft.canEdit === option.canEdit} disabled={!!lock} onChange={() => set({ canEdit: option.canEdit })} />
+                        <input
+                          type="radio"
+                          name={`${id}-access`}
+                          checked={draft.canEdit === option.canEdit}
+                          disabled={!!lock}
+                          onChange={() => set({ canEdit: option.canEdit })}
+                        />
                         <span className="t">{option.label}</span>
                         <span className="d">{option.detail}</span>
                       </label>
@@ -386,7 +451,18 @@ export function RolePanel({ state, target, onClose }: { state: State; target: Ro
                       <div className="options-list">
                         {(draft.category === "maintenance" ? ["notes", "build"] as const : ["notes", "findings"] as const).map((result) => (
                           <label key={result} className="option">
-                            <input type="radio" name={`${id}-result`} checked={draft.result === result} onChange={() => set(draft.category === "maintenance" ? { result, canEdit: result === "build" } : result === "findings" ? { result, canEdit: false } : { result })} />
+                            <input
+                              type="radio"
+                              name={`${id}-result`}
+                              checked={draft.result === result}
+                              onChange={() => set(draft.category === "maintenance" ? {
+                              result,
+                              canEdit: result === "build"
+                            } : result === "findings" ? {
+                              result,
+                              canEdit: false
+                            } : { result })}
+                            />
                             <span className="t">{draft.category === "maintenance" ? result === "build" ? "Small changes with review" : "Reports only" : RESULT_WORDS[result].label}</span>
                             <span className="d">{RESULT_WORDS[result].detail}</span>
                           </label>

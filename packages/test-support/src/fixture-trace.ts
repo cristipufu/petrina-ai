@@ -49,7 +49,8 @@ export class FixtureTrace {
         const record: ProcessObservation = { phase, child, exitWait: "pending" };
         this.processes.set(id, record);
         void child.exited.then(() => { record.exitWait = "completed"; }, (error) => {
-          record.exitWait = "rejected"; record.error = String(error);
+          record.exitWait = "rejected";
+          record.error = String(error);
         });
       }));
     } finally { this.processes.delete(id); }

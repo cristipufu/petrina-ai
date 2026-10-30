@@ -93,7 +93,10 @@ export function TakeOverControls({ task, state, onToast }: { task: Task; state: 
         className="btn small"
         disabled={!task.agent}
         title="Open this agent's own tool in your terminal, on the same session"
-        onClick={() => onToast("Take over works with real agents", "With real agents it opens the agent's own tool in your terminal on this session and pauses the step until you hand back.")}
+        onClick={() => onToast(
+          "Take over works with real agents",
+          "With real agents it opens the agent's own tool in your terminal on this session and pauses the step until you hand back."
+        )}
       >
         <SquareTerminal size={16} aria-hidden="true" />
         Take over in terminal
@@ -103,7 +106,12 @@ export function TakeOverControls({ task, state, onToast }: { task: Task; state: 
   const blocked = takeOverBlock(task, state);
   return (
     <span className="take-over">
-      <button className="btn small" disabled={blocked !== undefined} aria-describedby={blocked ? `take-over-why-${task.id}` : undefined} onClick={() => openTakeOver(task.id)}>
+      <button
+        className="btn small"
+        disabled={blocked !== undefined}
+        aria-describedby={blocked ? `take-over-why-${task.id}` : undefined}
+        onClick={() => openTakeOver(task.id)}
+      >
         <SquareTerminal size={16} aria-hidden="true" />
         Take over in terminal
       </button>
@@ -122,7 +130,17 @@ export function TakeOverDialogs({ state, find, onToast }: { state: State; find: 
   const task = current ? find.task(current.taskId) : undefined;
   if (!current || !task) return null;
   const close = () => set(undefined);
-  return current.kind === "take-over" ? <TakeOverDialog task={task} state={state} find={find} onClose={close} onToast={onToast} /> : <HandBackDialog task={task} find={find} onClose={close} />;
+  return current.kind === "take-over" ? <TakeOverDialog
+    task={task}
+    state={state}
+    find={find}
+    onClose={close}
+    onToast={onToast}
+  /> : <HandBackDialog
+    task={task}
+    find={find}
+    onClose={close}
+  />;
 }
 
 function Command({ launched }: { launched: Launched }) {
@@ -141,7 +159,14 @@ function Command({ launched }: { launched: Launched }) {
     <div className="command-box">
       <p>Run this in any terminal. It opens the agent's own tool on the same conversation, and refuses to open a second copy.</p>
       <div className="reply">
-        <input ref={field} className="command" readOnly aria-label="The command to run" value={launched.command} onFocus={(event) => event.currentTarget.select()} />
+        <input
+          ref={field}
+          className="command"
+          readOnly
+          aria-label="The command to run"
+          value={launched.command}
+          onFocus={(event) => event.currentTarget.select()}
+        />
         <button className="btn" onClick={() => void copy()}>
           {copied ? "Copied" : "Copy"}
         </button>
@@ -150,7 +175,13 @@ function Command({ launched }: { launched: Launched }) {
   );
 }
 
-function TakeOverDialog({ task, state, find, onClose, onToast }: { task: Task; state: State; find: Lookup; onClose: () => void; onToast: (title: string, detail?: string) => void }) {
+function TakeOverDialog({ task, state, find, onClose, onToast }: {
+  task: Task;
+  state: State;
+  find: Lookup;
+  onClose: () => void;
+  onToast: (title: string, detail?: string) => void
+}) {
   const box = useRef<HTMLDivElement>(null);
   useFocusTrap(box, onClose);
   const [busy, setBusy] = useState(false);
@@ -310,21 +341,43 @@ function HandBackDialog({ task, find, onClose }: { task: Task; find: Lookup; onC
               <p>
                 {preview.files === 0 && preview.commits === 0
                   ? "Nothing changed since you took over."
-                  : `${plural(preview.files, "file")} added, changed or removed${preview.files ? ` (${names(preview.names, preview.files)})` : ""}, in ${plural(preview.commits, "commit")} of yours.`}
+                  : `${plural(
+                    preview.files,
+                    "file"
+                  )} added, changed or removed${preview.files ? ` (${names(
+                    preview.names,
+                    preview.files
+                  )})` : ""}, in ${plural(
+                    preview.commits,
+                    "commit"
+                  )} of yours.`}
                 {preview.unsaved && " Petrina saves what you didn't commit as one more commit, marked as yours."}
               </p>
               {preview.saved && (
                 <>
                   <h3>The {role}'s unfinished work</h3>
                   <p>
-                    Before you took over, Petrina saved it as one commit: {plural(preview.saved.files, "file")} ({names(preview.saved.names, preview.saved.files)}). The {role} finishes it.
+                    Before you took over, Petrina saved it as one commit: {plural(
+                      preview.saved.files,
+                      "file"
+                    )} ({names(
+                      preview.saved.names,
+                      preview.saved.files
+                    )}). The {role} finishes it.
                   </p>
                 </>
               )}
             </div>
             <label className="note-box">
               <span>A note for the {role} (optional)</span>
-              <textarea className="field" rows={3} maxLength={4000} value={note} placeholder="What you did, or what it should do next" onChange={(event) => setNote(event.target.value)} />
+              <textarea
+                className="field"
+                rows={3}
+                maxLength={4000}
+                value={note}
+                placeholder="What you did, or what it should do next"
+                onChange={(event) => setNote(event.target.value)}
+              />
             </label>
             {preview.open === "unknown" && <p className="label warn">{TAKE_OVER_WORDS.cannotTell(tool)}</p>}
             <p className="quiet-text">The {role} carries on with this step, told what changed.{preview.files ? " The tests check runs on your changes now, and they are reviewed before anything ships." : ""}</p>

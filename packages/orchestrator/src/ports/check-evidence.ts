@@ -1,4 +1,13 @@
-import type { CheckAttemptEvidence, CheckEnvironmentBinding, CheckRun, CheckSetupAttempt, CheckSetupOutcome, DeepMutable, Id, JourneyProductCheck } from "@petrina/core";
+import type {
+  CheckAttemptEvidence,
+  CheckEnvironmentBinding,
+  CheckRun,
+  CheckSetupAttempt,
+  CheckSetupOutcome,
+  DeepMutable,
+  Id,
+  JourneyProductCheck
+} from "@petrina/core";
 import type { RepositoryContext } from "../repository-context.js";
 
 export type CheckVerification = { readonly results: readonly CheckRun[] } & (

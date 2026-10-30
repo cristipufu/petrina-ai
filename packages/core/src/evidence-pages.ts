@@ -31,7 +31,10 @@ export function paginateEvidence<T>(items: readonly T[], a: { cursor?: string; l
     ...(at + limit < items.length ? { next: codec.encodeCursor({ key, at: at + limit }) } : {}),
   };
 }
-export function readEvidenceText(value: unknown, a: { cursor?: string; limit?: number }, scope: unknown, extra: Record<string, unknown>, codec: EvidencePageCodec): EvidencePageResult {
+export function readEvidenceText(value: unknown, a: {
+  cursor?: string;
+  limit?: number
+}, scope: unknown, extra: Record<string, unknown>, codec: EvidencePageCodec): EvidencePageResult {
   if (value === undefined || value === null) return { outcome: "unavailable", message: "This evidence was not recorded or is no longer available.", ...extra };
   const source = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   const key = codec.fingerprint([scope, source]);

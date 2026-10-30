@@ -1,4 +1,22 @@
-import { deliveryDecisionProblem, reviewDecisionPending, checkSetupOutcome, checkSetupWords, checkOutcome, checkOutcomeLabel, checkCounts, deliveryCheckProblem, evidenceFor, checkProblemTitle, lastIndexWhere, repositoryPublished, stepsFrom, endYouStep, JOURNEY_WORDS, type CheckRun, type Task } from "@petrina/core";
+import {
+  deliveryDecisionProblem,
+  reviewDecisionPending,
+  checkSetupOutcome,
+  checkSetupWords,
+  checkOutcome,
+  checkOutcomeLabel,
+  checkCounts,
+  deliveryCheckProblem,
+  evidenceFor,
+  checkProblemTitle,
+  lastIndexWhere,
+  repositoryPublished,
+  stepsFrom,
+  endYouStep,
+  JOURNEY_WORDS,
+  type CheckRun,
+  type Task
+} from "@petrina/core";
 import { executionFor, scopesFor, taskView } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
 import type { CheckDecisionHost } from "./ports/check-delivery.js";
@@ -22,8 +40,14 @@ export class CheckDecision {
       const runs = scope.work.checks?.results.filter((run) => checkOutcome(run).kind !== "passed") ?? [];
       return runs.length ? [{ scope, runs, name: this.host.productName(scope) }] : [];
     });
-    const names = failing.flatMap(({ runs, name }) => runs.filter((run) => checkOutcome(run).kind === "failed").map((run) => shared ? `${name}: ${run.name}` : run.name));
-    const unverifiedNames = failing.flatMap(({ runs, name }) => runs.filter((run) => checkOutcome(run).kind !== "failed").map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const names = failing.flatMap(({
+      runs,
+      name
+    }) => runs.filter((run) => checkOutcome(run).kind === "failed").map((run) => shared ? `${name}: ${run.name}` : run.name));
+    const unverifiedNames = failing.flatMap(({
+      runs,
+      name
+    }) => runs.filter((run) => checkOutcome(run).kind !== "failed").map((run) => shared ? `${name}: ${run.name}` : run.name));
     const turns = (count: number) => `${count} automatic Builder ${count === 1 ? "turn" : "turns"}`;
     const setups = pending.filter(scope => scope.work.checkSetup || scope.work.checkSetupInvalidated).map(scope => {
       const setup = scope.work.checkSetup;
@@ -46,12 +70,28 @@ export class CheckDecision {
       const reused = evidence.some((check) => check.reusedAt !== undefined);
       const fresh = evidence.some((check) => check.run && check.reusedAt === undefined);
       const { failed, unverified } = checkCounts(evidence);
-      return [failed ? `${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.${unverified ? ` ${unverified} ${unverified === 1 ? "check also unverified" : "checks also unverified"}.` : ""}` : `${shared ? `${name}: ` : ""}Checks unverified. Unavailable or incomplete execution does not use an automatic Builder turn.`, ...lines, ...(reused ? [fresh ? "Some previous check evidence reused; other checks ran in this attempt." : "Previous check evidence reused; no new execution."] : [])].join("\n");
+      return [
+        failed ? `${shared ? `${name}: s` : "S"}till failing after ${turns(attempts)}.${unverified ? ` ${unverified} ${unverified === 1 ? "check also unverified" : "checks also unverified"}.` : ""}` : `${shared ? `${name}: ` : ""}Checks unverified. Unavailable or incomplete execution does not use an automatic Builder turn.`,
+        ...lines,
+        ...(reused ? [fresh ? "Some previous check evidence reused; other checks ran in this attempt." : "Previous check evidence reused; no new execution."] : [])
+      ].join("\n");
     });
-    const builder = lastIndexWhere(stages, (entry, index) => index < task.stageIndex && entry.kind === "do" && this.host.role(entry.roleId, task)?.result === "build");
+    const builder = lastIndexWhere(
+      stages,
+      (
+      entry,
+      index
+    ) => index < task.stageIndex && entry.kind === "do" && this.host.role(
+      entry.roleId,
+      task
+    )?.result === "build"
+    );
     const where = this.stoppedAt(task);
     const reviews = new Set(stages.filter((stage) => stage.kind === "review-chain").map((stage) => stage.id));
-    const reviewed = Math.max(-Infinity, ...(task.journey ?? []).filter((step) => step.kind === "agent" && step.stageId && reviews.has(step.stageId) && step.endedAt !== undefined).map((step) => step.endedAt!));
+    const reviewed = Math.max(
+      -Infinity,
+      ...(task.journey ?? []).filter((step) => step.kind === "agent" && step.stageId && reviews.has(step.stageId) && step.endedAt !== undefined).map((step) => step.endedAt!)
+    );
     const unconfirmed = task.findings.filter((finding) => finding.raisedBy !== "petrina" && finding.status !== "dismissed" && !/^(Failed|Could not verify) acceptance check:/.test(finding.text) && finding.answer?.fixed && finding.answer.at > reviewed).length;
     const view = { ...taskView(task), ...(builder >= 0 ? { stageIndex: builder, fixing: false } : {}) } as Task;
     const ahead = stepsFrom(this.host.state(), view, builder >= 0 ? builder + 1 : task.stageIndex);
@@ -67,7 +107,11 @@ export class CheckDecision {
     ].join("\n\n");
     const attempts = shared ? "their automatic Builder turns" : turns(executionFor(task).work.checkReturns ?? 0);
     return {
-      title: deliveryCheckProblem(taskView(task)) === "unverified" ? `Your call on “${task.title}”: checks unverified` : checkProblemTitle(task.title, names, unverifiedNames),
+      title: deliveryCheckProblem(taskView(task)) === "unverified" ? `Your call on “${task.title}”: checks unverified` : checkProblemTitle(
+        task.title,
+        names,
+        unverifiedNames
+      ),
       body,
       line: deliveryCheckProblem(taskView(task)) === "unverified" ? `Checks unverified (${unverifiedNames.join(", ")}), so Petrina waits for you ${where}` : `Checks still fail after ${attempts} (${names.join(", ")})${unverifiedNames.length ? `; unverified (${unverifiedNames.join(", ")})` : ""}, so Petrina waits for you ${where}`,
     };
@@ -90,8 +134,14 @@ export class CheckDecision {
     for (const { work } of scopesFor(task)) {
       if (repositoryPublished(work)) continue;
       work.checkSetupInvalidated = { id: this.host.id(task), kind: "explicit-rerun", at: this.host.now() };
-      if (work.checks) { delete work.checks.sha; delete work.checks.tree; work.checks.current = false; }
-      delete work.approvedSha; delete work.approvedPatch; delete work.approvedFor;
+      if (work.checks) {
+        delete work.checks.sha;
+        delete work.checks.tree;
+        work.checks.current = false;
+      }
+      delete work.approvedSha;
+      delete work.approvedPatch;
+      delete work.approvedFor;
     }
     this.host.log(task, "you", "You asked to run checks again on unchanged work; delivery is not approved");
     endYouStep(task, { outcome: "Run checks again", reason: JOURNEY_WORDS.checkAgain }, this.host.now());

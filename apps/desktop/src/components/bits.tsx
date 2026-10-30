@@ -125,7 +125,13 @@ export function Pipeline({ task, onActivate }: { task: Task; onActivate?: () => 
   };
 
   return (
-    <ol className={`pipeline ${all.length >= LONG_PIPELINE ? "long" : ""}`} aria-label="Progress" onClick={onActivate} onKeyDown={onKeyDown} onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setFocused(undefined)}>
+    <ol
+      className={`pipeline ${all.length >= LONG_PIPELINE ? "long" : ""}`}
+      aria-label="Progress"
+      onClick={onActivate}
+      onKeyDown={onKeyDown}
+      onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && setFocused(undefined)}
+    >
       {steps.map((step, index) => (
         <li
           key={`${step.label}-${index}`}
@@ -337,7 +343,15 @@ export function useViewport(): { width: number; height: number } {
  * Ask before something that cannot be taken back, or that loses what the coordinator typed. It opens
  * over everything, Escape or Cancel keeps things as they were, and focus goes back where it was.
  */
-export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, onCancel, children, busy = false }: { title: string; confirm: string; cancel?: string; onConfirm: () => void; onCancel: () => void; children?: ReactNode; busy?: boolean }) {
+export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, onCancel, children, busy = false }: {
+  title: string;
+  confirm: string;
+  cancel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  children?: ReactNode;
+  busy?: boolean
+}) {
   const box = useRef<HTMLDivElement>(null);
   const id = useId();
   const close = () => { if (!busy) onCancel(); };
@@ -345,7 +359,16 @@ export function ConfirmDialog({ title, confirm, cancel = "Cancel", onConfirm, on
   return (
     <>
       <div className="dialog-scrim confirm-scrim" onClick={close} />
-      <div ref={box} className="dialog confirm" aria-busy={busy || undefined} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={children ? `${id}-body` : undefined} tabIndex={-1}>
+      <div
+        ref={box}
+        className="dialog confirm"
+        aria-busy={busy || undefined}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={children ? `${id}-body` : undefined}
+        tabIndex={-1}
+      >
         <h2 className="heading" id={`${id}-title`}>
           {title}
         </h2>

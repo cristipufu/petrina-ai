@@ -240,7 +240,15 @@ export function BarsOverTime({ points, series, format, formatDetail = format, mi
       .filter((entry) => (points[index]!.values[entry.key] ?? 0) > 0 || points[index]!.missing?.[entry.key])
       .slice()
       .reverse()
-      .map((entry) => ({ key: entry.key, label: entry.label, value: detail(points[index]!.values[entry.key] ?? 0, points[index]!.missing?.[entry.key]), color: entry.color })),
+      .map((entry) => ({
+        key: entry.key,
+        label: entry.label,
+        value: detail(
+        points[index]!.values[entry.key] ?? 0,
+        points[index]!.missing?.[entry.key]
+      ),
+        color: entry.color
+      })),
     ...(running ? [{ key: "running", label: running.label, value: detail(running.values[index] ?? 0, runningMissing[index]) }] : []),
   ];
 
@@ -291,7 +299,11 @@ export function BarsOverTime({ points, series, format, formatDetail = format, mi
               <line className="axis" x1={margin.left} x2={margin.left + plotW} y1={stripBase} y2={stripBase} />
               {!nothing && (
                 <>
-                  <path className="wash" d={`${linePath} L${centre(lastIndex).toFixed(1)},${stripBase} L${centre(0).toFixed(1)},${stripBase} Z`} style={{ fill: "var(--accent)" }} />
+                  <path
+                    className="wash"
+                    d={`${linePath} L${centre(lastIndex).toFixed(1)},${stripBase} L${centre(0).toFixed(1)},${stripBase} Z`}
+                    style={{ fill: "var(--accent)" }}
+                  />
                   <path className="series-line" d={linePath} style={{ stroke: "var(--accent)" }} />
                   <circle className="dot" cx={centre(lastIndex)} cy={ry(running.values[lastIndex] ?? 0)} r={4} style={{ fill: "var(--accent)" }} />
                   <text className="cap" x={centre(lastIndex) - 7} y={ry(running.values[lastIndex] ?? 0) - 6} textAnchor="end">
@@ -314,7 +326,10 @@ export function BarsOverTime({ points, series, format, formatDetail = format, mi
                 className="hit"
                 role="listitem"
                 tabIndex={0}
-                aria-label={totals[index]! > 0 || missing[index] || running ? [point.title, ...tipRows(index).map((row) => `${row.label}: ${row.value}`)].join(" · ") : `${point.title}: nothing`}
+                aria-label={totals[index]! > 0 || missing[index] || running ? [
+                  point.title,
+                  ...tipRows(index).map((row) => `${row.label}: ${row.value}`)
+                ].join(" · ") : `${point.title}: nothing`}
                 x={margin.left + index * slot}
                 y={margin.top - 8}
                 width={slot}
@@ -327,7 +342,12 @@ export function BarsOverTime({ points, series, format, formatDetail = format, mi
             ))}
           </g>
         </svg>
-        {hover !== undefined && (totals[hover]! > 0 || missing[hover] || running) && <Tip x={centre(hover)} y={stacks[hover]!.top - 6} title={points[hover]!.title} rows={tipRows(hover)} />}
+        {hover !== undefined && (totals[hover]! > 0 || missing[hover] || running) && <Tip
+          x={centre(hover)}
+          y={stacks[hover]!.top - 6}
+          title={points[hover]!.title}
+          rows={tipRows(hover)}
+        />}
       </div>
       {missingNote}
     </figure>

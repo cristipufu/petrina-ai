@@ -1,6 +1,14 @@
 // Native codec/clock composition. The portable owner retains the existing log/query/wait behavior.
 import { boundWorkflowEvent, type WorkflowEvent } from "@petrina/core";
-import { WorkflowEvents as EventController, WorkflowEventLog as EventLog, EVENT_BYTES, EVENT_RETENTION, type WorkflowEventCodec, type WorkflowEventClock, type WorkflowEventsHost } from "@petrina/orchestrator";
+import {
+  WorkflowEvents as EventController,
+  WorkflowEventLog as EventLog,
+  EVENT_BYTES,
+  EVENT_RETENTION,
+  type WorkflowEventCodec,
+  type WorkflowEventClock,
+  type WorkflowEventsHost
+} from "@petrina/orchestrator";
 import type { Result } from "./coordination.js";
 import { cursor, readText } from "./evidence-read.js";
 import { fingerprint } from "@petrina/storage/receipt-identity";
@@ -14,7 +22,10 @@ const codec: WorkflowEventCodec<Result> = {
 };
 const clock: WorkflowEventClock = {
   now: () => Date.now(),
-  after: (ms, callback) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); },
+  after: (ms, callback) => {
+    const timer = setTimeout(callback, ms);
+    return () => clearTimeout(timer);
+  },
 };
 
 export function boundEvent(event: WorkflowEvent, limit = EVENT_BYTES): WorkflowEvent {
@@ -24,5 +35,22 @@ export class WorkflowEventLog extends EventLog<Result> {
   constructor(run: string, limits = EVENT_RETENTION) { super(run, codec, limits); }
 }
 export class WorkflowEvents extends EventController<Result> {
-  constructor(host: WorkflowEventsHost, limits?: { events?: number; bytes?: number }) { super(host, codec, clock, new WorkflowEventLog(host.boot, { ...EVENT_RETENTION, ...limits })); }
+  constructor(
+    host: WorkflowEventsHost,
+    limits?: {
+    events?: number;
+    bytes?: number
+  }
+  ) { super(
+    host,
+    codec,
+    clock,
+    new WorkflowEventLog(
+    host.boot,
+    {
+    ...EVENT_RETENTION,
+    ...limits
+  }
+  )
+  ); }
 }

@@ -50,8 +50,10 @@ export async function stopAgentPrograms(target: AgentStopTarget, graceMs: number
   };
   const forceBy = effects.now() + FORCE_STOP_DEADLINE_MS;
   const rescanBudget = collectPrograms ? RESCAN_BUDGET_MS : 0;
-  const started = effects.now(), lists: ("read" | "unreadable")[] = [];
-  let stage: StopDiagnostic["stage"] = "graceful", remaining: ObservedProcess[] = [];
+  const started = effects.now();
+  const lists: ("read" | "unreadable")[] = [];
+  let stage: StopDiagnostic["stage"] = "graceful";
+  let remaining: ObservedProcess[] = [];
   const confirmed = (result: boolean) => {
     if (!result) effects.incomplete?.({ stage, elapsedMs: effects.now() - started, lists, processes: remaining });
     return result;
@@ -101,8 +103,12 @@ export async function stopAgentPrograms(target: AgentStopTarget, graceMs: number
 }
 
 /** Existing final-list timing and defunct interpretation, independent of native process APIs. */
-export async function confirmStoppedProcesses(targets: readonly number[], ms: number, effects: StopConfirmationEffects): Promise<{ ended: boolean; processes: ObservedProcess[] }> {
-  const end = effects.now() + ms, from = effects.now() + ms / 4;
+export async function confirmStoppedProcesses(targets: readonly number[], ms: number, effects: StopConfirmationEffects): Promise<{
+  ended: boolean;
+  processes: ObservedProcess[]
+}> {
+  const end = effects.now() + ms;
+  const from = effects.now() + ms / 4;
   let listing: Promise<string | undefined> | undefined;
   for (; effects.now() < end; await effects.sleep(POLL_INTERVAL_MS)) {
     if (!targets.some(target => effects.possiblyPresent(target))) return { ended: true, processes: [] };

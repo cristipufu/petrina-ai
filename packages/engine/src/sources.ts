@@ -31,7 +31,10 @@ export class Sources {
       resolve: (task, choice, candidate) => this.resolve(task, choice, candidate),
       repository: repo => this.queries.repository(repo),
       isAbsoluteFolder: isAbsolute, folderPath: resolve,
-      folderOccupied: folder => readdir(folder).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; }),
+      folderOccupied: folder => readdir(folder).then(() => true, (error) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      }),
     });
   }
 
@@ -79,12 +82,41 @@ export class Sources {
       // any user files keep the folder occupied and require a different destination.
       if (files.length && files.every((name) => name === ".git")) await rm(resolve(addition.path, ".git"), { recursive: true, force: true });
       else if (files.length) throw new Error(`${addition.name} couldn’t be added. Its interrupted folder is saved. Change folder if it contains unrelated files.`);
-      const cloned = await git.run(["git", "clone", "--", remote, addition.path], this.k.dataDir, undefined, { credentials: true, local: !!(this.k.options.remote || this.k.options.remotes), timeoutMs: git.FETCH_TIMEOUT_MS });
+      const cloned = await git.run(
+        [
+        "git",
+        "clone",
+        "--",
+        remote,
+        addition.path
+      ],
+        this.k.dataDir,
+        undefined,
+        {
+        credentials: true,
+        local: !!(this.k.options.remote || this.k.options.remotes),
+        timeoutMs: git.FETCH_TIMEOUT_MS
+      }
+      );
       if (cloned.code) throw new Error(`${addition.name} couldn’t be added. Your plan and folder are saved. ${cloned.stderr}`);
       if (!await completeClone()) throw new Error(`${addition.name} couldn’t be added. The clone did not confirm the approved repository and default branch. Your plan and folder are saved.`);
     }
-    const product = { ...row.source!.product, id: addition.productId, name: addition.name, path: await realpath(addition.path), tone: "blue" as const, delivery: row.choice.delivery, approveDelivery: true };
-    if (!this.k.s.products.some((entry) => entry.id === product.id)) { this.k.s.products.push(product); this.k.tracking.product(product, { addedAt: Date.now() }); }
+    const product = {
+      ...row.source!.product,
+      id: addition.productId,
+      name: addition.name,
+      path: await realpath(addition.path),
+      tone: "blue" as const,
+      delivery: row.choice.delivery,
+      approveDelivery: true
+    };
+    if (!this.k.s.products.some((entry) => entry.id === product.id)) {
+      this.k.s.products.push(product);
+      this.k.tracking.product(
+      product,
+      { addedAt: Date.now() }
+    );
+    }
     addition.ready = true;
     this.k.commitNow();
   }
@@ -104,7 +136,10 @@ export class Sources {
     // The last tip this task actually fetched. Read before the fetch replaces it.
     const remembered = await git.revParse(product.path!, ref);
     const result = await this.connections.serial(product.id, () => git.fetchRef(product.path!, remote, from, ref));
-    if (!result.ok) throw new Error(`Could not fetch the approved starting point (${this.connections.why(scope, result)}). Retry; no other branch or older copy was substituted.`);
+    if (!result.ok) throw new Error(`Could not fetch the approved starting point (${this.connections.why(
+      scope,
+      result
+    )}). Retry; no other branch or older copy was substituted.`);
     const replaced = "The starting branch's history was replaced or diverged. The task's work is preserved; it cannot be published safely without a decision.";
     if (source.initialSha && source.initialSha !== result.sha && !(await git.contains(product.path!, result.sha, source.initialSha))) throw new Error(replaced);
     // A commit already brought in must still be in the new tip. A tip that is only behind commits on this

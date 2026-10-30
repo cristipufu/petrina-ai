@@ -5,7 +5,10 @@ import type { ReviewProofHost, ReviewProofProposal } from "./ports/review-proof.
 
 export function checkProofRequests(k: Pick<ReviewProofHost, "role">, task: RuntimeTask, requests: readonly ReviewProofProposal[]): string | undefined {
   if (!requests.length) return;
-  const owner = proofOwner(task as Task, task.plan!.stages.flatMap(stage => { const role = k.role(stage.roleId, task); return role ? [role] : []; }));
+  const owner = proofOwner(task as Task, task.plan!.stages.flatMap(stage => {
+    const role = k.role(stage.roleId, task);
+    return role ? [role] : [];
+  }));
   if (!owner) return "This plan has no acceptance testing step. Do not return proofRequests; keep required verification with the coordinator.";
   const ids = (task.repositories ?? [task.repository!]).map(work => work.productId);
   for (const request of requests) {
@@ -27,7 +30,22 @@ export function recordReviewProofs(k: ReviewProofHost, task: RuntimeTask, stage:
   for (const [index, item] of requests.entries()) {
     const source = `${reviewId}:${seat}:${index}`;
     if (task.proofRequests?.some(request => request.source === source)) continue;
-    const request: DeepMutable<ProofRequest> = { ...item, id: k.id(task.id), source, requestedBy: { stageId: stage.id, round, seat, roleId, profileId: by, reviewId }, reviewedVersions: { ...hunt.input?.trees }, ownerStageId: owner.id, status: "pending" };
+    const request: DeepMutable<ProofRequest> = {
+      ...item,
+      id: k.id(task.id),
+      source,
+      requestedBy: {
+      stageId: stage.id,
+      round,
+      seat,
+      roleId,
+      profileId: by,
+      reviewId
+    },
+      reviewedVersions: { ...hunt.input?.trees },
+      ownerStageId: owner.id,
+      status: "pending"
+    };
     // Only the latest saved checklist verdict, with its actual Tester record, can be reused.
     if (request.checklistText) {
       const step = task.journey?.findLast(step => step.stageId === owner.id && step.endedAt !== undefined && step.acceptanceChecks?.some(check => check.text === request.checklistText));

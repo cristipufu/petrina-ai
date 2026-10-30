@@ -216,7 +216,12 @@ export class Cleanup {
     const scope = executionFor(task);
     // Checkout may finish after quitting saved the task, before its usable copy was recorded.
     // Its saved identity still names the same folder prepare() uses; never search other folders.
-    const copy = scope.work.worktree ?? (task.state === "cancelled" && task.startedAt !== undefined ? join(this.k.dataDir, "worktrees", scope.work.productId, task.id) : undefined);
+    const copy = scope.work.worktree ?? (task.state === "cancelled" && task.startedAt !== undefined ? join(
+      this.k.dataDir,
+      "worktrees",
+      scope.work.productId,
+      task.id
+    ) : undefined);
     if (!copy) return undefined;
     const path = resolve(copy);
     return path.startsWith(resolve(this.k.dataDir, "worktrees") + sep) ? path : undefined;

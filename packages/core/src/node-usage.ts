@@ -37,7 +37,11 @@ export interface NodeUsage {
   runs: NodeUsageRun[];
 }
 
-function amounts(turns: readonly WorkTurn[], uncertain = false, lines: readonly TokenLine[] = []): { tokens: Figure; detail: Breakdown; breakdownIncomplete: boolean } {
+function amounts(turns: readonly WorkTurn[], uncertain = false, lines: readonly TokenLine[] = []): {
+  tokens: Figure;
+  detail: Breakdown;
+  breakdownIncomplete: boolean
+} {
   // A saved live report counts too. Missing live reports remain missing.
   const tally = tallyOf(turns.map(turn => ({ ...turn, end: turn.end ?? "finished" })));
   const tokens = turns.length ? figures(tally, uncertain).tokens : { atLeast: false };
@@ -93,12 +97,19 @@ export function nodeUsage(log: WorkLogReader, request: { taskId: Id; nodeId: Id 
     if (turn.stageId !== (candidate.stageId ?? `${task!.id}:plan`)) return undefined;
     // A grouped step can contain different reviewer roles; its time bounds still must be unique.
     const stage = task!.plan?.stages.find(stage => stage.id === candidate.stageId);
-    const roles = [candidate.roleId, ...(candidate.agentInputs?.map(input => input.roleId) ?? []), ...(stage?.kind === "review-chain" ? stage.roleIds ?? [stage.roleId] : [])];
+    const roles = [
+      candidate.roleId,
+      ...(candidate.agentInputs?.map(input => input.roleId) ?? []),
+      ...(stage?.kind === "review-chain" ? stage.roleIds ?? [stage.roleId] : [])
+    ];
     return roles.includes(turn.roleId) ? candidate.id : undefined;
   };
   const owned = new Map(all.map(turn => [turn.id, owner(turn)]));
   const turns = all.filter(turn => owned.get(turn.id) === step.id).sort((a, b) => a.startedAt - b.startedAt);
-  if (!turns.length) return { ...result, empty: step.usageTracked && step.startedAt >= log.since() ? step.endedAt === undefined ? "pending" : "unreported" : "unavailable" };
+  if (!turns.length) return {
+    ...result,
+    empty: step.usageTracked && step.startedAt >= log.since() ? step.endedAt === undefined ? "pending" : "unreported" : "unavailable"
+  };
   const beforeTracking = step.startedAt < log.since();
   const ambiguous = all.some(turn => turn.journeyId === undefined && owned.get(turn.id) === undefined
     && turn.stageId === (step.stageId ?? `${task!.id}:plan`) && turn.startedAt < (step.endedAt ?? Infinity) && (turn.endedAt ?? ctx.now) > step.startedAt);
@@ -124,11 +135,19 @@ export function nodeUsage(log: WorkLogReader, request: { taskId: Id; nodeId: Id 
     let key = turn.agentRunId;
     if (!key) {
       const prior = legacy.get(seat);
-      if (!prior || turn.reason === "first" || prior.session !== turn.sessionId || prior.profile !== turn.profileId) legacy.set(seat, { id: turn.id, session: turn.sessionId, profile: turn.profileId });
+      if (!prior || turn.reason === "first" || prior.session !== turn.sessionId || prior.profile !== turn.profileId) legacy.set(
+        seat,
+        {
+        id: turn.id,
+        session: turn.sessionId,
+        profile: turn.profileId
+      }
+      );
       key = legacy.get(seat)!.id;
     }
     const list = groups.get(key) ?? [];
-    list.push(turn); groups.set(key, list);
+    list.push(turn);
+    groups.set(key, list);
   }
   const starts = new Map<string, number>();
   const lines = log.lines({ taskId: request.taskId });
@@ -140,7 +159,10 @@ export function nodeUsage(log: WorkLogReader, request: { taskId: Id; nodeId: Id 
     if (seatKey !== undefined) starts.set(seatKey, start);
     const ids = new Set(list.map(turn => turn.id));
     const models = new Map<string, number>();
-    for (const line of lines) if (ids.has(line.turnId) && line.total !== undefined) models.set(lineModelLabel(line), (models.get(lineModelLabel(line)) ?? 0) + line.total);
+    for (const line of lines) if (ids.has(line.turnId) && line.total !== undefined) models.set(
+      lineModelLabel(line),
+      (models.get(lineModelLabel(line)) ?? 0) + line.total
+    );
     return { key, roleId: first.roleId, toolId: first.toolId, model: listWords([...new Set(list.map(turnModelLabel))]), ...(seat !== undefined ? { seat } : {}), start,
       ...amounts(list, false, lines), models: [...models].map(([label, tokens]) => ({ label, tokens })) };
   });

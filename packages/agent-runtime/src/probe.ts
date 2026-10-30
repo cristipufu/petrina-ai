@@ -45,7 +45,10 @@ export async function checkAgentTool(options: {
       return { status: "not-installed", detail: `Petrina's connector for ${adapter.name} is missing. Run bun install in Petrina's folder.` };
     }
     if (!options.which(adapter.cli)) return { status: "not-installed" };
-    if (adapter.installed && !adapter.installed()) return { status: "not-installed", detail: `${adapter.name}'s connector is missing. Run bun run petrina antigravity install.` };
+    if (adapter.installed && !adapter.installed()) return {
+      status: "not-installed",
+      detail: `${adapter.name}'s connector is missing. Run bun run petrina antigravity install.`
+    };
   }
   const limit = options.timeoutMs ?? AGENT_CHECK_TIMEOUT_MS;
   const controller = new AbortController();
@@ -85,7 +88,10 @@ export async function checkAgentTool(options: {
     if (adapter.login === "open") login ??= "opened";
     else await Promise.race([heard, late]);
     void agent.stop(2_000);
-    if (login === undefined) return { status: "unknown", detail: `${adapter.name} started but did not say whether it is logged in within ${Math.round(limit / 1000)} seconds.` };
+    if (login === undefined) return {
+      status: "unknown",
+      detail: `${adapter.name} started but did not say whether it is logged in within ${Math.round(limit / 1000)} seconds.`
+    };
     return { status: login === "none" ? "logged-out" : "ready" };
   } catch (error) {
     if (isAuthRequired(error)) return { status: "logged-out" };

@@ -1,5 +1,25 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, ArrowUpToLine, Ban, Check, CheckCircle2, ChevronRight, Clock3, Ellipsis, ExternalLink, GitPullRequest, Hand, ListOrdered, LoaderCircle, MessageSquare, Monitor, Pause, Play, TriangleAlert, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpToLine,
+  Ban,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Clock3,
+  Ellipsis,
+  ExternalLink,
+  GitPullRequest,
+  Hand,
+  ListOrdered,
+  LoaderCircle,
+  MessageSquare,
+  Monitor,
+  Pause,
+  Play,
+  TriangleAlert,
+  X
+} from "lucide-react";
 import { canEditTaskDependencies, mainLine, openStep, sourceLabel, TAKE_OVER_WORDS, type State, type Task } from "@petrina/core";
 import { sim } from "../engine";
 import { duration, safeUrl, STATE_LABEL, stateLabel, type Lookup } from "../lib";
@@ -79,7 +99,11 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
   useDismiss(menuBox, menu, closeMenu);
   // Focus moves into the sheet, and back to whatever opened it when it closes: the task's card if
   // that moved meanwhile (pausing moves it between sections).
-  useFocusTrap(sheet, onClose, () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"], .history-card[data-task-id="${task.id}"]`));
+  useFocusTrap(
+    sheet,
+    onClose,
+    () => document.querySelector<HTMLElement>(`.card-open[aria-describedby~="status-${task.id}"], .history-card[data-task-id="${task.id}"]`)
+  );
   const viewport = useViewport();
   // Narrow or short sheets keep the one-line title in the bar from the start.
   const compact = viewport.width < 900 || viewport.height < 640;
@@ -92,10 +116,17 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
   const driving = task.driving !== undefined;
   const label = driving ? "You're driving" : stateLabel(task, state);
 
-  useEffect(() => { globalScroll.current = 0; scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); }, [task.id]);
+  useEffect(() => {
+    globalScroll.current = 0;
+    scroller.current?.scrollTo({ top: 0 });
+    setSessionStep(undefined);
+  }, [task.id]);
   useLayoutEffect(() => { scroller.current?.scrollTo({ top: selectedStep ? 0 : globalScroll.current }); }, [selectedStep]);
   useEffect(() => {
-    if (tab !== "session") { scroller.current?.scrollTo({ top: 0 }); setSessionStep(undefined); }
+    if (tab !== "session") {
+      scroller.current?.scrollTo({ top: 0 });
+      setSessionStep(undefined);
+    }
     if (tab !== "overview") setPane("details");
   }, [tab]);
   useEffect(() => { if (selectedStep) setPane("details"); }, [selectedStep, task.id]);
@@ -103,7 +134,11 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
     sheet.current?.querySelector<HTMLElement>('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
   }, [task.id]);
   const taskDetails = () => onStep(undefined);
-  const readSession = (id: string, name: string) => { setSessionStep({ id, name }); onTab("session"); setPane("details"); };
+  const readSession = (id: string, name: string) => {
+    setSessionStep({ id, name });
+    onTab("session");
+    setPane("details");
+  };
   const listed = tasks.some((entry) => entry.id === task.id) ? tasks : [task, ...tasks];
   const asks = state.inbox.filter((item) => item.taskId === task.id);
   const activeStep = openStep(task);
@@ -132,16 +167,33 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
   return (
     <>
       <div className="scrim" onClick={onClose} />
-      <section ref={sheet} className={`sheet task-workspace ${short ? "short" : ""}`} role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabIndex={-1}>
+      <section
+        ref={sheet}
+        className={`sheet task-workspace ${short ? "short" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sheet-title"
+        tabIndex={-1}
+      >
         <WaitingLine text={waiting} />
         <div className="task-workspace-bar">
           <button className="btn quiet small" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" /> Back</button>
           <div className="task-workspace-title">
             <h1 className="sheet-title" id="sheet-title" title={task.title}>{task.title}</h1>
-            <div className="sheet-meta"><ProductName product={product} />{task.source && <span className="source-label">{sourceLabel(task.source)}</span>}<span aria-hidden="true">·</span><span>{label}</span>{<span className="num">· {task.startedAt === undefined ? "created" : "started"} {duration(task.startedAt ?? task.createdAt, state.now)} ago</span>}{task.screenAllowed && <span>· Screen allowed for this task</span>}</div>
+            <div className="sheet-meta"><ProductName product={product} />{task.source && <span className="source-label">{sourceLabel(task.source)}</span>}<span aria-hidden="true">·</span><span>{label}</span>{<span className="num">· {task.startedAt === undefined ? "created" : "started"} {duration(
+              task.startedAt ?? task.createdAt,
+              state.now
+            )} ago</span>}{task.screenAllowed && <span>· Screen allowed for this task</span>}</div>
           </div>
           <div className="sheet-actions">
-            {task.repositories ? <button className="btn quiet small" onClick={() => { taskDetails(); onTab("overview"); setPane("details"); }}>Deliveries · {task.repositories.filter((work) => work.pr || work.release || work.landed || work.nothingToPublish).length} of {task.repositories.length}</button> : prUrl && (
+            {task.repositories ? <button
+              className="btn quiet small"
+              onClick={() => {
+              taskDetails();
+              onTab("overview");
+              setPane("details");
+            }}
+            >Deliveries · {task.repositories.filter((work) => work.pr || work.release || work.landed || work.nothingToPublish).length} of {task.repositories.length}</button> : prUrl && (
               <a className="btn quiet small" href={prUrl} target="_blank" rel="noopener noreferrer" title="Open the pull request on GitHub">
                 Pull request #{task.pr?.number}
                 <ExternalLink size={14} aria-hidden="true" />
@@ -176,9 +228,20 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                 </button>
                 {menu && (
                   <div className="menu" role="menu" style={{ right: 0, top: "calc(100% + 4px)" }}>
-                    {canEditTaskDependencies(task) && onDependencies && <button role="menuitem" onClick={act(() => onDependencies(task))}>Start after other tasks…</button>}
+                    {canEditTaskDependencies(task) && onDependencies && <button
+                      role="menuitem"
+                      onClick={act(() => onDependencies(task))}
+                    >Start after other tasks…</button>}
                     {/* Its screen requests go ahead even while the switch is off, one agent at a time. */}
-                    <button role="menuitemcheckbox" aria-checked={task.screenAllowed === true} autoFocus={task.state !== "queued"} onClick={act(() => sim.setTaskScreen(task.id, !task.screenAllowed))}>
+                    <button
+                      role="menuitemcheckbox"
+                      aria-checked={task.screenAllowed === true}
+                      autoFocus={task.state !== "queued"}
+                      onClick={act(() => sim.setTaskScreen(
+                      task.id,
+                      !task.screenAllowed
+                    ))}
+                    >
                       <Monitor size={16} />
                       Allow the screen for this task
                       {task.screenAllowed && <Check size={16} className="menu-check" aria-hidden="true" />}
@@ -196,7 +259,13 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                         {task.startedAt === undefined && <button role="menuitem" onClick={act(() => sim.moveToBacklog(task.id))}>Move to backlog</button>}
                       </>
                     )}
-                    <button role="menuitem" className="danger" disabled={driving} title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined} onClick={act(() => sim.cancel(task.id))}>
+                    <button
+                      role="menuitem"
+                      className="danger"
+                      disabled={driving}
+                      title={driving ? TAKE_OVER_WORDS.handBackFirst : undefined}
+                      onClick={act(() => sim.cancel(task.id))}
+                    >
                       <Ban size={16} />
                       {driving ? `Cancel task (${TAKE_OVER_WORDS.handBackFirst.toLowerCase()})` : "Cancel task"}
                     </button>
@@ -210,13 +279,33 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
           </div>
         </div>
 
-        <nav className="task-workspace-switcher" aria-label="Task workspace">{["tasks", "flow", "details"].map((name) => <button key={name} className={`btn small ${pane === name ? "on" : "quiet"}`} aria-pressed={pane === name} onClick={() => setPane(name)}>{name === "tasks" ? "Tasks" : name === "flow" ? "Flow" : "Details"}</button>)}</nav>
+        <nav
+          className="task-workspace-switcher"
+          aria-label="Task workspace"
+        >{[
+          "tasks",
+          "flow",
+          "details"
+        ].map((name) => <button
+          key={name}
+          className={`btn small ${pane === name ? "on" : "quiet"}`}
+          aria-pressed={pane === name}
+          onClick={() => setPane(name)}
+        >{name === "tasks" ? "Tasks" : name === "flow" ? "Flow" : "Details"}</button>)}</nav>
         <div className="task-workspace-columns" data-pane={pane}>
           <aside className="task-list" aria-label="Tasks">
             <div className="task-list-heading"><h2>Tasks</h2><span className="quiet-text num">{listed.length}</span></div>
             <div className="task-list-scroll">
               {listed.map((entry) => (
-                <button key={entry.id} className={`task-list-item ${entry.id === task.id ? "selected" : ""}`} aria-current={entry.id === task.id ? "true" : undefined} onClick={() => { onTask(entry.id); setPane("flow"); }}>
+                <button
+                  key={entry.id}
+                  className={`task-list-item ${entry.id === task.id ? "selected" : ""}`}
+                  aria-current={entry.id === task.id ? "true" : undefined}
+                  onClick={() => {
+                  onTask(entry.id);
+                  setPane("flow");
+                }}
+                >
                   <span className="task-list-meta"><span className="task-list-product"><ProductName product={find.product(entry.productId)} />{entry.source && <> <span className="source-label">{sourceLabel(entry.source)}</span></>}</span><TaskActivity task={entry} /></span>
                   <span className="task-list-title">{entry.title}</span>
                   <span className="task-list-status">{entry.held && entry.state === "queued" ? "On hold" : mainLine(entry) || STATE_LABEL[entry.state]}</span>
@@ -232,7 +321,18 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
             scroller.current?.scrollTo({ top: id ? 0 : globalScroll.current });
           }} />
           <aside className="task-detail-panel" aria-label="Task and step details">
-          {selectedStep ? <div className="step-panel-bar"><button className="btn quiet small" onClick={taskDetails}><ArrowLeft size={16} aria-hidden="true" /> Back to task</button><span className="quiet-text">Step details</span></div> : <nav className="tabs" role="tablist" aria-label="Task details" onKeyDown={onTabKey}>
+          {selectedStep ? <div className="step-panel-bar"><button
+            className="btn quiet small"
+            onClick={taskDetails}
+          ><ArrowLeft
+            size={16}
+            aria-hidden="true"
+          /> Back to task</button><span className="quiet-text">Step details</span></div> : <nav
+            className="tabs"
+            role="tablist"
+            aria-label="Task details"
+            onKeyDown={onTabKey}
+          >
             {TABS.map((entry) => (
               <button
                 key={entry.id}
@@ -242,7 +342,10 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
                 aria-controls="sheet-panel"
                 tabIndex={tab === entry.id ? 0 : -1}
                 className={tab === entry.id ? "on" : ""}
-                onClick={() => { onTab(entry.id); setPane("details"); }}
+                onClick={() => {
+                  onTab(entry.id);
+                  setPane("details");
+                }}
               >
                 {entry.label}
                 {entry.id === "session" && hasDraft && <span className="draft-mark" aria-label="Unsent message" title="Unsent message" />}
@@ -251,10 +354,30 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
             ))}
           </nav>}
 
-          <div className="sheet-scroll" ref={scroller}><div className="sheet-body" id="sheet-panel" role={selectedStep ? undefined : "tabpanel"} aria-labelledby={selectedStep ? "journey-details-title" : `tab-${tab}`}>
+          <div
+            className="sheet-scroll"
+            ref={scroller}
+          ><div
+            className="sheet-body"
+            id="sheet-panel"
+            role={selectedStep ? undefined : "tabpanel"}
+            aria-labelledby={selectedStep ? "journey-details-title" : `tab-${tab}`}
+          >
             <div className="selected-step" hidden={!selectedStep} ref={setDetailsTarget} />
             <div className="task-global-details" hidden={!!selectedStep}>
-            {tab === "overview" && asks.length > 0 && <section className="sheet-section task-decisions" aria-label="Waiting for you">{asks.map((item) => <Ask key={item.id} item={item} state={state} find={find} onOpen={(_id, next) => onTab(next ?? "session")} />)}</section>}
+            {tab === "overview" && asks.length > 0 && <section
+              className="sheet-section task-decisions"
+              aria-label="Waiting for you"
+            >{asks.map((item) => <Ask
+              key={item.id}
+              item={item}
+              state={state}
+              find={find}
+              onOpen={(
+              _id,
+              next
+            ) => onTab(next ?? "session")}
+            />)}</section>}
             {tab === "overview" && (
               <Overview
                 separateFlow
@@ -271,7 +394,18 @@ export function TaskSheet({ task, tasks, onTask, state, find, tab, onTab, select
             {tab === "plan" && <PlanView task={task} state={state} find={find} />}
             {tab === "design" && <DesignView task={task} find={find} />}
             {tab === "review" && <ReviewView task={task} now={state.now} find={find} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />}
-            {tab === "session" && !selectedStep && <Session.Log key={sessionStep?.id ?? "latest"} task={task} state={state} find={find} scroller={scroller} onTab={onTab} {...(sessionStep ? { step: sessionStep, onStepDone: () => setSessionStep(undefined) } : {})} />}
+            {tab === "session" && !selectedStep && <Session.Log
+              key={sessionStep?.id ?? "latest"}
+              task={task}
+              state={state}
+              find={find}
+              scroller={scroller}
+              onTab={onTab}
+              {...(sessionStep ? {
+              step: sessionStep,
+              onStepDone: () => setSessionStep(undefined)
+            } : {})}
+            />}
           </div>
           </div></div>
 

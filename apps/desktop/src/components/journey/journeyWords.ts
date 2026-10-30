@@ -47,7 +47,10 @@ export function toolLine(node: JourneyNode, find: Lookup): string | undefined {
       return `“${entry.title}”${state ? ` · ${state}` : ""}`;
     }).join(", ") : node.waitsOn?.length ? quoteTitles(node.waitsOn.map((entry) => entry.title)) : undefined;
   } else {
-    line = profilesOf(node, find).map((profile) => `${node.legacy ? "Planned: " : ""}${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profileModelName(profile)}`).join("\n");
+    line = profilesOf(
+      node,
+      find
+    ).map((profile) => `${node.legacy ? "Planned: " : ""}${find.tool(profile.toolId)?.name ?? profile.toolId} · ${profileModelName(profile)}`).join("\n");
   }
   return [line, node.waitReason].filter(Boolean).join("\n") || undefined;
 }
@@ -117,7 +120,14 @@ export const unstopped = (text: string) => text.replace(/\.+$/, "");
 
 /** One list item for screen readers: number, name, state, tool and model, time, outcome and why it moved on. */
 export function spokenStep(node: JourneyNode, index: number, find: Lookup, now: number): string {
-  const marks = [node.roundMark ? `round ${node.roundMark}` : "", node.updateMark ? "update" : "", node.fixMark ? `fix ${node.fixMark}` : "", node.portMark ? "port review" : "", node.callMark ? "your call" : "", node.repeatMark ? "repeated" : ""].filter(Boolean);
+  const marks = [
+    node.roundMark ? `round ${node.roundMark}` : "",
+    node.updateMark ? "update" : "",
+    node.fixMark ? `fix ${node.fixMark}` : "",
+    node.portMark ? "port review" : "",
+    node.callMark ? "your call" : "",
+    node.repeatMark ? "repeated" : ""
+  ].filter(Boolean);
   const name = [visibleStepName(node), ...marks].join(", ");
   const parts = [`${index + 1}. ${name}`, stateWords(node)];
   for (const profile of profilesOf(node, find)) parts.push(`${node.legacy ? "Planned: " : ""}${profileText(profile, find, true)}`);

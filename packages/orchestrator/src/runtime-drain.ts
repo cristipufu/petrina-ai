@@ -14,7 +14,10 @@ export async function drainRuntime(effects: DrainEffects, clock: DrainClock, lim
   let last = -1;
   while (!effects.stopped()) {
     const left = effects.inFlight();
-    if (left !== last) { onWait?.(left); last = left; }
+    if (left !== last) {
+      onWait?.(left);
+      last = left;
+    }
     if (left === 0) {
       const failure = effects.failure?.();
       if (failure) throw failure.error;
@@ -34,6 +37,17 @@ export function inFlightWork(owners: { agents: number; settling: number; copyCle
 }
 
 /** Counts are already filtered by the host's paused-check ownership observations. */
-export function keepsIdleSleep(owners: { stopped: boolean; drivers: boolean; settling: boolean; agents: boolean; helpers: boolean; screenGroups: boolean; switching: boolean; copyCleanups: boolean; cleanupJobs: boolean; extraChecks: boolean }): boolean {
+export function keepsIdleSleep(owners: {
+  stopped: boolean;
+  drivers: boolean;
+  settling: boolean;
+  agents: boolean;
+  helpers: boolean;
+  screenGroups: boolean;
+  switching: boolean;
+  copyCleanups: boolean;
+  cleanupJobs: boolean;
+  extraChecks: boolean
+}): boolean {
   return !owners.stopped && (owners.drivers || owners.settling || owners.agents || owners.helpers || owners.screenGroups || owners.switching || owners.copyCleanups || owners.cleanupJobs || owners.extraChecks);
 }

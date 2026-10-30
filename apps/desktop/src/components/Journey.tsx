@@ -37,8 +37,28 @@ export function Journey(props: JourneyProps) {
 }
 
 function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false, detailsTarget, onSelectionChange, selectedStep, selectedAttempt }: JourneyProps) {
-  const profiles = useMemo(() => [...(task.maintenance ? [task.maintenance.profile] : []), ...state.profiles, ...(state.retiredProfiles ?? [])], [state.profiles, state.retiredProfiles, task.maintenance?.profile]);
-  const viewKey = journeyViewKey(task, { roles: state.roles, profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) });
+  const profiles = useMemo(
+    () => [
+    ...(task.maintenance ? [task.maintenance.profile] : []),
+    ...state.profiles,
+    ...(state.retiredProfiles ?? [])
+  ],
+    [
+    state.profiles,
+    state.retiredProfiles,
+    task.maintenance?.profile
+  ]
+  );
+  const viewKey = journeyViewKey(
+    task,
+    {
+    roles: state.roles,
+    profiles,
+    tasks: state.tasks,
+    inbox: state.inbox,
+    ...(state.planner ? { planner: state.planner } : {})
+  }
+  );
   const view = useMemo(
     () => journeyView(task, { roles: state.roles, profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
     // A WebSocket update replaces every task object, including the long conversation history. Only
@@ -65,7 +85,17 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
     const measure = () =>
       setSpace((old) => {
         const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-        const next = { width: el.clientWidth, rem, cap: workspace ? el.clientHeight : Math.round(Math.max(18 * rem, Math.min(28 * rem, window.innerHeight * 0.55))) };
+        const next = {
+          width: el.clientWidth,
+          rem,
+          cap: workspace ? el.clientHeight : Math.round(Math.max(
+          18 * rem,
+          Math.min(
+          28 * rem,
+          window.innerHeight * 0.55
+        )
+        ))
+        };
         return old.width === next.width && old.rem === next.rem && old.cap === next.cap ? old : next;
       });
     measure();
@@ -86,12 +116,29 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
     const fonts = document.fonts;
     void fonts?.ready?.then(changed);
     fonts?.addEventListener("loadingdone", changed);
-    return () => { mounted = false; fonts?.removeEventListener("loadingdone", changed); };
+    return () => {
+      mounted = false;
+      fonts?.removeEventListener("loadingdone", changed);
+    };
   }, []);
 
   const start = startWords(view, state.now);
   // Only a change to the journey's shape moves boxes: a new status line or a ticking clock does not.
-  const shape = JSON.stringify([start, view.end?.text, view.rest, view.nodes.map((node) => [node.id, node.kind, node.state, node.run, node.tone, node.reason, node.asks.length, node.team?.length])]);
+  const shape = JSON.stringify([
+    start,
+    view.end?.text,
+    view.rest,
+    view.nodes.map((node) => [
+    node.id,
+    node.kind,
+    node.state,
+    node.run,
+    node.tone,
+    node.reason,
+    node.asks.length,
+    node.team?.length
+  ])
+  ]);
   const layout = useMemo(() => {
     const probe = labelProbe.current;
     const measurements = new Map<string, { width: number; height: number }>();
@@ -132,10 +179,22 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
           kind: item.kind,
           ...(node ? { node } : {}),
           ...(node?.roleId && find.role(node.roleId) ? { role: find.role(node.roleId)! } : {}),
-          ...(item.kind === "start" ? { text: start } : item.kind === "end" ? { text: view.end?.text ?? "", endState: view.end?.state ?? "done" } : item.kind === "rest" ? { text: view.rest ?? "" } : {}),
+          ...(item.kind === "start" ? { text: start } : item.kind === "end" ? {
+            text: view.end?.text ?? "",
+            endState: view.end?.state ?? "done"
+          } : item.kind === "rest" ? { text: view.rest ?? "" } : {}),
           ...(node && toolLine(node, find) ? { tool: toolLine(node, find)! } : {}),
           foot: node ? footLine(node, state.now, find) : "",
-          asks: (node?.asks ?? []).map((ask) => ({ id: ask.id, label: `${askKind(ask)} · ${duration(ask.at, ask.endedAt ?? state.now)}`, title: ask.title, outcome: askOutcome(ask), open: ask.endedAt === undefined })),
+          asks: (node?.asks ?? []).map((ask) => ({
+            id: ask.id,
+            label: `${askKind(ask)} · ${duration(
+            ask.at,
+            ask.endedAt ?? state.now
+          )}`,
+            title: ask.title,
+            outcome: askOutcome(ask),
+            open: ask.endedAt === undefined
+          })),
           width: item.width,
           height: item.height,
           bodyHeight: item.bodyHeight,
@@ -146,7 +205,20 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
         const key = JSON.stringify([item.x, item.y, data]);
         const hit = cache.current.get(item.id);
         if (hit && hit.key === key) return hit.node;
-        const made: Node<BoxData> = { id: item.id, type: "journey", position: { x: item.x, y: item.y }, data, width: item.width, height: item.height, draggable: false, selectable: false, connectable: false };
+        const made: Node<BoxData> = {
+          id: item.id,
+          type: "journey",
+          position: {
+          x: item.x,
+          y: item.y
+        },
+          data,
+          width: item.width,
+          height: item.height,
+          draggable: false,
+          selectable: false,
+          connectable: false
+        };
         cache.current.set(item.id, { key, node: made });
         return made;
       });
@@ -160,7 +232,20 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
         source: edge.source,
         target: edge.target,
         type: "journey",
-        data: { path: edge.path, tipX: edge.tipX, tipY: edge.tipY, tip: Math.round(space.rem * 0.5), ...(edge.label ? { label: edge.label } : {}), labelX: edge.labelX, labelY: edge.labelY, labelWidth: edge.labelWidth, kind: edge.kind, labelTone: edge.labelTone, live: edge.live, motion: edge.live && !reduced },
+        data: {
+          path: edge.path,
+          tipX: edge.tipX,
+          tipY: edge.tipY,
+          tip: Math.round(space.rem * 0.5),
+          ...(edge.label ? { label: edge.label } : {}),
+          labelX: edge.labelX,
+          labelY: edge.labelY,
+          labelWidth: edge.labelWidth,
+          kind: edge.kind,
+          labelTone: edge.labelTone,
+          live: edge.live,
+          motion: edge.live && !reduced
+        },
         selectable: false,
         focusable: false,
       })),
@@ -198,13 +283,52 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
       <div className="journey-canvas" ref={canvas}>
         <span className="journey-rem" ref={remProbe} aria-hidden="true" />
         <span className="journey-label-measure" ref={labelProbe} aria-hidden="true" />
-        <Diagram nodes={nodes} edges={edges} items={layout.items} contentHeight={layout.height} height={height} target={target} {...(focused || selected ? { focused: focused ?? selected } : {})} glide={glide} minZoom={minZoom} following={following} setFollowing={setFollowing} onSelect={select} scrollable={workspace} />
+        <Diagram
+          nodes={nodes}
+          edges={edges}
+          items={layout.items}
+          contentHeight={layout.height}
+          height={height}
+          target={target}
+          {...(focused || selected ? { focused: focused ?? selected } : {})}
+          glide={glide}
+          minZoom={minZoom}
+          following={following}
+          setFollowing={setFollowing}
+          onSelect={select}
+          scrollable={workspace}
+        />
       </div>
       <p className="sr-only" aria-live="polite">
         {chosen ? `${chosen.name}: its details are ${workspace ? "in the right panel" : "below the diagram"}.` : ""}
       </p>
-      {workspace ? detailsTarget && createPortal(chosen ? <StepDetails key={chosen.id} selectedAttempt={workspace ? selectedAttempt : localAttempt} onOriginal={select} node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} {...(onOpenTask ? { onOpen: onOpenTask } : {})} /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null, detailsTarget) : chosen ? (
-        <StepDetails selectedAttempt={workspace ? selectedAttempt : localAttempt} onOriginal={select} node={chosen} task={task} state={state} find={find} now={state.now} onPlan={onPlan} onClose={() => setSelected(undefined)} {...(onOpenTask ? { onOpen: onOpenTask } : {})} />
+      {workspace ? detailsTarget && createPortal(
+        chosen ? <StepDetails
+        key={chosen.id}
+        selectedAttempt={workspace ? selectedAttempt : localAttempt}
+        onOriginal={select}
+        node={chosen}
+        task={task}
+        state={state}
+        find={find}
+        now={state.now}
+        onPlan={onPlan}
+        {...(onOpenTask ? { onOpen: onOpenTask } : {})}
+      /> : selected ? <p className="empty-state">This step is no longer available in this task's flow. Go back to the task or choose another step.</p> : null,
+        detailsTarget
+      ) : chosen ? (
+        <StepDetails
+          selectedAttempt={workspace ? selectedAttempt : localAttempt}
+          onOriginal={select}
+          node={chosen}
+          task={task}
+          state={state}
+          find={find}
+          now={state.now}
+          onPlan={onPlan}
+          onClose={() => setSelected(undefined)}
+          {...(onOpenTask ? { onOpen: onOpenTask } : {})}
+        />
       ) : (
         <p className="note journey-hint">Click a step to see its details here.</p>
       )}

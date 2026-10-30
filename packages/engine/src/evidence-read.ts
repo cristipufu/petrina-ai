@@ -10,5 +10,31 @@ const codec: EvidencePageCodec = {
   fingerprint, encodeCursor: cursor, decodeCursor: value => JSON.parse(Buffer.from(value, "base64url").toString()),
 };
 export function position(raw: string | undefined, key: string): number | undefined { return evidencePosition(raw, key, codec); }
-export function paginate<T>(items: readonly T[], args: { cursor?: string; limit?: number }, scope: unknown): Result { return paginateEvidence(items, args, scope, codec); }
-export function readText(value: unknown, args: { cursor?: string; limit?: number }, scope: unknown, extra: Record<string, unknown> = {}): Result { return readEvidenceText(value, args, scope, extra, codec); }
+export function paginate<T>(
+  items: readonly T[],
+  args: {
+  cursor?: string;
+  limit?: number
+},
+  scope: unknown
+): Result { return paginateEvidence(
+  items,
+  args,
+  scope,
+  codec
+); }
+export function readText(
+  value: unknown,
+  args: {
+  cursor?: string;
+  limit?: number
+},
+  scope: unknown,
+  extra: Record<string, unknown> = {}
+): Result { return readEvidenceText(
+  value,
+  args,
+  scope,
+  extra,
+  codec
+); }

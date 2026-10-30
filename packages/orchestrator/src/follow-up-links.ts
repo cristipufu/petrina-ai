@@ -1,4 +1,23 @@
-import { createTaskState, findingImages, followUpBlock, followUpDescription, followUpKey, followUpSnapshot, followUpTitle, planFollowUps, productsOn, takesFollowUps, completeAll, type DeepMutable, type FollowUpCredit, type FollowUpCreate, type FollowUpLink, type Id, type ReportImage, type Task } from "@petrina/core";
+import {
+  createTaskState,
+  findingImages,
+  followUpBlock,
+  followUpDescription,
+  followUpKey,
+  followUpSnapshot,
+  followUpTitle,
+  planFollowUps,
+  productsOn,
+  takesFollowUps,
+  completeAll,
+  type DeepMutable,
+  type FollowUpCredit,
+  type FollowUpCreate,
+  type FollowUpLink,
+  type Id,
+  type ReportImage,
+  type Task
+} from "@petrina/core";
 import type { RuntimeTask } from "./model.js";
 import type { FollowUpLinkHost } from "./ports/follow-up-links.js";
 
@@ -101,7 +120,10 @@ export class FollowUpLinks {
                 target.followUp = { ...followUp, reports: [...followUp.reports, stored(credit)] };
             }
             finding.tracking = { taskId: targetTaskId };
-            this.host.current().followUpPending = (this.host.current().followUpPending ?? []).map(group => ({ ...group, keys: group.keys.filter(entry => entry !== key) })).filter(group => group.keys.length);
+            this.host.current().followUpPending = (this.host.current().followUpPending ?? []).map(group => ({
+              ...group,
+              keys: group.keys.filter(entry => entry !== key)
+            })).filter(group => group.keys.length);
             if (!this.host.current().tasks.includes(source)) this.host.saveArchived(source);
             return record(link);
           });
@@ -121,7 +143,10 @@ export class FollowUpLinks {
         if (!saved) for (const line of prepared.session.slice(sessionLength)) for (const image of line.images ?? [])
           await this.host.discardPreparedPicture(targetTaskId, image.id);
       }
-    }).finally(() => { releaseSource(); releaseTarget(); });
+    }).finally(() => {
+      releaseSource();
+      releaseTarget();
+    });
   }
 
   beforeRemoval(task: RuntimeTask): Promise<void> {
@@ -152,12 +177,18 @@ export class FollowUpLinks {
     ];
     // An empty pass must not save. That save retires a finished task still being updated, and a full disk
     // would fail outside the task's own cleanup. The next catch-up records a link that is still missing.
-    if (!plan.created.length && !plan.linked.length && !plan.tracks.length && !plan.released.length && samePending(this.host.current().followUpPending, pending)) return;
+    if (!plan.created.length && !plan.linked.length && !plan.tracks.length && !plan.released.length && samePending(
+      this.host.current().followUpPending,
+      pending
+    )) return;
     try {
       // Keep a saved retry until the link itself is saved. Replacing the list first drops an archived
       // report, and a restart never sees it again.
       const released = new Set(plan.released.map(entry => followUpKey(entry.taskId, entry.findingId)));
-      const previous = this.pending().map(group => ({ ...group, keys: group.keys.filter(key => !released.has(key) && !this.linkedKey(key)) })).filter(group => group.keys.length);
+      const previous = this.pending().map(group => ({
+        ...group,
+        keys: group.keys.filter(key => !released.has(key) && !this.linkedKey(key))
+      })).filter(group => group.keys.length);
       this.host.current().followUpPending = mergePending(previous, pending);
       this.save();
       for (const release of plan.released) this.releaseReport(release);
@@ -268,7 +299,10 @@ export class FollowUpLinks {
         if (task && finding) this.dropPictures(card, task, finding);
         if (rewrite) {
           const names = this.productNames((card.selectedProducts ?? []).map((choice) => choice.productId));
-          card.description = followUpDescription(reports.map(asCredit), names.length ? names : this.productNames([...new Set(reports.flatMap((report) => report.productIds))]));
+          card.description = followUpDescription(
+            reports.map(asCredit),
+            names.length ? names : this.productNames([...new Set(reports.flatMap((report) => report.productIds))])
+          );
         }
       } else if (reports.length !== before.length) {
         const also = card.followUp.alsoReported;
@@ -358,7 +392,10 @@ export class FollowUpLinks {
   }
 
   private unassign(keys: readonly string[]): void {
-    this.host.current().followUpPending = (this.host.current().followUpPending ?? []).map(group => ({ ...group, keys: group.keys.filter(key => !keys.includes(key)) })).filter(group => group.keys.length);
+    this.host.current().followUpPending = (this.host.current().followUpPending ?? []).map(group => ({
+      ...group,
+      keys: group.keys.filter(key => !keys.includes(key))
+    })).filter(group => group.keys.length);
   }
 
   private tasks(): Task[] {
@@ -374,7 +411,10 @@ export class FollowUpLinks {
   }
 
   private cardFor(create: FollowUpCreate): RuntimeTask {
-    const existing = this.host.current().tasks.find((task) => task.followUp?.reports.some((report) => create.keys.includes(followUpKey(report.taskId, report.findingId))));
+    const existing = this.host.current().tasks.find((task) => task.followUp?.reports.some((report) => create.keys.includes(followUpKey(
+      report.taskId,
+      report.findingId
+    ))));
     return existing ?? this.createCard(create);
   }
 
@@ -388,13 +428,30 @@ export class FollowUpLinks {
     const product = this.host.current().products.find((entry) => entry.id === choices[0]?.productId);
     const names = create.productIds.map((productId) => this.host.current().products.find((entry) => entry.id === productId)?.name ?? productId);
     const now = this.host.now();
-    const task: RuntimeTask = createTaskState({ productId: choices[0]?.productId ?? "", title: create.title, description: followUpDescription(create.reports, names), kind: "bug", worksOn: choices, backlog: true }, this.host.current().products,
+    const task: RuntimeTask = createTaskState({
+      productId: choices[0]?.productId ?? "",
+      title: create.title,
+      description: followUpDescription(
+      create.reports,
+      names
+    ),
+      kind: "bug",
+      worksOn: choices,
+      backlog: true
+    }, this.host.current().products,
       { id, timelineId: this.host.id(id), now, priority: this.host.current().tasks.length });
     // Discovery selects the affected products; the coordinator still reviews this inferred request.
     task.explicitStart = false;
     task.repository = {
       productId: task.productId, delivery: task.delivery, workChoice: structuredClone(task.workChoice),
-      ...(product ? { workProduct: { id: product.id, name: product.name, repo: product.repo, path: product.path, remote: product.remote, defaultBranch: product.defaultBranch ?? "main" } } : {}),
+      ...(product ? { workProduct: {
+        id: product.id,
+        name: product.name,
+        repo: product.repo,
+        path: product.path,
+        remote: product.remote,
+        defaultBranch: product.defaultBranch ?? "main"
+      } } : {}),
     };
     task.timeline = [{ id: task.timeline[0]!.id, at: now, text: "Kept as future work", tone: "status" }];
     task.followUp = { reports: create.reports.map(stored) };
@@ -403,7 +460,10 @@ export class FollowUpLinks {
   }
 
   private cardAfterClose(link: FollowUpLink): RuntimeTask {
-    const existing = this.host.current().tasks.find((task) => task.followUp && task.state !== "done" && task.state !== "cancelled" && task.followUp.reports.some((report) => link.keys.includes(followUpKey(report.taskId, report.findingId))));
+    const existing = this.host.current().tasks.find((task) => task.followUp && task.state !== "done" && task.state !== "cancelled" && task.followUp.reports.some((report) => link.keys.includes(followUpKey(
+      report.taskId,
+      report.findingId
+    ))));
     if (existing) return existing;
     return this.createCard({
       title: followUpTitle(link.reports[0]?.text ?? "Older bug"),
@@ -460,7 +520,10 @@ export class FollowUpLinks {
   }
 
   private async keepImages(card: RuntimeTask, reports: readonly FollowUpCredit[]): Promise<boolean> {
-    const kept = new Set(card.session.flatMap(line => (line.images ?? []).flatMap(image => image.from ? [JSON.stringify([image.from.taskId, image.from.imageId])] : [])));
+    const kept = new Set(card.session.flatMap(line => (line.images ?? []).flatMap(image => image.from ? [JSON.stringify([
+      image.from.taskId,
+      image.from.imageId
+    ])] : [])));
     const pending = reports.flatMap(report => report.images).filter(image => {
       const key = JSON.stringify([image.sourceTaskId, image.sourceImageId]);
       if (kept.has(key)) return false;
@@ -470,7 +533,16 @@ export class FollowUpLinks {
     const saved = await completeAll(pending.map(image => this.host.keepPicture(card.id, image)));
     const failed = saved.some(image => image === "failed");
     const images = saved.filter((image): image is ReportImage => !!image && image !== "failed");
-    if (images.length) card.session = [...card.session, { id: this.host.id(card.id), at: this.host.now(), from: "system", text: "Kept from the original report", images }];
+    if (images.length) card.session = [
+      ...card.session,
+      {
+      id: this.host.id(card.id),
+      at: this.host.now(),
+      from: "system",
+      text: "Kept from the original report",
+      images
+    }
+    ];
     return !failed;
   }
 
@@ -501,7 +573,19 @@ function sameKeys(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((key) => right.includes(key));
 }
 
-function mergePending(current: readonly { keys: readonly string[]; cardId?: string; retry?: boolean }[], next: readonly { keys: readonly string[]; cardId?: string; retry?: boolean }[]): { keys: string[]; cardId?: string; retry?: boolean }[] {
+function mergePending(current: readonly {
+  keys: readonly string[];
+  cardId?: string;
+  retry?: boolean
+}[], next: readonly {
+  keys: readonly string[];
+  cardId?: string;
+  retry?: boolean
+}[]): {
+  keys: string[];
+  cardId?: string;
+  retry?: boolean
+}[] {
   const seen = new Set<string>();
   const merged: { keys: string[]; cardId?: string; retry?: boolean }[] = [];
   for (const group of [...current, ...next]) {
@@ -513,7 +597,15 @@ function mergePending(current: readonly { keys: readonly string[]; cardId?: stri
   return merged;
 }
 
-function samePending(current: readonly { keys: readonly string[]; cardId?: string; retry?: boolean }[] | undefined, next: readonly { keys: readonly string[]; cardId?: string; retry?: boolean }[]): boolean {
+function samePending(current: readonly {
+  keys: readonly string[];
+  cardId?: string;
+  retry?: boolean
+}[] | undefined, next: readonly {
+  keys: readonly string[];
+  cardId?: string;
+  retry?: boolean
+}[]): boolean {
   const left = current ?? [];
   return left.length === next.length && left.every((entry, index) => {
     const other = next[index];

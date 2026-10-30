@@ -1,6 +1,35 @@
-import { checkSourceApplicability, checkInputApplicability, checkOutcome, checkOwnershipConfirmed, checkResult, checkSetupOutcome, checkSetupWords, endAgentStep, endPetrinaStep, incompleteCheckOutcome, JOURNEY_WORDS, openStep, sameCheckEnvironmentIdentity, sameCheckExecutorFacts, recordCheckReuse, isCheckEnvironmentBinding, type CheckRun, type JourneyCheckReuse, type CheckEnvironmentBinding } from "@petrina/core";
+import {
+  checkSourceApplicability,
+  checkInputApplicability,
+  checkOutcome,
+  checkOwnershipConfirmed,
+  checkResult,
+  checkSetupOutcome,
+  checkSetupWords,
+  endAgentStep,
+  endPetrinaStep,
+  incompleteCheckOutcome,
+  JOURNEY_WORDS,
+  openStep,
+  sameCheckEnvironmentIdentity,
+  sameCheckExecutorFacts,
+  recordCheckReuse,
+  isCheckEnvironmentBinding,
+  type CheckRun,
+  type JourneyCheckReuse,
+  type CheckEnvironmentBinding
+} from "@petrina/core";
 import type { RepositoryContext } from "./repository-context.js";
-import type { CheckBatchEvidence, CheckEnvironmentObservation, CheckEvidenceHost, CheckVerification, CheckVerificationEffects, CheckEvidenceState, CheckAttemptEffects, CheckEvidenceDeclaration } from "./ports/check-evidence.js";
+import type {
+  CheckBatchEvidence,
+  CheckEnvironmentObservation,
+  CheckEvidenceHost,
+  CheckVerification,
+  CheckVerificationEffects,
+  CheckEvidenceState,
+  CheckAttemptEffects,
+  CheckEvidenceDeclaration
+} from "./ports/check-evidence.js";
 
 /** Records actual boundary observations and owns their verification/repair decisions without native effects. */
 export class CheckEvidence {
@@ -17,7 +46,13 @@ export class CheckEvidence {
       && !!live.attempt.identity && !!after.attempt.identity && sameCheckEnvironmentIdentity(live.attempt.identity, after.attempt.identity)
       && checkInputApplicability(state, after.attempt.input).kind === "matches" && !finalState.trackedChanged
       && results.every(run => sameCheckExecutorFacts(run.executor, after.attempt.executor));
-    const binding: CheckEnvironmentBinding | undefined = stable ? { ...after.attempt.identity!, setupAttempts: { before: live.attempt.id, after: after.attempt.id } } : undefined;
+    const binding: CheckEnvironmentBinding | undefined = stable ? {
+      ...after.attempt.identity!,
+      setupAttempts: {
+      before: live.attempt.id,
+      after: after.attempt.id
+    }
+    } : undefined;
     // A coordinator declaration/source change uses the existing bounded input convergence. A changed
     // executor/probe observation under the same inputs is a setup blocker and never retries a full suite.
     const inputsChanged = !live.valid() || !after.valid() || live.attempt.input.contract !== after.attempt.input.contract
@@ -25,12 +60,27 @@ export class CheckEvidence {
     const blockedReason: Extract<CheckVerification, { kind: "blocked" }>["reason"] = !completeRows ? "native-incomplete"
       : after.outcome.kind !== "verified" ? "setup" : inputsChanged ? "inputs-changed" : !sameEnvironment ? "setup" : "inputs-changed";
     const tree = rawTree;
-    repository.checks = { current: !!binding, ...(binding ? { environment: binding } : {}), at: this.host.now(), ...(before ? { sha: before } : {}), ...(tree ? { tree } : {}), definition, results, ...(stepId && attemptId ? { provenance: { nodeId: stepId, attemptId } } : {}) };
+    repository.checks = {
+      current: !!binding,
+      ...(binding ? { environment: binding } : {}),
+      at: this.host.now(),
+      ...(before ? { sha: before } : {}),
+      ...(tree ? { tree } : {}),
+      definition,
+      results,
+      ...(stepId && attemptId ? { provenance: {
+      nodeId: stepId,
+      attemptId
+    } } : {})
+    };
     const checksStep = openStep(task);
     for (const check of checksStep?.productChecks ?? []) if (check.result === "pending") check.result = "skipped";
     if (provenance && !binding) provenance.passed = false;
     const failed = binding ? this.host.settleFindings(scope, results) : results.filter(run => checkOutcome(run).kind === "failed");
-    const interrupted = results.some((run) => { const kind = checkOutcome(run).kind; return kind === "incomplete" || kind === "unavailable"; });
+    const interrupted = results.some((run) => {
+      const kind = checkOutcome(run).kind;
+      return kind === "incomplete" || kind === "unavailable";
+    });
     for (const entry of entries.values()) if (entry.run && checkOutcome(entry.run).kind === "failed") {
       entry.findingId = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === `Check failed: ${entry.run!.name} (${entry.run!.command})` && (!task.repositories || finding.productIds?.includes(repository.productId)))?.id;
     }
@@ -48,18 +98,59 @@ export class CheckEvidence {
       await this.host.closeEpisode(scope, state, () => live.valid() && after.valid());
     }
     if (binding && live.valid() && after.valid()) delete repository.checkSetupInvalidated;
-    else if (binding) { repository.checks.current = false; return this.blocked(scope, after, "inputs-changed"); }
+    else if (binding) {
+      repository.checks.current = false;
+      return this.blocked(scope, after, "inputs-changed");
+    }
     const incomplete = !binding ? blockedReason === "inputs-changed" ? "Check inputs changed during verification" : blockedReason === "native-incomplete" ? "Product command execution is incomplete or unavailable" : after.outcome.kind !== "verified" ? checkSetupWords(after.outcome) : "Local setup changed during verification"
       : incompleteCheckOutcome(results.map((run) => ({ name: run.name, result: checkResult(run), run })));
     const failureNames = failed.map((run) => run.name).join(", ");
-    this.host.log(scope, failed.length || interrupted ? "warn" : "done", incomplete ? `${incomplete}${failed.length ? ` (${failureNames})` : ""}; original reported results retained` : failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failureNames})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run");
+    this.host.log(
+      scope,
+      failed.length || interrupted ? "warn" : "done",
+      incomplete ? `${incomplete}${failed.length ? ` (${failureNames})` : ""}; original reported results retained` : failed.length ? `Checks: ${failed.length} of ${results.length} failed (${failureNames})` : results.length ? `Checks passed: ${results.map((run) => run.name).join(", ")}` : "No product checks or commit hooks to run"
+    );
     if ((failed.length || interrupted) && this.host.deliveryRole(scope)) {
-      endAgentStep(task, { outcome: incomplete ?? JOURNEY_WORDS.interrupted, reason: incomplete ?? JOURNEY_WORDS.checksFailed(failed.length), tone: "back", end: "failed" }, this.host.now());
+      endAgentStep(
+        task,
+        {
+        outcome: incomplete ?? JOURNEY_WORDS.interrupted,
+        reason: incomplete ?? JOURNEY_WORDS.checksFailed(failed.length),
+        tone: "back",
+        end: "failed"
+      },
+        this.host.now()
+      );
     } else {
-      endPetrinaStep(task, incomplete ? { outcome: incomplete, reason: incomplete, tone: "back" } : failed.length ? { outcome: JOURNEY_WORDS.checks(failed.length, results.length), reason: JOURNEY_WORDS.checksFailed(failed.length), tone: "back" } : { outcome: JOURNEY_WORDS.checks(0, results.length), reason: results.length ? JOURNEY_WORDS.checksPassed : JOURNEY_WORDS.noChecks }, this.host.now());
+      endPetrinaStep(
+        task,
+        incomplete ? {
+        outcome: incomplete,
+        reason: incomplete,
+        tone: "back"
+      } : failed.length ? {
+        outcome: JOURNEY_WORDS.checks(
+        failed.length,
+        results.length
+      ),
+        reason: JOURNEY_WORDS.checksFailed(failed.length),
+        tone: "back"
+      } : {
+        outcome: JOURNEY_WORDS.checks(
+        0,
+        results.length
+      ),
+        reason: results.length ? JOURNEY_WORDS.checksPassed : JOURNEY_WORDS.noChecks
+      },
+        this.host.now()
+      );
     }
     this.host.changed();
-    if (!binding || repository.checks.current === false && results.every(run => checkOutcome(run).kind === "passed")) return this.blocked(scope, after, blockedReason);
+    if (!binding || repository.checks.current === false && results.every(run => checkOutcome(run).kind === "passed")) return this.blocked(
+      scope,
+      after,
+      blockedReason
+    );
     return this.verification(scope, binding, "executed");
   }
 
@@ -69,7 +160,9 @@ export class CheckEvidence {
     const words = reason === "native-incomplete" ? "Product command execution is incomplete or unavailable" : reason === "inputs-changed" ? "Check inputs changed during verification" : live.outcome.kind === "verified" ? "Local setup changed during verification" : checkSetupWords(live.outcome);
     if (step?.kind === "petrina" && step.work === "checks") {
       for (const check of step.productChecks ?? []) if (check.result === "pending" || check.result === "running") {
-        check.result = "skipped"; check.detail = words; check.endedAt = this.host.now();
+        check.result = "skipped";
+        check.detail = words;
+        check.endedAt = this.host.now();
       }
       endPetrinaStep(scope.task, { outcome: "Checks unverified", reason: words, tone: "back" }, this.host.now());
     }
@@ -99,7 +192,8 @@ export class CheckEvidence {
   }
 
   retainIncomplete(scope: RepositoryContext, state: CheckEvidenceState, purpose: JourneyCheckReuse["purpose"], live: CheckEnvironmentObservation): CheckVerification {
-    const { task, work } = scope, saved = work.checks!;
+    const { task, work } = scope;
+    const saved = work.checks!;
     const host = (saved.provenance ? task.journey?.find(step => step.id === saved.provenance!.nodeId) : undefined) ?? task.journey?.at(-1);
     if (host) host.reuses = [...(host.reuses ?? []), { at: this.host.now(), purpose, productId: work.productId,
       ...(saved.provenance ? { attemptId: saved.provenance.attemptId } : {}), basis: state.tree && saved.tree === state.tree ? "same-tree" : "same-commit", originalAt: saved.at,
@@ -134,7 +228,8 @@ export class CheckEvidence {
   applies(scope: RepositoryContext, state: CheckEvidenceState, declaration: CheckEvidenceDeclaration): boolean {
     const { work: repository } = scope;
     if (!repository.checks || !Array.isArray(repository.checks.results) || repository.checks.results.some(run => !run) || !repository.worktree || state.trackedChanged) return false;
-    const { expected, hooks } = declaration, { definition } = state;
+    const { expected, hooks } = declaration;
+    const { definition } = state;
     if (JSON.stringify(expected) !== JSON.stringify(repository.checks.results.map((run) => run.command))) return false;
     if (repository.checks.definition !== undefined) {
       if (repository.checks.definition !== definition) return false;
@@ -171,13 +266,29 @@ export class CheckEvidence {
 
   async attempt<State extends CheckEvidenceState>(scope: RepositoryContext, signal: AbortSignal, purpose: JourneyCheckReuse["purpose"], effects: CheckAttemptEffects<State>): Promise<CheckVerification> {
     const { work } = scope;
-    if (!work.worktree) return { kind: "blocked", productId: work.productId, results: work.checks?.results ?? [], reason: "inputs-changed", setup: { kind: "unobserved" } };
+    if (!work.worktree) return {
+      kind: "blocked",
+      productId: work.productId,
+      results: work.checks?.results ?? [],
+      reason: "inputs-changed",
+      setup: { kind: "unobserved" }
+    };
     const state = await effects.capture();
     const previous = work.checkSetup;
     if (previous && !state.trackedChanged && previous.input.invalidationId === state.invalidationId
       && checkInputApplicability(previous.input, state).kind === "matches" && previous.input.contract === effects.setupContract()) {
       const outcome = checkSetupOutcome(previous);
-      if (["unmet", "unavailable", "incomplete"].includes(outcome.kind)) return { kind: "blocked", productId: work.productId, results: work.checks?.results ?? [], reason: "setup", setup: outcome };
+      if ([
+        "unmet",
+        "unavailable",
+        "incomplete"
+      ].includes(outcome.kind)) return {
+        kind: "blocked",
+        productId: work.productId,
+        results: work.checks?.results ?? [],
+        reason: "setup",
+        setup: outcome
+      };
     }
     if (!effects.setupRequired() && await effects.applies(state)) {
       const live = await effects.observe(state);
@@ -185,7 +296,15 @@ export class CheckEvidence {
       if (live.outcome.kind !== "verified") return this.blocked(scope, live);
       if (!live.valid()) return this.blocked(scope, live, "inputs-changed");
       if (this.matchesEnvironment(scope, live)) return this.reuse(scope, state, purpose, live, signal);
-      if (!live.forceFresh && work.checks!.results.some(run => !["passed", "failed"].includes(checkOutcome(run).kind))) return this.retainIncomplete(scope, state, purpose, live);
+      if (!live.forceFresh && work.checks!.results.some(run => ![
+        "passed",
+        "failed"
+      ].includes(checkOutcome(run).kind))) return this.retainIncomplete(
+        scope,
+        state,
+        purpose,
+        live
+      );
     }
     return effects.execute(state);
   }

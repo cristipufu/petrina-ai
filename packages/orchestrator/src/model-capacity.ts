@@ -48,7 +48,11 @@ export class ModelCapacity {
   constructor(private readonly host: CapacityRecoveryHost) {}
   defer(scope: RepositoryContext, roleId: Id, profileId: Id, error: CapacityRefusal, plannedId: Id, member?: string): boolean {
     const { task } = scope;
-    const sameRetry = (entry: { roleId: Id; profileId: Id; member?: string }) => entry.roleId === roleId && entry.profileId === profileId && entry.member === member;
+    const sameRetry = (entry: {
+      roleId: Id;
+      profileId: Id;
+      member?: string
+    }) => entry.roleId === roleId && entry.profileId === profileId && entry.member === member;
     const tried = task.capacityRetries?.find(sameRetry)?.tried ?? 0;
     const delay = capacityRetryDelay(tried, error.retryAfterMs);
     if (delay !== undefined) {
@@ -78,7 +82,19 @@ export class ModelCapacity {
       task.capacityResume = [...others, next];
     }
   }
-  forget(task: { capacityResume?: { sessionId: string; profileId: Id; roleId: Id; toolId: Id; model: string; member?: string }[] }, match: (entry: { sessionId: string; profileId: Id; roleId: Id; member?: string }) => boolean): void {
+  forget(task: { capacityResume?: {
+    sessionId: string;
+    profileId: Id;
+    roleId: Id;
+    toolId: Id;
+    model: string;
+    member?: string
+  }[] }, match: (entry: {
+    sessionId: string;
+    profileId: Id;
+    roleId: Id;
+    member?: string
+  }) => boolean): void {
     const kept = (task.capacityResume ?? []).filter((entry) => !match(entry));
     if (kept.length) task.capacityResume = kept;
     else delete task.capacityResume;

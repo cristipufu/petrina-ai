@@ -1,5 +1,14 @@
 export type CheckPlace = (() => void) & { waited: boolean };
-type Entry = { order: number; signal: AbortSignal; persistent: boolean; go: (place: CheckPlace) => void; fail: (error: Error) => void; stop: () => void; waited: boolean; onWait?: (closed?: string) => void };
+type Entry = {
+  order: number;
+  signal: AbortSignal;
+  persistent: boolean;
+  go: (place: CheckPlace) => void;
+  fail: (error: Error) => void;
+  stop: () => void;
+  waited: boolean;
+  onWait?: (closed?: string) => void
+};
 
 /** One FIFO for every host check workload. Handoff reserves capacity synchronously. */
 export interface CheckQueueErrors { aborted(): Error; unavailable(reason: string): Error }
@@ -9,7 +18,12 @@ export class CheckQueue {
   private readonly line: Entry[] = [];
   private blocked = 0;
   private order = 0;
-  constructor(private readonly limit: () => number, private readonly closed: () => string | undefined, private readonly draining: () => boolean, readonly errors: CheckQueueErrors) {}
+  constructor(
+    private readonly limit: () => number,
+    private readonly closed: () => string | undefined,
+    private readonly draining: () => boolean,
+    readonly errors: CheckQueueErrors
+  ) {}
 
   get waiting(): number { return this.line.length; }
   get position(): number { return this.running + this.line.length + 1; }
@@ -25,7 +39,10 @@ export class CheckQueue {
       const entry: Entry = { order, signal, persistent, go, fail, onWait, waited: !!closed || !!this.blocked || this.running >= this.limit() || !!this.line.length,
         stop: () => {
           const index = this.line.indexOf(entry);
-          if (index >= 0) { this.line.splice(index, 1); fail(this.errors.aborted()); }
+          if (index >= 0) {
+            this.line.splice(index, 1);
+            fail(this.errors.aborted());
+          }
         } };
       this.line.push(entry);
       this.line.sort((a, b) => a.order - b.order);
@@ -43,7 +60,11 @@ export class CheckQueue {
   block(): () => void {
     this.blocked++;
     let done = false;
-    return () => { if (!done) { done = true; this.blocked--; this.pump(); } };
+    return () => { if (!done) {
+      done = true;
+      this.blocked--;
+      this.pump();
+    } };
   }
 
   pump(): void {
@@ -65,7 +86,10 @@ export class CheckQueue {
     while (!this.blocked && this.running < Math.max(1, this.limit()) && this.line.length) {
       const entry = this.line.shift()!;
       entry.signal.removeEventListener("abort", entry.stop);
-      if (entry.signal.aborted) { entry.fail(this.errors.aborted()); continue; }
+      if (entry.signal.aborted) {
+        entry.fail(this.errors.aborted());
+        continue;
+      }
       this.running++;
       entry.go(Object.assign(this.release(), { waited: entry.waited }));
     }
@@ -75,6 +99,10 @@ export class CheckQueue {
 
   private release(): () => void {
     let done = false;
-    return () => { if (!done) { done = true; this.running--; this.pump(); } };
+    return () => { if (!done) {
+      done = true;
+      this.running--;
+      this.pump();
+    } };
   }
 }

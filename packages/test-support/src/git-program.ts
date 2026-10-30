@@ -26,7 +26,9 @@ export function writeGitProgram(file: string, body: string): void {
 
 /** Git for Windows supplies the same shell boundary; native paths there also accept forward slashes. */
 export function plantedGitProgram(folder: string, name: string): GitProgram {
-  const marks = join(folder, "marks"), marker = join(marks, name), script = join(folder, `${name}.ts`);
+  const marks = join(folder, "marks");
+  const marker = join(marks, name);
+  const script = join(folder, `${name}.ts`);
   mkdirSync(marks, { recursive: true });
   writeFileSync(script, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "ran");\nprocess.exit(1);\n`);
   const command = gitCommand([{ path: process.execPath }, { path: script }]);

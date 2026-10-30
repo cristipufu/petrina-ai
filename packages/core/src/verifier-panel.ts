@@ -27,7 +27,10 @@ export function verifierProfiles(input: {
 /** Open Important reports that lack support from two independent tools. */
 export function findingsNeedingVotes<F extends Finding>(task: Pick<Task, "productId" | "repositories" | "selectedProducts" | "workRows" | "acceptanceBlocked"> & { findings: readonly F[] }, toolOf: (profileId: Id) => Id | undefined): F[] {
   return task.findings.filter((finding) => {
-    if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification || finding.unresolved || exhaustedAcceptanceFailure(task, finding)) return false;
+    if (finding.status !== "open" || finding.severity !== "blocking" || finding.raisedBy === "petrina" || finding.verification || finding.unresolved || exhaustedAcceptanceFailure(
+      task,
+      finding
+    )) return false;
     if (task.repositories && !assignedProducts(task, finding.productIds).length) return false;
     const judgments = finding.judgments ?? [];
     const clashed = judgments.some((entry) => entry.severity === "pre-existing") && judgments.some((entry) => entry.severity === "blocking");
@@ -79,10 +82,12 @@ export function reviewedCode(hunt: Pick<Hunt, "input"> | undefined): ReviewedCod
  */
 function codeChanged(before: ReviewedCode, now: ReviewedCode): boolean {
   const products = (code: ReviewedCode) => new Set(Object.keys({ ...code.heads, ...code.trees }));
-  const earlier = products(before), later = products(now);
+  const earlier = products(before);
+  const later = products(now);
   if (!earlier.size || !later.size) return false;
   return [...new Set([...earlier, ...later])].some((id) => {
-    const trees = [before.trees?.[id], now.trees?.[id]], heads = [before.heads?.[id], now.heads?.[id]];
+    const trees = [before.trees?.[id], now.trees?.[id]];
+    const heads = [before.heads?.[id], now.heads?.[id]];
     if (trees[0] && trees[1]) return trees[0] !== trees[1];
     if (heads[0] && heads[1]) return heads[0] !== heads[1];
     return !earlier.has(id) || !later.has(id);
@@ -139,7 +144,12 @@ export function acceptsAnswer(panel: VerifierPanel, seat: VerifierSeat, finding:
  */
 export function engagedTools(panel: VerifierPanel, finding: Pick<Finding, "id" | "votes">, hunt: Ballot, except?: VerifierSeat): Set<Id> {
   const tools = new Set(panelAnswers(panel, finding, hunt).map((vote) => vote.toolId!));
-  for (const seat of panel.seats) if (seat !== except && seat.findingIds.includes(finding.id) && !seatAnswered(panel, seat, finding, hunt)) tools.add(seat.toolId);
+  for (const seat of panel.seats) if (seat !== except && seat.findingIds.includes(finding.id) && !seatAnswered(
+    panel,
+    seat,
+    finding,
+    hunt
+  )) tools.add(seat.toolId);
   return tools;
 }
 
@@ -166,7 +176,11 @@ export function decide(panel: VerifierPanel, answers: readonly Vote[]): PanelDec
   if (!answers.length) return undefined;
   const real = answers.filter((vote) => vote.verdict === "real");
   const others = answers.filter((vote) => vote.verdict !== "real");
-  if (panel.rule === "majority" ? real.length * 2 >= answers.length : real.length > 0) return { verdict: "real", vote: real[0] ?? answers[0]!, disputed: others };
+  if (panel.rule === "majority" ? real.length * 2 >= answers.length : real.length > 0) return {
+    verdict: "real",
+    vote: real[0] ?? answers[0]!,
+    disputed: others
+  };
   if (panel.rule === "bounded" && answers.length < 3 && panel.usable.length >= 3) return { verdict: "third" };
   const vote = mostCommon(others)!;
   return { verdict: vote.verdict as "not-a-bug" | "nit" | "pre-existing", vote };
@@ -182,7 +196,10 @@ export function rankCandidates<T extends PanelCandidate>(candidates: readonly T[
   const overlaps = (toolId: Id) => authorTools.filter((tool) => tool === toolId).length;
   return candidates
     .map((candidate, index) => ({ candidate, index }))
-    .sort((a, b) => Number(!!b.candidate.usableNow) - Number(!!a.candidate.usableNow) || overlaps(a.candidate.toolId) - overlaps(b.candidate.toolId) || a.index - b.index)
+    .sort((
+      a,
+      b
+    ) => Number(!!b.candidate.usableNow) - Number(!!a.candidate.usableNow) || overlaps(a.candidate.toolId) - overlaps(b.candidate.toolId) || a.index - b.index)
     .map(({ candidate }) => candidate);
 }
 
@@ -193,18 +210,47 @@ const listWords = (names: readonly string[]) => (names.length < 2 ? names.join("
  * ballot already proved keep their tools' places first; any larger evidenced panel stays. The rest of the initial pair
  * avoids the findings' author tools where another usable tool exists. Undefined when no tool is usable.
  */
-export function choosePanel(input: { candidates: readonly PanelCandidate[]; recovered?: readonly PanelCandidate[]; findings: readonly { id: Id; author?: Id }[]; name: (toolId: Id) => string }): VerifierPanel | undefined {
+export function choosePanel(input: {
+  candidates: readonly PanelCandidate[];
+  recovered?: readonly PanelCandidate[];
+  findings: readonly {
+  id: Id;
+  author?: Id
+}[];
+  name: (toolId: Id) => string
+}): VerifierPanel | undefined {
   const recovered = [...new Map((input.recovered ?? []).map((entry) => [entry.toolId, entry])).values()];
   const usable = [...new Set([...input.candidates.map((entry) => entry.toolId), ...recovered.map((entry) => entry.toolId)])];
   if (!usable.length) return undefined;
   const ids = input.findings.map((finding) => finding.id);
   const authorTools = input.findings.map((finding) => finding.author);
-  const fresh = rankCandidates(input.candidates.filter((entry) => !recovered.some((kept) => kept.toolId === entry.toolId)), authorTools).slice(0, Math.max(0, 2 - recovered.length));
+  const fresh = rankCandidates(
+    input.candidates.filter((entry) => !recovered.some((kept) => kept.toolId === entry.toolId)),
+    authorTools
+  ).slice(
+    0,
+    Math.max(
+    0,
+    2 - recovered.length
+  )
+  );
   const avoided = [...new Set(authorTools.filter((tool): tool is Id => !!tool && usable.includes(tool) && !fresh.some((entry) => entry.toolId === tool)))];
   const usableWords = `usable at selection: ${listWords(usable.map(input.name))}`;
   const seats: VerifierSeat[] = [
-    ...recovered.map((entry) => ({ key: entry.profileId, profileId: entry.profileId, toolId: entry.toolId, findingIds: ids, reason: `Kept the place ${input.name(entry.toolId)} already answered in this ballot (${usableWords}).` })),
-    ...fresh.map((entry) => ({ key: entry.profileId, profileId: entry.profileId, toolId: entry.toolId, findingIds: ids, reason: `${usable.length === 1 ? "The only usable tool checks these findings alone" : "Chosen for the initial pair"} (${usableWords}${avoided.length ? `; avoided ${listWords(avoided.map(input.name))}, which reported ${authorTools.filter((tool) => tool && avoided.includes(tool)).length === 1 ? "a finding" : "findings"}` : ""}).` })),
+    ...recovered.map((entry) => ({
+      key: entry.profileId,
+      profileId: entry.profileId,
+      toolId: entry.toolId,
+      findingIds: ids,
+      reason: `Kept the place ${input.name(entry.toolId)} already answered in this ballot (${usableWords}).`
+    })),
+    ...fresh.map((entry) => ({
+      key: entry.profileId,
+      profileId: entry.profileId,
+      toolId: entry.toolId,
+      findingIds: ids,
+      reason: `${usable.length === 1 ? "The only usable tool checks these findings alone" : "Chosen for the initial pair"} (${usableWords}${avoided.length ? `; avoided ${listWords(avoided.map(input.name))}, which reported ${authorTools.filter((tool) => tool && avoided.includes(tool)).length === 1 ? "a finding" : "findings"}` : ""}).`
+    })),
   ];
   const authors = Object.fromEntries(input.findings.flatMap((finding) => (finding.author ? [[finding.id, finding.author]] : [])));
   return { rule: "bounded", usable, ...(Object.keys(authors).length ? { authors } : {}), seats };
@@ -216,7 +262,21 @@ export function choosePanel(input: { candidates: readonly PanelCandidate[]; reco
  * Compatible findings share one place; places split only when independence requires it, usable tools first. A finding
  * with no ready independent tool stays unresolved rather than settling on two answers.
  */
-export function planThirdAnswers(input: { findings: readonly { id: Id; answered: readonly Id[]; author?: Id }[]; suppliers: readonly PanelCandidate[]; name: (toolId: Id) => string }): { seats: VerifierSeat[]; escalations: Record<Id, { reason: string; unresolved?: true }> } {
+export function planThirdAnswers(input: {
+  findings: readonly {
+  id: Id;
+  answered: readonly Id[];
+  author?: Id
+}[];
+  suppliers: readonly PanelCandidate[];
+  name: (toolId: Id) => string
+}): {
+  seats: VerifierSeat[];
+  escalations: Record<Id, {
+  reason: string;
+  unresolved?: true
+}>
+} {
   const escalations: Record<Id, { reason: string; unresolved?: true }> = {};
   const open = (finding: (typeof input.findings)[number]) => input.suppliers.filter((supplier) => !finding.answered.includes(supplier.toolId));
   const seats: VerifierSeat[] = [];
@@ -228,7 +288,14 @@ export function planThirdAnswers(input: { findings: readonly { id: Id; answered:
       const best = [...pool].sort((a, b) => covers(b).length - covers(a).length)[0];
       const covered = best ? covers(best) : [];
       if (!best || !covered.length) return remaining;
-      seats.push({ key: `third:${best.profileId}`, profileId: best.profileId, toolId: best.toolId, findingIds: covered.map((finding) => finding.id), third: true, reason: `Third answer: both first verifiers said ${covered.length === 1 ? "this finding does" : "these findings do"} not block, and ${input.name(best.toolId)} has not answered ${covered.length === 1 ? "it" : "them"} yet.` });
+      seats.push({
+        key: `third:${best.profileId}`,
+        profileId: best.profileId,
+        toolId: best.toolId,
+        findingIds: covered.map((finding) => finding.id),
+        third: true,
+        reason: `Third answer: both first verifiers said ${covered.length === 1 ? "this finding does" : "these findings do"} not block, and ${input.name(best.toolId)} has not answered ${covered.length === 1 ? "it" : "them"} yet.`
+      });
       remaining = remaining.filter((finding) => !covered.includes(finding));
     }
     return remaining;
@@ -240,7 +307,10 @@ export function planThirdAnswers(input: { findings: readonly { id: Id; answered:
     const seat = seats.find((entry) => entry.findingIds.includes(finding.id));
     escalations[finding.id] = seat
       ? { reason: `Both first answers said it does not block; ${input.name(seat.toolId)} gives the third answer.` }
-      : { reason: "Both first answers said it does not block, and no ready independent tool can give the required third answer: it stays Important, unresolved.", unresolved: true };
+      : {
+        reason: "Both first answers said it does not block, and no ready independent tool can give the required third answer: it stays Important, unresolved.",
+        unresolved: true
+      };
   }
   return { seats, escalations };
 }

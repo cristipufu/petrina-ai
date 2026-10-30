@@ -12,7 +12,13 @@ export class ReviewWorkflow {
     // Older saved tasks could reopen a fix while retaining the verdict on its previous code. An acceptance failure held for
     // the delivery decision is no review's to reopen: acceptance testing already tested its claims.
     for (const finding of task.findings) {
-      if (finding.raisedBy !== "petrina" && finding.status === "open" && finding.answer?.fixed && (finding.reopenedAt ?? -Infinity) < finding.answer.at && (!finding.verification || finding.verification.at < finding.answer.at) && !exhaustedAcceptanceFailure(task, finding)) reopenFinding(finding, this.host.now());
+      if (finding.raisedBy !== "petrina" && finding.status === "open" && finding.answer?.fixed && (finding.reopenedAt ?? -Infinity) < finding.answer.at && (!finding.verification || finding.verification.at < finding.answer.at) && !exhaustedAcceptanceFailure(
+        task,
+        finding
+      )) reopenFinding(
+        finding,
+        this.host.now()
+      );
     }
     // Older saved port marks did not prove the feature had completed ordinary review.
     if (scope.work.portReview && !scope.work.reviewedTree) {
@@ -39,7 +45,10 @@ export class ReviewWorkflow {
           const result = await this.effects.checks(scope, signal);
           failedChecks = result.kind !== "passed" || failedChecks;
           if (result.kind === "product-failed") eligibleProducts.add(result.productId);
-        } catch (error) { if (this.effects.preparationChanged(error)) return "continue"; throw error; }
+        } catch (error) {
+          if (this.effects.preparationChanged(error)) return "continue";
+          throw error;
+        }
       }
       if (failedChecks) {
         // The check fix can reach beyond the port's conflicted files, so its review must be ordinary.
@@ -78,7 +87,14 @@ export class ReviewWorkflow {
     if (vote?.voters.length) {
       // The reviewers' box ends with what they raised; the voters get a box of their own.
       const roleId = openStep(task)?.roleId;
-      if (roleId === stage.roleId || (roleId && stage.roleIds?.includes(roleId))) endAgentStep(task, { outcome: this.raised(task), reason: JOURNEY_WORDS.toCheck(vote.findings.length) }, this.host.now());
+      if (roleId === stage.roleId || (roleId && stage.roleIds?.includes(roleId))) endAgentStep(
+        task,
+        {
+        outcome: this.raised(task),
+        reason: JOURNEY_WORDS.toCheck(vote.findings.length)
+      },
+        this.host.now()
+      );
       await this.effects.vote(task, vote, signal);
       return "continue";
     }

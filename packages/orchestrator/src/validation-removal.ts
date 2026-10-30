@@ -6,7 +6,10 @@ export async function confirmContainerRemoval(read: () => Promise<readonly strin
     for (;;) {
       if (clock.now() >= deadline) return false;
       try { if (!(await read()).length) return true; }
-      catch (error) { if (clock.now() >= deadline) return false; throw error; }
+      catch (error) {
+        if (clock.now() >= deadline) return false;
+        throw error;
+      }
       const left = deadline - clock.now();
       if (left <= 0) return false;
       await clock.sleep(Math.min(50, left));

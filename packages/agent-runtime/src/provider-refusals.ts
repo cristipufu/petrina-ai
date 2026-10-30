@@ -20,11 +20,25 @@ export function clockTime(text: string, now: number): number | undefined {
 }
 
 /** Native composition supplies provider metadata; parsing itself needs no registry, process or account. */
-export function createLimitParsing(adapter: (toolId: string) => { name: string; parseLimitError?: (data: Record<string, unknown>, message: string) => LimitFailure | null | undefined } | undefined) {
+export function createLimitParsing(adapter: (toolId: string) => {
+  name: string;
+  parseLimitError?: (data: Record<string, unknown>, message: string) => LimitFailure | null | undefined
+} | undefined) {
   /** The error for a turn that ended while the tool's latest report said it was out. */
   function limitFromReport(profile: AgentProfile, info: UsageInfo, now: number, source: "report" | "refusal" = "report"): UsageLimited {
     const tool = adapter(profile.toolId)?.name ?? profile.toolId;
-    return new UsageLimited(profile.toolId, info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS, `${tool}'s ${kindWords(info.kind, info.windowMinutes, info.name)} limit`, info.model, undefined, source);
+    return new UsageLimited(
+      profile.toolId,
+      info.resetsAt && info.resetsAt > now ? info.resetsAt : now + UNKNOWN_LIMIT_MS,
+      `${tool}'s ${kindWords(
+      info.kind,
+      info.windowMinutes,
+      info.name
+    )} limit`,
+      info.model,
+      undefined,
+      source
+    );
   }
 
   const payload = (error: unknown): Record<string, unknown> => {
@@ -51,7 +65,16 @@ export function createLimitParsing(adapter: (toolId: string) => { name: string; 
     if (!limit) return undefined;
     const tool = adapter(profile.toolId)?.name ?? profile.toolId;
     const reason = limit.reason ?? `${tool}'s ${limit.kind} limit`;
-    const refusal = new UsageLimited(profile.toolId, limit.retryAfter ? now + limit.retryAfter : clockTime(`${message}\n${said}`, now) ?? now + UNKNOWN_LIMIT_MS, reason, undefined, limit.retryAfter ? true : undefined);
+    const refusal = new UsageLimited(
+      profile.toolId,
+      limit.retryAfter ? now + limit.retryAfter : clockTime(
+      `${message}\n${said}`,
+      now
+    ) ?? now + UNKNOWN_LIMIT_MS,
+      reason,
+      undefined,
+      limit.retryAfter ? true : undefined
+    );
     if (limit.independent) refusal.independent = true;
     return refusal;
   }

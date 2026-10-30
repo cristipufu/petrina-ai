@@ -1,5 +1,11 @@
 import { repositoryPublished } from "./repositories.js";
-import { isCheckEnvironmentBinding, priorCheckBatchPass, recordedCheckBatch, sameCheckEnvironmentIdentity, sameCheckExecutorFacts } from "./check-environment.js";
+import {
+  isCheckEnvironmentBinding,
+  priorCheckBatchPass,
+  recordedCheckBatch,
+  sameCheckEnvironmentIdentity,
+  sameCheckExecutorFacts
+} from "./check-environment.js";
 import type { CheckAttemptEvidence, CheckRun, JourneyProductCheck, RepositoryState, Task } from "./model.js";
 import { checkOutcome, checkCommandOutcome } from "./check-outcome.js";
 
@@ -33,7 +39,11 @@ export function checkCounts(checks: readonly JourneyProductCheck[]) {
 
 export function checkProblemWords(checks: readonly JourneyProductCheck[]): string {
   const { failed, unverified, passed } = checkCounts(checks);
-  return [failed ? `${failed} still failing` : "", unverified ? `${unverified} unverified` : "", !failed && !unverified ? `${passed} passing` : ""].filter(Boolean).join(", ");
+  return [
+    failed ? `${failed} still failing` : "",
+    unverified ? `${unverified} unverified` : "",
+    !failed && !unverified ? `${passed} passing` : ""
+  ].filter(Boolean).join(", ");
 }
 
 export function incompleteCheckOutcome(checks: readonly JourneyProductCheck[]): string | undefined {
@@ -105,7 +115,8 @@ function priorDisplayedPass(task: DeliveryDecisionTask, work: DeliveryDecisionSt
   if (work.checks?.current !== false || priorCheckBatchPass(work).kind !== "prior-pass"
     || typeof work.checkedSha !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(work.checkedSha)
     || typeof work.checkedPatch !== "string" || !work.checkedPatch.length) return false;
-  const saved = work.checks, provenance = saved.provenance;
+  const saved = work.checks;
+  const provenance = saved.provenance;
   // The displayed commit must be one of the actual observed versions, including an
   // equivalent-tree squash observed by the latest verified setup.
   if (work.checkedSha !== saved.sha && work.checkedSha !== work.checkSetup!.input.sha) return false;
@@ -176,10 +187,30 @@ export function evidenceFor(task: Pick<Task, "journey">, work: Pick<RepositorySt
   const entries = saved.results.map((run, index): JourneyProductCheck => {
     const found = originalCheck(task, run);
     const original = found?.check;
-    const source = run.source ?? (found && original?.id && original.attemptId ? { stepId: found.stepId, checkId: original.id, attemptId: original.attemptId } : undefined);
+    const source = run.source ?? (found && original?.id && original.attemptId ? {
+      stepId: found.stepId,
+      checkId: original.id,
+      attemptId: original.attemptId
+    } : undefined);
     const reusedAt = reusedAtFor(source, run.logPath);
-    const recordedRun = { ...run, ...(source ? { source } : {}), ...(run.startedAt === undefined && original?.startedAt !== undefined ? { startedAt: original.startedAt } : {}), ...(run.endedAt === undefined && original?.endedAt !== undefined ? { endedAt: original.endedAt } : {}) };
-    return { ...original, id: source?.checkId ?? `saved-${index}`, name: run.name, productId: work.productId, result: original ? checkEntryResult({ ...original, run }) : checkResult(run), run: recordedRun, ...(reusedAt !== undefined ? { reusedAt } : {}) };
+    const recordedRun = {
+      ...run,
+      ...(source ? { source } : {}),
+      ...(run.startedAt === undefined && original?.startedAt !== undefined ? { startedAt: original.startedAt } : {}),
+      ...(run.endedAt === undefined && original?.endedAt !== undefined ? { endedAt: original.endedAt } : {})
+    };
+    return {
+      ...original,
+      id: source?.checkId ?? `saved-${index}`,
+      name: run.name,
+      productId: work.productId,
+      result: original ? checkEntryResult({
+      ...original,
+      run
+    }) : checkResult(run),
+      run: recordedRun,
+      ...(reusedAt !== undefined ? { reusedAt } : {})
+    };
   });
   const sources = new Set(entries.flatMap(({ run }) => run?.source ? [`${run.source.stepId}:${run.source.attemptId}`] : []));
   for (const step of task.journey ?? []) for (const check of step.productChecks ?? []) {
@@ -216,7 +247,11 @@ export function builderCheckSummary(task: Pick<Task, "journey" | "repositories" 
     const following = task.journey?.slice((returned?.index ?? -1) + 1) ?? [];
     const reused = evidence.some((check) => check.reusedAt !== undefined && following.some((step) => step.work === "check-reuse" && step.productChecks?.some((recorded) => recorded.productId === work.productId && recorded.reusedAt === check.reusedAt)));
     const name = task.repositories ? `${task.repositories.find((repository) => repository.productId === work.productId)?.source?.product.name ?? work.productId}: ` : "";
-    return `${name}${entry ? `${builderReturnWords(entry.changed, undefined, entry.claimedFixes)}. ` : ""}${status}${reused && !outdated ? "Previous check evidence reused." : ""}`.trim();
+    return `${name}${entry ? `${builderReturnWords(
+      entry.changed,
+      undefined,
+      entry.claimedFixes
+    )}. ` : ""}${status}${reused && !outdated ? "Previous check evidence reused." : ""}`.trim();
   }).join(" ");
 }
 

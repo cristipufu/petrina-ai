@@ -114,7 +114,13 @@ export function removeConnection(home: string, pid: number): void {
 
 /** Does an engine answer at this address, with this key? */
 export async function answers(connection: Connection, timeoutMs = 1500): Promise<boolean> {
-  const ask = (path: string) => fetch(`${connection.api}${path}`, { headers: { authorization: `Bearer ${connection.token}` }, signal: AbortSignal.timeout(timeoutMs) });
+  const ask = (path: string) => fetch(
+    `${connection.api}${path}`,
+    {
+    headers: { authorization: `Bearer ${connection.token}` },
+    signal: AbortSignal.timeout(timeoutMs)
+  }
+  );
   try {
     const health = await ask("/api/health");
     if (health.ok) return true;

@@ -45,12 +45,22 @@ export function useTaskDetails(id: string | undefined, needed: boolean, liveRevi
     const schedule = () => {
       if (cancelled || running || timer !== undefined || (!first && (loaded === latest.current.revision || requested === latest.current.revision))) return;
       const delay = Math.max(0, 400 - (Date.now() - started));
-      if (!delay) { void load(); return; }
-      timer = setTimeout(() => { timer = undefined; void load(); }, delay);
+      if (!delay) {
+        void load();
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = undefined;
+        void load();
+      }, delay);
     };
     refresh.current = schedule;
     void load();
-    return () => { cancelled = true; clearTimeout(timer); refresh.current = undefined; };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      refresh.current = undefined;
+    };
   }, [id, needed, retry]);
 
   useEffect(() => { refresh.current?.(); }, [revision]);

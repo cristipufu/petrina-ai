@@ -62,7 +62,13 @@ export const allowanceKey = (raw: UsageReport): string => {
   const report = claudeWindow(raw);
   return `${report.toolId}|${report.kind}|${report.model ?? ""}`;
 };
-export const reportedLevel = (report: UsageReport): number | undefined => report.utilization === undefined || !Number.isFinite(report.utilization) ? undefined : Math.max(0, Math.min(1, report.utilization));
+export const reportedLevel = (report: UsageReport): number | undefined => report.utilization === undefined || !Number.isFinite(report.utilization) ? undefined : Math.max(
+  0,
+  Math.min(
+  1,
+  report.utilization
+)
+);
 export const percentWords = (value: number): string => `${Math.round(value * 100)}%`;
 export function reportedUsage(report: UsageReport): string {
   const level = reportedLevel(report);
@@ -85,11 +91,31 @@ export function limitBuckets(period: "today" | "7d" | "30d", now: number): Bucke
     });
   }
   const slots: Bucket[] = [];
-  for (let start = day(0); start < day(1); start += HOUR) slots.push({ start, end: Math.min(start + HOUR, day(1)), label: new Date(start).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }) });
+  for (let start = day(0); start < day(1); start += HOUR) slots.push({
+    start,
+    end: Math.min(
+    start + HOUR,
+    day(1)
+  ),
+    label: new Date(start).toLocaleTimeString(
+    undefined,
+    {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }
+  )
+  });
   for (const slot of slots) {
     if (slots.filter(other => new Date(other.start).getHours() === new Date(slot.start).getHours()).length > 1) {
       const offset = -new Date(slot.start).getTimezoneOffset();
-      slot.label += ` UTC${offset >= 0 ? "+" : "−"}${String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0")}:${String(Math.abs(offset) % 60).padStart(2, "0")}`;
+      slot.label += ` UTC${offset >= 0 ? "+" : "−"}${String(Math.floor(Math.abs(offset) / 60)).padStart(
+        2,
+        "0"
+      )}:${String(Math.abs(offset) % 60).padStart(
+        2,
+        "0"
+      )}`;
     }
   }
   return slots;
@@ -110,7 +136,10 @@ export function readingChange(previous: UsageReport | undefined, report: UsageRe
   const reset = previous.resetsAt;
   const advanced = reset !== undefined && report.resetsAt !== undefined && report.resetsAt - reset - (report.at - previous.at) >= MINUTE;
   const possible = lower && reset !== undefined && (reset <= report.at || advanced);
-  return { text: possible ? `Possible reset (was ${percentWords(before)})` : lower ? `Lower (was ${percentWords(before)})` : value > before ? `Higher (was ${percentWords(before)})` : "Same level", possible };
+  return {
+    text: possible ? `Possible reset (was ${percentWords(before)})` : lower ? `Lower (was ${percentWords(before)})` : value > before ? `Higher (was ${percentWords(before)})` : "Same level",
+    possible
+  };
 }
 
 function mergedReports(history: readonly UsageReport[], current: readonly UsageReport[], snapshotAt: number): UsageReport[] {
@@ -167,11 +196,17 @@ export function limitsOverTime(history: readonly UsageReport[], current: readonl
     const level = reportedLevel(report);
     if (level === undefined) continue;
     bucket.numericCount++;
-    if (bucket.highest === undefined || level > bucket.highest) { bucket.highest = level; bucket.highestAt = report.at; }
+    if (bucket.highest === undefined || level > bucket.highest) {
+      bucket.highest = level;
+      bucket.highestAt = report.at;
+    }
   }
   const tools = new Map<string, AllowanceHistory[]>();
   for (const group of groups.values()) (tools.get(group.latest.toolId) ?? tools.set(group.latest.toolId, []).get(group.latest.toolId)!).push(group);
-  const order = (id: string) => { const index = toolOrder.indexOf(id); return index < 0 ? toolOrder.length : index; };
+  const order = (id: string) => {
+    const index = toolOrder.indexOf(id);
+    return index < 0 ? toolOrder.length : index;
+  };
   return { from, to, now, hourly, buckets, tools: [...tools.entries()].sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b)).map(([toolId, limits]) => {
     const labels = new Map<string, AllowanceHistory[]>();
     for (const limit of limits) (labels.get(limit.label) ?? labels.set(limit.label, []).get(limit.label)!).push(limit);
@@ -180,7 +215,10 @@ export function limitsOverTime(history: readonly UsageReport[], current: readonl
       const scopes = matching.map(limit => limit.latest.model ?? "All models");
       if (new Set(scopes).size > 1) {
         const titled = scopes.map(scope => scope.charAt(0).toUpperCase() + scope.slice(1));
-        matching.forEach((limit, index) => { limit.label += ` (scope: ${titled.filter(scope => scope === titled[index]).length > 1 ? scopes[index] : titled[index]})`; });
+        matching.forEach((
+          limit,
+          index
+        ) => { limit.label += ` (scope: ${titled.filter(scope => scope === titled[index]).length > 1 ? scopes[index] : titled[index]})`; });
       }
       const remaining = new Map<string, AllowanceHistory[]>();
       for (const limit of matching) (remaining.get(limit.label) ?? remaining.set(limit.label, []).get(limit.label)!).push(limit);
@@ -189,24 +227,45 @@ export function limitsOverTime(history: readonly UsageReport[], current: readonl
         duplicates.sort((a, b) => a.key.localeCompare(b.key)).forEach((limit, index) => { limit.label += ` · Allowance ${index + 1}`; });
       }
     }
-    return { toolId, label: toolName(toolId), limits: limits.sort((a, b) => Number(b.current) - Number(a.current) || a.windowMinutes - b.windowMinutes || a.label.localeCompare(b.label)) };
+    return {
+      toolId,
+      label: toolName(toolId),
+      limits: limits.sort((
+      a,
+      b
+    ) => Number(b.current) - Number(a.current) || a.windowMinutes - b.windowMinutes || a.label.localeCompare(b.label))
+    };
   }) };
 }
 
 export function initialAllowance(limits: AllowanceHistory[]): AllowanceHistory | undefined {
   const current = limits.filter(limit => limit.current);
-  return current.filter(limit => limit.buckets.some(bucket => bucket.highest !== undefined)).sort((a, b) => a.windowMinutes - b.windowMinutes || b.latest.at - a.latest.at)[0]
+  return current.filter(limit => limit.buckets.some(bucket => bucket.highest !== undefined)).sort((
+    a,
+    b
+  ) => a.windowMinutes - b.windowMinutes || b.latest.at - a.latest.at)[0]
     ?? [...(current.length ? current : limits)].sort((a, b) => b.latest.at - a.latest.at)[0];
 }
 
 export function readingsView(history: readonly UsageReport[], current: readonly UsageReport[], request: ReadingsRequest): ReadingsView {
-  const reports = mergedReports(history, request.latest ? [request.latest] : current, request.snapshotAt).filter(report => report.toolId === request.toolId && allowanceKey(report) === request.allowanceKey);
+  const reports = mergedReports(
+    history,
+    request.latest ? [request.latest] : current,
+    request.snapshotAt
+  ).filter(report => report.toolId === request.toolId && allowanceKey(report) === request.allowanceKey);
   let previous: UsageReport | undefined;
   let previousReport: UsageReport | undefined;
   const rows: ReadingDetail[] = [];
   for (const report of reports) {
     const change = readingChange(previous, report);
-    if (report.at >= request.from && report.at < request.to) rows.push({ report, change: change.text, resetUnchanged: sameResetSchedule(previousReport?.resetsAt, report.resetsAt) });
+    if (report.at >= request.from && report.at < request.to) rows.push({
+      report,
+      change: change.text,
+      resetUnchanged: sameResetSchedule(
+      previousReport?.resetsAt,
+      report.resetsAt
+    )
+    });
     if (reportedLevel(report) !== undefined) previous = report;
     previousReport = report;
   }

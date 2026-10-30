@@ -8,7 +8,19 @@ import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
-import { MAX_READING_OFFSET, READING_PAGE_SIZE, allowanceKey, HISTORY_STATUSES, type HistoryStatus, ROLE_ICON_CHOICES, ROLE_LIMITS, TONE_CHOICES, COMMAND_NAMES, type CommandName, type Commands } from "@petrina/core";
+import {
+  MAX_READING_OFFSET,
+  READING_PAGE_SIZE,
+  allowanceKey,
+  HISTORY_STATUSES,
+  type HistoryStatus,
+  ROLE_ICON_CHOICES,
+  ROLE_LIMITS,
+  TONE_CHOICES,
+  COMMAND_NAMES,
+  type CommandName,
+  type Commands
+} from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { Coordination, serial, type LifecycleControl } from "./coordination.js";
 
@@ -16,7 +28,12 @@ const ALLOWED_ORIGINS = new Set(["http://localhost:1430", "http://127.0.0.1:1430
 
 /** The window's id for something it sent, so a resend after a lost confirmation counts once. */
 const ClientId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
-const Said = z.object({ taskId: z.string().optional(), about: z.string().max(4000).optional(), decided: z.boolean().optional(), clientId: ClientId.optional() });
+const Said = z.object({
+  taskId: z.string().optional(),
+  about: z.string().max(4000).optional(),
+  decided: z.boolean().optional(),
+  clientId: ClientId.optional()
+});
 const TaskId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const How = z.enum(["open", "copy"]);
 const NewTask = z.object({
@@ -51,17 +68,86 @@ const RoleDraft = z.object({
   result: z.enum(["plan", "notes", "brief", "objections", "build", "checks", "findings", "delivery", "check-discovery", "guide", "votes"]),
 });
 
-const RoutineDraft = z.object({ name: z.string().max(100), productId: z.string(), roleId: z.string(), profileId: z.string(), focus: z.string().max(4000), zone: z.string().max(100), enabled: z.boolean(), schedule: z.discriminatedUnion("kind", [z.object({ kind: z.literal("daily"), time: z.string() }), z.object({ kind: z.literal("weekly"), time: z.string(), weekdays: z.array(z.number().int().min(0).max(6)).max(7) }), z.object({ kind: z.literal("cron"), expression: z.string().max(200) })]) });
-const HistoryReport = z.object({ toolId: z.string().min(1).max(200), kind: z.string().min(1).max(200), model: z.string().max(200).optional(), name: z.string().max(400).optional(), status: z.enum(["allowed", "allowed_warning", "rejected"]), at: z.number().int().min(0), utilization: z.number().optional(), windowMinutes: z.number().positive().optional(), resetsAt: z.number().min(0).optional(), overage: z.boolean().optional() }).strict();
+const RoutineDraft = z.object({
+  name: z.string().max(100),
+  productId: z.string(),
+  roleId: z.string(),
+  profileId: z.string(),
+  focus: z.string().max(4000),
+  zone: z.string().max(100),
+  enabled: z.boolean(),
+  schedule: z.discriminatedUnion(
+  "kind",
+  [
+  z.object({
+  kind: z.literal("daily"),
+  time: z.string()
+}),
+  z.object({
+  kind: z.literal("weekly"),
+  time: z.string(),
+  weekdays: z.array(z.number().int().min(0).max(6)).max(7)
+}),
+  z.object({
+  kind: z.literal("cron"),
+  expression: z.string().max(200)
+})
+]
+)
+});
+const HistoryReport = z.object({
+  toolId: z.string().min(1).max(200),
+  kind: z.string().min(1).max(200),
+  model: z.string().max(200).optional(),
+  name: z.string().max(400).optional(),
+  status: z.enum([
+  "allowed",
+  "allowed_warning",
+  "rejected"
+]),
+  at: z.number().int().min(0),
+  utilization: z.number().optional(),
+  windowMinutes: z.number().positive().optional(),
+  resetsAt: z.number().min(0).optional(),
+  overage: z.boolean().optional()
+}).strict();
 const ARGS = {
-  profileChoices: z.tuple([z.object({ toolId: z.string().min(1).max(100), modelId: z.string().min(1).max(200).optional(), refresh: z.boolean().optional() }).strict()]),
-  saveProfile: z.tuple([z.object({ toolId: z.string().min(1).max(100), modelId: z.string().min(1).max(200), effort: z.enum(["low", "medium", "high", "xhigh", "ultra"]), standby: z.boolean().optional() }).strict(), ClientId, z.string().optional()]),
+  profileChoices: z.tuple([z.object({
+    toolId: z.string().min(1).max(100),
+    modelId: z.string().min(1).max(200).optional(),
+    refresh: z.boolean().optional()
+  }).strict()]),
+  saveProfile: z.tuple([
+    z.object({
+    toolId: z.string().min(1).max(100),
+    modelId: z.string().min(1).max(200),
+    effort: z.enum([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "ultra"
+  ]),
+    standby: z.boolean().optional()
+  }).strict(),
+    ClientId,
+    z.string().optional()
+  ]),
   removeProfile: z.tuple([z.string()]),
   saveRoutine: z.tuple([RoutineDraft, z.string().optional()]),
   setRoutineEnabled: z.tuple([z.string(), z.boolean()]),
   removeRoutine: z.tuple([z.string()]),
   resolveMaintenanceSettings: z.tuple([TaskId, z.enum(["keep", "stop"])]),
-  historyPage: z.tuple([z.object({ includeUsage: z.boolean().optional(), taskId: TaskId.optional(), status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(), routineId: z.string().min(1).max(200).optional(), productId: z.string().max(200).optional(), query: z.string().max(500).optional(), cursor: z.string().max(1000).optional(), limit: z.number().int().min(1).max(100).optional() }).strict()]),
+  historyPage: z.tuple([z.object({
+    includeUsage: z.boolean().optional(),
+    taskId: TaskId.optional(),
+    status: z.enum(Object.keys(HISTORY_STATUSES) as HistoryStatus[]).optional(),
+    routineId: z.string().min(1).max(200).optional(),
+    productId: z.string().max(200).optional(),
+    query: z.string().max(500).optional(),
+    cursor: z.string().max(1000).optional(),
+    limit: z.number().int().min(1).max(100).optional()
+  }).strict()]),
   taskDetails: z.tuple([TaskId]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),
@@ -70,9 +156,30 @@ const ARGS = {
   removeRole: z.tuple([z.string()]),
   addProduct: z.tuple([z.string().min(1).max(4096), z.string().max(200).optional()]),
   removeProduct: z.tuple([z.string()]),
-  setProductChecks: z.tuple([z.string(), z.union([z.null(), z.array(z.object({ name: z.string().min(1).max(40), command: z.string().min(1).max(500) })).max(12)])]),
+  setProductChecks: z.tuple([
+    z.string(),
+    z.union([
+    z.null(),
+    z.array(z.object({
+    name: z.string().min(1).max(40),
+    command: z.string().min(1).max(500)
+  })).max(12)
+  ])
+  ]),
   setProductCheckSetup: z.tuple([z.string(), CheckSetupRequirementsSchema]),
-  updateProduct: z.tuple([z.string(), z.object({ name: z.string(), delivery: z.enum(["pull-request", "release", "local"]), approveDelivery: z.boolean(), shipLowRisk: z.boolean().optional() })]),
+  updateProduct: z.tuple([
+    z.string(),
+    z.object({
+    name: z.string(),
+    delivery: z.enum([
+    "pull-request",
+    "release",
+    "local"
+  ]),
+    approveDelivery: z.boolean(),
+    shipLowRisk: z.boolean().optional()
+  })
+  ]),
   setProductDelivery: z.tuple([z.string(), z.enum(["pull-request", "release", "local"]), z.boolean()]),
   setTaskStart: z.tuple([z.string(), WorkChoiceSchema]),
   setTaskProducts: z.tuple([z.string(), z.array(WorkChoiceSchema).max(20)]),
@@ -134,7 +241,16 @@ const ARGS = {
       z.object({ view: z.literal("node"), taskId: z.string().min(1).max(200), nodeId: z.string().min(1).max(200) }).strict(),
       z.object({ view: z.literal("products") }).strict(),
       z.object({ view: z.literal("today") }).strict(),
-      z.object({ view: z.literal("readings"), toolId: z.string().min(1).max(200), allowanceKey: z.string().min(1).max(600), from: z.number().int().min(0), to: z.number().int().min(0), snapshotAt: z.number().int().min(0), latest: HistoryReport.optional(), offset: z.number().int().min(0).max(MAX_READING_OFFSET).multipleOf(READING_PAGE_SIZE) }).strict(),
+      z.object({
+        view: z.literal("readings"),
+        toolId: z.string().min(1).max(200),
+        allowanceKey: z.string().min(1).max(600),
+        from: z.number().int().min(0),
+        to: z.number().int().min(0),
+        snapshotAt: z.number().int().min(0),
+        latest: HistoryReport.optional(),
+        offset: z.number().int().min(0).max(MAX_READING_OFFSET).multipleOf(READING_PAGE_SIZE)
+      }).strict(),
       z.object({ view: z.literal("analytics"), period: z.enum(["today", "7d", "30d"]), productId: z.string().min(1).max(200).optional() }).strict(),
     ]),
   ]),
@@ -153,7 +269,13 @@ export async function dispatch(engine: Engine, raw: unknown): Promise<unknown> {
   const method = engine[name] as (...args: unknown[]) => unknown;
   if (name === "profileChoices") return await method.apply(engine, checked);
   // Native discovery must not hold the coordinator mutation queue while a tool opens.
-  if (name === "saveProfile") { const draft = checked[0] as Parameters<Commands["saveProfile"]>[0]; await engine.profileChoices({ toolId: draft.toolId, modelId: draft.modelId }); }
+  if (name === "saveProfile") {
+    const draft = checked[0] as Parameters<Commands["saveProfile"]>[0];
+    await engine.profileChoices({
+    toolId: draft.toolId,
+    modelId: draft.modelId
+  });
+  }
   return await serial(engine, async () => {
     const before = engine.s?.inbox.map(item => item.id) ?? [];
     const result = await method.apply(engine, checked);
@@ -233,8 +355,21 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
 
       // A browser on the dev server can distinguish an engine that is down from one with a new
       // key. Only the health check allows cross-origin reads, and only from Petrina's own pages.
-      const healthHeaders = (url.pathname === "/api/health" || url.pathname.startsWith("/api/images/")) && origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : undefined;
-      if (healthHeaders && request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...healthHeaders, "Access-Control-Allow-Methods": "GET", "Access-Control-Allow-Headers": "Authorization" } });
+      const healthHeaders = (url.pathname === "/api/health" || url.pathname.startsWith("/api/images/")) && origin ? {
+        "Access-Control-Allow-Origin": origin,
+        Vary: "Origin"
+      } : undefined;
+      if (healthHeaders && request.method === "OPTIONS") return new Response(
+        null,
+        {
+        status: 204,
+        headers: {
+        ...healthHeaders,
+        "Access-Control-Allow-Methods": "GET",
+        "Access-Control-Allow-Headers": "Authorization"
+      }
+      }
+      );
 
       if (url.pathname === "/ws") {
         // Browsers always send Origin on WebSocket handshakes: a missing one is not a browser we know.
@@ -243,7 +378,19 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
         const offered = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((entry) => entry.trim());
         const presented = offered.find((entry) => entry.startsWith("petrina.token."))?.slice("petrina.token.".length);
         if (!offered.includes("petrina.v1") || !tokenOk(presented)) return new Response("Unauthorized", { status: 401 });
-        return server.upgrade(request, { data: { authed: true, dirty: true }, headers: { "Sec-WebSocket-Protocol": "petrina.v1" } }) ? undefined : new Response("Upgrade failed", { status: 400 });
+        return server.upgrade(
+          request,
+          {
+          data: {
+          authed: true,
+          dirty: true
+        },
+          headers: { "Sec-WebSocket-Protocol": "petrina.v1" }
+        }
+        ) ? undefined : new Response(
+          "Upgrade failed",
+          { status: 400 }
+        );
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -256,16 +403,33 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
             const { name, args } = await request.json() as { name: string; args: unknown };
             // A wait stays open for its whole requested deadline, past the ordinary idle cutoff; other
             // requests keep the server's usual behavior. Disconnecting releases the wait through its signal.
-            if (typeof name === "string" && (name.startsWith("watch.") || (name === "validation.run" && typeof args === "object" && args !== null && "wait" in args && args.wait === true))) server.timeout(request, 0);
+            if (typeof name === "string" && (name.startsWith("watch.") || (name === "validation.run" && typeof args === "object" && args !== null && "wait" in args && args.wait === true))) server.timeout(
+              request,
+              0
+            );
             return Response.json(await coordination.call(name, args, request.signal));
           } catch {
-            return Response.json({ outcome: "failed", message: "The coordination request could not be completed. Retry changes with their original request reference." });
+            return Response.json({
+              outcome: "failed",
+              message: "The coordination request could not be completed. Retry changes with their original request reference."
+            });
           }
         }
         const imagePath = /^\/api\/images\/([A-Za-z0-9_-]+)\/([a-f0-9-]{36})$/.exec(url.pathname);
         if (imagePath && request.method === "GET") {
           const image = await engine.reportImage(imagePath[1]!, imagePath[2]!);
-          return image ? new Response(image, { headers: { ...healthHeaders, "content-type": "image/png", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } }) : new Response("Not found", { status: 404 });
+          return image ? new Response(
+            image,
+            { headers: {
+            ...healthHeaders,
+            "content-type": "image/png",
+            "cache-control": "private, no-store",
+            "x-content-type-options": "nosniff"
+          } }
+          ) : new Response(
+            "Not found",
+            { status: 404 }
+          );
         }
         if (url.pathname === "/api/action" && request.method === "POST") {
           try {
@@ -307,7 +471,10 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
       },
       close(socket) {
         sockets.delete(socket);
-        if (!sockets.size) { clearTimeout(pending); pending = undefined; }
+        if (!sockets.size) {
+          clearTimeout(pending);
+          pending = undefined;
+        }
       },
     },
   });

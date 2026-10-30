@@ -44,7 +44,13 @@ function ScreenUse({ state, find }: { state: State; find: Lookup }) {
       <h4 id="screen-use-title">Agents may use the screen</h4>
       <div className="segmented" role="radiogroup" aria-labelledby="screen-use-title">
         {SCREEN_CHOICES.map((choice) => (
-          <button key={choice.mode} role="radio" aria-checked={mode === choice.mode} className={mode === choice.mode ? "on" : ""} onClick={() => sim.setScreenUse(choice.mode)}>
+          <button
+            key={choice.mode}
+            role="radio"
+            aria-checked={mode === choice.mode}
+            className={mode === choice.mode ? "on" : ""}
+            onClick={() => sim.setScreenUse(choice.mode)}
+          >
             {choice.label}
           </button>
         ))}
@@ -73,7 +79,13 @@ export function ScreenMarkIcon({ state }: { state: State }) {
 }
 
 /** The pool's controls, who is in each slot, and today's numbers: in the pool popover, or in the top bar's More menu. */
-export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; onDone: () => void; onAnalytics: () => void }) {
+export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: {
+  state: State;
+  find: Lookup;
+  onOpen: (taskId: string, tab?: SheetTab) => void;
+  onDone: () => void;
+  onAnalytics: () => void
+}) {
   const holders = agentSlots(state, find);
   const next = readyQueue(state)[0];
   const slots = Array.from({ length: Math.max(state.pool.limit, holders.length) }, (_, index) => holders[index]);
@@ -140,7 +152,13 @@ export function PoolPanel({ state, find, onOpen, onDone, onAnalytics }: { state:
 }
 
 /** The pool indicator in the top bar: one square per slot, coloured by the role in it. */
-export function PoolButton({ state, find, onOpen, onAnalytics, compact }: { state: State; find: Lookup; onOpen: (taskId: string, tab?: SheetTab) => void; onAnalytics: () => void; compact: boolean }) {
+export function PoolButton({ state, find, onOpen, onAnalytics, compact }: {
+  state: State;
+  find: Lookup;
+  onOpen: (taskId: string, tab?: SheetTab) => void;
+  onAnalytics: () => void;
+  compact: boolean
+}) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -215,7 +233,10 @@ function Today({ state, onAnalytics }: { state: State; onAnalytics: () => void }
                 <div key={tool.toolId} className="pool-tool">
                   <i style={{ background: toolColor(tool.toolId) }} />
                   <span className="t">{tool.label}</span>
-                  <span className="small">{tool.turns > 0 ? <Amount tokens={tool.tokens} time={tool.time} /> : <span className="muted">nothing yet</span>}</span>
+                  <span className="small">{tool.turns > 0 ? <Amount
+                    tokens={tool.tokens}
+                    time={tool.time}
+                  /> : <span className="muted">nothing yet</span>}</span>
 
                 </div>
               );

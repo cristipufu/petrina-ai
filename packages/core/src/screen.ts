@@ -36,7 +36,10 @@ export function onScreen<T extends ScreenTask>(tasks: readonly T[]): T | undefin
 
 /** Requests still waiting for the screen, first asked first. */
 export function screenQueue<T extends ScreenTask>(tasks: readonly T[]): T[] {
-  return tasks.filter((task) => (task.state === "waiting" || task.state === "needs-you") && task.screen && !task.screen.granted && !runtimeWaitHolds(task)).sort((a, b) => a.screen!.at - b.screen!.at);
+  return tasks.filter((task) => (task.state === "waiting" || task.state === "needs-you") && task.screen && !task.screen.granted && !runtimeWaitHolds(task)).sort((
+    a,
+    b
+  ) => a.screen!.at - b.screen!.at);
 }
 
 /** The request that gets the screen next: the earliest allowed one, once nobody is on the screen. */

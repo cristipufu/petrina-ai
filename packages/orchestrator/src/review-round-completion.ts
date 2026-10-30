@@ -1,4 +1,18 @@
-import { coveredByDecision, endAgentStep, exhaustedAcceptanceFailure, findingCount, JOURNEY_WORDS, noteRoundEnd, openStep, passedOpenWords, reviewBlocking, reviewDecisionFor, reviewRoundEnd, type Id, type Stage } from "@petrina/core";
+import {
+  coveredByDecision,
+  endAgentStep,
+  exhaustedAcceptanceFailure,
+  findingCount,
+  JOURNEY_WORDS,
+  noteRoundEnd,
+  openStep,
+  passedOpenWords,
+  reviewBlocking,
+  reviewDecisionFor,
+  reviewRoundEnd,
+  type Id,
+  type Stage
+} from "@petrina/core";
 import { beginRepair } from "./repair.js";
 import { executionFor, scopesFor } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
@@ -38,7 +52,16 @@ export class ReviewRoundCompletion {
         if (work.worktree && (task.repositories || incremental)) work.reviewedTree = anchor.tree;
         const step = openStep(task);
         const reviewed = reviewedVersions?.[work.productId];
-        if (step && reviewed) step.checkReviews = [...(step.checkReviews ?? []), { productId: work.productId, tree: reviewed, at: this.host.now(), stageId: stage.id, round }];
+        if (step && reviewed) step.checkReviews = [
+          ...(step.checkReviews ?? []),
+          {
+          productId: work.productId,
+          tree: reviewed,
+          at: this.host.now(),
+          stageId: stage.id,
+          round
+        }
+        ];
       } else if (work === scope.work) delete work.reviewedTree;
       if (incremental) {
         if (anchor.head) work.reviewedSha = anchor.head;
@@ -47,8 +70,18 @@ export class ReviewRoundCompletion {
     }
     this.host.reviewEnd(task, round, end.kind === "send back" ? "sent-back" : end.kind === "used up" ? "rounds-used" : "passed");
     const pendingProofs = task.proofRequests?.filter(request => request.status !== "proved" && request.status !== "already-current").length ?? 0;
-    const passed = [JOURNEY_WORDS.reviewPassed, ...(end.kind === "passed" && end.covered ? [JOURNEY_WORDS.coveredOpen(end.covered)] : []), ...(pendingProofs ? [`${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing`] : [])].join("; ");
-    const reason = end.kind === "send back" ? { reason: JOURNEY_WORDS.sentBack(end.open), tone: "back" as const } : end.kind === "used up" ? { reason: JOURNEY_WORDS.stillOpen(end.open), tone: "back" as const } : { reason: passed };
+    const passed = [
+      JOURNEY_WORDS.reviewPassed,
+      ...(end.kind === "passed" && end.covered ? [JOURNEY_WORDS.coveredOpen(end.covered)] : []),
+      ...(pendingProofs ? [`${pendingProofs} proof request${pendingProofs === 1 ? "" : "s"} for final acceptance testing`] : [])
+    ].join("; ");
+    const reason = end.kind === "send back" ? {
+      reason: JOURNEY_WORDS.sentBack(end.open),
+      tone: "back" as const
+    } : end.kind === "used up" ? {
+      reason: JOURNEY_WORDS.stillOpen(end.open),
+      tone: "back" as const
+    } : { reason: passed };
     endAgentStep(task, { outcome, ...reason }, this.host.now());
     if (end.kind === "send back") {
       task.rounds[stage.id] = round + 1;
@@ -82,7 +115,17 @@ export class ReviewRoundCompletion {
       this.host.openDeliveryDecision(task);
       return "stop";
     } else {
-      this.host.note(task, "done", `${port ? "Port review" : "Review"} passed: ${passedOpenWords(task.findings.filter((finding) => !exhaustedAcceptanceFailure(task, finding)), covered)}`);
+      this.host.note(
+        task,
+        "done",
+        `${port ? "Port review" : "Review"} passed: ${passedOpenWords(
+        task.findings.filter((finding) => !exhaustedAcceptanceFailure(
+        task,
+        finding
+      )),
+        covered
+      )}`
+      );
     }
     this.host.changed(task);
     return "continue";

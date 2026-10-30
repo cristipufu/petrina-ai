@@ -226,12 +226,44 @@ export function layoutJourney(view: JourneyView, width: number, rem: number, sta
     const tip = px(0.5);
     const { labelWidth, labelHeight, out, back } = connections[index - 1]!;
     if (from.row === to.row) {
-      edges.push({ id: `${from.id}->${to.id}`, source: from.id, target: to.id, path: `M ${x1} ${y1} L ${x2 - tip} ${y2}`, tipX: x2, tipY: y2, ...(label ? { label } : {}), labelX: (x1 + x2) / 2, labelY: y1 - px(0.375), labelWidth, labelHeight, kind, live, labelTone, wraps: false });
+      edges.push({
+        id: `${from.id}->${to.id}`,
+        source: from.id,
+        target: to.id,
+        path: `M ${x1} ${y1} L ${x2 - tip} ${y2}`,
+        tipX: x2,
+        tipY: y2,
+        ...(label ? { label } : {}),
+        labelX: (x1 + x2) / 2,
+        labelY: y1 - px(0.375),
+        labelWidth,
+        labelHeight,
+        kind,
+        live,
+        labelTone,
+        wraps: false
+      });
     } else {
       // Down from the end of the row, back under it (below anything hanging there), and into the next row's first box.
       const under = rowBottoms[from.row]! + Math.max(px(SIZES.rowGap) / 2, labelHeight + px(0.75));
       const path = rounded([[x1, y1], [out, y1], [out, under], [back, under], [back, y2], [x2 - tip, y2]], radius);
-      edges.push({ id: `${from.id}->${to.id}`, source: from.id, target: to.id, path, tipX: x2, tipY: y2, ...(label ? { label } : {}), labelX: (out + back) / 2, labelY: under - px(0.25), labelWidth, labelHeight, kind, live, labelTone, wraps: true });
+      edges.push({
+        id: `${from.id}->${to.id}`,
+        source: from.id,
+        target: to.id,
+        path,
+        tipX: x2,
+        tipY: y2,
+        ...(label ? { label } : {}),
+        labelX: (out + back) / 2,
+        labelY: under - px(0.25),
+        labelWidth,
+        labelHeight,
+        kind,
+        live,
+        labelTone,
+        wraps: true
+      });
     }
   }
 

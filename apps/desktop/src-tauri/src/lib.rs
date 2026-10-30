@@ -556,14 +556,15 @@ mod tests {
     fn outer_exit_probe(mode: &str) -> Control {
         let listener = Listener::new();
         let ready = Listener::new();
-        let mut outer = OwnedOuter(Command::new(std::env::current_exe().expect("test executable path"))
+        let mut command = Command::new(std::env::current_exe().expect("test executable path"));
+        command
             .args(["--exact", "tests::desktop_shutdown_waits_for_owned_child_or_preserves_handoff", "--nocapture"])
             .env("PETRINA_OUTER_EXIT_CHILD_CASE", mode)
             .env("PETRINA_OUTER_CONTROL_ADDRESS", listener.address())
             .env("PETRINA_OUTER_READY_ADDRESS", ready.address())
             .env_remove("PETRINA_TEST_SHELL_CHILD").env_remove("PETRINA_TEST_SHELL_CONTROL")
-            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().expect("outer shell test process starts"));
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut outer = OwnedOuter(super::engine_process::spawn_command(&mut command).expect("outer shell test process starts"));
         let control = listener.accept().expect("outer shell's child connects to its fixture owner");
         let mut receipt = ready.accept().expect("outer completed startup before shutdown timing");
         assert_eq!(receipt.pid, outer.0.id());

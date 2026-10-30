@@ -1,5 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowRight, Bot, ChevronRight, ClipboardCheck, Clock3, CornerDownRight, FileInput, Flag, Hourglass, MessageCircle, MessageSquare, SlidersHorizontal, Timer, User, X } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  Bot,
+  ChevronRight,
+  ClipboardCheck,
+  Clock3,
+  CornerDownRight,
+  FileInput,
+  Flag,
+  Hourglass,
+  MessageCircle,
+  MessageSquare,
+  SlidersHorizontal,
+  Timer,
+  User,
+  X
+} from "lucide-react";
 import { decisionEvidence, dependencyLanding, type JourneyNode, type State, type Task } from "@petrina/core";
 import { duration, EFFORT_LABEL, profileText, type Lookup } from "../../lib";
 import { reviewOutcome, reviewRoundGroups } from "../../reviewRound";
@@ -15,7 +32,18 @@ import { CheckAttempts } from "../CheckAttempts";
 import { StepCheckSetups } from "../CheckSetupObservations";
 import { askKind, askOutcome, LANDING_WORDS, profilesOf, since, stateWords, timeOf, unstopped, visibleStepName } from "./journeyWords";
 
-export function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, onOriginal, selectedAttempt }: { onOriginal: (id: string, attempt?: string) => void; selectedAttempt?: string; node: JourneyNode; task: Task; state: State; find: Lookup; now: number; onPlan: () => void; onClose?: () => void; onOpen?: (taskId: string) => void }) {
+export function StepDetails({ node, task, state, find, now, onPlan, onClose, onOpen, onOriginal, selectedAttempt }: {
+  onOriginal: (id: string, attempt?: string) => void;
+  selectedAttempt?: string;
+  node: JourneyNode;
+  task: Task;
+  state: State;
+  find: Lookup;
+  now: number;
+  onPlan: () => void;
+  onClose?: () => void;
+  onOpen?: (taskId: string) => void
+}) {
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "conversation">("overview");
   useEffect(() => setActiveTab("overview"), [node.id]);
   const role = find.role(node.roleId);
@@ -34,14 +62,37 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
   // Builders retain their assigned findings and answers as history, not newly raised findings.
   const findings = role?.result === "build" ? undefined : node.result?.findings ?? (role?.result === "findings" && nextAgent
     ? task.findings.filter((finding) => nextAgent.fixing && nextAgent.findingIds?.includes(finding.id) || checkingThisRound && handedOn.includes(`[${finding.id}]`)) : undefined);
-  const reviewGroups = useMemo(() => role?.result === "findings" ? reviewRoundGroups(node, task.journey ?? [], (id) => find.role(id)?.result) : undefined, [role?.result, node, task.journey, find]);
+  const reviewGroups = useMemo(
+    () => role?.result === "findings" ? reviewRoundGroups(
+    node,
+    task.journey ?? [],
+    (id) => find.role(id)?.result
+  ) : undefined,
+    [
+    role?.result,
+    node,
+    task.journey,
+    find
+  ]
+  );
   const outcome = reviewOutcome(node, role);
   const given = node.agentInputs?.flatMap((input) => input.sections.map((section) => section.body)).join("\n") ?? "";
   const objections = node.result?.objections ?? (role?.result === "objections" && ownStep
     ? task.objections.filter((objection) => objection.round === ownStep.round && (node.team ?? [node.profileId]).includes(objection.raisedBy))
     : role?.result === "brief" ? task.objections.filter((objection) => objection.answer && given.includes(`[${objection.id}]`)) : undefined);
   const supportingChecks = node.productChecks ?? (node.kind === "you" && node.waitsFor === "delivery" && journeyIndex === journeySteps.length - 1 ? decisionEvidence(task) : []);
-  const acceptanceChecks = node.acceptanceChecks ? [...node.acceptanceChecks].sort((a, b) => ({ pass: 0, blocked: 1, fail: 2 }[a.result] - { pass: 0, blocked: 1, fail: 2 }[b.result])) : [];
+  const acceptanceChecks = node.acceptanceChecks ? [...node.acceptanceChecks].sort((
+    a,
+    b
+  ) => ({
+    pass: 0,
+    blocked: 1,
+    fail: 2
+  }[a.result] - {
+    pass: 0,
+    blocked: 1,
+    fail: 2
+  }[b.result])) : [];
   const time = timeOf(node, now);
   const recorded = !planned && !node.legacy && node.startedAt !== undefined;
   // Long tasks keep only their latest timeline events and conversation lines.
@@ -93,7 +144,12 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
         >{tab[0]!.toUpperCase() + tab.slice(1)}</button>)}
       </div>}
 
-      {activeTab === "overview" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-overview`} aria-labelledby={`journey-tab-${node.id}-overview`}>
+      {activeTab === "overview" && <div
+        className="journey-tab-panel"
+        role="tabpanel"
+        id={`journey-panel-${node.id}-overview`}
+        aria-labelledby={`journey-tab-${node.id}-overview`}
+      >
       {planned ? (
         <>
           <p className="note">
@@ -101,7 +157,11 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
               ? "Planned: the squad waits here for your OK before it goes on."
               : node.kind === "petrina"
                 ? "Planned: Petrina publishes the checked work itself."
-                : `Planned: ${visibleStepName(node)}${profiles.length ? ` on ${profiles.map((profile) => profileText(profile, find, true)).join(" and ")}` : ""}.`}
+                : `Planned: ${visibleStepName(node)}${profiles.length ? ` on ${profiles.map((profile) => profileText(
+                  profile,
+                  find,
+                  true
+                )).join(" and ")}` : ""}.`}
             {node.live ? ` ${unstopped(node.live)}.` : ""}
           </p>
           {node.kind === "agent" && (
@@ -118,7 +178,14 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
           {profiles.length > 0 && (
             <>
               <dt><Bot size={14} aria-hidden="true" />{node.legacy ? "Planned tool and model" : "Tool and model"}</dt>
-              <dd>{profiles.map((profile) => <span key={profile.id} className="journey-agent-profile"><ToolIcon toolId={profile.toolId} /><span>{profileText(profile, find, true)}</span></span>)}</dd>
+              <dd>{profiles.map((profile) => <span
+                key={profile.id}
+                className="journey-agent-profile"
+              ><ToolIcon toolId={profile.toolId} /><span>{profileText(
+                profile,
+                find,
+                true
+              )}</span></span>)}</dd>
             </>
           )}
           {node.waitReason && <><dt>Reason for waiting</dt><dd className="prose">{node.waitReason}</dd></>}
@@ -142,7 +209,10 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
           <dd className="num">{node.legacy || node.startedAt === undefined ? "Not recorded" : since(node.startedAt, now)}</dd>
           {time && (
             <>
-              <dt><Timer size={14} aria-hidden="true" />{node.kind === "you" ? (node.endedAt === undefined ? "Waiting for" : "Waited") : node.endedAt === undefined ? "Elapsed so far" : "Elapsed"}</dt>
+              <dt><Timer
+                size={14}
+                aria-hidden="true"
+              />{node.kind === "you" ? (node.endedAt === undefined ? "Waiting for" : "Waited") : node.endedAt === undefined ? "Elapsed so far" : "Elapsed"}</dt>
               <dd className="num">{node.kind === "you" ? time : `${time}, including any pauses and waiting`}</dd>
             </>
           )}
@@ -186,21 +256,50 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
             const identity = seatKey(input);
             const start = (seen.get(identity) ?? 0) + 1;
             seen.set(identity, start);
-            const agentLabel = `${inputRole}${inputs.length > 1 && profile ? ` (${profileText(profile, find, true)})` : ""}${input.reviewerKey !== undefined ? ` · Seat ${Number(input.reviewerKey) + 1}` : ""}${starts.get(identity)! > 1 ? ` · Start ${start}` : ""}`;
+            const agentLabel = `${inputRole}${inputs.length > 1 && profile ? ` (${profileText(
+              profile,
+              find,
+              true
+            )})` : ""}${input.reviewerKey !== undefined ? ` · Seat ${Number(input.reviewerKey) + 1}` : ""}${starts.get(identity)! > 1 ? ` · Start ${start}` : ""}`;
             return <div className="journey-agent-start" key={`${input.roleId}:${input.profileId}:${input.reviewerKey ?? "main"}:${index}`}>
               <details className="agent-selection">
-                <summary><SlidersHorizontal size={16} aria-hidden="true" /><span>Agent choice{inputs.length > 1 ? ` · ${agentLabel}` : ""}</span><ChevronRight className="journey-disclosure" size={16} aria-hidden="true" /></summary>
-                <p>Requested: {input.requestedProfileId ? profileText(find.profile(input.requestedProfileId), find, true) || "A profile no longer in the Library" : "Not recorded"}</p>
+                <summary><SlidersHorizontal
+                  size={16}
+                  aria-hidden="true"
+                /><span>Agent choice{inputs.length > 1 ? ` · ${agentLabel}` : ""}</span><ChevronRight
+                  className="journey-disclosure"
+                  size={16}
+                  aria-hidden="true"
+                /></summary>
+                <p>Requested: {input.requestedProfileId ? profileText(
+                  find.profile(input.requestedProfileId),
+                  find,
+                  true
+                ) || "A profile no longer in the Library" : "Not recorded"}</p>
                 <p>Selected: {profileText(profile, find, true) || "A profile no longer in the Library"}</p>
-                {input.assignment && input.assignment.profileId !== input.requestedProfileId && <p>Original assignment: {profileText(find.profile(input.assignment.profileId), find, true) || "A profile no longer in the Library"}</p>}
+                {input.assignment && input.assignment.profileId !== input.requestedProfileId && <p>Original assignment: {profileText(
+                  find.profile(input.assignment.profileId),
+                  find,
+                  true
+                ) || "A profile no longer in the Library"}</p>}
                 {input.assignment?.reason && <p>{input.assignment.reason}</p>}
                 {input.assignment?.changeReason && <p>{input.assignment.changeReason}</p>}
                 {input.selectionReason && <p>{input.selectionReason}</p>}
                 {input.confirmedSettings?.model && <p className="quiet-text">Tool confirmed at start: {input.confirmedSettings.modelName ?? (input.confirmedSettings.model === profile?.modelId ? profile.model : input.confirmedSettings.model)}{input.confirmedSettings.effort ? ` · ${EFFORT_LABEL[input.confirmedSettings.effort as keyof typeof EFFORT_LABEL] ?? input.confirmedSettings.effort}` : ""}</p>}
               </details>
               <details className="journey-input-record">
-                <summary><FileInput size={18} aria-hidden="true" /><span>Input given to {agentLabel}<span className="journey-input-mode">{input.mode === "continued" ? "Continued conversation" : "Fresh conversation"}</span></span><ChevronRight className="journey-disclosure" size={16} aria-hidden="true" /></summary>
-                <p className="quiet-text">{input.mode === "continued" ? "Updated job and context for its existing conversation." : "Job and context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}{input.at !== undefined ? ` Sent ${since(input.at, now)}.` : ""}</p>
+                <summary><FileInput
+                  size={18}
+                  aria-hidden="true"
+                /><span>Input given to {agentLabel}<span className="journey-input-mode">{input.mode === "continued" ? "Continued conversation" : "Fresh conversation"}</span></span><ChevronRight
+                  className="journey-disclosure"
+                  size={16}
+                  aria-hidden="true"
+                /></summary>
+                <p className="quiet-text">{input.mode === "continued" ? "Updated job and context for its existing conversation." : "Job and context for a fresh conversation."}{input.stageTitle ? ` Assigned stage: ${input.stageTitle}.` : ""}{input.at !== undefined ? ` Sent ${since(
+                  input.at,
+                  now
+                )}.` : ""}</p>
                 {input.taskDescription && <div>
                   <h4>Task request</h4>
                   <p>{input.taskDescription}</p>
@@ -216,7 +315,10 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
                 {!!input.updates?.length && <div className="journey-input-updates">
                   <h4>Further instructions</h4>
                   {input.updates.map((update, updateIndex) => <div key={updateIndex}>
-                    <p className="quiet-text">{update.reason === "message" ? "Coordinator message" : update.reason === "answer" ? "Answer to its question" : update.reason === "redo" ? "Result correction" : "Continuation"}{update.delivery && ` · ${update.delivery === "applied" ? "Heard" : update.delivery === "accepted" ? "Accepted by the tool" : update.delivery === "sending" ? "Sending" : update.delivery === "waiting" ? "Not accepted" : update.delivery === "skipped" ? "Continued without confirmed delivery" : "Delivery unconfirmed"}`} · {since(update.at, now)}</p>
+                    <p className="quiet-text">{update.reason === "message" ? "Coordinator message" : update.reason === "answer" ? "Answer to its question" : update.reason === "redo" ? "Result correction" : "Continuation"}{update.delivery && ` · ${update.delivery === "applied" ? "Heard" : update.delivery === "accepted" ? "Accepted by the tool" : update.delivery === "sending" ? "Sending" : update.delivery === "waiting" ? "Not accepted" : update.delivery === "skipped" ? "Continued without confirmed delivery" : "Delivery unconfirmed"}`} · {since(
+                      update.at,
+                      now
+                    )}</p>
                     <p>{update.text}</p>
                   </div>)}
                 </div>}
@@ -260,14 +362,30 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
         </div>
       )}
 
-      {reviewGroups ? <ReviewRoundFindings groups={reviewGroups} find={find} {...(onOpen ? { onOpen } : {})} /> : findings !== undefined && <div className="journey-context">
+      {reviewGroups ? <ReviewRoundFindings
+        groups={reviewGroups}
+        find={find}
+        {...(onOpen ? { onOpen } : {})}
+      /> : findings !== undefined && <div className="journey-context">
         <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings from this step</h4>
-        {findings.length ? <><p className="note">{node.result?.findingsSettled ? role?.result === "votes" ? "Settled decisions for this vote step." : "Settled decisions for this review round." : node.result?.findings ? "Hand-back copies; no settled decision was saved." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem key={finding.id} finding={finding} find={find} {...(onOpen ? { onOpen } : {})} />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
+        {findings.length ? <><p className="note">{node.result?.findingsSettled ? role?.result === "votes" ? "Settled decisions for this vote step." : "Settled decisions for this review round." : node.result?.findings ? "Hand-back copies; no settled decision was saved." : "Latest recorded status of the findings handed on."}</p><ol className="issues">{findings.map((finding) => <FindingItem
+          key={finding.id}
+          finding={finding}
+          find={find}
+          {...(onOpen ? { onOpen } : {})}
+        />)}</ol></> : <p className="note">{node.result?.findings ? "No findings were raised or confirmed." : "This step's findings were not recorded separately."}</p>}
       </div>}
 
       {objections !== undefined && <div className="journey-context">
-        <h4 className="journey-section-heading"><MessageSquare size={16} aria-hidden="true" />{role?.result === "brief" ? "Answers to objections" : "Objections from this step"}</h4>
-        {objections.length ? <><p className="note">{node.result?.objections ? "As recorded when this step handed back its result." : "Latest recorded answers and status."}</p><ol className="issues">{objections.map((objection) => <ObjectionItem key={objection.id} objection={objection} find={find} />)}</ol></> : <p className="note">{node.result?.objections ? role?.result === "brief" ? "No objections needed an answer in this step." : "No objections were raised." : "This step's objection details were not recorded separately."}</p>}
+        <h4 className="journey-section-heading"><MessageSquare
+          size={16}
+          aria-hidden="true"
+        />{role?.result === "brief" ? "Answers to objections" : "Objections from this step"}</h4>
+        {objections.length ? <><p className="note">{node.result?.objections ? "As recorded when this step handed back its result." : "Latest recorded answers and status."}</p><ol className="issues">{objections.map((objection) => <ObjectionItem
+          key={objection.id}
+          objection={objection}
+          find={find}
+        />)}</ol></> : <p className="note">{node.result?.objections ? role?.result === "brief" ? "No objections needed an answer in this step." : "No objections were raised." : "This step's objection details were not recorded separately."}</p>}
       </div>}
 
       {acceptanceChecks.length ? (
@@ -284,9 +402,20 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
         </div>
       ) : node.kind === "agent" && role?.result === "checks" && !planned ? <p className="note">{node.state === "now" || node.state === "you" ? "Acceptance testing in progress. No results recorded yet." : "Acceptance results unavailable for this step."}</p> : null}
 
-      {(ownStep?.checkSetups?.length || (node.kind === "petrina" && node.work === "checks")) ? <StepCheckSetups attempts={ownStep?.checkSetups ?? []} productName={id => find.product(id)?.name ?? task.repositories?.find(work => work.productId === id)?.source?.product.name ?? "Removed product"} /> : null}
+      {(ownStep?.checkSetups?.length || (node.kind === "petrina" && node.work === "checks")) ? <StepCheckSetups
+        attempts={ownStep?.checkSetups ?? []}
+        productName={id => find.product(id)?.name ?? task.repositories?.find(work => work.productId === id)?.source?.product.name ?? "Removed product"}
+      /> : null}
       {node.kind !== "you" && (node.productChecks?.length || (node.kind === "petrina" && node.work === "checks")) && (() => {
-        if (node.productChecks?.length) return <CheckAttempts checks={node.productChecks} find={find} now={now} taskId={task.id} onOriginal={onOriginal} selectedAttempt={selectedAttempt} evidence={node.work === "check-reuse"} />;
+        if (node.productChecks?.length) return <CheckAttempts
+          checks={node.productChecks}
+          find={find}
+          now={now}
+          taskId={task.id}
+          onOriginal={onOriginal}
+          selectedAttempt={selectedAttempt}
+          evidence={node.work === "check-reuse"}
+        />;
         if (checkTimeline) return <div className="journey-context">
           <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Automated check results</h4>
           <p>{checkTimeline.text}</p>
@@ -297,7 +426,14 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
       {node.kind === "you" && node.waitsFor === "delivery" && <div className="journey-context">
         <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Checks behind this delivery decision</h4>
         <p className="note">This is your decision.{supportingChecks.length ? " Supporting check evidence is recorded below." : ""}</p>
-        {supportingChecks.length ? <CheckAttempts checks={supportingChecks} find={find} now={now} taskId={task.id} onOriginal={onOriginal} evidence /> : <p>Original check evidence unavailable.</p>}
+        {supportingChecks.length ? <CheckAttempts
+          checks={supportingChecks}
+          find={find}
+          now={now}
+          taskId={task.id}
+          onOriginal={onOriginal}
+          evidence
+        /> : <p>Original check evidence unavailable.</p>}
       </div>}
 
       {node.asks.length > 0 && (
@@ -318,7 +454,12 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
       )}
       </div>}
 
-      {activeTab === "timeline" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-timeline`} aria-labelledby={`journey-tab-${node.id}-timeline`}>
+      {activeTab === "timeline" && <div
+        className="journey-tab-panel"
+        role="tabpanel"
+        id={`journey-panel-${node.id}-timeline`}
+        aria-labelledby={`journey-tab-${node.id}-timeline`}
+      >
       {recorded ? (
         <div className="journey-part">
           <h4>This step on the timeline</h4>
@@ -331,8 +472,21 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
       ) : <p className="note">This step has no recorded timeline.</p>}
       </div>}
 
-      {activeTab === "conversation" && <div className="journey-tab-panel" role="tabpanel" id={`journey-panel-${node.id}-conversation`} aria-labelledby={`journey-tab-${node.id}-conversation`}>
-        {lines.length > 0 ? <StepConversation lines={lines} find={find} now={now} live={node.state === "now" || node.state === "you"} taskId={task.id} repositories={task.repositories} finished={task.state === "done" || task.state === "cancelled"} /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
+      {activeTab === "conversation" && <div
+        className="journey-tab-panel"
+        role="tabpanel"
+        id={`journey-panel-${node.id}-conversation`}
+        aria-labelledby={`journey-tab-${node.id}-conversation`}
+      >
+        {lines.length > 0 ? <StepConversation
+          lines={lines}
+          find={find}
+          now={now}
+          live={node.state === "now" || node.state === "you"}
+          taskId={task.id}
+          repositories={task.repositories}
+          finished={task.state === "done" || task.state === "cancelled"}
+        /> : sessionTrimmed ? <p className="note">This step’s earlier conversation is no longer kept; long tasks retain only the latest lines.</p> : <p className="note">No agent conversation was recorded for this step.</p>}
       </div>}
     </section>
   );

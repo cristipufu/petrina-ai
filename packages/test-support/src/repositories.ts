@@ -16,7 +16,10 @@ export interface ProductRepository {
 }
 
 /** A private writable copy whose initial commit was observed while preparing its immutable seed. */
-export async function createProductRepository(root: string, options: { origin?: "private" | "none"; objectFormat?: "sha1" | "sha256" } = {}): Promise<ProductRepository> {
+export async function createProductRepository(root: string, options: {
+  origin?: "private" | "none";
+  objectFormat?: "sha1" | "sha256"
+} = {}): Promise<ProductRepository> {
   const seed = await repositorySeed(undefined, true, options.objectFormat, options.origin === "none" ? "none" : "github");
   const origin = join(root, "origin.git");
   const clone = join(root, "clone");
@@ -50,7 +53,11 @@ export function repositorySeed(version?: string, versionFile = false, objectForm
   const published = environment.shared ? join(environment.shared, createHash("sha256").update(recipe).digest("hex")) : undefined;
   if (published) {
     const ready = publishedSeed(published, recipe);
-    if (ready) { const value = Promise.resolve(ready); repositorySeeds.set(key, value); return value; }
+    if (ready) {
+      const value = Promise.resolve(ready);
+      repositorySeeds.set(key, value);
+      return value;
+    }
   }
   const preparing = (async (): Promise<RepositorySeed> => {
     const claim = published ? await claimSeedPreparation(`${published}.claim`, published, recipe) : undefined;
@@ -133,7 +140,9 @@ function publishedSeed(path: string, recipe: string): RepositorySeed | undefined
 
 async function prepareSeed(path: string, version: string | undefined, versionFile: boolean, objectFormat: "sha1" | "sha256" | undefined, remote: "github" | "none", env: NodeJS.ProcessEnv): Promise<RepositorySeed> {
   const git = (cwd: string, ...args: string[]) => gitWith({ cwd, env }, ...args);
-  const source = join(path, "source"), origin = join(path, "origin.git"), clone = join(path, "clone");
+  const source = join(path, "source");
+  const origin = join(path, "origin.git");
+  const clone = join(path, "clone");
   mkdirSync(source);
   await git(source, "init", "-q", "-b", "main", ...(objectFormat ? [`--object-format=${objectFormat}`] : []));
   writeFileSync(join(source, "README.md"), "# Demo\n");

@@ -1,5 +1,24 @@
 import { profileModelName } from "@petrina/core";
-import { landingOf, onScreen, SCREEN_WORDS, screenOn, screenWait, slotUses, type AgentProfile, type Column, type Effort, type Id, type Role, type RoleIcon, type RoleResult, type RunState, type State, type Task, type Tone, type Tool } from "@petrina/core";
+import {
+  landingOf,
+  onScreen,
+  SCREEN_WORDS,
+  screenOn,
+  screenWait,
+  slotUses,
+  type AgentProfile,
+  type Column,
+  type Effort,
+  type Id,
+  type Role,
+  type RoleIcon,
+  type RoleResult,
+  type RunState,
+  type State,
+  type Task,
+  type Tone,
+  type Tool
+} from "@petrina/core";
 
 export function lookup(state: State, task?: Pick<Task, "maintenance">) {
   const roles = new Map(state.roles.map((role) => [role.id, role]));
@@ -84,12 +103,21 @@ export function profileText(profile: AgentProfile | undefined, find: Lookup, ful
 /** Where delivered work stands, in words, or undefined before delivery. A closed pull request and "Mark as done" deliver nothing. */
 export function deliveryText(task: Task): { text: string; done: boolean } | undefined {
   if (task.release) return { text: `Released ${task.release.tag}`, done: true };
-  if (task.landed) return { text: task.localUpdate?.pushed ? `Committed to ${task.landed.branch} · pushed to GitHub` : `Delivered locally to ${task.landed.branch}`, done: true };
+  if (task.landed) return {
+    text: task.localUpdate?.pushed ? `Committed to ${task.landed.branch} · pushed to GitHub` : `Delivered locally to ${task.landed.branch}`,
+    done: true
+  };
   // A pull request found after you marked the work done does not deliver it.
   if (landingOf(task) === "marked-done") return { text: "Marked as done · delivery not confirmed", done: false };
   if (task.pr?.state === "merged") return { text: `Pull request #${task.pr.number} merged`, done: true };
-  if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) return { text: `Pull request #${task.pr.number} closed without merging`, done: false };
-  if (task.pr) return { text: `${task.source?.start.kind === "pull-request" ? "Updated PR" : "Pull request"} #${task.pr.number} · awaiting merge`, done: false };
+  if (task.pr && (task.pr.state === "closed" || landingOf(task) === "closed")) return {
+    text: `Pull request #${task.pr.number} closed without merging`,
+    done: false
+  };
+  if (task.pr) return {
+    text: `${task.source?.start.kind === "pull-request" ? "Updated PR" : "Pull request"} #${task.pr.number} · awaiting merge`,
+    done: false
+  };
   if (landingOf(task) === "no-changes") return { text: "Completed · No product changes", done: true };
   return undefined;
 }

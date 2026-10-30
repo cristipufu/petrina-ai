@@ -13,8 +13,20 @@ export function headNow(worktree: string): string {
   const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
   const ref = /^ref: (refs\/.+)$/.exec(head)?.[1];
   // A loose ref wins over packed-refs; one packed away between the two reads is found there.
-  const read = (path: string) => { try { return readFileSync(path, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } };
-  const sha = !ref ? head : read(join(common, ref))?.trim() ?? read(join(common, "packed-refs"))?.split("\n").find((line) => line.endsWith(` ${ref}`))?.split(" ")[0] ?? "";
+  const read = (path: string) => { try { return readFileSync(
+    path,
+    "utf8"
+  ); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  } };
+  const sha = !ref ? head : read(join(
+    common,
+    ref
+  ))?.trim() ?? read(join(
+    common,
+    "packed-refs"
+  ))?.split("\n").find((line) => line.endsWith(` ${ref}`))?.split(" ")[0] ?? "";
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sha)) throw new Error(`Could not read the HEAD of ${worktree} from Git's files (${head})`);
   return sha;
 }

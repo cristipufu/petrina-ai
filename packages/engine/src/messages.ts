@@ -1,5 +1,16 @@
 // Coordinator instructions belong to durable participant seats, never a process or profile.
-import { messageMember, settleInterruptedMessageDeliveries, unresolvedMessage, removeHeardMessages, addAsk, openStep, pauseClock, resumeClock, type AgentProfile, type QueuedMessage } from "@petrina/core";
+import {
+  messageMember,
+  settleInterruptedMessageDeliveries,
+  unresolvedMessage,
+  removeHeardMessages,
+  addAsk,
+  openStep,
+  pauseClock,
+  resumeClock,
+  type AgentProfile,
+  type QueuedMessage
+} from "@petrina/core";
 import { Aborted, type Kernel, type RuntimeTask } from "./kernel.js";
 import type { RepositoryContext } from "@petrina/orchestrator";
 import type { TurnResult, AgentSession } from "@petrina/orchestrator";
@@ -51,7 +62,10 @@ export async function holdUnconfirmed(k: Kernel, scope: RepositoryContext, membe
             if (work.clock) work.clock = pauseClock(work.clock, Date.now());
             work.waiting = status;
             k.showReviewWork(task);
-          } else { k.pauseStep(task); task.statusLine = status; }
+          } else {
+            k.pauseStep(task);
+            task.statusLine = status;
+          }
           k.commitNow(scope);
           answer = await k.waitForReply(item.id, signal);
         }
@@ -187,7 +201,13 @@ export class MessageTurn {
       // Save ownership before crossing the process boundary.
       const step = openStep(task);
       const input = step?.agentInputs?.findLast(entry => entry.roleId === this.roleId && entry.profileId === this.profile.id && entry.reviewerKey === this.reviewerKey);
-      const update = { at: Date.now(), reason: "message" as const, text: message.text, messageId: message.id, delivery: "sending" as import("@petrina/core").MessageDelivery["state"] };
+      const update = {
+        at: Date.now(),
+        reason: "message" as const,
+        text: message.text,
+        messageId: message.id,
+        delivery: "sending" as import("@petrina/core").MessageDelivery["state"]
+      };
       if (input) input.updates = [...(input.updates ?? []), update];
       this.k.commitNow(this.scope);
       const result = await this.run.guide(message.text, message.id);

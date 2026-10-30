@@ -19,7 +19,10 @@ function Observation({ attempt, invalidated }: { attempt?: CheckSetupAttempt; in
     {attempt && <>
       <p className="quiet-text setup-observation-meta">{attempt.position === "before-checks" ? "Before automated checks" : attempt.position === "after-checks" ? "After automated checks" : "Position unavailable"}<span aria-hidden="true"> · </span>{recordedTime(attempt)}</p>
       {Array.isArray(attempt.requirements) && requirements.length === 0 && <p className="note">No local setup requirements were declared for this observation.</p>}
-      {results.some(result => result.run.output) && <details className="setup-diagnostics"><summary>Recorded details</summary>{results.filter(result => result.run.output).map((result, index) => <div key={`${result.requirementId}-${index}`}><p className="setup-detail-name">{requirements.find(requirement => requirement.id === result.requirementId)?.name ?? "Requirement with no recorded name"}</p><pre className="check-output">{result.run.output}</pre></div>)}</details>}
+      {results.some(result => result.run.output) && <details className="setup-diagnostics"><summary>Recorded details</summary>{results.filter(result => result.run.output).map((
+        result,
+        index
+      ) => <div key={`${result.requirementId}-${index}`}><p className="setup-detail-name">{requirements.find(requirement => requirement.id === result.requirementId)?.name ?? "Requirement with no recorded name"}</p><pre className="check-output">{result.run.output}</pre></div>)}</details>}
     </>}
   </div>;
 }
@@ -37,7 +40,10 @@ export function CheckSetupObservations({ latest, invalidated, history = [], titl
   const earlier = unique(history).filter(attempt => attempt.id !== latest?.id).reverse();
   return <section className="sheet-section check-setup-observations" aria-label={title}>
     <h2>{title}</h2><p className="quiet-text">Latest recorded observation</p><Observation attempt={latest} invalidated={invalidated} />
-    {earlier.length > 0 && <details className="setup-history"><summary>Earlier setup observations ({earlier.length})</summary>{earlier.map(attempt => <div className="setup-history-entry" key={attempt.id}><Observation attempt={attempt} /></div>)}</details>}
+    {earlier.length > 0 && <details className="setup-history"><summary>Earlier setup observations ({earlier.length})</summary>{earlier.map(attempt => <div
+      className="setup-history-entry"
+      key={attempt.id}
+    ><Observation attempt={attempt} /></div>)}</details>}
   </section>;
 }
 
@@ -46,8 +52,17 @@ export function StepCheckSetups({ attempts, productName }: { attempts: readonly 
   const grouped = new Map<string, CheckSetupAttempt[]>();
   for (const attempt of unique(attempts)) grouped.set(attempt.productId, [...(grouped.get(attempt.productId) ?? []), attempt]);
   if (!grouped.size) return <div className="journey-context"><h4>Local setup</h4><p className="note">No local setup observation was recorded for this step.</p></div>;
-  return <div className="journey-context check-setup-observations"><h4>Local setup recorded for this step</h4>{[...grouped].map(([productId, records]) => <div className="setup-product" key={productId}>
+  return <div className="journey-context check-setup-observations"><h4>Local setup recorded for this step</h4>{[...grouped].map(([productId, records]) => <div
+    className="setup-product"
+    key={productId}
+  >
     <h5>{productName(productId)}</h5><p className="quiet-text">Latest recorded for this step</p><Observation attempt={records.at(-1)} />
-    {records.length > 1 && <details className="setup-history"><summary>Earlier observations for this product ({records.length - 1})</summary>{records.slice(0, -1).reverse().map(attempt => <div className="setup-history-entry" key={attempt.id}><Observation attempt={attempt} /></div>)}</details>}
+    {records.length > 1 && <details className="setup-history"><summary>Earlier observations for this product ({records.length - 1})</summary>{records.slice(
+      0,
+      -1
+    ).reverse().map(attempt => <div
+      className="setup-history-entry"
+      key={attempt.id}
+    ><Observation attempt={attempt} /></div>)}</details>}
   </div>)}</div>;
 }

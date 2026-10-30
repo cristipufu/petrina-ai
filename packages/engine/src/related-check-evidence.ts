@@ -11,7 +11,14 @@ const EVIDENCE_ENTRY_LIMIT = 3;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const short = (value: string, limit = 600) => value.replace(/\s+/g, " ").trim().slice(0, limit);
 import { assignedCheckFailures, projectCheckEvidence, relatedCheckCandidates } from "@petrina/core";
-export { namedCheckFailures, projectCheckEvidence, assignedCheckFailures, relatedCheckCandidates, type CheckFailureReference, type RelatedCheckCandidate } from "@petrina/core";
+export {
+  namedCheckFailures,
+  projectCheckEvidence,
+  assignedCheckFailures,
+  relatedCheckCandidates,
+  type CheckFailureReference,
+  type RelatedCheckCandidate
+} from "@petrina/core";
 
 import { checkObjectTypes, deliveryMissing, type ObservedWorktreeHistory } from "@petrina/repositories/check-evidence";
 export { deliveryMissing } from "@petrina/repositories/check-evidence";
@@ -52,7 +59,13 @@ export async function relatedCheckEvidence(k: RelatedCheckEvidenceHost, scope: R
       clean = status.code === 0 && fullSha(head) && !lines.some((line) => !line.startsWith("#"));
     }
     if (clean) {
-      const specs = [`${head}^{tree}`, ...deliveryCandidates.flatMap((candidate) => [`${candidate.delivery!.sha}^{commit}`, `${candidate.delivery!.sha}^{tree}`])];
+      const specs = [
+        `${head}^{tree}`,
+        ...deliveryCandidates.flatMap((candidate) => [
+        `${candidate.delivery!.sha}^{commit}`,
+        `${candidate.delivery!.sha}^{tree}`
+      ])
+      ];
       const checked = await checkObjectTypes(worktree, specs);
       const currentTree = checked.get(`${head}^{tree}`);
       if (currentTree?.type === "tree") {
@@ -87,13 +100,25 @@ export async function relatedCheckEvidence(k: RelatedCheckEvidenceHost, scope: R
     const failingSnapshotOk = snapshots.get(`${failure.attempt.tree!}^{tree}`)?.type === "tree";
     return [
       `- Shared named failure: ${candidate.names.map((name) => JSON.stringify(name)).join(", ")}`,
-      `  Task ${candidate.taskId}; failure node ${failure.nodeId}; check ${failure.check.id} (${short(failure.check.run.name, 100)}); attempt ${failure.attempt.id}; command ${short(failure.check.run.command, 300)}.`,
+      `  Task ${candidate.taskId}; failure node ${failure.nodeId}; check ${failure.check.id} (${short(
+        failure.check.run.name,
+        100
+      )}); attempt ${failure.attempt.id}; command ${short(
+        failure.check.run.command,
+        300
+      )}.`,
       `  Saved check log: ${log ? JSON.stringify(log) + (!existsSync(log) ? " (unavailable)" : failure.check.run.logError || failure.check.run.logComplete === false ? " (incomplete)" : "") : "not recorded"}.`,
       `  Failing code: commit ${failure.attempt.sha}, tree ${failure.attempt.tree}${!failingSnapshotOk ? " (snapshot unavailable)" : ""}.`,
       `  Repair node ${candidate.nodeId}; ${new Date(candidate.at).toISOString()}; ${candidate.status} for commit ${repair.sha}, tree ${repair.tree}${!snapshotOk ? " (snapshot unavailable)" : ""}.`,
       `  Builder's check-specific answer (${repair.answer.fixed ? "candidate repair" : "diagnosis"}): ${JSON.stringify(short(repair.answer.text))}`,
-      ...(delivery ? [`  Separately confirmed landed contents: ${delivery.repo} · ${short(delivery.branch, 150)}, commit ${delivery.sha}, tree ${delivery.tree}; ${new Date(delivery.at).toISOString()}. This delivery is absent from the current prepared history; delivery does not prove the earlier diagnosis or candidate.`] : []),
+      ...(delivery ? [`  Separately confirmed landed contents: ${delivery.repo} · ${short(
+        delivery.branch,
+        150
+      )}, commit ${delivery.sha}, tree ${delivery.tree}; ${new Date(delivery.at).toISOString()}. This delivery is absent from the current prepared history; delivery does not prove the earlier diagnosis or candidate.`] : []),
     ].join("\n");
   });
-  return [{ title: "Related check evidence", body: `Navigation leads only: a shared test name does not establish a shared cause, or a pre-existing or flaky failure. Inspect applicability to your current code and prove your own repair with normal checks and independent review. Do not copy an unreviewed repair automatically or wait for another task. Status belongs only to the named snapshot.\n${entries.join("\n")}` }];
+  return [{
+    title: "Related check evidence",
+    body: `Navigation leads only: a shared test name does not establish a shared cause, or a pre-existing or flaky failure. Inspect applicability to your current code and prove your own repair with normal checks and independent review. Do not copy an unreviewed repair automatically or wait for another task. Status belongs only to the named snapshot.\n${entries.join("\n")}`
+  }];
 }

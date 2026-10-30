@@ -50,11 +50,20 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
     setHistoryLoading(true);
     const timer = setTimeout(() => {
       Promise.resolve().then(() => sim.historyPage({ query: trimmed, limit: 40 })).then(
-        (page) => { if (!cancelled) { setHistory({ query: trimmed, page }); setHistoryLoading(false); } },
-        (error) => { if (!cancelled) { setHistory({ query: trimmed, error: failureText(error) }); setHistoryLoading(false); } },
+        (page) => { if (!cancelled) {
+          setHistory({ query: trimmed, page });
+          setHistoryLoading(false);
+        } },
+        (error) => { if (!cancelled) {
+          setHistory({ query: trimmed, error: failureText(error) });
+          setHistoryLoading(false);
+        } },
       );
     }, 150);
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [trimmed, searchHistory, historyRevision]);
   const past = searchHistory && history?.query === trimmed ? history.page : undefined;
   const historyError = searchHistory && history?.query === trimmed ? history.error : undefined;
@@ -68,9 +77,17 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
     return { tasks, products, matched };
   }, [state, query, stats, taskActions, actions]);
 
-  const finish = (run: () => void) => () => { onClose(); run(); };
+  const finish = (run: () => void) => () => {
+    onClose();
+    run();
+  };
   const actionRow = (action: PaletteAction): PaletteAction => action.id === "limit" ? {
-    ...action, run: () => { setLimit(true); setQuery(""); setSelected(`limit-${state.pool.limit}`); input.current?.focus(); },
+    ...action, run: () => {
+      setLimit(true);
+      setQuery("");
+      setSelected(`limit-${state.pool.limit}`);
+      input.current?.focus();
+    },
   } : { ...action, run: finish(action.run) };
   const liveTaskIds = new Set(search.tasks.map((task) => task.id));
   const pastTasks = past?.items.filter((task) => !liveTaskIds.has(task.id)) ?? [];
@@ -101,7 +118,13 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
     ...search.matched.filter((action) => action.label.toLocaleLowerCase().startsWith(query.trim().toLocaleLowerCase())).map(actionRow),
     ...taskRows, ...productRows,
     ...search.matched.filter((action) => !action.label.toLocaleLowerCase().startsWith(query.trim().toLocaleLowerCase())).map(actionRow),
-    { id: "new-query", label: `New task: “${query.trim()}”`, detail: "Choose a product and review before creating", shortcut: "↵", run: finish(() => onNew(query.trim())) },
+    {
+      id: "new-query",
+      label: `New task: “${query.trim()}”`,
+      detail: "Choose a product and review before creating",
+      shortcut: "↵",
+      run: finish(() => onNew(query.trim()))
+    },
     ...(!nothing ? [{ id: "filter", label: `Filter the board: “${query.trim()}”`, shortcut: "↵", run: finish(() => onFilter(query.trim())) }] : []),
   ];
   const rowIds = rows.map((row) => row.id);
@@ -122,19 +145,48 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
         <Search size={20} aria-hidden="true" />
         <input ref={input} autoFocus role="combobox" aria-label={limit ? "Choose a pool limit" : "Find tasks, products or actions"} aria-autocomplete="list" aria-expanded="true" aria-controls="palette-list" aria-activedescendant={active ? `palette-${active.id}` : undefined}
           placeholder={limit ? "Type a number from 1 to 12" : "Find tasks, products or actions…"} value={query}
-          onChange={(event) => { const value = event.target.value; setQuery(value); if (!limit) setSelected(undefined); else if (/^(?:[1-9]|1[0-2])$/.test(value)) setSelected(`limit-${Number(value)}`); }}
+          onChange={(event) => {
+            const value = event.target.value;
+            setQuery(value);
+            if (!limit) setSelected(undefined);
+          else if (/^(?:[1-9]|1[0-2])$/.test(value)) setSelected(`limit-${Number(value)}`);
+          }}
           onKeyDown={(event) => {
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = rowIds.indexOf(activeId!); setSelected(rowIds[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))]); }
-            if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); if (!(historyPending && nothing && active?.id === "new-query")) active?.run(); }
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const index = rowIds.indexOf(activeId!);
+              setSelected(rowIds[Math.max(
+              0,
+              Math.min(
+              rows.length - 1,
+              index + (event.key === "ArrowDown" ? 1 : -1)
+            )
+            )]);
+            }
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              if (!(historyPending && nothing && active?.id === "new-query")) active?.run();
+            }
           }} />
         <button className="btn quiet small" onClick={onClose}>Esc</button>
       </div>
       {limit && <p className="palette-note">Lowering the limit never stops anyone. Running stages finish first.</p>}
       {!limit && historyPending && <p className="palette-note" role="status">Searching finished tasks…</p>}
       {!limit && historyError && <p className="palette-note" role="status">Finished tasks could not be searched. {historyError}</p>}
-      {!limit && nothing && query.trim() && !historyPending && !historyError && <p className="palette-note" role="status">Nothing matched. Enter opens New task for you to review.</p>}
+      {!limit && nothing && query.trim() && !historyPending && !historyError && <p
+        className="palette-note"
+        role="status"
+      >Nothing matched. Enter opens New task for you to review.</p>}
       <div className="palette-list" id="palette-list" role="listbox" aria-label={limit ? "Pool limits" : "Tasks, products and actions"}>
-        {rows.map((row) => <div key={row.id} id={`palette-${row.id}`} role="option" aria-selected={row.id === active?.id} className={`palette-row ${row.id === active?.id ? "on" : ""}`} onMouseMove={() => setSelected(row.id)} onClick={row.run}>
+        {rows.map((row) => <div
+          key={row.id}
+          id={`palette-${row.id}`}
+          role="option"
+          aria-selected={row.id === active?.id}
+          className={`palette-row ${row.id === active?.id ? "on" : ""}`}
+          onMouseMove={() => setSelected(row.id)}
+          onClick={row.run}
+        >
           <span><strong>{row.label}</strong>{row.detail && <small>{row.detail}</small>}</span><kbd>{row.shortcut}</kbd>
         </div>)}
       </div>
@@ -147,7 +199,17 @@ export function CommandPalette({ state, actions, taskActions, onClose, onTask, o
 export function KeyboardShortcuts({ onClose }: { onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   useFocusTrap(box, onClose);
-  return <><div className="dialog-scrim" onClick={onClose} /><div className="dialog shortcut-help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" ref={box} tabIndex={-1}>
+  return <><div
+    className="dialog-scrim"
+    onClick={onClose}
+  /><div
+    className="dialog shortcut-help"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Keyboard shortcuts"
+    ref={box}
+    tabIndex={-1}
+  >
     <div className="row between"><h2>Keyboard shortcuts</h2><button className="btn quiet" onClick={onClose}>Close <kbd>Esc</kbd></button></div>
     <p>Single keys rest while you type. An open task takes the keys first, then the inbox, then the visible board.</p>
     <dl>{SHORTCUTS.map(([key, label]) => <div key={key}><dt>{label}</dt><dd><kbd>{key}</kbd></dd></div>)}</dl>

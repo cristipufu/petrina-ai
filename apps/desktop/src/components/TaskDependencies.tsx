@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, ListOrdered, Search } from "lucide-react";
-import { blocksDependents, canEditTaskDependencies, finishedTask, historyItem, historyDeliveryItem, landingOf, runtimeWaitView, taskProductIds, validateTaskDependencies, type HistoryItem, type State, type Task } from "@petrina/core";
+import {
+  blocksDependents,
+  canEditTaskDependencies,
+  finishedTask,
+  historyItem,
+  historyDeliveryItem,
+  landingOf,
+  runtimeWaitView,
+  taskProductIds,
+  validateTaskDependencies,
+  type HistoryItem,
+  type State,
+  type Task
+} from "@petrina/core";
 import { failureText, sim } from "../engine";
 import { uncertainReply } from "../commandFailures";
 import { lookup, STATE_LABEL } from "../lib";
@@ -24,7 +37,13 @@ export function dependencyOutcome(task: Choice): string {
   const summary = "description" in task ? historyItem(task) : task;
   const deliveries = summary.deliveries;
   if (deliveries?.length) {
-    const outcomes = [...new Set(deliveries.map((work) => work.nothingToPublish ? "No product changes" : dependencyOutcome({ ...historyDeliveryItem(summary, work), state: task.state } as Choice)))];
+    const outcomes = [...new Set(deliveries.map((work) => work.nothingToPublish ? "No product changes" : dependencyOutcome({
+      ...historyDeliveryItem(
+      summary,
+      work
+    ),
+      state: task.state
+    } as Choice)))];
     return outcomes.every((outcome) => outcome === "Landed") && stillBlocks(task) ? "Delivery recorded — landing not confirmed" : outcomes.join(" · ");
   }
   // An open delivery stays open even when an older broad task state says done.
@@ -67,7 +86,13 @@ function useChoices(state: State, ids: readonly string[]) {
   return { choice, reload: () => setRetry((value) => value + 1) };
 }
 
-function Selection({ state, ids, onChange, disabled, onOpenTask }: { state: State; ids: readonly string[]; onChange?: (ids: string[]) => void; disabled?: boolean; onOpenTask?: (id: string) => void }) {
+function Selection({ state, ids, onChange, disabled, onOpenTask }: {
+  state: State;
+  ids: readonly string[];
+  onChange?: (ids: string[]) => void;
+  disabled?: boolean;
+  onOpenTask?: (id: string) => void
+}) {
   const { choice, reload } = useChoices(state, ids);
   const find = lookup(state);
   return ids.length ? <ul className="dependency-selection" aria-label="Selected prerequisites">{ids.map((id) => {
@@ -77,10 +102,22 @@ function Selection({ state, ids, onChange, disabled, onOpenTask }: { state: Stat
       {onChange ? <strong>{task.title}</strong> : <TaskLink taskId={id} find={find} onOpen={onOpenTask}>{task.title}</TaskLink>}
       <span className="quiet-text">{productsOf(task, state)}</span>
       <span className="quiet-text">{dependencyOutcome(task)}{blocking === undefined ? "" : blocking ? " · Still blocks" : " · No longer blocks"}</span>
-    </> : <><strong>{loading ? "Checking selected task…" : error ? "Selected task could not be checked" : "Unavailable task"}</strong><span className="quiet-text" role={error ? "alert" : undefined}>{error ?? (loading ? "Keeping this choice while it loads." : "This task was removed or is unavailable. Remove it and choose a replacement.")}</span></>}
+    </> : <><strong>{loading ? "Checking selected task…" : error ? "Selected task could not be checked" : "Unavailable task"}</strong><span
+      className="quiet-text"
+      role={error ? "alert" : undefined}
+    >{error ?? (loading ? "Keeping this choice while it loads." : "This task was removed or is unavailable. Remove it and choose a replacement.")}</span></>}
     {error && task && <span className="note bad" role="alert">Could not refresh this task. {error}</span>}
     {error && <button type="button" className="linkish" onClick={reload}>Try checking again</button>}</div>
-    {onChange && <button type="button" className="btn quiet small" disabled={disabled} aria-label={`Remove ${task?.title ?? "unavailable task"}`} onClick={(event) => { onChange(ids.filter((entry) => entry !== id)); event.currentTarget.closest(".dependency-picker")?.querySelector<HTMLButtonElement>("button")?.focus(); }}>Remove</button>}</li>;
+    {onChange && <button
+      type="button"
+      className="btn quiet small"
+      disabled={disabled}
+      aria-label={`Remove ${task?.title ?? "unavailable task"}`}
+      onClick={(event) => {
+      onChange(ids.filter((entry) => entry !== id));
+      event.currentTarget.closest(".dependency-picker")?.querySelector<HTMLButtonElement>("button")?.focus();
+    }}
+    >Remove</button>}</li>;
   })}</ul> : null;
 }
 
@@ -98,14 +135,35 @@ export function DependencyPicker({ state, ids, onChange, task, disabled = false,
   useDismiss(box, open, close, "click");
   const id = useId();
   useEffect(() => {
-    const timer = setTimeout(() => { setQuery(search.trim()); setCursor(undefined); setEarlier([]); }, 200);
+    const timer = setTimeout(() => {
+      setQuery(search.trim());
+      setCursor(undefined);
+      setEarlier([]);
+    }, 200);
     return () => clearTimeout(timer);
   }, [search]);
   const { page, error, reload } = useHistoryPage(state, open, "all", { query, cursor });
   const terms = search.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-  const live = state.tasks.filter((entry) => !finishedTask(entry) && terms.every((term) => `${entry.title} ${productsOf(entry, state)}`.toLocaleLowerCase().includes(term)));
-  const results = [...live.slice(0, liveLimit), ...earlier, ...(page?.items ?? [])].filter((entry, at, all) => all.findIndex((other) => other.id === entry.id) === at);
-  const done = () => { setOpen(false); box.current?.querySelector("button")?.focus(); };
+  const live = state.tasks.filter((entry) => !finishedTask(entry) && terms.every((term) => `${entry.title} ${productsOf(
+    entry,
+    state
+  )}`.toLocaleLowerCase().includes(term)));
+  const results = [
+    ...live.slice(
+    0,
+    liveLimit
+  ),
+    ...earlier,
+    ...(page?.items ?? [])
+  ].filter((
+    entry,
+    at,
+    all
+  ) => all.findIndex((other) => other.id === entry.id) === at);
+  const done = () => {
+    setOpen(false);
+    box.current?.querySelector("button")?.focus();
+  };
   const reason = (entry: Choice): string | undefined => {
     if (ids.includes(entry.id)) return;
     if (task && entry.id === task.id) return "A task cannot wait for itself";
@@ -118,24 +176,101 @@ export function DependencyPicker({ state, ids, onChange, task, disabled = false,
   return <div className="dependency-picker">
     <span className="sr-only" role="status">{ids.length} prerequisites selected</span>
     <div className="new-task-product-select" ref={box}>
-      <button type="button" className="select new-task-product-trigger" aria-label="Choose tasks to wait for" aria-expanded={open} aria-controls={id} disabled={disabled} onClick={() => setOpen(!open)}><ListOrdered size={16} aria-hidden="true" /><span>Choose tasks to wait for…</span><span className="num quiet-text">{ids.length}</span><ChevronDown size={16} aria-hidden="true" /></button>
+      <button
+        type="button"
+        className="select new-task-product-trigger"
+        aria-label="Choose tasks to wait for"
+        aria-expanded={open}
+        aria-controls={id}
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+      ><ListOrdered
+        size={16}
+        aria-hidden="true"
+      /><span>Choose tasks to wait for…</span><span className="num quiet-text">{ids.length}</span><ChevronDown
+        size={16}
+        aria-hidden="true"
+      /></button>
       {open && <div id={id} className="new-task-product-menu">
-        <label className="new-task-product-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="Find tasks by title or product" placeholder="Find tasks by title or product…" value={search} disabled={disabled} onChange={(event) => { setSearch(event.target.value); setLiveLimit(24); setCursor(undefined); setEarlier([]); }} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} autoFocus /></label>
+        <label className="new-task-product-search"><Search
+          size={16}
+          aria-hidden="true"
+        /><input
+          type="search"
+          aria-label="Find tasks by title or product"
+          placeholder="Find tasks by title or product…"
+          value={search}
+          disabled={disabled}
+          onChange={(event) => {
+          setSearch(event.target.value);
+          setLiveLimit(24);
+          setCursor(undefined);
+          setEarlier([]);
+        }}
+          onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }}
+          autoFocus
+        /></label>
         <p className="note dependency-search-hint">Finished tasks are searched by title.</p>
         <div className="new-task-product-picker dependency-results" role="group" aria-label="Task prerequisites">{results.map((entry) => {
           const unavailable = reason(entry);
           return <label className={`new-task-product-choice ${ids.includes(entry.id) ? "chosen" : ""}`} key={entry.id}>
-            <input type="checkbox" checked={ids.includes(entry.id)} disabled={disabled || !!unavailable} onChange={(event) => onChange(event.target.checked ? [...ids, entry.id] : ids.filter((id) => id !== entry.id))} />
-            <span><strong>{entry.title}</strong><span className="quiet-text">{productsOf(entry, state)}</span><span className="quiet-text">{dependencyOutcome(entry)}</span>{unavailable && <span className="quiet-text">{unavailable}</span>}</span>
+            <input
+              type="checkbox"
+              checked={ids.includes(entry.id)}
+              disabled={disabled || !!unavailable}
+              onChange={(event) => onChange(event.target.checked ? [
+              ...ids,
+              entry.id
+            ] : ids.filter((id) => id !== entry.id))}
+            />
+            <span><strong>{entry.title}</strong><span className="quiet-text">{productsOf(
+              entry,
+              state
+            )}</span><span className="quiet-text">{dependencyOutcome(entry)}</span>{unavailable && <span className="quiet-text">{unavailable}</span>}</span>
           </label>;
         })}
         {!results.length && <p className="note">{page ? search.trim() ? "No tasks match your search." : "No tasks to wait for yet. Create another task first." : "No matching tasks on the board."}</p>}
         </div>
         {(!page || search.trim() !== query) && !error && <p className="note" role="status">Finding finished tasks…</p>}
-        {error && <p className="note bad" role="alert">Could not search finished tasks. {error} <button type="button" className="linkish" onClick={reload}>Try again</button></p>}
-        {live.length > liveLimit && <button type="button" className="btn quiet small" disabled={disabled} onClick={() => setLiveLimit(liveLimit + 24)}>Show more board tasks</button>}
-        {page?.nextCursor && <button type="button" className="btn quiet small" disabled={disabled || search.trim() !== query} onClick={() => { setEarlier([...earlier, ...page.items]); setCursor(page.nextCursor); }}>Show more</button>}
-        <div className="new-task-product-menu-foot"><span className="quiet-text num" role="status">{ids.length} selected</span><div className="row"><button type="button" className="btn quiet small" disabled={disabled || !ids.length} onClick={() => onChange([])}>Clear all</button><button type="button" className="btn quiet small" onClick={done}>Done</button></div></div>
+        {error && <p
+          className="note bad"
+          role="alert"
+        >Could not search finished tasks. {error} <button
+          type="button"
+          className="linkish"
+          onClick={reload}
+        >Try again</button></p>}
+        {live.length > liveLimit && <button
+          type="button"
+          className="btn quiet small"
+          disabled={disabled}
+          onClick={() => setLiveLimit(liveLimit + 24)}
+        >Show more board tasks</button>}
+        {page?.nextCursor && <button
+          type="button"
+          className="btn quiet small"
+          disabled={disabled || search.trim() !== query}
+          onClick={() => {
+          setEarlier([
+          ...earlier,
+          ...page.items
+        ]);
+          setCursor(page.nextCursor);
+        }}
+        >Show more</button>}
+        <div className="new-task-product-menu-foot"><span
+          className="quiet-text num"
+          role="status"
+        >{ids.length} selected</span><div className="row"><button
+          type="button"
+          className="btn quiet small"
+          disabled={disabled || !ids.length}
+          onClick={() => onChange([])}
+        >Clear all</button><button
+          type="button"
+          className="btn quiet small"
+          onClick={done}
+        >Done</button></div></div>
       </div>}
     </div>
     <Selection state={state} ids={ids} onChange={onChange} disabled={disabled} onOpenTask={onOpenTask} />
@@ -152,29 +287,79 @@ export function DependencyEditor({ task, state, onClose, onOpenTask }: { task: T
   const baseline = useRef(JSON.stringify([...(task.after ?? [])].sort()));
   const dirty = JSON.stringify([...ids].sort()) !== baseline.current;
   const editable = canEditTaskDependencies(task);
-  const close = () => { if (!saving) { if (dirty) setDiscard(true); else onClose(); } };
+  const close = () => { if (!saving) { if (dirty) setDiscard(true);
+  else onClose(); } };
   const save = async () => {
     if (sent.current || (!dirty && !pending)) return;
-    sent.current = true; setSaving(true); setError("");
-    try { await sim.setAfter(task.id, [...(pending ?? ids)]); onClose(); }
-    catch (failure) { setError(failureText(failure)); setPending(uncertainReply(failure) ? [...(pending ?? ids)] : undefined); }
-    finally { sent.current = false; setSaving(false); }
+    sent.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      await sim.setAfter(task.id, [...(pending ?? ids)]);
+      onClose();
+    }
+    catch (failure) {
+      setError(failureText(failure));
+      setPending(uncertainReply(failure) ? [...(pending ?? ids)] : undefined);
+    }
+    finally {
+      sent.current = false;
+      setSaving(false);
+    }
   };
-  return <><EditorPanel title="Start after other tasks land" caption={task.title} description={DEPENDENCY_HELP} busy={saving} onClose={close} footer={<><button type="button" className="btn quiet" disabled={saving} onClick={onClose}>Cancel</button><button type="button" className="btn lead" disabled={saving || !editable || (!dirty && !pending)} onClick={() => void save()}>{saving ? "Saving…" : pending ? "Retry confirmation" : "Save changes"}</button></>}>
+  return <><EditorPanel
+    title="Start after other tasks land"
+    caption={task.title}
+    description={DEPENDENCY_HELP}
+    busy={saving}
+    onClose={close}
+    footer={<><button
+    type="button"
+    className="btn quiet"
+    disabled={saving}
+    onClick={onClose}
+  >Cancel</button><button
+    type="button"
+    className="btn lead"
+    disabled={saving || !editable || (!dirty && !pending)}
+    onClick={() => void save()}
+  >{saving ? "Saving…" : pending ? "Retry confirmation" : "Save changes"}</button></>}
+  >
     <DependencyPicker state={state} task={task} ids={ids} onChange={setIds} disabled={saving || !!pending || !editable} initiallyOpen onOpenTask={onOpenTask} />
-    {!editable && <p className="note" role="status">This task has started or finished. Prerequisites can no longer change. Your attempted choices are still shown.</p>}
-    {error && <p className="note bad" role="alert">{error}{pending ? " Retry confirmation sends the same choices again." : " Your choices have not been changed here. Review them and try again."}</p>}
-  </EditorPanel>{discard && <ConfirmDialog title="Discard prerequisite changes?" confirm="Discard changes" cancel="Keep editing" onConfirm={onClose} onCancel={() => setDiscard(false)}><p>Your unsaved prerequisite choices will be lost.</p></ConfirmDialog>}</>;
+    {!editable && <p
+      className="note"
+      role="status"
+    >This task has started or finished. Prerequisites can no longer change. Your attempted choices are still shown.</p>}
+    {error && <p
+      className="note bad"
+      role="alert"
+    >{error}{pending ? " Retry confirmation sends the same choices again." : " Your choices have not been changed here. Review them and try again."}</p>}
+  </EditorPanel>{discard && <ConfirmDialog
+    title="Discard prerequisite changes?"
+    confirm="Discard changes"
+    cancel="Keep editing"
+    onConfirm={onClose}
+    onCancel={() => setDiscard(false)}
+  ><p>Your unsaved prerequisite choices will be lost.</p></ConfirmDialog>}</>;
 }
 
-export function TaskDependencies({ task, state, onOpenTask, onEdit }: { task: Task; state: State; onOpenTask?: (id: string) => void; onEdit?: (task: Task) => void }) {
+export function TaskDependencies({ task, state, onOpenTask, onEdit }: {
+  task: Task;
+  state: State;
+  onOpenTask?: (id: string) => void;
+  onEdit?: (task: Task) => void
+}) {
   const [editing, setEditing] = useState(false);
   const editable = canEditTaskDependencies(task);
   if (!editable && !task.after?.length) return null;
   return <section className="sheet-section reading">
     <h2>Start after other tasks land</h2><p className="quiet-text">{DEPENDENCY_HELP}</p>
     <Selection state={state} ids={task.after ?? []} onOpenTask={onOpenTask} />
-    {editable ? <button type="button" className="btn outline" onClick={() => onEdit ? onEdit(task) : setEditing(true)}>{task.after?.length ? "Change prerequisites" : "Choose tasks to wait for…"}</button> : <p className="note">Work has started. These pre-start prerequisites can no longer change.</p>}
+    {editable ? <button
+      type="button"
+      className="btn outline"
+      onClick={() => onEdit ? onEdit(task) : setEditing(true)}
+    >{task.after?.length ? "Change prerequisites" : "Choose tasks to wait for…"}</button> : <p className="note">Work has started. These pre-start prerequisites can no longer change.</p>}
     {editing && <DependencyEditor task={task} state={state} onClose={() => setEditing(false)} onOpenTask={onOpenTask} />}
   </section>;
 }
@@ -188,7 +373,14 @@ export function TaskRuntimeWait({ task, state, onOpenTask }: { task: Task; state
   const view = runtimeWaitView(task, (id) => choice(id).task);
   if (!wait || !view) return null;
   const checking = wait.after.some((id) => choice(id).loading || choice(id).error);
-  const list = (selected: readonly string[]) => selected.length ? selected.map((id, index) => <span key={id}>{index > 0 ? ", " : ""}<TaskLink taskId={id} find={find} onOpen={onOpenTask}>{choice(id).task?.title ?? wait.titles?.[id] ?? "Unavailable task"}</TaskLink></span>) : "None";
+  const list = (selected: readonly string[]) => selected.length ? selected.map((
+    id,
+    index
+  ) => <span key={id}>{index > 0 ? ", " : ""}<TaskLink
+    taskId={id}
+    find={find}
+    onOpen={onOpenTask}
+  >{choice(id).task?.title ?? wait.titles?.[id] ?? "Unavailable task"}</TaskLink></span>) : "None";
   const date = (at: number) => <time className="num" dateTime={new Date(at).toISOString()}>{new Date(at).toLocaleString()}</time>;
   return <section className="sheet-section reading runtime-wait" aria-label="Wait for other tasks to land">
     <h2>Wait for other tasks to land</h2>
@@ -200,7 +392,14 @@ export function TaskRuntimeWait({ task, state, onOpenTask }: { task: Task; state
       return <li key={entry.id}><div>
         <TaskLink taskId={entry.id} find={find} onOpen={onOpenTask}>{saved.loading ? "Checking awaited task…" : entry.title}</TaskLink>
         <span className="quiet-text">{saved.loading ? "Checking its current outcome…" : saved.error ? "The current outcome could not be checked." : entry.state}{!saved.loading && !saved.error && view.held && entry.decisionNeeded ? " · Your decision is needed" : ""}</span>
-        {saved.error && <><span className="note bad" role="alert">{saved.error}</span><button type="button" className="linkish" onClick={reload}>Try checking again</button></>}
+        {saved.error && <><span
+          className="note bad"
+          role="alert"
+        >{saved.error}</span><button
+          type="button"
+          className="linkish"
+          onClick={reload}
+        >Try checking again</button></>}
       </div></li>;
     })}</ul>}
     {view.releasedAt !== undefined && <p className="note">Wait ended {date(view.releasedAt)}.</p>}

@@ -34,7 +34,18 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
   const select = (stage: Stage, list: "profileIds" | "reviewerProfileIds", index: number, value: string, editable: boolean) => {
     const assignment = (list === "profileIds" ? stage.assignments : stage.reviewerAssignments)?.[index];
     return <div className="stage-profile">{editable ? (
-      <Select className="select" value={value} aria-label={`Who does ${stage.title.toLowerCase()}`} onChange={(event) => sim.setStageProfile(task.id, stage.id, list, index, event.target.value)}>
+      <Select
+        className="select"
+        value={value}
+        aria-label={`Who does ${stage.title.toLowerCase()}`}
+        onChange={(event) => sim.setStageProfile(
+        task.id,
+        stage.id,
+        list,
+        index,
+        event.target.value
+      )}
+      >
         {state.profiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
             {profileText(profile, find, true)}
@@ -44,7 +55,11 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
     ) : (
       <ProfileText profile={find.profile(value)} find={find} full />
     )}{assignment && <details className="assignment-reason"><summary>Why this agent</summary><p>{assignment.reason ?? "A reason was not recorded for this assignment."}</p>
-      {assignment.profileId !== value && <p>Requested: {find.profile(assignment.profileId) ? profileText(find.profile(assignment.profileId), find, true) : "a profile no longer in the Library"}.</p>}
+      {assignment.profileId !== value && <p>Requested: {find.profile(assignment.profileId) ? profileText(
+        find.profile(assignment.profileId),
+        find,
+        true
+      ) : "a profile no longer in the Library"}.</p>}
       {assignment.changeReason && <p>{assignment.changeReason}</p>}
     </details>}</div>;
   };
@@ -65,7 +80,11 @@ export function PlanView({ task, state, find }: { task: Task; state: State; find
         </p>
       </section>
 
-      {plan.products && <section className="sheet-section reading"><h2>Product ownership</h2>{plan.products.map((owner) => <p key={owner.productId}>{state.products.find((product) => product.id === owner.productId)?.name ?? task.workRows?.find((row) => row.choice.productId === owner.productId)?.source?.product.name ?? owner.productId} · Builder: {profileText(find.profile(owner.builderProfileId), find, true)}{owner.productId === task.leadProductId || owner.productId === plan.leadProductId ? " · Leads shared repairs" : ""}</p>)}</section>}
+      {plan.products && <section className="sheet-section reading"><h2>Product ownership</h2>{plan.products.map((owner) => <p key={owner.productId}>{state.products.find((product) => product.id === owner.productId)?.name ?? task.workRows?.find((row) => row.choice.productId === owner.productId)?.source?.product.name ?? owner.productId} · Builder: {profileText(
+        find.profile(owner.builderProfileId),
+        find,
+        true
+      )}{owner.productId === task.leadProductId || owner.productId === plan.leadProductId ? " · Leads shared repairs" : ""}</p>)}</section>}
       <section className="sheet-section">
         <h2>Stages</h2>
         <ol className="stages">

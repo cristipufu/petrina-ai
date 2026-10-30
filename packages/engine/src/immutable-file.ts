@@ -11,8 +11,12 @@ const absent = (error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") 
 
 /** Save the body as `<digest>.<suffix>` in the folder, or a private `<digest>.<id>.<suffix>` without hard links; a failed write leaves no new file. */
 export async function saveImmutable(folder: string, suffix: string, body: string, changed: string): Promise<{ file: string; digest: string }> {
-  const hash = digest(body), file = join(folder, `${hash}.${suffix}`);
-  const same = (text: string) => { if (digest(text) !== hash) throw new Error(changed); return { file, digest: hash }; };
+  const hash = digest(body);
+  const file = join(folder, `${hash}.${suffix}`);
+  const same = (text: string) => {
+    if (digest(text) !== hash) throw new Error(changed);
+    return { file, digest: hash };
+  };
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const existing = await readFile(file, "utf8").catch(absent);
   if (existing !== undefined) return same(existing);

@@ -80,8 +80,17 @@ export function codexCapacityFailure(error: unknown): CapacityStop | undefined {
   const nested = recordOf(record.data) ?? {};
   const failure = sessionFailureOf(record) ?? sessionFailureOf(nested);
   const warning = failure?.severity === "warning";
-  const messages = [record.message, nested.message, !warning && typeof failure?.title === "string" ? failure.title : undefined].filter((value): value is string => typeof value === "string" && value.length > 0);
-  const code = [record.codexErrorInfo, record.codex_error_info, nested.codexErrorInfo, nested.codex_error_info].some((value) => typeof value === "string" && CODEX_CAPACITY_CODES.has(value));
+  const messages = [
+    record.message,
+    nested.message,
+    !warning && typeof failure?.title === "string" ? failure.title : undefined
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  const code = [
+    record.codexErrorInfo,
+    record.codex_error_info,
+    nested.codexErrorInfo,
+    nested.codex_error_info
+  ].some((value) => typeof value === "string" && CODEX_CAPACITY_CODES.has(value));
   const sentence = messages.some((value) => codexModelAtCapacity(value)) || codexModelAtCapacity(messages.join("\n"));
   if (!code && !sentence) return undefined;
   const retryAfterMs = retryDelayMs(record) ?? retryDelayMs(nested) ?? (!warning ? retryDelayMs(failure) : undefined);
@@ -143,7 +152,10 @@ function createCodexFailure(authRequired: () => Error) {
     // A new-session action alone does not prove the account has run out.
     const codexErrorInfo = failure.category === "limit" && !actions.includes("new_session")
       ? actions.includes("retry") ? "rateLimitExceeded" : "usageLimitExceeded" : undefined;
-    return Object.assign(new Error(failure.category === "connection" ? `Codex's connection failed: ${title}` : title), { data: codexErrorInfo ? { codexErrorInfo } : {} });
+    return Object.assign(
+      new Error(failure.category === "connection" ? `Codex's connection failed: ${title}` : title),
+      { data: codexErrorInfo ? { codexErrorInfo } : {} }
+    );
   };
 }
 

@@ -4,7 +4,10 @@ import { repositoryView, type RepositoryContext } from "./repository-context.js"
 import { reviewConversationScope } from "@petrina/core";
 
 /** Shared by admission and turns. Native packets and base ancestry are checked before reopening. */
-export function participantConversation(catalog: { readonly profiles: readonly AgentProfile[]; digest(serialized: string): string }, scope: RepositoryContext, role: Role, planned: AgentProfile, reviewerKey?: string) {
+export function participantConversation(catalog: {
+  readonly profiles: readonly AgentProfile[];
+  digest(serialized: string): string
+}, scope: RepositoryContext, role: Role, planned: AgentProfile, reviewerKey?: string) {
   const { task, work } = scope;
   const stage = task.plan?.stages[task.stageIndex];
   if (!stage || task.maintenance || work.conversation || task.screen) return;
@@ -37,7 +40,15 @@ export function participantConversation(catalog: { readonly profiles: readonly A
   if (!reason && !actual) reason = "its saved profile is no longer offered";
   if (!reason && actual) {
     const expected = stage.kind === "converge" ? designConversationScope(repositoryView(scope), role, planned, actual, text => catalog.digest(text))
-      : reviewConversationScope(repositoryView(scope), stage.id, reviewerKey ?? String(stage.profileIds.indexOf(planned.id)), role, planned, actual, text => catalog.digest(text));
+      : reviewConversationScope(
+        repositoryView(scope),
+        stage.id,
+        reviewerKey ?? String(stage.profileIds.indexOf(planned.id)),
+        role,
+        planned,
+        actual,
+        text => catalog.digest(text)
+      );
     if (prior.scope !== expected) reason = "its role, profile, request or starting point changed";
   }
   return { prior, actual, reason, coordinator };

@@ -1,7 +1,24 @@
 import { useState, type ReactNode } from "react";
 import { useLimitClock } from "../usage";
 import { TOOL_COLORS } from "../lib";
-import { CHANGED_LABEL, NOT_CONFIRMED_LABEL, displayLimits, usageLines, usagePauseWords, agoText, limitWords, count, figureText, tokenNumber, type AboutCounts, type Figure, type WorkUsageLine, type State, type UsagePeriod, TOKEN_PARTS } from "@petrina/core";
+import {
+  CHANGED_LABEL,
+  NOT_CONFIRMED_LABEL,
+  displayLimits,
+  usageLines,
+  usagePauseWords,
+  agoText,
+  limitWords,
+  count,
+  figureText,
+  tokenNumber,
+  type AboutCounts,
+  type Figure,
+  type WorkUsageLine,
+  type State,
+  type UsagePeriod,
+  TOKEN_PARTS
+} from "@petrina/core";
 
 /** Chart colours per tool: the app's tool colours, with their own step in dark mode. */
 export const toolColor = (toolId: string | undefined) => (toolId ? `var(--tool-${toolId}, var(--slate))` : "var(--slate)");
@@ -92,7 +109,16 @@ export interface ColumnBucket {
  * Plain columns drawn by the app: stacked by series, a 2px gap between segments, the total
  * on each column's cap, and the numbers on hover.
  */
-export function ColumnChart({ buckets, format, legend, label }: { buckets: readonly ColumnBucket[]; format: (value: number) => string; legend: readonly { key: string; label: string; color: string }[]; label: string }) {
+export function ColumnChart({ buckets, format, legend, label }: {
+  buckets: readonly ColumnBucket[];
+  format: (value: number) => string;
+  legend: readonly {
+  key: string;
+  label: string;
+  color: string
+}[];
+  label: string
+}) {
   const [hover, setHover] = useState<string>();
   const totals = buckets.map((bucket) => bucket.segments.reduce((sum, segment) => sum + segment.value, 0));
   const max = Math.max(1, ...totals);
@@ -263,9 +289,15 @@ export function AboutNote({ about, period }: { about: AboutCounts; period: Usage
         <li>Grok counts all model calls in a turn, including collected helper work. Thinking is already included in its output.</li>
         <li>Antigravity tokens come from the increase in its native session totals per turn. It reports no separate cache breakdown.</li>
         <li>
-          Codex reports only its main agent. {PERIOD_WORDS[period].charAt(0).toUpperCase() + PERIOD_WORDS[period].slice(1)}, {count(about.codexHelperTurns, "Codex turn")} started helper agents whose use Codex doesn't report.
+          Codex reports only its main agent. {PERIOD_WORDS[period].charAt(0).toUpperCase() + PERIOD_WORDS[period].slice(1)}, {count(
+            about.codexHelperTurns,
+            "Codex turn"
+          )} started helper agents whose use Codex doesn't report.
         </li>
-        {about.claudeMainOnly > 0 && <li>{count(about.claudeMainOnly, "Claude Code turn")} counted the main agent only, because Claude Code sent no per-model breakdown.</li>}
+        {about.claudeMainOnly > 0 && <li>{count(
+          about.claudeMainOnly,
+          "Claude Code turn"
+        )} counted the main agent only, because Claude Code sent no per-model breakdown.</li>}
         <li>Agent time sits with the model the agent ran on. A model that only appeared inside a turn shows its tokens, and its agent time reads “not reported”.</li>
         <li>“Not known” means the work wasn't recorded: it ran before Petrina started keeping track, or was cut off when Petrina stopped.</li>
         <li>Agent time adds up agents running at once, so a day can hold more than 24 hours of it.</li>
@@ -307,7 +339,10 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
                 <strong>{tool.name}</strong>
               </div>
               {state.pool.usageReads?.[tool.id]?.state === "reading" && <div className="muted small" role="status">Updating usage…</div>}
-              {state.pool.usageReads?.[tool.id]?.state === "unavailable" && <div className="muted small" role="status">Couldn’t refresh usage.{own.length ? " Showing the last report." : " No current reading is available."}</div>}
+              {state.pool.usageReads?.[tool.id]?.state === "unavailable" && <div
+                className="muted small"
+                role="status"
+              >Couldn’t refresh usage.{own.length ? " Showing the last report." : " No current reading is available."}</div>}
               {own.length === 0 && out.length === 0 && (
                 <div className="muted small">Not reported. Account readings refresh while Analytics is open. A percentage appears only when a tool reports one.</div>
               )}
@@ -321,7 +356,14 @@ export function UsageList({ state, expanded = false }: { state: State; expanded?
                       <span className={`num ${text.stale ? "muted" : ""}`}>{text.used}</span>
                     </div>
                     {text.percent !== undefined && (
-                      <span className={`meter ${tone}`} role="meter" aria-valuenow={text.percent} aria-valuemin={0} aria-valuemax={100} aria-label={`${tool.name} ${text.label}`}>
+                      <span
+                        className={`meter ${tone}`}
+                        role="meter"
+                        aria-valuenow={text.percent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${tool.name} ${text.label}`}
+                      >
                         <i style={{ width: `${text.percent}%` }} />
                       </span>
                     )}

@@ -16,16 +16,33 @@ function localImagePath(value: string): string | undefined {
 }
 
 /** Screenshot bytes live only in a visible preview, never in saved task or window state. */
-export const MessageBody = memo(function MessageBody({ text, taskId, productId, finished = false }: { text: string; taskId: string; productId?: string; finished?: boolean }) {
+export const MessageBody = memo(function MessageBody({ text, taskId, productId, finished = false }: {
+  text: string;
+  taskId: string;
+  productId?: string;
+  finished?: boolean
+}) {
   const components = useMemo<Components>(() => ({
     a: ({ href, children }) => {
       const path = localImagePath(href ?? "");
-      if (path) return <ImagePreview taskId={taskId} productId={productId} path={path} label={typeof children === "string" ? children : "Screenshot"} finished={finished} />;
+      if (path) return <ImagePreview
+        taskId={taskId}
+        productId={productId}
+        path={path}
+        label={typeof children === "string" ? children : "Screenshot"}
+        finished={finished}
+      />;
       return href && /^(https?:|mailto:)/i.test(href) ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>;
     },
     img: ({ src, alt }) => {
       const path = typeof src === "string" ? localImagePath(src) : undefined;
-      return path ? <ImagePreview taskId={taskId} productId={productId} path={path} label={alt || "Screenshot"} finished={finished} /> : <span>{alt || "Image"}</span>;
+      return path ? <ImagePreview
+        taskId={taskId}
+        productId={productId}
+        path={path}
+        label={alt || "Screenshot"}
+        finished={finished}
+      /> : <span>{alt || "Image"}</span>;
     },
     table: ({ children }) => <div className="message-table"><table>{children}</table></div>,
     // Keep agents' words readable without introducing a source-code viewer.
@@ -37,7 +54,14 @@ export const MessageBody = memo(function MessageBody({ text, taskId, productId, 
 });
 
 /** Both saved report pictures and links share the same bounded, visible-only image lifetime. */
-export function ImagePreview({ taskId, productId, path, imageId, label, finished }: { taskId: string; productId?: string; path?: string; imageId?: string; label: string; finished: boolean }) {
+export function ImagePreview({ taskId, productId, path, imageId, label, finished }: {
+  taskId: string;
+  productId?: string;
+  path?: string;
+  imageId?: string;
+  label: string;
+  finished: boolean
+}) {
   const box = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
   const [url, setUrl] = useState<string>();
@@ -47,7 +71,10 @@ export function ImagePreview({ taskId, productId, path, imageId, label, finished
   useEffect(() => {
     const element = box.current;
     if (!element || finished) return;
-    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
     // Fast scrolling can queue both entering and leaving this one observed image.
     const observer = new IntersectionObserver((entries) => setVisible(Boolean(entries.at(-1)?.isIntersecting)), { rootMargin: "100px" });
     observer.observe(element);
@@ -55,7 +82,10 @@ export function ImagePreview({ taskId, productId, path, imageId, label, finished
   }, [finished]);
 
   useEffect(() => {
-    if (finished || (!visible && !expanded)) { setUrl(undefined); return; }
+    if (finished || (!visible && !expanded)) {
+      setUrl(undefined);
+      return;
+    }
     let disposed = false;
     let objectUrl: string | undefined;
     setError(undefined);
@@ -81,10 +111,27 @@ export function ImagePreview({ taskId, productId, path, imageId, label, finished
 
   // A loading thumbnail stays focusable when closing releases its offscreen image.
   return <span ref={box} className="message-image">
-    {finished ? <span className="message-image-unavailable"><ImageIcon size={16} aria-hidden="true" /><strong>{label}</strong><span>Preview unavailable after the task finishes.</span></span>
-      : error ? <span className="message-image-unavailable"><ImageIcon size={16} aria-hidden="true" /><strong>{label}</strong><span role="status">{error}</span><button className="btn ghost small" onClick={() => setAttempt((value) => value + 1)}>Try again</button></span>
+    {finished ? <span className="message-image-unavailable"><ImageIcon
+      size={16}
+      aria-hidden="true"
+    /><strong>{label}</strong><span>Preview unavailable after the task finishes.</span></span>
+      : error ? <span className="message-image-unavailable"><ImageIcon
+        size={16}
+        aria-hidden="true"
+      /><strong>{label}</strong><span role="status">{error}</span><button
+        className="btn ghost small"
+        onClick={() => setAttempt((value) => value + 1)}
+      >Try again</button></span>
       : <button className="message-image-open" aria-disabled={!url} onClick={() => { if (url) setExpanded(true); }} aria-label={`Enlarge ${label} screenshot`}>
-          {url ? <img src={url} alt={`${label} screenshot`} decoding="async" onError={() => setError("This screenshot could not be displayed.")} /> : <span className="message-image-loading"><ImageIcon size={22} aria-hidden="true" />{visible ? "Loading screenshot…" : "Screenshot"}</span>}
+          {url ? <img
+            src={url}
+            alt={`${label} screenshot`}
+            decoding="async"
+            onError={() => setError("This screenshot could not be displayed.")}
+          /> : <span className="message-image-loading"><ImageIcon
+            size={22}
+            aria-hidden="true"
+          />{visible ? "Loading screenshot…" : "Screenshot"}</span>}
           <span className="message-image-caption"><strong>{label}</strong><Expand size={14} aria-hidden="true" /></span>
         </button>}
     {expanded && url && !finished && createPortal(<ImageLightbox url={url} label={label} onClose={() => setExpanded(false)} />, document.body)}
@@ -97,7 +144,11 @@ function ImageLightbox({ url, label, onClose }: { url: string; label: string; on
   useFocusTrap(panel, onClose);
   return <div className="message-image-scrim" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={panel} className="message-image-dialog" role="dialog" aria-modal="true" aria-labelledby={title} tabIndex={-1}>
-      <div className="message-image-dialog-head"><strong id={title}>{label}</strong><button className="btn ghost icon" aria-label="Close screenshot" onClick={onClose}><X size={20} /></button></div>
+      <div className="message-image-dialog-head"><strong id={title}>{label}</strong><button
+        className="btn ghost icon"
+        aria-label="Close screenshot"
+        onClick={onClose}
+      ><X size={20} /></button></div>
       <div className="message-image-full"><img src={url} alt={`${label} screenshot`} /></div>
     </div>
   </div>;

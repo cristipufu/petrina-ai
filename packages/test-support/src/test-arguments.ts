@@ -15,13 +15,20 @@ const OPTIONAL_NUMBER = new Set(["--parallel", "--bail"]);
  */
 export function testSelection(args: readonly string[]): { paths: string[]; cwd?: string } {
   const paths: string[] = [];
-  let positional = false, cwd: string | undefined;
+  let positional = false;
+  let cwd: string | undefined;
   for (let index = 0; index < args.length; index++) {
     const argument = args[index]!;
-    if (!positional && argument === "--") { positional = true; continue; }
+    if (!positional && argument === "--") {
+      positional = true;
+      continue;
+    }
     if (!positional && argument.startsWith("-")) {
       if (argument.startsWith("--cwd=")) cwd = argument.slice("--cwd=".length);
-      else if (WITH_VALUE.has(argument)) { if (argument === "--cwd") cwd = args[index + 1]; index++; }
+      else if (WITH_VALUE.has(argument)) {
+        if (argument === "--cwd") cwd = args[index + 1];
+        index++;
+      }
       else if (OPTIONAL_NUMBER.has(argument) && /^\d+$/.test(args[index + 1] ?? "")) index++;
       continue;
     }

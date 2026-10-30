@@ -90,7 +90,17 @@ export function stripOf(steps: readonly PipelineStep[]): StripItem[] {
   if (steps.length < LONG_PIPELINE) return [...steps];
   let done = 0;
   while (done < steps.length && steps[done]!.state === "done") done += 1;
-  const items: StripItem[] = done >= 2 ? [{ label: `${done} done`, state: "done", folded: steps.slice(0, done).map((step) => step.label) }] : steps.slice(0, done);
+  const items: StripItem[] = done >= 2 ? [{
+    label: `${done} done`,
+    state: "done",
+    folded: steps.slice(
+    0,
+    done
+  ).map((step) => step.label)
+  }] : steps.slice(
+    0,
+    done
+  );
   const rest = steps.slice(done);
   if (items.length + rest.length <= STRIP_MARKS) return [...items, ...rest];
   const shown = rest.slice(0, STRIP_MARKS - items.length - 1);
@@ -154,7 +164,10 @@ export function boardSections(tasks: readonly Task[], visible: (task: Task) => b
   const started = (task: Task) => task.startedAt ?? task.createdAt;
   const pick = (section: BoardSection) => tasks.filter((task) => sectionOf(task) === section && visible(task));
   return {
-    "needs-you": pick("needs-you").sort((a, b) => Number(b.holdsSlot) - Number(a.holdsSlot) || Number(a.state === "failed") - Number(b.state === "failed") || started(a) - started(b)),
+    "needs-you": pick("needs-you").sort((
+      a,
+      b
+    ) => Number(b.holdsSlot) - Number(a.holdsSlot) || Number(a.state === "failed") - Number(b.state === "failed") || started(a) - started(b)),
     working: pick("working").sort((a, b) => started(a) - started(b)),
     waiting: pick("waiting").sort((a, b) => (WAITING_ORDER[a.state] ?? 9) - (WAITING_ORDER[b.state] ?? 9) || started(a) - started(b)),
     queue: queueOf(tasks).filter(visible),

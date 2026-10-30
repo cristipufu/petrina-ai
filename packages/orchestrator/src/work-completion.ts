@@ -34,7 +34,11 @@ export class WorkCompletion {
         return "continue";
       }
       const next = task.repositories.find((work) => !work.completedStages.includes(input.stageId));
-      if (next) { task.activeProductId = next.productId; this.host.checkpoint(); return "continue"; }
+      if (next) {
+        task.activeProductId = next.productId;
+        this.host.checkpoint();
+        return "continue";
+      }
     }
     task.stageIndex += 1;
     task.sub = 0;

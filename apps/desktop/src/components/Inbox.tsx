@@ -20,7 +20,24 @@ import {
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { proofGap, checkDecisionLabel, deliveryDecisionProblem, decisionEvidence, CHECK_NAMES, checkOf, deliveryLabel, fixFor, inboxOrder, inboxSummary, reviewDecisionPending, wontStartFix, type InboxItem, type InboxKind, type State, type Tone } from "@petrina/core";
+import {
+  proofGap,
+  checkDecisionLabel,
+  deliveryDecisionProblem,
+  decisionEvidence,
+  CHECK_NAMES,
+  checkOf,
+  deliveryLabel,
+  fixFor,
+  inboxOrder,
+  inboxSummary,
+  reviewDecisionPending,
+  wontStartFix,
+  type InboxItem,
+  type InboxKind,
+  type State,
+  type Tone
+} from "@petrina/core";
 import { desktop, sim, useEngineStatus, useUnsent } from "../engine";
 import { useBrowserPermission } from "../notify/channels";
 import { finishOffer, useNotifySettings } from "../notify/settings";
@@ -128,7 +145,18 @@ export const Inbox = forwardRef<HTMLElement, InboxProps>(function Inbox({ state,
           </div>
         )}
         {items.map((item) => (
-          <div key={item.id} data-inbox-id={item.id} tabIndex={-1} className={`inbox-item ${selectedId === item.id ? "selected" : ""}`} onFocus={() => onFocus(item.id)} onMouseDown={() => onFocus(item.id)} onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); onOpenItem(item.id); } }}>
+          <div
+            key={item.id}
+            data-inbox-id={item.id}
+            tabIndex={-1}
+            className={`inbox-item ${selectedId === item.id ? "selected" : ""}`}
+            onFocus={() => onFocus(item.id)}
+            onMouseDown={() => onFocus(item.id)}
+            onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) {
+            event.preventDefault();
+            onOpenItem(item.id);
+          } }}
+          >
             <Ask item={item} state={state} find={find} onOpen={(_taskId, tab) => onOpenItem(item.id, tab)} />
           </div>
         ))}
@@ -189,7 +217,15 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
   // A delivery whose review rounds ran out with Important findings open is a decision, not "ready to ship".
   const unsettled = item.kind === "delivery" && ((task && !!proofGap(task)) || task?.acceptanceUnverified === true || (task?.findings.some((finding) => finding.status === "open" && finding.severity === "blocking") ?? false));
   const checkIssue = task && !reviewDecisionPending(task) ? deliveryDecisionProblem(task) : undefined;
-  const kind = item.kind === "delivery" && checkIssue ? { ...KIND.delivery, label: checkDecisionLabel(task!)!, tone: "amber" as const } : unsettled ? { ...KIND.delivery, label: "Your call", tone: "amber" as const } : KIND[item.kind];
+  const kind = item.kind === "delivery" && checkIssue ? {
+    ...KIND.delivery,
+    label: checkDecisionLabel(task!)!,
+    tone: "amber" as const
+  } : unsettled ? {
+    ...KIND.delivery,
+    label: "Your call",
+    tone: "amber" as const
+  } : KIND[item.kind];
   const Icon = kind.icon;
   const role = find.role(item.roleId);
   const profile = find.profile(item.profileId);
@@ -259,7 +295,17 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
             {lessons.map((line, index) => (
               <li key={index}>
                 <label>
-                  <input type="checkbox" checked={!dropped.includes(index)} onChange={(event) => setSelection({ offer, dropped: event.target.checked ? dropped.filter(entry => entry !== index) : [...dropped, index] })} />
+                  <input
+                    type="checkbox"
+                    checked={!dropped.includes(index)}
+                    onChange={(event) => setSelection({
+                    offer,
+                    dropped: event.target.checked ? dropped.filter(entry => entry !== index) : [
+                    ...dropped,
+                    index
+                  ]
+                  })}
+                  />
                   <span>{line}</span>
                 </label>
               </li>
@@ -295,7 +341,19 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         </div>
       )}
 
-      {item.kind === "maintenance-settings" && <div className="actions"><button className="btn lead" onClick={() => sim.resolveMaintenanceSettings(item.taskId, "keep")}>Keep this run</button><button className="btn" onClick={() => sim.resolveMaintenanceSettings(item.taskId, "stop")}>Stop this run</button></div>}
+      {item.kind === "maintenance-settings" && <div className="actions"><button
+        className="btn lead"
+        onClick={() => sim.resolveMaintenanceSettings(
+        item.taskId,
+        "keep"
+      )}
+      >Keep this run</button><button
+        className="btn"
+        onClick={() => sim.resolveMaintenanceSettings(
+        item.taskId,
+        "stop"
+      )}
+      >Stop this run</button></div>}
       {!sending && item.kind === "question" && (
         <>
           {item.options && item.options.length > 0 && (
@@ -321,7 +379,12 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
               if (reply.trim()) sim.answer(item.id, reply.trim());
             }}
           >
-            <input aria-label="Your answer" placeholder={item.options?.length ? "Or answer in your own words" : "Your answer"} value={reply} onChange={(event) => setReply(event.target.value)} />
+            <input
+              aria-label="Your answer"
+              placeholder={item.options?.length ? "Or answer in your own words" : "Your answer"}
+              value={reply}
+              onChange={(event) => setReply(event.target.value)}
+            />
             <button className="btn" type="submit" disabled={!reply.trim()}>
               Answer
             </button>
@@ -391,7 +454,11 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
 
       {item.kind === "stuck" && (
         <div className="ask-actions">
-          <button className="btn lead" onClick={() => sim.retry(item.id)} title={item.toolId ? `Checks ${CHECK_NAMES[item.toolId]} again, then tries` : undefined}>
+          <button
+            className="btn lead"
+            onClick={() => sim.retry(item.id)}
+            title={item.toolId ? `Checks ${CHECK_NAMES[item.toolId]} again, then tries` : undefined}
+          >
             {item.toolId ? "Retry" : "Try again"}
           </button>
           <button className="btn" onClick={() => onOpen(item.taskId, "session")}>
@@ -479,7 +546,15 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
         <>
           {item.detail && <p className="ask-note">{item.detail}</p>}
           <div className="ask-actions">
-            <button className="btn lead" disabled={!kept.length} onClick={() => sim.addLessons(item.id, kept)} title="The ticked ones join the Learnings section of AGENTS.md with the next delivery">
+            <button
+              className="btn lead"
+              disabled={!kept.length}
+              onClick={() => sim.addLessons(
+              item.id,
+              kept
+            )}
+              title="The ticked ones join the Learnings section of AGENTS.md with the next delivery"
+            >
               {kept.length === lessons.length ? "Add them" : `Add ${kept.length} of ${lessons.length}`}
             </button>
             <button className="btn quiet" onClick={() => sim.decline(item.id)}>
@@ -495,7 +570,42 @@ export function Ask({ item, state, find, onOpen }: { item: InboxItem; state: Sta
             {checkIssue ? <RotateCw size={16} aria-hidden="true" /> : <GitPullRequest size={16} aria-hidden="true" />}
             {task && reviewDecisionPending(task) ? "Continue to final checks" : checkIssue ? "Run checks again" : task ? deliveryLabel(task) : "Ship it"}
           </button>
-          {checkIssue && task ? <a className="btn" onClick={(event) => followLink(event, () => { window.history.pushState(window.history.state, "", event.currentTarget.href); window.dispatchEvent(new PopStateEvent("popstate")); })} href={(() => { const url = new URL(window.location.href); url.pathname = `/tasks/${encodeURIComponent(task.id)}`; const source = decisionEvidence(task).find((check) => check.run?.source && check.result !== "pass")?.run?.source ?? decisionEvidence(task).find((check) => check.run?.source)?.run?.source; if (source) { url.searchParams.set("node", source.stepId); url.searchParams.set("attempt", source.attemptId); } return `${url.pathname}${url.search}`; })()}>See original checks</a> : <button className="btn" onClick={() => onOpen(item.taskId, "review")}>See the reviews</button>}
+          {checkIssue && task ? <a
+            className="btn"
+            onClick={(event) => followLink(
+            event,
+            () => {
+            window.history.pushState(
+            window.history.state,
+            "",
+            event.currentTarget.href
+          );
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          }
+          )}
+            href={(() => {
+            const url = new URL(window.location.href);
+            url.pathname = `/tasks/${encodeURIComponent(task.id)}`;
+            const source = decisionEvidence(task).find((check) => check.run?.source && check.result !== "pass")?.run?.source ?? decisionEvidence(task).find((check) => check.run?.source)?.run?.source;
+            if (source) {
+            url.searchParams.set(
+            "node",
+            source.stepId
+          );
+            url.searchParams.set(
+            "attempt",
+            source.attemptId
+          );
+          }
+            return `${url.pathname}${url.search}`;
+          })()}
+          >See original checks</a> : <button
+            className="btn"
+            onClick={() => onOpen(
+            item.taskId,
+            "review"
+          )}
+          >See the reviews</button>}
           {sendBack("Send back…")}
         </div>
       )}
@@ -518,7 +628,14 @@ function ToolFix({ item, state }: { item: InboxItem; state: State }) {
   if (!state.setup) return item.body ? <p className="ask-body">{item.body}</p> : null;
   if (item.toolProblem === "not-installed" && status === "unknown") {
     const fix = fixFor(toolId, status, platform)!;
-    return <FixSteps fix={{ ...fix, sentence: `The latest check of ${name} couldn't run, so Petrina can't confirm it is missing; Retry carries on.` }} detail={check.detail} name={name} />;
+    return <FixSteps
+      fix={{
+      ...fix,
+      sentence: `The latest check of ${name} couldn't run, so Petrina can't confirm it is missing; Retry carries on.`
+    }}
+      detail={check.detail}
+      name={name}
+    />;
   }
   const now = status === "not-installed" || status === "logged-out" ? status : undefined;
   if (!now && item.toolProblem !== "wont-start" && status === "ready") return <p className="ask-body">{name} is ready now, so Retry carries on.</p>;

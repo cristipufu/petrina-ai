@@ -17,26 +17,42 @@ export class ToolCheckCoordinator {
     const running = this.checking.get(id);
     if (running) return running;
     const absent = this.probe.absent(id);
-    let resolve!: () => void, reject!: (error: unknown) => void;
-    const job = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const job = new Promise<void>((done, failed) => {
+      resolve = done;
+      reject = failed;
+    });
     // Register before publishing: a subscriber can synchronously ask for this very check.
     this.checking.set(id, job);
     const finish = () => { if (this.checking.get(id) === job) this.checking.delete(id); };
     try {
       if (absent) {
         this.host.publish({ id, status: "not-installed", at: this.clock.now() });
-        finish(); resolve();
+        finish();
+        resolve();
         return job;
       }
       this.host.publish({ ...this.host.current(id), checking: true });
     } catch (error) {
-      finish(); reject(error);
+      finish();
+      reject(error);
       return job;
     }
     void this.observe(id).then(result => {
-      try { this.host.publish({ id, ...result, at: this.clock.now() }); finish(); resolve(); }
-      catch (error) { finish(); reject(error); }
-    }, error => { finish(); reject(error); });
+      try {
+        this.host.publish({ id, ...result, at: this.clock.now() });
+        finish();
+        resolve();
+      }
+      catch (error) {
+        finish();
+        reject(error);
+      }
+    }, error => {
+      finish();
+      reject(error);
+    });
     return job;
   }
 
@@ -67,7 +83,10 @@ export class ToolCheckCoordinator {
         } finally { deadline.abort(); }
       }
       if (this.stopping.signal.aborted || this.host.stopped()) return { status: "unknown", detail: "The tools check stopped before this probe could start." };
-      if (this.lingering.get(id)?.size) return { status: "unknown", detail: `${CHECK_NAMES[id]} is still stopping after its last check, so try Check again in a moment.` };
+      if (this.lingering.get(id)?.size) return {
+        status: "unknown",
+        detail: `${CHECK_NAMES[id]} is still stopping after its last check, so try Check again in a moment.`
+      };
       return await this.probe.run(id, { signal: this.stopping.signal, onGone: gone => this.own(id, gone) });
     } catch (error) { return { status: "unknown", detail: error instanceof Error ? error.message : String(error) }; }
   }

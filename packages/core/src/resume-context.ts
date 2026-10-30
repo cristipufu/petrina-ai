@@ -14,7 +14,14 @@ export const MAX_FILES = 30;
 
 /** For a fresh conversation on a step whose conversation could not be reopened. */
 export function formatWhereYouWere(where: WhereYouWere, reason: string, cause: "restart" | "screen" = "restart"): string {
-  return [cause === "screen" ? `You asked for the screen while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did in the background: build on it instead of redoing it, and check it first.` : `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`, `Earlier pages and browser logins are gone; the supplied headless browser starts with empty storage.`, ...whereDetails(where, "you")].join("\n\n");
+  return [
+    cause === "screen" ? `You asked for the screen while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did in the background: build on it instead of redoing it, and check it first.` : `Petrina restarted while you were on “${where.stage}” as the ${where.role}, and your conversation could not be reopened (${reason}), so this one is fresh. The working copy keeps what you did: build on it instead of redoing it. Your last action may not have finished, so check the working copy first.`,
+    `Earlier pages and browser logins are gone; the supplied headless browser starts with empty storage.`,
+    ...whereDetails(
+    where,
+    "you"
+  )
+  ].join("\n\n");
 }
 
 /** What was done in the step so far and which files changed: the same in a restart's summary and a take-over's. */

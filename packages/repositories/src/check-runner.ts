@@ -61,8 +61,14 @@ export async function runChecks(
       try {
         admitted = beforeStart?.() ?? true;
         if (admitted && log) onLog?.(log.created);
-      } catch (error) { await log?.close(); throw error; }
-      if (!admitted) { await log?.close(); break; }
+      } catch (error) {
+        await log?.close();
+        throw error;
+      }
+      if (!admitted) {
+        await log?.close();
+        break;
+      }
       const started = Date.now();
       onProgress?.({ kind: "started", index, at: started });
       const run = executeCommand
@@ -71,7 +77,11 @@ export async function runChecks(
       const endedAt = Date.now();
       const result = { name: check.name, command: commandText(check.argv), startedAt: started, endedAt, ms: endedAt - started, ...await log?.close() };
       const output = [
-        run.postStartError !== undefined ? [run.output, `Stopped after launch: ${run.postStartError}`, "The command outcome was not recorded."].filter(Boolean).join("\n")
+        run.postStartError !== undefined ? [
+          run.output,
+          `Stopped after launch: ${run.postStartError}`,
+          "The command outcome was not recorded."
+        ].filter(Boolean).join("\n")
           : run.error ? `Could not start: ${run.error}` : run.timedOut ? `${run.output}\nStopped after ${Math.round(timeoutMs / 60_000)} minutes without finishing.` : run.exitUnreported ? `${run.output}\n${CHECK_EXIT_UNREPORTED}` : run.output,
         ...(run.cleanupIncomplete ? [CLEANUP_INCOMPLETE] : []),
       ].filter(Boolean).join("\n");
@@ -137,7 +147,15 @@ async function checkLog(directory: string): Promise<CheckLog> {
   let pending = Promise.resolve();
   let logError: string | undefined;
   return {
-    created: { logPath: path, logFileIdentity: { device: created.dev.toString(), inode: created.ino.toString() }, logFileLength: 0, logFileBeginning: createHash("sha256").update("").digest("hex") },
+    created: {
+      logPath: path,
+      logFileIdentity: {
+      device: created.dev.toString(),
+      inode: created.ino.toString()
+    },
+      logFileLength: 0,
+      logFileBeginning: createHash("sha256").update("").digest("hex")
+    },
     write(bytes) {
       // stdout and stderr share one file position. Serialize writes and apply backpressure
       // to their readers, rather than collecting an unbounded queue of output in memory.
@@ -168,7 +186,18 @@ async function checkLog(directory: string): Promise<CheckLog> {
  * One command, with only the end of its output kept while it runs, so a noisy check never fills
  * memory. It gets a process group of its own: a timeout or a stopped task ends everything it started.
  */
-type NativeCheckResult = { code: number | null; output: string; timedOut: boolean; outputComplete: boolean; execution: CheckExecution; cleanupIncomplete?: boolean; exitUnreported?: boolean; exitSignal?: string; error?: string; postStartError?: string }
+type NativeCheckResult = {
+  code: number | null;
+  output: string;
+  timedOut: boolean;
+  outputComplete: boolean;
+  execution: CheckExecution;
+  cleanupIncomplete?: boolean;
+  exitUnreported?: boolean;
+  exitSignal?: string;
+  error?: string;
+  postStartError?: string
+}
   & Pick<CheckRun, "executor" | "executorError" | "outputIdentity" | "outputIdentityError">;
 
 const TEXT_ENCODER = new TextEncoder();
@@ -186,7 +215,8 @@ async function runScriptedOrNative(
   onSpawn?: (pid: number) => void,
 ): Promise<NativeCheckResult> {
   if ("mock" in Bun.spawn) return runOne(argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
-  const executor = observeCheckExecutor(), identity = checkOutputCapture();
+  const executor = observeCheckExecutor();
+  const identity = checkOutputCapture();
   const timeoutController = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -205,7 +235,10 @@ async function runScriptedOrNative(
       ? await Promise.race([
           pending,
           new Promise<CheckCommandOutcome>((resolve) => {
-            if (combinedSignal.aborted) { resolve({ code: 130 }); return; }
+            if (combinedSignal.aborted) {
+              resolve({ code: 130 });
+              return;
+            }
             combinedSignal.addEventListener("abort", () => resolve({ code: 130 }), { once: true });
           }),
         ])
@@ -226,7 +259,8 @@ async function runScriptedOrNative(
     clearTimeout(timer);
   }
   if (outcome === undefined) return runOne(argv, cwd, env, timeoutMs, signal, log, processList, onSpawn);
-  let kept = "", cut = false;
+  let kept = "";
+  let cut = false;
   const append = async (field: "stdout" | "stderr", chunk?: string | Uint8Array) => {
     if (chunk === undefined) return;
     const bytes = typeof chunk === "string" ? TEXT_ENCODER.encode(chunk) : chunk;
@@ -234,7 +268,10 @@ async function runScriptedOrNative(
     identity.add(field, bytes);
     const text = typeof chunk === "string" ? chunk : TEXT_DECODER.decode(bytes);
     kept += text;
-    if (kept.length > OUTPUT_KEPT * 2) { kept = kept.slice(-OUTPUT_KEPT * 2); cut = true; }
+    if (kept.length > OUTPUT_KEPT * 2) {
+      kept = kept.slice(-OUTPUT_KEPT * 2);
+      cut = true;
+    }
     await log?.write(bytes);
   };
   await append("stdout", outcome.stdout);
@@ -263,10 +300,24 @@ async function runScriptedOrNative(
 
 function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal, log?: CheckLog, processList?: (timeout: number) => Promise<string | undefined>, onSpawn?: (pid: number) => void): Promise<NativeCheckResult> {
   return new Promise((resolve) => {
-    const executor = observeCheckExecutor(), identity = checkOutputCapture();
+    const executor = observeCheckExecutor();
+    const identity = checkOutputCapture();
     const windows = !processHost.groups;
-    const execution: CheckExecution = { started: false, exit: { status: "unreported" }, stdout: "incomplete", stderr: "incomplete", timedOut: false, cancelled: false, cleanup: "not-requested", outputCleanup: "not-requested" };
-    let kept = "", cut = false, settling = false, exitSeen = false, exitUnreported = false;
+    const execution: CheckExecution = {
+      started: false,
+      exit: { status: "unreported" },
+      stdout: "incomplete",
+      stderr: "incomplete",
+      timedOut: false,
+      cancelled: false,
+      cleanup: "not-requested",
+      outputCleanup: "not-requested"
+    };
+    let kept = "";
+    let cut = false;
+    let settling = false;
+    let exitSeen = false;
+    let exitUnreported = false;
     let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
     let completion: Promise<number> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
@@ -288,11 +339,17 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
                 // Only an error observed before this cancellation independently proves closure.
                 // cancel() can close the logical reader and still fail to release its resource.
                 const alreadyErrored = pipe.errored === true;
-                try { await pipe.reader.cancel(); return true; }
+                try {
+                  await pipe.reader.cancel();
+                  return true;
+                }
                 catch { return alreadyErrored; }
               }
               // A locked pipe is not owned by us and cancellation cannot prove it closed.
-              if (pipe.stream) { await pipe.stream.cancel(); return true; }
+              if (pipe.stream) {
+                await pipe.stream.cancel();
+                return true;
+              }
             } catch { /* Unavailable output closure remains unconfirmed. */ }
             return false;
           })).then(closed => closed.every(Boolean)),
@@ -306,7 +363,9 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
       if (error !== undefined) execution.failure ??= { kind: execution.started ? kind : "start", message: tidyOutput(error) };
       // Both reader and child ownership settle before this result can release the worktree.
       if (error !== undefined && child) stopWork();
-      clearTimeout(timer); clearTimeout(grace); watch.abort();
+      clearTimeout(timer);
+      clearTimeout(grace);
+      watch.abort();
       signal?.removeEventListener("abort", stop);
       const needsOutputCleanup = child !== undefined && !fields.every(field => execution[field] === "eof");
       void Promise.allSettled([stopping ?? Promise.resolve(true), closeOutput()]).then(([processes, output]) => {
@@ -338,14 +397,23 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
     }, timeoutMs);
     const validExit = (code: number) => Number.isSafeInteger(code) && code >= 0;
     const observeExit = (code: number) => {
-      exitSeen = true; watch.abort();
+      exitSeen = true;
+      watch.abort();
       const exitSignal = child?.signalCode;
-      execution.exit = { status: validExit(code) ? "reported" : "invalid", ...(validExit(code) ? { code } : {}), ...(exitSignal ? { signal: exitSignal } : {}) };
-      if (!validExit(code)) { finish(null, "The system reported an invalid check exit.", "exit"); return; }
+      execution.exit = {
+        status: validExit(code) ? "reported" : "invalid",
+        ...(validExit(code) ? { code } : {}),
+        ...(exitSignal ? { signal: exitSignal } : {})
+      };
+      if (!validExit(code)) {
+        finish(null, "The system reported an invalid check exit.", "exit");
+        return;
+      }
       // A held pipe is incomplete execution, not a successful check with a shortened log.
       if (!settling) grace ??= setTimeout(() => finish(code, "The check exited before its output finished.", "output"), 5000);
     };
-    let startupError: unknown, startFailed = false;
+    let startupError: unknown;
+    let startFailed = false;
     try {
       child = Bun.spawn([...argv], { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !windows, windowsHide: true });
       execution.started = true;
@@ -356,41 +424,67 @@ function runOne(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv, ti
         finish(null, message(error), "exit");
       });
       onSpawn?.(child.pid);
-    } catch (error) { startupError = error; startFailed = true; }
+    } catch (error) {
+      startupError = error;
+      startFailed = true;
+    }
     // Acquire each pipe independently: failure on the first never leaves the second unowned.
-    let readError: unknown, readFailed = false;
+    let readError: unknown;
+    let readFailed = false;
     if (child) for (const [index, field] of fields.entries()) {
       const pipe = pipes[index]!;
       try {
         pipe.stream = child[field];
-        const reader = pipe.stream.getReader(); pipe.reader = reader;
+        const reader = pipe.stream.getReader();
+        pipe.reader = reader;
         // Observe errors immediately, independently from a later cancellation attempt.
         pipe.errored = false;
         void reader.closed.then(() => undefined, () => { pipe.errored = true; });
-      } catch (error) { execution[field] = "read-error"; if (!readFailed) readError = error; readFailed = true; }
+      } catch (error) {
+        execution[field] = "read-error";
+        if (!readFailed) readError = error;
+        readFailed = true;
+      }
     }
-    if (startFailed || !child) { finish(null, message(startupError)); return; }
-    if (readFailed) { finish(null, message(readError), "read"); return; }
+    if (startFailed || !child) {
+      finish(null, message(startupError));
+      return;
+    }
+    if (readFailed) {
+      finish(null, message(readError), "read");
+      return;
+    }
     signal?.addEventListener("abort", stop, { once: true });
     if (signal?.aborted) stop();
     const keep = (text: string) => {
       kept += text;
-      if (kept.length > OUTPUT_KEPT * 2) { kept = kept.slice(-OUTPUT_KEPT * 2); cut = true; }
+      if (kept.length > OUTPUT_KEPT * 2) {
+        kept = kept.slice(-OUTPUT_KEPT * 2);
+        cut = true;
+      }
     };
     const drain = async (index: number) => {
-      const reader = pipes[index]!.reader!, field = fields[index]!, decoder = new TextDecoder();
+      const reader = pipes[index]!.reader!;
+      const field = fields[index]!;
+      const decoder = new TextDecoder();
       try {
         while (!settling) {
           const next = await reader.read();
           if (settling) break;
-          if (next.done) { execution[field] = "eof"; break; }
+          if (next.done) {
+            execution[field] = "eof";
+            break;
+          }
           identity.add(field, next.value);
           keep(decoder.decode(next.value, { stream: true }));
           await log?.write(next.value);
         }
         if (!settling) keep(decoder.decode());
       } catch (error) {
-        if (!settling) { execution[field] = "read-error"; finish(null, message(error), "read"); }
+        if (!settling) {
+          execution[field] = "read-error";
+          finish(null, message(error), "read");
+        }
       }
     };
     const output = Promise.all([drain(0), drain(1)]);

@@ -38,17 +38,34 @@ export function taskCommands({ state, find, live, visible, toast }: Context) {
   /** P: hold or release a queued task, resume a paused one, or pause one at work. */
   const pause = (task: Task) => {
     const name = `“${task.title}”`;
-    if (task.driving) { toast("Hand back first", TAKE_OVER_WORDS.handBackFirst); return; }
+    if (task.driving) {
+      toast("Hand back first", TAKE_OVER_WORDS.handBackFirst);
+      return;
+    }
     if (task.state === "queued") {
-      void sendAction(() => sim.setHeld(task.id, !task.held), `${name} ${task.held ? "released" : "held"}`, task.held ? "It can start when a slot is free. P again holds it." : "It stays in the queue and will not start. P again releases it.");
+      void sendAction(
+        () => sim.setHeld(
+        task.id,
+        !task.held
+      ),
+        `${name} ${task.held ? "released" : "held"}`,
+        task.held ? "It can start when a slot is free. P again holds it." : "It stays in the queue and will not start. P again releases it."
+      );
     } else if (task.state === "paused") {
       const waitingForYou = state.inbox.some((item) => item.taskId === task.id && !item.blocking);
-      void sendAction(() => sim.resume(task.id), `${name} resumed`, waitingForYou ? "It waits for you at its checkpoint." : "It is ready to start again when a slot is free.");
+      void sendAction(
+        () => sim.resume(task.id),
+        `${name} resumed`,
+        waitingForYou ? "It waits for you at its checkpoint." : "It is ready to start again when a slot is free."
+      );
     } else if (["running", "needs-you", "waiting"].includes(task.state)) {
       const request = state.inbox.some((item) => item.taskId === task.id && (item.kind === "question" || item.kind === "permission") && item.blocking);
       const detail = request ? "Its open request was withdrawn and may be asked again. P to resume" : task.holdsSlot ? "The agent’s current step stopped and will start again after resuming. P to resume" : "It will not start another step. P to resume";
       void sendAction(() => sim.pause(task.id), `${name} paused`, detail);
-    } else toast(`${name} cannot be paused`, task.state === "failed" ? "Use Try again to restart this task." : task.state === "backlog" ? "Review the request in Backlog, then queue it when it is ready." : "This task has finished.");
+    } else toast(
+      `${name} cannot be paused`,
+      task.state === "failed" ? "Use Try again to restart this task." : task.state === "backlog" ? "Review the request in Backlog, then queue it when it is ready." : "This task has finished."
+    );
   };
 
   const moved = async (task: Task, action: () => number | Promise<number>) => {
@@ -62,7 +79,10 @@ export function taskCommands({ state, find, live, visible, toast }: Context) {
     }
     try {
       const hidden = await action();
-      if (hidden >= 0) toast(`“${task.title}” moved`, hidden ? `It passed ${hidden} hidden task${hidden === 1 ? "" : "s"}. Their order stays the same.` : "Its queue position has updated.");
+      if (hidden >= 0) toast(
+        `“${task.title}” moved`,
+        hidden ? `It passed ${hidden} hidden task${hidden === 1 ? "" : "s"}. Their order stays the same.` : "Its queue position has updated."
+      );
     } catch {
       toast("Could not change priority", "The engine did not confirm the move.");
     }

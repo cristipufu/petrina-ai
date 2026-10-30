@@ -22,7 +22,10 @@ export function sameLimit(a: Pick<UsageReport, "toolId" | "kind" | "model">, b: 
 
 /** The same reading of the same limit: only the time it was reported differs. */
 export function sameReading(a: UsageReport, b: UsageReport): boolean {
-  return sameLimit(a, b) && a.status === b.status && (a.utilization ?? -1) === (b.utilization ?? -1) && (a.resetsAt ?? 0) === (b.resetsAt ?? 0) && (a.windowMinutes ?? 0) === (b.windowMinutes ?? 0) && (a.name ?? "") === (b.name ?? "");
+  return sameLimit(
+    a,
+    b
+  ) && a.status === b.status && (a.utilization ?? -1) === (b.utilization ?? -1) && (a.resetsAt ?? 0) === (b.resetsAt ?? 0) && (a.windowMinutes ?? 0) === (b.windowMinutes ?? 0) && (a.name ?? "") === (b.name ?? "");
 }
 
 /**

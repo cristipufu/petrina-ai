@@ -141,7 +141,10 @@ export function createToolActivity(readMetadata: (meta: Record<string, unknown>)
       case "fetch":
         return "Looking something up";
       default:
-        return update.title ? (!/\s/.test(update.title) && /[_]|^(?:mcp|functions)[.:]/i.test(update.title) ? "Using a tool" : update.title.slice(0, 80)) : "Working";
+        return update.title ? (!/\s/.test(update.title) && /[_]|^(?:mcp|functions)[.:]/i.test(update.title) ? "Using a tool" : update.title.slice(
+          0,
+          80
+        )) : "Working";
     }
   }
 

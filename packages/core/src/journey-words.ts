@@ -23,7 +23,13 @@ export const JOURNEY_WORDS = {
   built: "Change ready",
   unchanged: "No changes to the code",
   fixed: (count: number) => (count ? `Builder claims ${plural(count, "fix")}` : "Changes returned"),
-  checks: (failed: number, total: number) => (failed ? `${failed} of ${plural(total, "check")} failed` : total === 1 ? "The check passes" : total ? `All ${total} checks pass` : "No checks to run"),
+  checks: (
+    failed: number,
+    total: number
+  ) => (failed ? `${failed} of ${plural(
+    total,
+    "check"
+  )} failed` : total === 1 ? "The check passes" : total ? `All ${total} checks pass` : "No checks to run"),
   voted: verificationSummary,
   firstAnswers: (total: number, real: number, third: number) => `${total} checked: ${real} must be fixed in this change, ${third} awaiting a third answer`,
   foundChecks: (count: number) => (count ? `Found ${plural(count, "check")}` : "Found no checks"),
