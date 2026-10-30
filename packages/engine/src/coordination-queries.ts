@@ -23,7 +23,7 @@ import { ImmutableEvidenceChangedError } from "./immutable-file.js";
 import type { OperationInput, QueryOperationName } from "./operations.js";
 import { readReviewInput } from "./review-context.js";
 
-export type DirectQueryName = "engine.status" | "watch.events" | "watch.wait";
+export type DirectQueryName = "engine.status" | "engine.releases" | "watch.events" | "watch.wait";
 export type DelegatedQueryName = Exclude<QueryOperationName, DirectQueryName>;
 type PreCheckQueryName = "validation.inspect" | "validation.log" | "watch.event" | "analytics.inspect";
 type StandardQueryName = Exclude<DelegatedQueryName, PreCheckQueryName>;
@@ -459,12 +459,13 @@ export const GENERAL_QUERY_HANDLERS: { readonly [K in GeneralQueryName]: General
   "product.list": ({ name, state, args }) =>
     paginate(
       state.products
-        .map(({ id, name: productName, repo, delivery, approveDelivery }) => ({
+        .map(({ id, name: productName, repo, delivery, approveDelivery, requiredRemoteChecks }) => ({
           id,
           name: productName,
           repo,
           delivery,
           approveDelivery,
+          requiredRemoteChecks: requiredRemoteChecks ?? [],
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
       args,

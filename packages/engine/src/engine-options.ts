@@ -264,6 +264,9 @@ export interface EngineOptions {
   home?: string;
   /** Tests: how often the once-a-minute checks run (pull requests, removing working copies). */
   checkEveryMs?: number;
+  /** Tests: polling cadence and deadline for required GitHub checks before direct branch or release delivery. */
+  remoteCheckPollMs?: number;
+  remoteCheckTimeoutMs?: number;
   /** Tests: how long "For an hour" lasts. */
   screenHourMs?: number;
   /** Tests: where failed checks' sleep evidence comes from, instead of this Mac's power log. */

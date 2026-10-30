@@ -9,7 +9,7 @@ import { SuiteCoordinator } from "@petrina/test-support/suite-coordinator";
 import { suiteRecords, workspaceOutcome } from "@petrina/test-support/suite-results";
 import { conventions, inputs, observe, readGit, recordedCoverage, ROOT } from "./repository.js";
 import { fingerprint, impactPlan, isTest } from "./impact.js";
-import { NATIVE_SCOPE, nativeScriptProblems } from "./required-plan.js";
+import { nativeScriptProblems } from "./required-plan.js";
 import { feedbackFiles, feedbackPlan } from "./feedback-plan.js";
 import { executeTests } from "./execution.js";
 import { runSettlements } from "@petrina/test-support/run-settlement";
@@ -34,7 +34,6 @@ if (fingerprint(manifest, impactRuntime().identity) !== plan.fingerprint) throw 
 const expectedFiles = [...manifest.keys()].filter(isTest).sort();
 const requested = [...plan.selected];
 plan = { ...plan, selected: feedbackFiles(requested, expectedFiles) };
-if (plan.selected.length !== requested.length) plan.reasons.push("Vitest feedback runs each selected workspace completely; native feedback retains exact file selection");
 const executionPlan = feedbackPlan(plan.selected, expectedFiles);
 const revision = (await readGit(ROOT, ["rev-parse", "HEAD", "HEAD^{tree}"])).trim();
 const [head, tree] = revision.split("\n");
@@ -59,7 +58,7 @@ try {
   await coordinator?.run(async execution => {
     const evidence = await executeTests(execution, {
       root: ROOT, folder, expectedFiles: plan.selected, env: owned.env, signal: controller.signal, settlements,
-      ...(execution.id === NATIVE_SCOPE.id ? { files: plan.selected.filter(file => execution.workspaces.some(workspace => file.startsWith(`${workspace}/`))) } : {}),
+      files: plan.selected.filter(file => execution.workspaces.some(workspace => file.startsWith(`${workspace}/`))),
     });
     if (fixtureRetention(owned.env[FIXTURE_JOURNAL]!).kind !== "clear") controller.abort("Fixture cleanup was not confirmed");
     return evidence;

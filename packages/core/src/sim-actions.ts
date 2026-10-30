@@ -6,6 +6,7 @@ import { afterChangesAsked, type DeepMutable } from "./flow.js";
 import { AFTER_WORDS, endYouStep, JOURNEY_WORDS, syncWait, withdrawAsks } from "./journey.js";
 import type { CheckPrerequisite, Id, InboxItem, Task } from "./model.js";
 import { configureProductChecks, configureProductCheckSetup } from "./products.js";
+import { configureProductRemoteChecks } from "./remote-checks.js";
 import { involvesProduct, taskProductIds, withoutProduct } from "./repositories.js";
 import { queueOf } from "./scheduler.js";
 import { SCREEN_WORDS } from "./screen.js";
@@ -196,6 +197,13 @@ export function simSetProductCheckSetup(d: Draft, productId: Id, requirements: r
   configureProductCheckSetup(d.products.find(product => product.id === productId), requirements, executions(), {
     id: prefix => simId(d, prefix), now: () => d.now,
   });
+}
+
+export function simSetProductRemoteChecks(d: Draft, productId: Id, checks: readonly string[]): void {
+  const executions = function* () {
+    for (const task of d.tasks) for (const work of task.repositories ?? [task]) yield work;
+  };
+  configureProductRemoteChecks(d.products.find((product) => product.id === productId), checks, executions());
 }
 
 export function simRemoveProduct(rt: SimRuntime, d: Draft, productId: Id): void {

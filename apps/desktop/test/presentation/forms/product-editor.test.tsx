@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { parseCommand, type ProductCheck } from "@petrina/core";
 import { ProductEditor } from "../../../src/components/ProductSettings";
 
-const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn(), setProductCheckSetup: vi.fn() }));
+const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn(), setProductCheckSetup: vi.fn(), setProductRemoteChecks: vi.fn() }));
 
 vi.mock("../../../src/engine", () => ({ sim: commands, useEngineStatus: () => ({ link: "live" }), failureText: (failure: unknown) => failure instanceof Error ? failure.message : String(failure) }));
 
@@ -117,4 +117,24 @@ it("adds and removes independent check rows while keeping the save blocked until
   await edit(rows[1]!.querySelector<HTMLTextAreaElement>('textarea[aria-label="Command for Survives"]')!, "program --check");
   await click("Remove", rows[0]!); await click("Save checks");
   expect(commands.setProductChecks).toHaveBeenCalledWith("shop", [{ name: "Survives", command: "program --check" }]);
+});
+
+it("edits, validates, and saves plain-language GitHub check names while guarding unsaved drafts", async () => {
+  await mount();
+  await click("Add GitHub checks");
+  const input = () => host.querySelectorAll<HTMLInputElement>('input[placeholder="Check name as shown on GitHub"]');
+  await edit(input()[0]!, "Tests");
+  await click("Save", host.querySelector(".editor-footer")!);
+  expect(commands.updateProduct).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Save or cancel your GitHub check edits first.");
+
+  await click("Add GitHub check");
+  await edit(input()[1]!, "Tests");
+  await click("Save GitHub checks");
+  expect(commands.setProductRemoteChecks).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Use each GitHub check name only once.");
+
+  await edit(input()[1]!, "  Linux validation  ");
+  await click("Save GitHub checks");
+  expect(commands.setProductRemoteChecks).toHaveBeenCalledWith("shop", ["Tests", "Linux validation"]);
 });

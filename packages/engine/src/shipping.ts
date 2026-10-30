@@ -190,6 +190,7 @@ export class Shipping {
       verifier: this.verifier,
       workflow: this.workflow,
       recovery: this.recovery,
+      needGitHub: (task) => this.tools.needGitHub(task),
       beforePublishing: (scope) => this.beforePublishing(scope),
       branchTip: (scope) => this.branchTip(scope),
       pullRequestBody: (scope) => this.pullRequestBody(scope),
@@ -268,7 +269,7 @@ export class Shipping {
     this.workflow.clearApproval(scope);
   }
 
-  private async publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
+  private async publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop"> {
     const { work: repository } = scope;
     const hooks = this.publishHooks();
     if (repository.source?.start.kind === "pull-request") return publishPrUpdateDelivery(hooks, scope, signal);
@@ -297,7 +298,7 @@ export class Shipping {
     });
   }
 
-  private publishLocal(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
+  private publishLocal(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop"> {
     return publishLocalDelivery(this.publishHooks(), scope, signal);
   }
 

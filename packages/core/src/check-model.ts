@@ -44,6 +44,8 @@ export interface Product {
   checksSeen?: readonly { fingerprint: string; checks: readonly ProductCheck[] }[];
   /** The repository's own commit hooks (pre-commit, commit-msg) as git would run them: Petrina runs them on every task's change. */
   hooks?: readonly string[];
+  /** Check names on GitHub that must pass on the exact tested version before direct branch or release delivery. */
+  requiredRemoteChecks?: readonly string[];
 }
 
 /** One command that proves a product works, run as an argument array (never through a shell). */

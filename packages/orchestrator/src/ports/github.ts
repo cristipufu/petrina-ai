@@ -1,3 +1,4 @@
+import type { RemoteCommitChecks } from "@petrina/core";
 import type { SourceBackgroundPullRequest } from "../source-background.js";
 
 export type GitHubResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -28,4 +29,5 @@ export interface GitHubService {
   comment(repo: string, number: number, body: string): Promise<void>;
   description(repo: string, number: number): Promise<string>;
   editDescription(repo: string, number: number, body: string): Promise<void>;
+  commitChecks(repo: string, sha: string): Promise<GitHubResult<RemoteCommitChecks>>;
 }

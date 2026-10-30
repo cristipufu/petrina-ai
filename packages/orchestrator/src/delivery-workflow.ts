@@ -487,7 +487,8 @@ export class DeliveryWorkflow {
         await this.effects.returnForDecision(task, "acceptance");
         return "continue";
       }
-      return (await this.effects.publish(scope, signal)) === "done" ? "stop" : "continue";
+      const published = await this.effects.publish(scope, signal);
+      return published === "done" || published === "stop" ? "stop" : "continue";
     } catch (error) {
       const failure = this.failures.classify(error);
       if (failure.kind !== "source-moved") throw error;

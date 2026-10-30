@@ -247,6 +247,8 @@ export abstract class Kernel {
   windowState = (): State => this.projection.windowState();
   historyPage = (request: HistoryQuery): HistoryPage => this.projection.historyPage(request);
   taskDetails = (id: Id): Task | undefined => this.projection.taskDetails(id);
+  taskDetailsDelta = (id: Id, sinceRevision: string): import("@petrina/core").TaskDetailsUpdate | undefined =>
+    this.projection.taskDetailsDelta(id, sinceRevision);
 
   saveArchivedTask(task: RuntimeTask): void { this.projection.saveArchivedTask(task); }
   forgetProductHistory(productId: Id): void { this.projection.forgetProductHistory(productId); }

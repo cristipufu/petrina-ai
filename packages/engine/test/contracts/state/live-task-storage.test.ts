@@ -1,3 +1,4 @@
+import { applyTaskDetailsUpdate } from "@petrina/core";
 import { engineCaseFixtures } from "../../fixtures/engine-cases.js";
 import { afterAll, expect, it } from "bun:test";
 import { join } from "node:path";
@@ -61,7 +62,20 @@ it("broadcasts summaries, fetches complete details, and saves one streaming task
     const bytes = JSON.stringify(engine.windowState()).length;
     expect(bytes).toBeLessThan(JSON.stringify(engine.getState()).length / 5);
     expect(engine.windowState().tasks.every((task) => task.detailsOmitted && !task.session.length && !task.timeline.length && !task.journey)).toBe(true);
-    expect(engine.taskDetails(two.id)!.session[0]!.text).toContain("LARGE-PRIVATE-HISTORY");
+    const initialTwo = engine.taskDetails(two.id)!;
+    expect(initialTwo.session[0]!.text).toContain("LARGE-PRIVATE-HISTORY");
+    expect(engine.taskDetailsDelta(two.id, initialTwo.detailsRevision!)).toEqual({
+      kind: "unchanged",
+      detailsRevision: initialTwo.detailsRevision!,
+    });
+    engine.say(two, "agent", "Small streamed update");
+    engine.commitNow(two);
+    const deltaTwo = engine.taskDetailsDelta(two.id, initialTwo.detailsRevision!)!;
+    expect(deltaTwo.kind).toBe("delta");
+    expect(JSON.stringify(deltaTwo).length).toBeLessThan(JSON.stringify(initialTwo).length / 20);
+    const mergedTwo = applyTaskDetailsUpdate(initialTwo, deltaTwo);
+    expect(mergedTwo).toEqual(engine.taskDetails(two.id)!);
+    expect(engine.taskDetailsDelta(two.id, "stale:0")?.kind).toBe("full");
     const oldRevision = engine.windowState().tasks.find((task) => task.id === two.id)!.detailsRevision;
     Object.defineProperty(two.session, "toJSON", { configurable: true, value: () => { throw new Error("Untouched task was serialized"); } });
     try {

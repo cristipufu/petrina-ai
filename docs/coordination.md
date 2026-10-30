@@ -63,6 +63,9 @@ petrina engine pause --wait --timeout-ms 30000
 petrina engine status --json
 petrina engine resume
 petrina engine restart --wait --timeout-ms 60000
+petrina engine releases --json
+petrina engine promote --version 1.2.0 --source-path ./release-dir --wait
+petrina engine rollback --wait
 petrina engine stop --wait
 ```
 
@@ -77,6 +80,8 @@ A drain includes agent processes, check runs, deliveries and necessary cleanup. 
 Stop and restart keep draining until admitted work settles. They have no forced deadline. A caller's `--timeout-ms` ends only its wait, with a `timed-out` result; the lifecycle operation continues. Resolve named blockers or explicitly interrupt/cancel the relevant task if that is the decision you want. A coordinating agent waiting for its own slot to drain must release that work first.
 
 Restart closes the old engine, releases the folder's existing ownership lock and launches one replacement through the existing launcher. The replacement preserves the connection key and port, saved task state, completed peers, queued messages and supported conversations. Paused scheduling stays paused until an explicit resume; running scheduling continues once the replacement is ready. Desktop recovery steps aside for the existing owner, respects an intentional stop, and does not interrupt a handoff. Closing the desktop during an explicit restart leaves the requested replacement running in the background. A replacement runs independently of the original desktop child; stop it explicitly when finished.
+
+`engine releases` inspects immutable staged releases under `<PETRINA_HOME>/releases/versions/<version>/` alongside the atomic `current` and `previous` release pointers. `engine promote` stages a release (when `--source-path` is given), drains admitted work with zero cleanup failures before switching `previous` and `current`, launches the promoted replacement, verifies `/health` readiness, and automatically restores `current` from `previous` and relaunches the previous engine if the promoted release fails startup. `engine rollback` drains admitted work and atomically switches `current` back to `previous`.
 
 Start discovers an existing owner. An owner that does not answer is `unresponsive`; silence never authorizes a second engine. Startup failures remain visible in status and the local engine log. Repair the cause through ordinary coding tools, then explicitly start again using a new request reference. A restart of a confirmed stopped engine starts once. Another restart while one is unfinished follows that operation; a competing lifecycle change returns a conflict identifying the operation already under way.
 
@@ -96,7 +101,7 @@ Inspect an inbox request before deciding. The result provides its `revision`, av
 
 `inbox approve` handles only plan, design, delivery and disagreement checkpoints. Questions use `inbox answer`; tool requests use `inbox allow` (once only) or `inbox deny`; stuck items use `inbox retry`; interrupted deliveries use `inbox recovery` with `check`, `ship-again` or `mark-done`. Marking done leaves delivery visibly unconfirmed. Existing delivery checks remain authoritative.
 
-Learning offers use `learning inspect`, `learning accept --positions '[0,2]'`, or `learning decline`. Positions start at **zero**; acceptance needs a nonempty valid selection from the inspected revision. Unselected lessons follow existing decline behavior. Review-guide proposals have their own inspect, accept and decline operations. Accepted points follow existing delivery timing; the interface does not edit product files directly.
+Learning offers use `learning inspect`, `learning accept --positions '[0,2]'`, or `learning decline`. Positions start at **zero**; acceptance needs a nonempty valid selection from the inspected revision. Unselected lessons follow existing decline behavior. Review-guide proposals have their own inspect, accept and decline operations. Accepted points follow existing delivery timing; the interface does not edit product files directly. Use `product remote-checks --product-id PRODUCT --checks '["Tests"]'` (MCP: `petrina_product_remote_checks`) to declare or clear GitHub check names required on the exact candidate commit before direct branch or release delivery; `product list` and `product inspect` report `requiredRemoteChecks`.
 
 ## Focused evidence and waits
 

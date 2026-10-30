@@ -2,12 +2,21 @@ import { oneTaskFixture } from "../../fixtures/state";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { type Task } from "@petrina/core";
+import { type Task, type TaskDetailsUpdate } from "@petrina/core";
 import { useTaskDetails } from "../../../src/task-details";
 
 const read = vi.hoisted(() => vi.fn<(id: string) => Promise<Task | undefined>>());
+const deltaApi = vi.hoisted(() => ({ fn: undefined as ((id: string, since: string) => Promise<TaskDetailsUpdate | undefined>) | undefined }));
 
-vi.mock("../../../src/engine", () => ({ sim: { taskDetails: read }, failureText: (error: unknown) => (error as Error).message }));
+vi.mock("../../../src/engine", () => ({
+  sim: {
+    taskDetails: read,
+    get taskDetailsDelta() {
+      return deltaApi.fn;
+    },
+  },
+  failureText: (error: unknown) => (error as Error).message,
+}));
 
 const task = oneTaskFixture(1_000_000_000).tasks[0]!;
 
@@ -19,7 +28,7 @@ function View({ id = task.id, revision = "boot:1", history = 1, archived = false
 }
 
 beforeEach(() => {
-  vi.useFakeTimers(); read.mockReset();
+  vi.useFakeTimers(); read.mockReset(); deltaApi.fn = undefined;
   read.mockImplementation(async id => ({ ...task, id, detailsRevision: "boot:1" }));
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
@@ -87,4 +96,26 @@ it("retries errors only on an explicit retry or a new revision, without an idle 
   await advance(1000); expect(read).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0);
   await show({ retry: 1 }); expect(host.textContent).toBe(task.title);
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("streams incremental taskDetailsDelta updates after the initial full load while keeping archived reads full", async () => {
+  const delta = vi.fn<(id: string, since: string) => Promise<TaskDetailsUpdate | undefined>>();
+  deltaApi.fn = delta;
+  await show();
+  expect(read).toHaveBeenCalledExactlyOnceWith(task.id);
+  expect(delta).not.toHaveBeenCalled();
+
+  const { session: _s, timeline: _t, journey: _j, designSessions: _ds, reviewSessions: _rs, handedBack: _hb, ...summary } = task;
+  delta.mockResolvedValueOnce({
+    kind: "delta",
+    baseRevision: "boot:1",
+    detailsRevision: "boot:2",
+    summary: { ...summary, title: "Streamed via delta" },
+    session: { upserts: [{ id: "stream-1", at: 42, from: "agent", text: "Incremental line" }] },
+  });
+  await advance(400);
+  await show({ revision: "boot:2" });
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(delta).toHaveBeenCalledExactlyOnceWith(task.id, "boot:1");
+  expect(host.textContent).toBe("Streamed via delta");
 });

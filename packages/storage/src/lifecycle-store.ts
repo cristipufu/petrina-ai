@@ -23,14 +23,19 @@ export class LifecycleStore {
   }
   begin(
     kind: string,
-    request: { readonly requestId: string },
+    request: { readonly requestId: string; readonly version?: string; readonly sourcePath?: string },
     scheduling: "paused" | "running",
     apply: () => void = () => {},
     launcherPid?: number,
   ): Result {
     return this.db.transaction((): Result => {
       // Waiting options belong to the caller, not the effect being retried.
-      const hash = fingerprint({ kind, requestId: request.requestId });
+      const hash = fingerprint({
+        kind,
+        requestId: request.requestId,
+        ...(request.version !== undefined ? { version: request.version } : {}),
+        ...(request.sourcePath !== undefined ? { sourcePath: request.sourcePath } : {}),
+      });
       const old = this.db.query<{ fingerprint: string; result: string }, [string]>("SELECT fingerprint,result FROM receipts WHERE id=?").get(request.requestId);
       if (old)
         return old.fingerprint === hash
@@ -39,9 +44,12 @@ export class LifecycleStore {
       const current = this.current;
       let result: Result;
       const unfinished = current && !["completed", "failed"].includes(current.phase);
-      const replacesPause = unfinished && current.kind === "pause" && ["resume", "stop", "restart"].includes(kind);
+      const replacesPause = unfinished && current.kind === "pause" && ["resume", "stop", "restart", "promote", "rollback"].includes(kind);
       if (unfinished && !replacesPause) {
-        const follows = kind === current.kind && ["restart", "pause"].includes(kind);
+        const follows =
+          kind === current.kind
+          && ["restart", "pause", "promote", "rollback"].includes(kind)
+          && (kind !== "promote" || current.version === request.version);
         result = {
           outcome: kind === "start" && current.kind === "pause" ? "completed" : follows ? "pending" : "conflict",
           requestId: request.requestId,
@@ -61,6 +69,7 @@ export class LifecycleStore {
           kind,
           phase: launcherPid === undefined ? "draining" : "starting",
           scheduling,
+          ...(request.version !== undefined ? { version: request.version } : {}),
           ...(launcherPid === undefined ? {} : { launcherPid })
         };
         this.current = operation;
@@ -71,11 +80,17 @@ export class LifecycleStore {
     })();
   }
   /** A disconnected follower may join an operation, but must never create a new effect. */
-  follow(kind: string, request: { readonly requestId: string }, observed: LifecycleOperation): Result {
+  follow(kind: string, request: { readonly requestId: string; readonly version?: string }, observed: LifecycleOperation): Result {
     return this.db.transaction((): Result => {
       if (this.receipt(request.requestId)) return this.begin(kind, request, observed.scheduling);
       const current = this.current;
-      if (current?.id !== observed.id || current.kind !== kind || !["pause", "restart"].includes(kind) || ["completed", "failed"].includes(current.phase))
+      if (
+        current?.id !== observed.id
+        || current.kind !== kind
+        || !["pause", "restart", "promote", "rollback"].includes(kind)
+        || (kind === "promote" && current.version !== request.version)
+        || ["completed", "failed"].includes(current.phase)
+      )
         return {
           outcome: "disconnected",
           requestId: request.requestId,
@@ -93,6 +108,68 @@ export class LifecycleStore {
       if (error) op.error = error;
       this.current = op;
       this.updateReceipts(op, phase === "failed" ? "failed" : phase === "completed" ? "completed" : "pending", error);
+    })();
+  }
+  /** Mark a failed promotion receipt while recording that the rolled-back engine is now live and healthy. */
+  finishRollbackRecovery(error: string, restoredVersion: string): void {
+    this.db.transaction(() => {
+      const op = this.current;
+      if (op && !["completed", "failed"].includes(op.phase)) {
+        const failedOp: LifecycleOperation = { ...op, phase: "failed", error };
+        this.updateReceipts(failedOp, "failed", error);
+        this.current = {
+          id: `${op.id}:rollback`,
+          kind: "rollback",
+          phase: "completed",
+          scheduling: op.scheduling,
+          version: restoredVersion,
+        };
+        return;
+      }
+      this.current = {
+        id: `auto-rollback-${Date.now()}`,
+        kind: "rollback",
+        phase: "completed",
+        scheduling: op?.scheduling ?? "running",
+        version: restoredVersion,
+      };
+    })();
+  }
+  recordCompletedOffline(
+    kind: string,
+    request: { readonly requestId: string; readonly version?: string; readonly sourcePath?: string },
+    scheduling: "paused" | "running",
+    extra: Record<string, unknown> = {},
+  ): Result {
+    return this.db.transaction((): Result => {
+      const hash = fingerprint({
+        kind,
+        requestId: request.requestId,
+        ...(request.version !== undefined ? { version: request.version } : {}),
+        ...(request.sourcePath !== undefined ? { sourcePath: request.sourcePath } : {}),
+      });
+      const old = this.db.query<{ fingerprint: string; result: string }, [string]>("SELECT fingerprint,result FROM receipts WHERE id=?").get(request.requestId);
+      if (old) {
+        return old.fingerprint === hash
+          ? this.receipt(request.requestId)!
+          : { outcome: "conflict", message: "That request reference belongs to another lifecycle request." };
+      }
+      const operation: LifecycleOperation = {
+        id: request.requestId,
+        kind,
+        phase: "completed",
+        scheduling,
+        ...(request.version !== undefined ? { version: request.version } : {}),
+      };
+      const result: Result = {
+        outcome: "completed",
+        requestId: request.requestId,
+        status: "stopped",
+        operation,
+        ...extra,
+      };
+      this.db.query("INSERT INTO receipts VALUES (?,?,?)").run(request.requestId, hash, JSON.stringify(result));
+      return result;
     })();
   }
   private updateReceipts(op: LifecycleOperation, outcome: Result["outcome"], message?: string, supersededBy?: string): void {

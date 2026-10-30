@@ -23,6 +23,7 @@ export interface LifecycleOperation {
   kind: string;
   phase: "starting" | "draining" | "stopping" | "completed" | "failed";
   scheduling: "paused" | "running";
+  version?: string;
   error?: string;
   launcherPid?: number;
 }

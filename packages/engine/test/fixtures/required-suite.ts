@@ -236,9 +236,11 @@ appendFileSync(resolve(import.meta.dir, "environments.log"), JSON.stringify({ wo
 if (stand.print) process.stdout.write(stand.print);
 const failed = stand.report === "fail", skipped = stand.report === "skipped";
 const status = failed ? "failed" : skipped ? "skipped" : stand.report === "running" ? "pending" : "passed";
-let report = JSON.stringify({ success: !failed, numTotalTestSuites: 1, numPassedTestSuites: Number(!failed), numFailedTestSuites: Number(failed), numPendingTestSuites: 0,
- numTotalTests: stand.report === "counts" ? 2 : 1, numPassedTests: Number(status === "passed"), numFailedTests: Number(failed), numPendingTests: Number(skipped || status === "pending"), numTodoTests: 0,
- testResults: [{ name: resolve(${JSON.stringify(EXAMPLE)}), status: failed ? "failed" : "passed", assertionResults: [{ status }] }] });
+const selected = process.argv.slice(3).filter(arg => !arg.startsWith("-"));
+const suites = selected.length ? selected : [${JSON.stringify(EXAMPLE)}];
+let report = JSON.stringify({ success: !failed, numTotalTestSuites: suites.length, numPassedTestSuites: failed ? 0 : suites.length, numFailedTestSuites: failed ? suites.length : 0, numPendingTestSuites: 0,
+ numTotalTests: stand.report === "counts" ? suites.length + 1 : suites.length, numPassedTests: status === "passed" ? suites.length : 0, numFailedTests: failed ? suites.length : 0, numPendingTests: skipped || status === "pending" ? suites.length : 0, numTodoTests: 0,
+ testResults: suites.map(file => ({ name: resolve(file), status: failed ? "failed" : "passed", assertionResults: [{ status }] })) });
 if (stand.report === "truncated") report = report.slice(0, -5);
 if (stand.report !== "missing") writeFileSync(process.argv.find(arg => arg.startsWith("--outputFile=")).slice("--outputFile=".length), report);
 if (stand.change) writeFileSync(${JSON.stringify(EXAMPLE)}, "// changed after starting");

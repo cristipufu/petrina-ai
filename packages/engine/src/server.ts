@@ -149,6 +149,7 @@ const ARGS = {
     limit: z.number().int().min(1).max(100).optional()
   }).strict()]),
   taskDetails: z.tuple([TaskId]),
+  taskDetailsDelta: z.tuple([TaskId, z.string().min(1).max(200)]),
   previewImage: z.tuple([TaskId, z.string().min(1).max(4096), z.string().max(200).optional()]),
   saveRole: z.tuple([z.string(), RoleDraft]),
   addRole: z.tuple([RoleDraft]),
@@ -167,6 +168,10 @@ const ARGS = {
   ])
   ]),
   setProductCheckSetup: z.tuple([z.string(), CheckSetupRequirementsSchema]),
+  setProductRemoteChecks: z.tuple([
+    z.string(),
+    z.array(z.string().min(1).max(120)).max(20),
+  ]),
   updateProduct: z.tuple([
     z.string(),
     z.object({

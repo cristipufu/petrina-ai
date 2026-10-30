@@ -3,6 +3,14 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { copyNoLongerNeeded, displayTask, finishedTask, type ExtraValidation, type Id, type State, type Task, type TimelineEntry } from "@petrina/core";
 import { TaskHistory } from "./history-store.js";
+import {
+  applySchemaMigrations,
+  CORRUPT_STATE_QUARANTINE_KEY,
+  MIGRATIONS,
+  prepareSchemaUpgrade,
+  TARGET_SCHEMA_VERSION,
+  type SchemaMigration,
+} from "./schema-migrations.js";
 import { logSqlExecutions, SqlExecutionLog } from "./sql-log.js";
 import { WorkLog } from "./worklog.js";
 
@@ -24,22 +32,29 @@ export class Store {
   readonly history: TaskHistory;
   private activeIds: Set<Id>;
 
-  constructor(path: string, options: { debugSql?: boolean } = {}) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  constructor(
+    path: string,
+    options: { debugSql?: boolean; migrations?: readonly SchemaMigration[]; targetVersion?: number } = {},
+  ) {
+    if (path !== ":memory:" && path !== "") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new Database(path, { create: true });
     // Offline status reads can recover the WAL before a replacement opens it. Give that
     // short recovery the same bounded allowance as lifecycle receipts, before touching it.
     try {
       this.db.run("PRAGMA busy_timeout = 3000");
       if (options.debugSql) logSqlExecutions(this.db, new SqlExecutionLog(dirname(path)));
-      // Journal selection precedes the transaction; SQLite cannot change it inside one.
+      // Journal selection and VACUUM INTO backup snapshots precede the migration transaction.
       this.db.run("PRAGMA journal_mode = WAL");
+      const migrations = options.migrations ?? MIGRATIONS;
+      const targetVersion = options.targetVersion ?? TARGET_SCHEMA_VERSION;
+      const plan = prepareSchemaUpgrade(this.db, path, migrations, targetVersion);
       const initialized = this.db.transaction(() => {
         this.db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
         this.db.run("CREATE TABLE IF NOT EXISTS active_tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
         const history = new TaskHistory(this.db);
         this.db.run("CREATE TABLE IF NOT EXISTS coordination_receipts (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL)");
         this.db.run("CREATE TABLE IF NOT EXISTS coordination_handled_items (id TEXT PRIMARY KEY)");
+        applySchemaMigrations(this.db, plan.currentVersion, plan.targetVersion, migrations);
         return { history, activeIds: this.readActiveIds() };
       }).immediate();
       this.history = initialized.history;
@@ -68,6 +83,15 @@ export class Store {
     try {
       saved = JSON.parse(row.value);
     } catch {
+      try {
+        this.db
+          .query(
+            "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+          )
+          .run(CORRUPT_STATE_QUARANTINE_KEY, row.value, Date.now());
+      } catch {
+        // Best-effort forensic quarantine; board recovery must still proceed.
+      }
       // A lost state snapshot recovers to a fresh board while the work log protects historical IDs.
       return undefined;
     }

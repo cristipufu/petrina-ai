@@ -5,7 +5,7 @@ import type { CheckPrerequisite } from "@petrina/core";
 import { ProductEditor } from "../../../src/components/ProductSettings";
 import { stateFixture } from "../../fixtures/state";
 
-const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn(), setProductCheckSetup: vi.fn(), live: true }));
+const commands = vi.hoisted(() => ({ updateProduct: vi.fn(), removeProduct: vi.fn(), setProductChecks: vi.fn(), setProductCheckSetup: vi.fn(), setProductRemoteChecks: vi.fn(), live: true }));
 vi.mock("../../../src/engine", () => ({ sim: commands, useEngineStatus: () => ({ link: commands.live ? "live" : "reconnecting" }), failureText: (failure: unknown) => failure instanceof Error ? failure.message : String(failure) }));
 let host: HTMLDivElement, root: Root;
 const closed = vi.fn(), removed = vi.fn();

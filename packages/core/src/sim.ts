@@ -22,7 +22,7 @@ import { SETUP_STEPS, type SetupStep } from "./setup.js";
 import {
   simAddLessons, simAddTask, simApproveItem, simCancelTask, simFinalizeCombineBacklog, simMoveInQueue,
   simPauseTask, simRemoveProduct, simRerunChecks, simRequestChanges, simRetryItem, simSendMessage, simSetProductChecks,
-  simSetProductCheckSetup, simSetTaskProducts, simSetTaskStartSingle,
+  simSetProductCheckSetup, simSetProductRemoteChecks, simSetTaskProducts, simSetTaskStartSingle,
 } from "./sim-actions.js";
 import { simAgePullRequest } from "./sim-delivery.js";
 import { simSchedule, simStep } from "./sim-engine.js";
@@ -123,6 +123,10 @@ export class Simulator {
     return query.includeUsage ? historyPageUsage(page, this.rt.work) : page;
   }
   taskDetails(taskId: Id): Task | undefined { return this.state.tasks.find((task) => task.id === taskId); }
+  taskDetailsDelta(taskId: Id, _sinceRevision: string): import("./task-details-delta.js").TaskDetailsUpdate | undefined {
+    const task = this.taskDetails(taskId);
+    return task ? { kind: "full", task } : undefined;
+  }
   async previewImage(_taskId: Id, _path: string): Promise<{ mime: string; data: string }> {
     throw new Error("This image is unavailable in the demo.");
   }
@@ -299,6 +303,10 @@ export class Simulator {
 
   setProductCheckSetup(productId: Id, requirements: readonly CheckPrerequisite[]): void {
     this.update(d => simSetProductCheckSetup(d, productId, requirements));
+  }
+
+  setProductRemoteChecks(productId: Id, checks: readonly string[]): void {
+    this.update((d) => simSetProductRemoteChecks(d, productId, checks));
   }
 
   removeProduct(productId: Id): void {

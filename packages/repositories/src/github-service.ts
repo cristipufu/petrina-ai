@@ -1,4 +1,5 @@
 import type { GitHubService } from "@petrina/orchestrator";
+import { commitChecks } from "./commit-checks.js";
 import * as github from "./github.js";
 import * as source from "./source-github.js";
 
@@ -31,5 +32,6 @@ export function githubService(command: github.GitHubCommand = ["gh"]): GitHubSer
       const result = await github.gh(command, repo, ["pr", "edit", String(number), "--body-file", "-"], body);
       if (result.code) throw new Error(result.stderr || "Could not finish companion links.");
     },
+    commitChecks: (repo, sha) => commitChecks(repo, sha, command),
   };
 }

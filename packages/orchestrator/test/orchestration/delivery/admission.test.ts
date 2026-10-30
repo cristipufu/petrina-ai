@@ -21,13 +21,28 @@ it("invalidates only unpublished candidates when a destination is released, keep
   const f = deliveryAdmissionFixture(), task = f.add("shared", ["a", "b"]);
   const [first, second] = scopesFor(task);
   expect(f.admission.waitingForTurn(task)).toBeUndefined();
-  first!.work.shipping = { start: "first", moves: 0, failures: 0, prepared: { tested: "first", summary: "First candidate" } };
-  second!.work.shipping = { start: "second", moves: 0, failures: 0, prepared: { tested: "second", summary: "Second candidate" }, step: "push" };
+  first!.work.shipping = {
+    start: "first",
+    moves: 0,
+    failures: 0,
+    prepared: { tested: "first", summary: "First candidate" },
+    remoteValidation: { ref: "refs/heads/petrina/validation/shared-first-0", sha: "first", pushed: true, verifiedAt: 1 },
+  };
+  second!.work.shipping = {
+    start: "second",
+    moves: 0,
+    failures: 0,
+    prepared: { tested: "second", summary: "Second candidate" },
+    remoteValidation: { ref: "refs/heads/petrina/validation/shared-second-0", sha: "second", pushed: true, verifiedAt: 2 },
+    step: "push",
+  };
   expect(f.admission.yieldForDecision(task)).toBe(false);
   expect(f.admission.epoch(task)).toBe(0);
   f.admission.releaseDeliveryTurn(task.id);
   expect(first!.work.shipping.prepared).toBeUndefined();
+  expect(first!.work.shipping.remoteValidation).toBeUndefined();
   expect(second!.work.shipping.prepared?.tested).toBe("second");
+  expect(second!.work.shipping.remoteValidation?.verifiedAt).toBe(2);
   expect(f.admission.epoch(task)).toBe(1);
   expect(f.orders.size).toBe(0);
 });

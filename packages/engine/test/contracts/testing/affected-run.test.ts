@@ -61,7 +61,7 @@ for (const failure of ["none", "error"] as const) it(`retains selected feedback'
   if (browsers) expect(existsSync(browsers)).toBe(false);
 });
 
-it("runs a complete short Vitest workspace with its real runner despite colliding filename filters", async () => {
+it("runs only the selected Vitest file with its real runner despite colliding filename filters", async () => {
   const { report, selection, code } = await run(["core"], {}, "HEAD", async root => {
     const core = join(root, "packages/core");
     const installedCore = resolve(import.meta.dir, "../../../../core");
@@ -73,16 +73,20 @@ it("runs a complete short Vitest workspace with its real runner despite collidin
     manifest.devDependencies = { vitest: JSON.parse(readFileSync(join(vitest, "package.json"), "utf8")).version };
     writeFileSync(packageFile, JSON.stringify(manifest));
     writeFileSync(join(core, "vitest-entry.ts"), `await import(${JSON.stringify(join(vitest, "vitest.mjs"))});`);
-    for (const file of [EXAMPLE, EXAMPLE + "x", `test/contracts/testing/nested/${EXAMPLE}`]) {
+    writeFileSync(
+      join(core, EXAMPLE),
+      "import { expect, it } from 'vitest'; it('runs its actual assertion', () => expect(1).toBe(1));\n",
+    );
+    for (const file of [EXAMPLE + "x", `test/contracts/testing/nested/${EXAMPLE}`, "test/contracts/testing/other.test.ts"]) {
       const path = join(core, file); mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, "import { expect, it } from 'vitest'; it('runs its actual assertion', () => expect(1).toBe(1));\n");
+      writeFileSync(path, "import { it } from 'vitest'; it('must not run when unselected', () => { throw new Error('unselected sibling ran'); });\n");
     }
     commitSuiteDirectory(root, "Private real Vitest workspace");
   });
   expect(code).toBe(0);
   expect(selection.requested).toEqual([`packages/core/${EXAMPLE}`]);
-  expect(selection.selected).toHaveLength(3);
-  expect(report.results).toMatchObject([{ workspace: "packages/core", counts: { tests: 3, passed: 3, failed: 0 } }]);
+  expect(selection.selected).toEqual([`packages/core/${EXAMPLE}`]);
+  expect(report.results).toMatchObject([{ workspace: "packages/core", counts: { tests: 1, passed: 1, failed: 0 } }]);
   expect(report.deliveryEligible).toBe(false);
 });
 

@@ -8,6 +8,7 @@ import { readConnection, FolderLock } from "./instance.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import type { Result } from "./coordination.js";
 import { operation } from "./operations.js";
+import { ReleaseStore, validateReleaseVersion } from "./release-store.js";
 
 export const defaultHome = () => process.env.PETRINA_HOME || join(homedir(), ".petrina");
 function coordinationReceipt(home: string, id: string): boolean | undefined {
@@ -48,8 +49,20 @@ export class EngineClient {
   ) {
     this.start = start ?? (() => {
       const prior = readConnection(home);
-      const child = Bun.spawn([process.execPath, entrypoint, "serve", "--managed"], {
-        env: { ...process.env, PETRINA_HOME: home, PETRINA_PORT: prior ? new URL(prior.api).port : "0" },
+      const releaseStore = new ReleaseStore(home);
+      const current = releaseStore.readCurrent();
+      const command = current
+        ? releaseStore.commandFor(current, ["serve", "--managed"])
+        : [process.execPath, entrypoint, "serve", "--managed"];
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        PETRINA_HOME: home,
+        PETRINA_PORT: prior ? new URL(prior.api).port : "0",
+      };
+      delete env.PETRINA_AUTO_ROLLBACK_MESSAGE;
+      delete env.PETRINA_AUTO_ROLLBACK_VERSION;
+      const child = Bun.spawn(command, {
+        env,
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -127,7 +140,14 @@ export class EngineClient {
             operation: current ?? null,
             scheduling,
           };
-        const request = { requestId: String(args.requestId) };
+        if (name === "engine.releases") {
+          return { outcome: "completed", ...new ReleaseStore(this.home).list() };
+        }
+        const request = {
+          requestId: String(args.requestId),
+          ...(typeof args.version === "string" ? { version: args.version } : {}),
+          ...(typeof args.sourcePath === "string" ? { sourcePath: args.sourcePath } : {}),
+        };
         const known = store.receipt(request.requestId);
         // A known lifecycle receipt is authoritative during handoff, even while the old
         // task database is closing its WAL. Do not turn a saved effect into "not submitted".
@@ -138,8 +158,14 @@ export class EngineClient {
         else if (!lock) {
           // Only the engine can apply scheduling and admission changes. A lost reply may
           // leave its request queued: reserving a receipt here would make that queued request
-          // skip its effects. Following an existing restart/pause has no new engine effect.
-          if (current && !["completed", "failed"].includes(current.phase) && current.kind === name.slice(7) && ["restart", "pause"].includes(current.kind))
+          // skip its effects. Following an existing restart/pause/promote/rollback has no new engine effect.
+          if (
+            current
+            && !["completed", "failed"].includes(current.phase)
+            && current.kind === name.slice(7)
+            && ["restart", "pause", "promote", "rollback"].includes(current.kind)
+            && (current.kind !== "promote" || current.version === request.version)
+          )
             result = store.follow(name.slice(7), request, current);
           else
             return {
@@ -149,6 +175,46 @@ export class EngineClient {
               operation: current ?? null,
               message: "An engine owns this folder but did not confirm this request. Retry with the same request reference; no replacement was started.",
             };
+        } else if (name === "engine.promote" || name === "engine.rollback") {
+          if (current && !["starting", "completed", "failed"].includes(current.phase))
+            return {
+              outcome: "disconnected",
+              requestId: args.requestId,
+              status: "unresponsive",
+              operation: current,
+              message: "The previous engine process is still alive. Its lifecycle change cannot be confirmed; no release pointer was changed.",
+            };
+          const releaseStore = new ReleaseStore(this.home);
+          if (name === "engine.promote") {
+            let cleanVersion: string;
+            try {
+              cleanVersion = validateReleaseVersion(String(args.version ?? ""));
+            } catch (error) {
+              return { outcome: "invalid", requestId: args.requestId, message: error instanceof Error ? error.message : "Invalid engine release version." };
+            }
+            if (request.sourcePath && !releaseStore.hasVersion(cleanVersion)) {
+              try {
+                releaseStore.stage(cleanVersion, request.sourcePath);
+              } catch (error) {
+                return { outcome: "invalid", requestId: args.requestId, message: error instanceof Error ? error.message : "Could not stage engine release." };
+              }
+            }
+            if (!releaseStore.hasVersion(cleanVersion)) {
+              return {
+                outcome: "missing",
+                requestId: args.requestId,
+                message: `Engine release version ${cleanVersion} is not staged. Provide sourcePath to stage it.`
+              };
+            }
+            const promoted = releaseStore.promote(cleanVersion);
+            result = store.recordCompletedOffline("promote", { ...request, version: cleanVersion }, scheduling, promoted);
+          } else {
+            if (!releaseStore.readPrevious()) {
+              return { outcome: "invalid", requestId: args.requestId, message: "No previous engine release is available to roll back to." };
+            }
+            const restored = releaseStore.rollback();
+            result = store.recordCompletedOffline("rollback", request, scheduling, restored);
+          }
         } else if (!["engine.start", "engine.restart"].includes(name))
           return { outcome: "invalid", status: "stopped", message: "The engine is stopped. Start it explicitly before changing scheduling." };
         else {
@@ -177,7 +243,10 @@ export class EngineClient {
         store.close();
       }
     }
-    if (!name.startsWith("engine.") || name === "engine.status" || !args.wait || !["completed", "pending"].includes(result.outcome)) return result;
+    if (!name.startsWith("engine.") || name === "engine.status" || name === "engine.releases" || !args.wait || ![
+      "completed",
+      "pending"
+    ].includes(result.outcome)) return result;
     const opId = (result.operation as { id?: string } | undefined)?.id ?? args.requestId;
     const deadline = Date.now() + Number(args.timeoutMs);
     for (;;) {

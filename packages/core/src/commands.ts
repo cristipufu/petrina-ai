@@ -13,6 +13,7 @@ import type { UsageRequest, UsageViewFor } from "./analytics.js";
 import type { StartFrom, WorkChoice } from "./source.js";
 import type { HistoryPage, HistoryQuery } from "./history.js";
 import type { Task } from "./model.js";
+import type { TaskDetailsUpdate } from "./task-details-delta.js";
 
 /** A new task as the window sends it. */
 export interface NewTaskInput {
@@ -55,6 +56,7 @@ export interface Commands {
   resolveMaintenanceSettings(taskId: Id, choice: "keep" | "stop"): void;
   historyPage(query: HistoryQuery): HistoryPage;
   taskDetails(taskId: Id): Task | undefined;
+  taskDetailsDelta(taskId: Id, sinceRevision: string): TaskDetailsUpdate | undefined;
   previewImage(taskId: Id, path: string, productId?: Id): Promise<{ mime: string; data: string }>;
   saveRole(roleId: Id, draft: RoleDraft): void;
   addRole(draft: RoleDraft): Id;
@@ -67,6 +69,7 @@ export interface Commands {
   setProductDelivery(productId: Id, delivery: DeliveryMode, approveDelivery: boolean): void;
   setProductChecks(productId: Id, checks: { name: string; command: string }[] | null): void;
   setProductCheckSetup(productId: Id, requirements: readonly CheckPrerequisite[]): void;
+  setProductRemoteChecks(productId: Id, checks: readonly string[]): void;
   // First run and the tools check
   /** Check every tool again, each on its own. The answers arrive in the state, one by one. */
   checkTools(): Promise<void>;
@@ -148,7 +151,7 @@ export type CommandName = keyof Commands;
 export const COMMAND_NAMES = [
   "profileChoices", "saveProfile", "removeProfile",
   "saveRoutine", "setRoutineEnabled", "removeRoutine", "resolveMaintenanceSettings",
-  "historyPage", "taskDetails", "previewImage",
+  "historyPage", "taskDetails", "taskDetailsDelta", "previewImage",
   "saveRole", "addRole", "resetRole", "removeRole",
   "addProduct",
   "removeProduct",
@@ -156,6 +159,7 @@ export const COMMAND_NAMES = [
   "setProductDelivery",
   "setProductChecks",
   "setProductCheckSetup",
+  "setProductRemoteChecks",
   "checkTools",
   "findClones",
   "setSetupStep",

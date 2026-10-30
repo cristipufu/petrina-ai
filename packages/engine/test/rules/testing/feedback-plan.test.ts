@@ -8,11 +8,11 @@ const engine = "packages/engine/test/contracts/tasks/example.test.ts";
 const runtime = "packages/agent-runtime/test/contracts/agents/example.test.ts";
 const files = [core, desktop, engine, runtime];
 
-it("expands short Vitest suites while keeping native feedback file-specific", () => {
+it("keeps both Vitest and native feedback file-specific", () => {
   const sibling = "packages/core/test/rules/tasks/example.test.tsx";
   const nested = "packages/core/test/rules/tasks/nested/example.test.ts";
   const nativePeer = "packages/engine/test/contracts/tasks/example.test.tsx";
-  expect(feedbackFiles([core, engine], [...files, sibling, nested, nativePeer])).toEqual([core, sibling, nested, engine]);
+  expect(feedbackFiles([engine, core], [...files, sibling, nested, nativePeer])).toEqual([core, engine]);
   expect(feedbackFiles([engine], [...files, nativePeer])).toEqual([engine]);
   expect(feedbackFiles([], files)).toEqual([]);
 });

@@ -1,5 +1,7 @@
 // Live projections, bounded archive ownership and revision/persistence bookkeeping.
 import {
+  captureTaskDetailsBase,
+  diffTaskDetails,
   finishedTask,
   historyPageUsage,
   involvesProduct,
@@ -7,6 +9,8 @@ import {
   type Id,
   type State,
   type Task,
+  type TaskDetailsBase,
+  type TaskDetailsUpdate,
   type HistoryQuery,
   type HistoryPage
 } from "@petrina/core";
@@ -121,11 +125,53 @@ export class StateProjection {
 
   taskDetails = (id: Id): Task | undefined => {
     const task = this.task(id);
-    return task ? {
-    ...taskView(task),
-    detailsRevision: this.detailRevision(id)
-  } : undefined;
+    if (!task) {
+      this.detailBases.delete(id);
+      return undefined;
+    }
+    const projected: Task = {
+      ...taskView(task),
+      detailsRevision: this.detailRevision(id),
+    };
+    if (this.k.s.tasks.includes(task)) this.rememberDetailBase(id, captureTaskDetailsBase(projected));
+    return projected;
   };
+
+  taskDetailsDelta = (id: Id, sinceRevision: string): TaskDetailsUpdate | undefined => {
+    const task = this.task(id);
+    if (!task) {
+      this.detailBases.delete(id);
+      return undefined;
+    }
+    const revision = this.detailRevision(id);
+    const isLive = this.k.s.tasks.includes(task);
+    const base = this.detailBases.get(id);
+    if (isLive && base && base.detailsRevision === sinceRevision && revision === sinceRevision) {
+      return { kind: "unchanged", detailsRevision: revision };
+    }
+    const projected: Task = {
+      ...taskView(task),
+      detailsRevision: revision,
+    };
+    if (!isLive || !base || base.detailsRevision !== sinceRevision) {
+      if (isLive) this.rememberDetailBase(id, captureTaskDetailsBase(projected));
+      return { kind: "full", task: projected };
+    }
+    const { update, nextBase } = diffTaskDetails(base, projected);
+    this.rememberDetailBase(id, nextBase);
+    return update;
+  };
+
+  private readonly detailBases = new Map<Id, TaskDetailsBase>();
+
+  private rememberDetailBase(id: Id, base: TaskDetailsBase): void {
+    this.detailBases.delete(id);
+    if (this.detailBases.size >= 8) {
+      const oldest = this.detailBases.keys().next().value;
+      if (oldest !== undefined) this.detailBases.delete(oldest);
+    }
+    this.detailBases.set(id, base);
+  }
 
   private readonly archiveCache = new Map<Id, RuntimeTask>();
 
@@ -183,7 +229,10 @@ export class StateProjection {
     this.dirtyTasks.clear();
     const ids = new Set(retired);
     this.k.s.tasks = this.k.s.tasks.filter((task) => !ids.has(task.id));
-    for (const id of ids) this.taskRevisions.delete(id);
+    for (const id of ids) {
+      this.taskRevisions.delete(id);
+      this.detailBases.delete(id);
+    }
     return this.k.store.history.info().revision !== revision;
   }
 }

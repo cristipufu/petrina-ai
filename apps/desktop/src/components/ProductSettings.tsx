@@ -15,6 +15,7 @@ import { ConfirmDialog } from "./bits";
 import { EditorPanel, FormSection } from "./EditorPanel";
 import { ProductCheckSetup } from "./ProductCheckSetup";
 import { ProductCommandRows, hasOpenCommandQuote, type ProductCommandRow, type ProductCommandErrors } from "./ProductCommandRows";
+import { ProductRemoteChecks } from "./ProductRemoteChecks";
 import { sim, useEngineStatus } from "../engine";
 
 /** Product settings leave the repository identity unchanged. */
@@ -27,6 +28,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
   const [discarding, setDiscarding] = useState(false);
   const [checkState, setCheckState] = useState({ busy: false, dirty: false });
   const [setupState, setSetupState] = useState({ busy: false, dirty: false });
+  const [remoteCheckState, setRemoteCheckState] = useState({ busy: false, dirty: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -40,8 +42,8 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
     "cancelled"
   ].includes(task.state)).length + (archived?.done ?? 0) + (archived?.cancelled ?? 0) - (archived?.shared ?? 0);
   const retained = involved.filter((task) => taskProductIds(task).length > 1).length + (archived?.shared ?? 0);
-  const pending = busy || checkState.busy || setupState.busy;
-  const dirty = name !== product.name || delivery !== (product.delivery ?? "pull-request") || approveDelivery !== (product.approveDelivery ?? true) || shipLowRisk !== (product.shipLowRisk ?? false) || checkState.dirty || setupState.dirty;
+  const pending = busy || checkState.busy || setupState.busy || remoteCheckState.busy;
+  const dirty = name !== product.name || delivery !== (product.delivery ?? "pull-request") || approveDelivery !== (product.approveDelivery ?? true) || shipLowRisk !== (product.shipLowRisk ?? false) || checkState.dirty || setupState.dirty || remoteCheckState.dirty;
   const close = () => { if (!pending) { if (dirty) setDiscarding(true);
   else onClose(); } };
   const save = async () => {
@@ -52,6 +54,10 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
     }
     if (setupState.dirty) {
       setError("Save or cancel your local setup edits first.");
+      return;
+    }
+    if (remoteCheckState.dirty) {
+      setError("Save or cancel your GitHub check edits first.");
       return;
     }
     setBusy(true);
@@ -132,6 +138,7 @@ export function ProductEditor({ product, state, onClose, onRemoved }: { product:
       </FormSection>
       <ProductChecks product={product} live={live} onState={setCheckState} />
       <ProductCheckSetup product={product} live={live} onState={setSetupState} />
+      <ProductRemoteChecks product={product} live={live} onState={setRemoteCheckState} />
       <FormSection title="Remove product" description="Remove this product and its task history from Petrina. Your repository and GitHub stay as they are.">
         <div><button
           className="btn danger"

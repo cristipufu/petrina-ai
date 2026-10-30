@@ -261,6 +261,8 @@ export interface ShippingRecord {
     body?: string;
     notes?: string;
   };
+  /** Pre-publication candidate validation on GitHub before direct branch or release delivery. */
+  remoteValidation?: { ref: string; sha: string; pushed?: boolean; verifiedAt?: number };
   /** The step Petrina is on. Saved before the step starts; recovery looks the result up. */
   step?: ShippingStep;
   /** Which run of the engine saved the step, to tell a restart from a pause. */

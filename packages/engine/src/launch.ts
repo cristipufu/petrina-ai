@@ -17,6 +17,7 @@ import { answers, claimFolder, type Connection, FolderLock, previousToken, readC
 import { OutputLog } from "./log.js";
 import { serve } from "./server.js";
 import { EngineLifecycle } from "./lifecycle.js";
+import { executeLifecycleTransition } from "./release-transition.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
 
 export interface LaunchOptions {
@@ -68,7 +69,9 @@ export async function launch(options: LaunchOptions): Promise<void> {
   const recovery = app && !process.env.PETRINA_LIFECYCLE_REPLACEMENT;
   const unfinishedHandoff = (op: typeof prior) => op && ([
     "stop",
-    "restart"
+    "restart",
+    "promote",
+    "rollback",
   ].includes(op.kind) || op.phase === "starting") && ![
     "completed",
     "failed"
@@ -137,7 +140,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
 
   const { lock } = claim;
   const latest = lifecycleStore.current;
-  const recoverFailedHandoff = recovery && latest?.phase === "failed" && ["pause", "stop", "restart"].includes(latest.kind);
+  const recoverFailedHandoff = recovery && latest?.phase === "failed" && ["pause", "stop", "restart", "promote", "rollback"].includes(latest.kind);
   if (app && latest && ((latest.kind === "stop" && ["stopping", "completed"].includes(latest.phase)) || (latest.phase === "failed" && !recoverFailedHandoff))) {
     // Recheck after taking ownership: the app may have opened while the old owner was handing
     // the folder back. Recovery must not turn that intentional stop into a fresh launch.
@@ -159,7 +162,7 @@ export async function launch(options: LaunchOptions): Promise<void> {
     );
   }
   // Taking ownership also transfers an offline caller's reservation to this engine.
-  lifecycleStore.noteLauncher(process.pid);
+  if (!process.env.PETRINA_PROMOTE_SUPERVISED) lifecycleStore.noteLauncher(process.pid);
   log.open(join(home, "engine.log"));
   console.log(`${new Date().toISOString()} Petrina engine starting (process ${process.pid}, ${app ? "started by the app" : "started by hand"}, data in ${home})`);
 
@@ -229,24 +232,30 @@ export async function launch(options: LaunchOptions): Promise<void> {
     engine = new Engine(home, { ...options.engine, admissionsClosed: true });
     await engine.waitUntilReady();
     await engine.startupSweep;
-    lifecycle = new EngineLifecycle(engine, lifecycleStore, async (restart) => {
-      const reconnectPort = server!.port;
+    lifecycle = new EngineLifecycle(engine, lifecycleStore, async (restart, action) => {
+      const reconnectPort = server?.port ?? 0;
       lifecycle?.close();
       server?.stop(true);
       await engine!.shutdown();
       // Reserve the replacement before releasing ownership. Desktop recovery follows this
       // operation during the gap, including when its former child has already exited.
       if (restart) lifecycleStore.finish("starting", undefined, process.pid);
-      // The old owner is fully settled before a replacement may claim the folder.
-      lock.release();
       if (restart) {
-        const child = Bun.spawn([process.execPath, ...process.argv.slice(1)], {
-          env: { ...process.env, PETRINA_LIFECYCLE_REPLACEMENT: "1", PETRINA_RECONNECT_PORT: String(reconnectPort) },
-          stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, windowsHide: true,
+        const transition =
+          action && action.kind !== "stop" ? action : ({ kind: "restart" } as const);
+        await executeLifecycleTransition({
+          home,
+          mode,
+          action: transition,
+          reconnectPort,
+          lock,
+          lifecycleStore,
         });
-        lifecycleStore.noteLauncher(child.pid);
-        child.unref();
-      } else lifecycleStore.finish("completed");
+      } else {
+        // The old owner is fully settled before releasing folder ownership.
+        lock.release();
+        lifecycleStore.finish("completed");
+      }
       log.close();
       process.exit(0);
     }, app ? signalDesktopHandoff : undefined);
@@ -272,7 +281,15 @@ export async function launch(options: LaunchOptions): Promise<void> {
       if (!process.env.PETRINA_LIFECYCLE_REPLACEMENT) {
         const closed = () => {
           const operation = lifecycleStore.current;
-          const handoff = operation && ["stop", "restart"].includes(operation.kind) && !["completed", "failed"].includes(operation.phase);
+          const handoff = operation && [
+            "stop",
+            "restart",
+            "promote",
+            "rollback"
+          ].includes(operation.kind) && ![
+            "completed",
+            "failed"
+          ].includes(operation.phase);
           if (!handoff) void stop();
         };
         process.stdin.on("end", closed);
@@ -282,7 +299,12 @@ export async function launch(options: LaunchOptions): Promise<void> {
       }
     }
   } catch (error) {
-    lifecycleStore.finish("failed", "The replacement engine could not start. Saved work remains available; inspect the engine log and explicitly start again.");
+    if (!process.env.PETRINA_PROMOTE_SUPERVISED) {
+      lifecycleStore.finish(
+        "failed",
+        "The replacement engine could not start. Saved work remains available; inspect the engine log and explicitly start again."
+      );
+    }
     console.error("Petrina's engine could not start:", error);
     if (app) tell({ type: "error", message: `Petrina's engine could not start: ${error instanceof Error ? error.message : String(error)}` });
     stop(1);

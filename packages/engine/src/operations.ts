@@ -49,6 +49,7 @@ function op<const N extends string, F extends z.ZodRawShape, const C extends boo
 }
 export const OPERATIONS = [
   op("engine.status", "Inspect engine health, saved scheduling preference, lifecycle progress, active work and drain blockers. Never starts an engine.", {}),
+  op("engine.releases", "List staged engine release versions alongside the active current and previous release pointers. Never starts an engine.", {}),
   ...(["start", "pause", "resume", "stop", "restart"] as const).map((name) =>
     op(
       `engine.${name}` as const,
@@ -60,6 +61,22 @@ export const OPERATIONS = [
       wait,
       true,
     ),
+  ),
+  op(
+    "engine.promote",
+    "Stage (when sourcePath is provided) and atomically promote a versioned engine release. Drains active work before switching pointers, verifies replacement health, and automatically rolls back if the replacement fails startup.",
+    {
+      version: z.string().min(1).max(80),
+      sourcePath: z.string().min(1).max(1000).optional(),
+      ...wait,
+    },
+    true,
+  ),
+  op(
+    "engine.rollback",
+    "Drain active work and atomically roll back the current engine release pointer to the previous verified version.",
+    wait,
+    true,
   ),
   op(
     "task.add",
@@ -398,6 +415,15 @@ export const OPERATIONS = [
     requirements: CheckSetupRequirementsSchema
   },
     true
+  ),
+  op(
+    "product.remote-checks",
+    "Set required GitHub check names that must pass on the exact tested version before direct branch or release delivery.",
+    {
+      productId: id,
+      checks: z.array(z.string().min(1).max(120)).max(20),
+    },
+    true,
   ),
   op("pool.inspect", "Inspect pool limits, scheduling preference, admitted work and drain blockers.", {}),
   op("pool.limit", "Set the existing total agent cap (1–12).", { limit: z.number().int().min(1).max(12) }, true),

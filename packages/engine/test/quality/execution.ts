@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runProcess, SUITE_RUN_TIMEOUT_MS } from "@petrina/test-support/run-process";
@@ -16,12 +16,46 @@ export interface TestExecution {
   signal: AbortSignal;
   /** One shared record prevents disposal or a later execution after uncertain command cleanup. */
   settlements: Pick<RunSettlements, "observe">;
-  /** Exact native file selection; Vitest feedback runs complete selected workspaces. */
+  /** Exact file selection within this execution's workspaces; omitted by the full required run. */
   files?: readonly string[];
   /** Only the complete run owns required-suite duration hints. */
   timings?: string;
   /** Opt-in observers; diagnostic results never establish delivery evidence. */
   resources?: string;
+}
+
+const SKIPPED_SCAN_DIRS = new Set([".git", ".test-results", "coverage", "dist", "node_modules", "target"]);
+const VITEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/i;
+
+function escapeGlob(path: string): string {
+  return path.replace(/[*?[\](){}!+@\\]/g, "\\$&");
+}
+
+function vitestTestFiles(cwd: string, prefix = ""): string[] {
+  const discovered: string[] = [];
+  for (const entry of readdirSync(prefix ? join(cwd, prefix) : cwd, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (!SKIPPED_SCAN_DIRS.has(entry.name)) discovered.push(...vitestTestFiles(cwd, rel));
+    } else if ((entry.isFile() || entry.isSymbolicLink()) && VITEST_FILE_PATTERN.test(entry.name)) {
+      discovered.push(rel);
+    }
+  }
+  return discovered;
+}
+
+function vitestCollisionExcludes(cwd: string, root: string, files: readonly string[]): string[] {
+  const selected = files.map((file) => relative(cwd, join(root, file)).replaceAll("\\", "/"));
+  const selectedSet = new Set(selected);
+  const selectedLower = selected.map((file) => file.toLowerCase());
+  return vitestTestFiles(cwd)
+    .filter(
+      (candidate) =>
+        !selectedSet.has(candidate)
+        && selectedLower.some((filter) => candidate.toLowerCase().includes(filter)),
+    )
+    .sort()
+    .map((candidate) => `--exclude=${escapeGlob(candidate)}`);
 }
 
 /** Native execution and complete report verification, shared without sharing delivery policy. */
@@ -31,8 +65,7 @@ export async function executeTests(execution: SuiteExecution, options: TestExecu
   if (
     options.files
     && (
-      !native
-      || !options.files.length
+      !options.files.length
       || new Set(options.files).size !== options.files.length
       || options.files.some(
         (file) =>
@@ -42,7 +75,7 @@ export async function executeTests(execution: SuiteExecution, options: TestExecu
     )
   ) {
     throw new Error(
-      "Exact native selection requires unique files from this execution's expected manifest; Vitest runs complete workspaces",
+      "Exact file selection requires unique files from this execution's expected manifest",
     );
   }
 
@@ -57,6 +90,7 @@ export async function executeTests(execution: SuiteExecution, options: TestExecu
     : native
       ? execution.workspaces.map((workspace) => selector(`${workspace}/test`))
       : [];
+  const excludes = !native && options.files ? vitestCollisionExcludes(cwd, root, options.files) : [];
 
   const command = native
     ? testCommand([
@@ -74,6 +108,7 @@ export async function executeTests(execution: SuiteExecution, options: TestExecu
       "run",
       "test",
       ...selectors,
+      ...excludes,
       "--reporter=json",
       `--outputFile=${output}`,
       ...(options.resources

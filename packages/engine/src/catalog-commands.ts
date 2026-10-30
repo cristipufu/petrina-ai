@@ -258,6 +258,19 @@ export class CatalogCommands {
     if (changed) this.engine.commitNow();
   }
 
+  setProductRemoteChecks(productId: Id, checks: readonly string[]): void {
+    const engine = this.engine;
+    const executions = function* () {
+      for (const task of engine.s.tasks) for (const { work } of scopesFor(task)) yield work;
+    };
+    const changed = library.configureProductRemoteChecks(
+      this.engine.s.products.find((product) => product.id === productId),
+      checks,
+      executions(),
+    );
+    if (changed) this.engine.commitNow();
+  }
+
   updateProduct(productId: Id, settings: ProductSettings): void {
     const product = this.engine.s.products.find((entry) => entry.id === productId);
     if (!product) throw new Error("This product is no longer in Petrina.");

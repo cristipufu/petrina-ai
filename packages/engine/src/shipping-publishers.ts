@@ -13,6 +13,7 @@ import { Aborted, RELEASE_MANAGER_PROFILE, type Kernel, type MutableStage, type 
 import type { ProductChecks } from "./product-checks.js";
 import type { ReleasePrep } from "./release-prep.js";
 import { ReleaseNotesResult, TEXT_LIMITS } from "./roles.js";
+import { verifyRequiredRemoteChecks } from "./shipping-remote-ci.js";
 import type { ShippingVerifier } from "./shipping-verifier.js";
 import type { Turns } from "./turn.js";
 
@@ -190,6 +191,7 @@ export interface ShippingPublishHooks {
   verifier: ShippingVerifier;
   workflow: DeliveryWorkflow;
   recovery: DeliveryRecovery;
+  needGitHub(task: RuntimeTask): Promise<void>;
   beforePublishing(scope: RepositoryContext): void;
   branchTip(scope: RepositoryContext): Promise<string | undefined>;
   pullRequestBody(scope: RepositoryContext): string;
@@ -247,7 +249,8 @@ export async function prepareDelivery(
     shipping.prepared = { tested: start, summary: `Ready to go onto ${defaultBranch}` };
     k.log(scope, "status", `Ready to publish: ${start.slice(0, 7)}, on top of ${defaultBranch}`);
     k.commitNow();
-    return "ready";
+    const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);
+    return remoteGate === "again" ? "continue" : remoteGate;
   }
   if (repository.delivery === "pull-request") {
     shipping.prepared = { tested: start, summary: "Ready to open a pull request", title: formatPullRequestTitle(scope), body: hooks.pullRequestBody(scope) };
@@ -313,7 +316,8 @@ export async function prepareDelivery(
     by
   );
   k.commitNow();
-  return "ready";
+  const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);
+  return remoteGate === "again" ? "continue" : remoteGate;
 }
 
 export async function publishPullRequestDelivery(hooks: ShippingPublishHooks, scope: RepositoryContext, signal: AbortSignal): Promise<"done"> {
@@ -351,7 +355,7 @@ export async function publishPullRequestDelivery(hooks: ShippingPublishHooks, sc
   });
 }
 
-export async function publishReleaseDelivery(hooks: ShippingPublishHooks, scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
+export async function publishReleaseDelivery(hooks: ShippingPublishHooks, scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop"> {
   const { k, connections, verifier, recovery } = hooks;
   const { work: repository } = scope;
   const product = k.repositoryOf(scope)!;
@@ -362,6 +366,8 @@ export async function publishReleaseDelivery(hooks: ShippingPublishHooks, scope:
   const root = product.path!;
   const remote = await connections.requireConnection(scope, signal);
   if (!shipping.pushed) {
+    const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);
+    if (remoteGate !== "ready") return remoteGate;
     checking(k, scope, `Checking: looking at ${branch} and the tag ${tag} on GitHub`);
     const before = await verifier.releaseRefs(scope, remote);
     if (before.tag === tested && (await verifier.onGitHub(scope, remote, before.main, tested))) {
@@ -420,7 +426,7 @@ export async function publishReleaseDelivery(hooks: ShippingPublishHooks, scope:
   });
 }
 
-export async function publishLocalDelivery(hooks: ShippingPublishHooks, scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again"> {
+export async function publishLocalDelivery(hooks: ShippingPublishHooks, scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | "continue" | "stop"> {
   const { k, connections } = hooks;
   const { work: repository } = scope;
   const product = k.repositoryOf(scope)!;
@@ -428,6 +434,8 @@ export async function publishLocalDelivery(hooks: ShippingPublishHooks, scope: R
   const { tested } = shipping.prepared!;
   const branch = repository.source?.destination.branch ?? product.defaultBranch ?? "main";
   const root = product.path!;
+  const remoteGate = await verifyRequiredRemoteChecks(hooks, scope, signal);
+  if (remoteGate !== "ready") return remoteGate;
   const outcome = await connections.serial(product.id, async (): Promise<"found" | "moved" | { again: string }> => {
     checking(k, scope, `Checking: looking at ${branch} in the main copy`);
     const current = await git.revParse(root, `refs/heads/${branch}`);

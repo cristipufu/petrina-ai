@@ -89,3 +89,5 @@ export * from "./follow-up-prompt.js";
 export * from "./workflow-event-bounds.js";
 
 export * from "./checkpoint-acceptance.js";
+export * from "./task-details-delta.js";
+export * from "./remote-checks.js";

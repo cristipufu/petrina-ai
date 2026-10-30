@@ -32,7 +32,7 @@ export interface DeliveryPhaseEffects {
   proofApprovalCurrent(task: RuntimeTask, signal: AbortSignal, prepared?: boolean): Promise<boolean>;
   returnForDecision(task: RuntimeTask, why: "proof" | "acceptance"): Promise<void>;
   backToWork(scope: RepositoryContext): Promise<void>;
-  publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again">;
+  publish(scope: RepositoryContext, signal: AbortSignal): Promise<"done" | "again" | DeliveryRunResult>;
   prepareAgain(scope: RepositoryContext, why: string): Promise<"again">;
   clearUnpublishedVersion(scope: RepositoryContext): Promise<void>;
   finishCompanions(task: RuntimeTask): Promise<boolean>;

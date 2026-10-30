@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Task } from "@petrina/core";
+import { applyTaskDetailsUpdate, type Task } from "@petrina/core";
 import { failureText, sim } from "./engine";
 
 /** One open task, refreshed by revisions. Idle sheets own no polling timer. */
@@ -17,6 +17,7 @@ export function useTaskDetails(id: string | undefined, needed: boolean, liveRevi
     let running = false;
     let first = true;
     let loaded: string | undefined;
+    let loadedTask: Task | undefined;
     let requested: string | undefined;
     let started = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -27,11 +28,24 @@ export function useTaskDetails(id: string | undefined, needed: boolean, liveRevi
       const request = latest.current;
       requested = request.revision;
       try {
-        const task = await sim.taskDetails(id);
+        let task: Task | undefined;
+        const canDelta =
+          !request.archived
+          && loadedTask !== undefined
+          && loaded !== undefined
+          && loadedTask.detailsRevision === loaded
+          && typeof sim.taskDetailsDelta === "function";
+        if (canDelta) {
+          const update = await sim.taskDetailsDelta(id, loaded!);
+          task = update ? applyTaskDetailsUpdate(loadedTask!, update) : undefined;
+        } else {
+          task = await sim.taskDetails(id);
+        }
         if (cancelled) return;
         // Archive notifications use the history revision; live responses carry the exact
         // revision they read, including changes that arrived while this request was open.
         loaded = request.archived ? request.revision : task?.detailsRevision ?? request.revision;
+        loadedTask = task;
         setResult({ id, task });
       } catch (error) {
         if (cancelled) return;

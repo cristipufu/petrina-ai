@@ -33,6 +33,7 @@ use tauri_plugin_notification::NotificationExt;
 mod test_process;
 
 mod engine_process;
+mod engine_release;
 #[cfg(test)]
 use engine_process::{
     connection_action, handoff_event, read_handoff_events, stop, stop_for_recovery_with_grace,
@@ -46,11 +47,52 @@ struct Shell {
 }
 impl Shell {
     fn connect(&self, app: &tauri::AppHandle, restart: bool) -> Result<String, String> {
-        self.engine.connect(restart, || engine_command(app))
+        let home = engine_release::petrina_home();
+        self.engine.connect_managed(
+            restart,
+            home.as_deref(),
+            command_for_release,
+            || engine_command(app),
+            engine_process::START_TIMEOUT,
+        )
     }
     fn shutdown(&self) {
         self.engine.shutdown();
     }
+}
+
+fn command_for_release(
+    pointer: &engine_release::ReleasePointer,
+    rollback_note: Option<(&str, &str)>,
+) -> Result<Command, String> {
+    let mut command = match pointer.kind {
+        engine_release::ReleaseKind::Binary => {
+            let mut cmd = Command::new(&pointer.entrypoint);
+            cmd.arg("app");
+            cmd
+        }
+        engine_release::ReleaseKind::Bun => {
+            #[cfg(debug_assertions)]
+            {
+                let bun = find_bun().ok_or(
+                    "Petrina needs Bun to run its engine. Install it from https://bun.sh, then try again.",
+                )?;
+                let mut cmd = Command::new(bun);
+                cmd.arg(&pointer.entrypoint).arg("app");
+                cmd
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                return Err("Installed versions only run a compiled engine binary.".into());
+            }
+        }
+    };
+    if let Some((message, version)) = rollback_note {
+        command
+            .env("PETRINA_AUTO_ROLLBACK_MESSAGE", message)
+            .env("PETRINA_AUTO_ROLLBACK_VERSION", version);
+    }
+    Ok(command)
 }
 
 /// Development builds run the engine from the source folder they were built from.

@@ -10,11 +10,10 @@ function selectionOwners(selected: readonly string[], available: readonly string
   return new Set(selected.map(workspaceOf));
 }
 
-/** Vitest's CLI filters match substrings. Its short workspace suites keep their exact normal configuration. */
+/** Both Vitest and native feedback select exact registered test files. */
 export function feedbackFiles(requested: readonly string[], available: readonly string[]): string[] {
-  const owners = selectionOwners(requested, available);
-  const whole = new Set<string>(PRELIMINARY.filter(work => owners.has(work.path)).map(work => work.path));
-  return available.filter(file => requested.includes(file) || whole.has(workspaceOf(file)!)).sort();
+  selectionOwners(requested, available);
+  return [...requested].sort();
 }
 
 /** Feedback never replaces the complete required execution plan. */

@@ -132,6 +132,8 @@ Conventional type checks and lint run first. A static failure skips the remainin
 
 Tasks’ checks use a separate bounded queue (see [Scheduling](engine-runtime.md#scheduling)); full suites and builds compete for the same machine.
 
+When a product declares required **GitHub checks before direct delivery** (`Product.requiredRemoteChecks`, `packages/engine/src/shipping-remote-ci.ts`), direct branch and release deliveries push the exact tested candidate commit (including the release version commit) to a `petrina/validation/…` branch without force-pushing or deleting remote refs, and poll GitHub check-runs and commit statuses on that exact SHA before advancing the destination branch or creating a release tag. If any required GitHub check fails (or finishes skipped without passing), nothing is published and the failure follows `preparationFailed`; if the destination branch moves on GitHub meanwhile, delivery reconciles onto the new tip via `prepareAgain` and validates the refreshed candidate commit. Pull-request deliveries rely on GitHub's own pull-request checks, and Petrina never merges pull requests.
+
 ### The repository's own commit hooks
 
 Petrina's own git steps never run hooks, so Petrina runs the hooks git would run when committing, as the repository has them (local `.git/hooks`, or `core.hooksPath` for husky, lefthook and the like), alongside the checks: the pre-commit hook with the task's whole change staged on top of where it started (the working copy's HEAD detached at the base for the run, and put back after, even across a restart), and the commit-msg hook on the task's one commit message.

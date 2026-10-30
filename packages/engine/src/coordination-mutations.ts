@@ -13,7 +13,12 @@ import type { Engine } from "./engine.js";
 import type { RuntimeTask } from "./kernel.js";
 import type { MutationOperationName, OperationInput } from "./operations.js";
 
-export type LifecycleOnlyMutationName = "engine.start" | "engine.stop" | "engine.restart";
+export type LifecycleOnlyMutationName =
+  | "engine.start"
+  | "engine.stop"
+  | "engine.restart"
+  | "engine.promote"
+  | "engine.rollback";
 export type DirectMutationName = "validation.run" | "task.track-finding";
 export type DelegatedMutationName = Exclude<
   MutationOperationName,
@@ -341,6 +346,9 @@ export const GLOBAL_MUTATION_HANDLERS: { readonly [K in GlobalMutationName]: Glo
   },
   "product.check-setup": ({ engine, args }) => {
     engine.setProductCheckSetup(args.productId, args.requirements);
+  },
+  "product.remote-checks": ({ engine, args }) => {
+    engine.setProductRemoteChecks(args.productId, args.checks);
   },
   "pool.limit": ({ engine, args }) => {
     engine.setPoolLimit(args.limit);

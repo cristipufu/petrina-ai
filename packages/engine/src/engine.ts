@@ -399,6 +399,9 @@ export class Engine extends Kernel implements Commands {
   setProductCheckSetup(productId: Id, requirements: readonly library.CheckPrerequisite[]): void {
     this.catalogCommands.setProductCheckSetup(productId, requirements);
   }
+  setProductRemoteChecks(productId: Id, checks: readonly string[]): void {
+    this.catalogCommands.setProductRemoteChecks(productId, checks);
+  }
   updateProduct(productId: Id, settings: ProductSettings): void {
     this.catalogCommands.updateProduct(productId, settings);
   }

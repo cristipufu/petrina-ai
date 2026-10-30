@@ -11,6 +11,7 @@ import {
   type OperationInput,
   type QueryOperationName,
 } from "./operations.js";
+import { ReleaseStore } from "./release-store.js";
 
 export type { CoordinationOutcome as Outcome, CoordinationResult as Result } from "@petrina/core";
 export { drainStatus, requestRevision, taskSummary, type LifecycleControl } from "./coordination-views.js";
@@ -97,6 +98,9 @@ export class Coordination {
           boot: this.engine.boot,
           ...drainStatus(this.engine),
         };
+      }
+      if (spec.name === "engine.releases") {
+        return { outcome: "completed", ...new ReleaseStore(this.engine.dataDir).list() };
       }
     }
 

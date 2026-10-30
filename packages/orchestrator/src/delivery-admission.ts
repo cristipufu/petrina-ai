@@ -83,7 +83,10 @@ export class DeliveryAdmission {
   invalidateUnpublishedPreparations(task: RuntimeTask): void {
     for (const { work } of scopesFor(task)) {
       if (work.pr || work.release || work.landed || work.nothingToPublish || work.shipping?.step || work.shipping?.pushed) continue;
-      if (work.shipping) delete work.shipping.prepared;
+      if (work.shipping) {
+        delete work.shipping.prepared;
+        delete work.shipping.remoteValidation;
+      }
     }
   }
 
