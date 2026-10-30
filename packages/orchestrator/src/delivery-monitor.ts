@@ -159,54 +159,122 @@ export class DeliveryMonitor {
    * Unless GitHub confirms the pull request ended, it is still open, and the copy stays.
    */
   async pollPullRequests(): Promise<void> {
-    for (const task of this.host.tasks().filter((entry) => entry.repositories)) {
+    if (this.host.stopped()) return;
+    const following = (task: RuntimeTask) =>
+      executionFor(task).work.pr?.state === "open"
+      && !!executionFor(task).work.worktree
+      && (task.state === "pr-open"
+        || ((task.state === "done" || task.state === "cancelled")
+          && executionFor(task).work.cleanup?.removedAt === undefined));
+
+    const tasks = this.host.tasks();
+    const unrecorded = tasks.filter((task) => !task.repositories && needsPullRequestCheck(task as Task));
+
+    const multiLocked: {
+      task: RuntimeTask;
+      pending: { work: NonNullable<RuntimeTask["repositories"]>[number]; pr: NonNullable<Task["pr"]>; repo: string }[];
+    }[] = [];
+    for (const task of tasks.filter((entry) => entry.repositories)) {
       if (this.host.stopped() || this.host.hasDriver(task.id) || this.following.has(task.id)) continue;
       this.following.add(task.id);
-      try {
-
-        const pending = task.repositories!.filter((work) => work.pr?.state === "open").map((work) => ({ work, pr: work.pr! }));
-        const states = await Promise.all(pending.map(({ work, pr }) => this.effects.prState(work.source!.product.repo, pr.number).catch(() => undefined)));
-        if (this.host.stopped() || this.host.hasDriver(task.id)) continue;
-        for (const [index, { work, pr }] of pending.entries()) {
-          const state = states[index];
-          if (work.pr !== pr || pr.state !== "open") continue;
-          if (state === "merged" || state === "closed") {
-            work.pr.state = state;
-
-            this.host.log(task, "done", `${work.source!.product.name}: ${state === "merged" ? "Pull request merged" : "Pull request closed without merging"}`);
-          }
-        }
-        if ((task.state !== "cancelled" && task.repositories!.every(repositoryDelivered)) || task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)) this.delivery.finishMany(task);
-      } finally { this.following.delete(task.id); }
+      const pending = task
+        .repositories!.filter((work) => work.pr?.state === "open")
+        .map((work) => ({ work, pr: work.pr!, repo: work.source!.product.repo }));
+      multiLocked.push({ task, pending });
     }
-    const following = (task: RuntimeTask) => executionFor(task).work.pr?.state === "open" && !!executionFor(task).work.worktree && (task.state === "pr-open" || ((task.state === "done" || task.state === "cancelled") && executionFor(task).work.cleanup?.removedAt === undefined));
-    await completeAll([...this.host.tasks().filter((task) => !task.repositories && needsPullRequestCheck(task as Task)).map((task) => this.checkUnrecordedPullRequest(executionFor(task))), ...this.host.tasks().filter((task) => !task.repositories && following(task)).map(async (task) => {
-      if (this.host.stopped() || this.following.has(task.id)) return;
+
+    const singleLocked: { task: RuntimeTask; repo: string | undefined; number: number }[] = [];
+    for (const task of tasks.filter((entry) => !entry.repositories && following(entry))) {
+      if (this.host.stopped() || this.following.has(task.id)) continue;
       this.following.add(task.id);
-      try {
-        const repo = this.host.repository(task)?.repo;
-        const state = repo ? await this.effects.prState(repo, executionFor(task).work.pr!.number).catch(() => undefined) : undefined;
-        if (this.host.stopped() || (state !== "merged" && state !== "closed") || !following(task)) return;
-        executionFor(task).work.pr!.state = state;
-        const words = state === "merged" ? `Merged #${executionFor(task).work.pr!.number} on GitHub` : `Closed #${executionFor(task).work.pr!.number} without merging`;
-        if (task.state === "pr-open") {
-          task.state = "done";
-          task.column = "done";
-          task.finishedAt = this.host.now();
-          task.statusLine = words;
-          this.host.log(task, "done", words);
-          this.host.done(task);
-        } else {
-          this.host.log(task, "done", words);
-        }
-        this.host.prSettled(task, state);
-        this.host.commit();
-        // Tasks waiting for this one to land can start now.
-        this.host.schedule();
-        this.host.tidy(task.id);
-      } finally {
-        this.following.delete(task.id);
+      singleLocked.push({
+        task,
+        repo: this.host.repository(task)?.repo,
+        number: executionFor(task).work.pr!.number,
+      });
+    }
+
+    const numbersByRepo = new Map<string, Set<number>>();
+    const addLookup = (repo: string | undefined, number: number) => {
+      if (!repo) return;
+      let set = numbersByRepo.get(repo);
+      if (!set) {
+        set = new Set();
+        numbersByRepo.set(repo, set);
       }
-    })]);
+      set.add(number);
+    };
+    for (const entry of multiLocked) {
+      for (const item of entry.pending) addLookup(item.repo, item.pr.number);
+    }
+    for (const entry of singleLocked) addLookup(entry.repo, entry.number);
+
+    const repoRequests = new Map<string, Promise<Map<number, "open" | "merged" | "closed">>>();
+    for (const [repo, numbers] of numbersByRepo) {
+      repoRequests.set(
+        repo,
+        this.effects.prStates(repo, [...numbers]).catch(() => new Map<number, "open" | "merged" | "closed">()),
+      );
+    }
+
+    await completeAll([
+      ...unrecorded.map((task) => this.checkUnrecordedPullRequest(executionFor(task))),
+      ...multiLocked.map(async ({ task, pending }) => {
+        try {
+          const uniqueRepos = [...new Set(pending.map((item) => item.repo))];
+          const resolved = await Promise.all(uniqueRepos.map((repo) => repoRequests.get(repo)!));
+          const byRepo = new Map(uniqueRepos.map((repo, index) => [repo, resolved[index]!]));
+          if (this.host.stopped() || this.host.hasDriver(task.id)) return;
+          for (const { work, pr, repo } of pending) {
+            const state = byRepo.get(repo)?.get(pr.number);
+            if (work.pr !== pr || pr.state !== "open") continue;
+            if (state === "merged" || state === "closed") {
+              work.pr.state = state;
+              this.host.log(
+                task,
+                "done",
+                `${work.source!.product.name}: ${state === "merged" ? "Pull request merged" : "Pull request closed without merging"}`,
+              );
+            }
+          }
+          if (
+            (task.state !== "cancelled" && task.repositories!.every(repositoryDelivered))
+            || task.repositories!.some((work) => work.pr?.state === "closed" && !work.landingAccepted)
+          ) {
+            this.delivery.finishMany(task);
+          }
+        } finally {
+          this.following.delete(task.id);
+        }
+      }),
+      ...singleLocked.map(async ({ task, repo, number }) => {
+        try {
+          const states = repo ? await repoRequests.get(repo)! : undefined;
+          const state = states?.get(number);
+          if (this.host.stopped() || (state !== "merged" && state !== "closed") || !following(task)) return;
+          const currentPr = executionFor(task).work.pr;
+          if (!currentPr || currentPr.number !== number) return;
+          currentPr.state = state;
+          const words = state === "merged" ? `Merged #${number} on GitHub` : `Closed #${number} without merging`;
+          if (task.state === "pr-open") {
+            task.state = "done";
+            task.column = "done";
+            task.finishedAt = this.host.now();
+            task.statusLine = words;
+            this.host.log(task, "done", words);
+            this.host.done(task);
+          } else {
+            this.host.log(task, "done", words);
+          }
+          this.host.prSettled(task, state);
+          this.host.commit();
+          // Tasks waiting for this one to land can start now.
+          this.host.schedule();
+          this.host.tidy(task.id);
+        } finally {
+          this.following.delete(task.id);
+        }
+      }),
+    ]);
   }
 }

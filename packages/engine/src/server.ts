@@ -12,6 +12,8 @@ import {
   MAX_READING_OFFSET,
   READING_PAGE_SIZE,
   allowanceKey,
+  captureWindowStateBase,
+  diffWindowState,
   HISTORY_STATUSES,
   type HistoryStatus,
   ROLE_ICON_CHOICES,
@@ -20,6 +22,8 @@ import {
   COMMAND_NAMES,
   type CommandName,
   type Commands,
+  type State,
+  type WindowStateBase,
 } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { Coordination, serial, type LifecycleControl } from "./coordination.js";
@@ -306,6 +310,9 @@ interface Socket {
   authed: boolean;
   dirty: boolean;
   awaitingState?: number;
+  ackedStateId?: number;
+  ackedBase?: WindowStateBase;
+  pendingBase?: { stateId: number; base: WindowStateBase };
 }
 
 /** `port` 0 picks a free one: read it back from the returned server. */
@@ -325,17 +332,42 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
   const sendState = (ready: ServerWebSocket<Socket>[]) => {
     if (!ready.length) return;
     const id = ++stateId;
-    let message: string;
+    let snapshot: State;
+    let currentBase: WindowStateBase;
+    let fullMessage: string | undefined;
+    const deltaMessages = new Map<number, string>();
     try {
-      message = JSON.stringify({ type: "state", stateId: id, state: engine.windowState() });
+      snapshot = engine.windowState();
+      currentBase = captureWindowStateBase(snapshot);
+      for (const socket of ready) {
+        const baseId = socket.data.ackedStateId;
+        const base = socket.data.ackedBase;
+        if (baseId !== undefined && base !== undefined) {
+          if (!deltaMessages.has(baseId)) {
+            const delta = diffWindowState(base, snapshot, currentBase);
+            deltaMessages.set(
+              baseId,
+              JSON.stringify({ type: "state-delta", stateId: id, baseStateId: baseId, delta }),
+            );
+          }
+        } else {
+          fullMessage ??= JSON.stringify({ type: "state", stateId: id, state: snapshot });
+        }
+      }
     } catch (error) {
       console.error("Could not refresh task windows:", error);
       for (const socket of ready) socket.close(1011, "Could not refresh this window. Reconnecting.");
       return;
     }
     for (const socket of ready) {
+      const baseId = socket.data.ackedStateId;
+      const message =
+        baseId !== undefined && socket.data.ackedBase !== undefined
+          ? deltaMessages.get(baseId)!
+          : fullMessage!;
       socket.data.dirty = false;
       socket.data.awaitingState = id;
+      socket.data.pendingBase = { stateId: id, base: currentBase };
       send(socket, message);
     }
   };
@@ -475,7 +507,12 @@ export function serve(engine: Engine, options: { port: number; token: string; ui
           const message = JSON.parse(String(data)) as { type?: unknown; stateId?: unknown; id?: unknown; action?: unknown };
           if (message.type === "state-ack") {
             if (message.stateId === socket.data.awaitingState && typeof message.stateId === "number") {
-              socket.data.awaitingState = undefined;
+              if (socket.data.pendingBase?.stateId === message.stateId) {
+                socket.data.ackedStateId = message.stateId;
+                socket.data.ackedBase = socket.data.pendingBase.base;
+                delete socket.data.pendingBase;
+              }
+              delete socket.data.awaitingState;
               if (socket.data.dirty) schedule();
             }
             return;

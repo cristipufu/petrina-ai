@@ -15,6 +15,7 @@ import {
   writeSync,
 } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
+import { findBunRuntime } from "@petrina/platform/compiled-runtime";
 
 export type ReleaseKind = "binary" | "bun";
 
@@ -309,7 +310,7 @@ export class ReleaseStore {
     return { current: restored, rolledBackFrom: oldCurrent?.version ?? null };
   }
 
-  commandFor(pointer: ReleasePointer, args: readonly string[], bunExecutable = process.execPath): string[] {
+  commandFor(pointer: ReleasePointer, args: readonly string[], bunExecutable = findBunRuntime()): string[] {
     return pointer.kind === "bun"
       ? [bunExecutable, pointer.entrypoint, ...args]
       : [pointer.entrypoint, ...args];

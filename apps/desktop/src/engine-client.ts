@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommandName, Commands, Id, State } from "@petrina/core";
+import { applyWindowStateDelta, type CommandName, type Commands, type Id, type State } from "@petrina/core";
 import { Late, Lost } from "./commandFailures";
 import {
   browserAddress,
@@ -169,6 +169,7 @@ export class EngineClient {
     const socket = new WebSocket(address.url, ["petrina.v1", `petrina.token.${address.token}`]);
     this.socket = socket;
     let opened = false;
+    let syncedStateId: number | undefined;
     socket.onopen = () => {
       if (this.disposed || this.socket !== socket) return;
       clearTimeout(this.hintTimer);
@@ -185,11 +186,35 @@ export class EngineClient {
       if (!message) return;
       if (message.type === "state") {
         this.state = message.state;
+        syncedStateId =
+          typeof message.stateId === "number" && Number.isSafeInteger(message.stateId) && message.stateId > 0
+            ? message.stateId
+            : undefined;
         if (!this.status.synced) this.status = { ...this.status, synced: true };
         this.emit();
-        if (typeof message.stateId === "number" && Number.isSafeInteger(message.stateId) && message.stateId > 0) {
-          this.acknowledgeState(socket, message.stateId);
+        if (syncedStateId !== undefined) {
+          this.acknowledgeState(socket, syncedStateId);
         }
+      } else if (message.type === "state-delta") {
+        if (
+          !this.status.synced ||
+          syncedStateId === undefined ||
+          message.baseStateId !== syncedStateId ||
+          !Number.isSafeInteger(message.stateId) ||
+          message.stateId <= 0
+        ) {
+          socket.close();
+          return;
+        }
+        try {
+          this.state = applyWindowStateDelta(this.state, message.delta);
+        } catch {
+          socket.close();
+          return;
+        }
+        syncedStateId = message.stateId;
+        this.emit();
+        this.acknowledgeState(socket, message.stateId);
       } else {
         const call = this.calls.get(message.id);
         this.calls.delete(message.id);

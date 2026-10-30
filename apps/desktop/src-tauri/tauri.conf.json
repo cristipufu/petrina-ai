@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run build && bun run build:engine",
     "frontendDist": "../dist"
   },
   "app": {
@@ -32,6 +32,9 @@
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "Coordinate a squad of coding agents",
+    "resources": {
+      "resources/engine/*": "engine/"
+    },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
   }
 }

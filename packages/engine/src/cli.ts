@@ -14,14 +14,29 @@ import { browserCommand } from "./setup.js";
 import { coordinationCli } from "./coordination-cli.js";
 import { runMcp } from "./mcp.js";
 import { installAntigravity } from "@petrina/agent-runtime/antigravity-runtime";
+import { runBrowserServer } from "@petrina/agent-runtime/browser-server";
+import { runCodexBackground } from "@petrina/agent-runtime/codex-background";
 import { checkAgentTool } from "@petrina/agent-runtime/probe";
 import { ADAPTERS, ENGINE_PROFILES, findProgram } from "@petrina/agent-runtime/tools";
+import { compiledExecutableDir, isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import { agentEnv } from "@petrina/platform/process-environment";
 import { mkdir } from "node:fs/promises";
 import type { EngineClient } from "./engine-client.js";
 
+export function resolveDefaultUiDir(execPath: string = process.execPath, metaDir: string = import.meta.dir): string {
+  if (isCompiledBinary(metaDir)) {
+    const dir = compiledExecutableDir(execPath);
+    const adjacent = join(dir, "ui");
+    if (existsSync(adjacent)) return adjacent;
+    const sibling = resolve(dir, "../ui");
+    if (existsSync(sibling)) return sibling;
+    return adjacent;
+  }
+  return resolve(metaDir, "../../../apps/desktop/dist");
+}
+
 const home = process.env.PETRINA_HOME || join(homedir(), ".petrina");
-const ui = resolve(import.meta.dir, "../../../apps/desktop/dist");
+const ui = resolveDefaultUiDir();
 const DEV_UI = "http://localhost:1430/";
 
 function connection() {
@@ -72,6 +87,14 @@ async function open(dev: boolean): Promise<void> {
 /** The production parser with a launch boundary that lifecycle tests can supply without native accounts. */
 export async function runCli(args: readonly string[] = process.argv.slice(2), startEngine: typeof launch = launch, client?: EngineClient): Promise<void> {
   const [command, ...rest] = args;
+  if (command === "__internal-browser-server") {
+    runBrowserServer(rest);
+    return;
+  }
+  if (command === "__internal-codex-background") {
+    await runCodexBackground(rest);
+    return;
+  }
   const newKey = rest.includes("--new-key");
   const debugSql = rest.includes("--debug-sql") || process.env.PETRINA_DEBUG_SQL === "1";
   if (command === "serve") await startEngine({

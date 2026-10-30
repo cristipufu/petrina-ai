@@ -1,6 +1,5 @@
 //! Private desktop lifecycle fixtures. Real child handles and loopback controls, with no shell or PID killing.
-use super::engine_process::{spawn_command, ChildOwner};
-use super::{read_handoff_events, Started};
+use super::engine_process::{read_handoff_events, spawn_command, ChildOwner, Started};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -9,7 +8,8 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const CHILD_TEST: &str = "tests::ordinary_quit_closes_stdin_and_reaps_a_cooperative_child";
+const CHILD_TEST: &str =
+    "engine_process::tests::ordinary_quit_closes_stdin_and_reaps_a_cooperative_child";
 const READY: &str = "petrina-fixture-ready";
 const START: Duration = Duration::from_secs(10);
 const IO: Duration = Duration::from_secs(2);

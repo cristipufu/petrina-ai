@@ -59,6 +59,28 @@ it("keeps native and in-process GitHub answers equivalent while removing the CLI
         world.setGitHub(state => { state.hidden = false; state.fail = { "pr view": 1 }; });
         await expectRejection(service.description("acme/demo", 1), "Could not read the companion links");
         expect(await service.prState("acme/demo", 1)).toBe("open");
+        expect(
+          await service.openPullRequest("acme/demo", {
+            head: "main",
+            base: "main",
+            title: "Second PR",
+            body: "Batch check",
+          }),
+        ).toMatchObject({ ok: false, exists: true });
+        world.setGitHub((state) => {
+          state.prs.push({
+            ...state.prs[0]!,
+            number: 2,
+            headRefName: "topic-batch",
+            state: "MERGED",
+          });
+        });
+        expect(await service.prStates("acme/demo", [1, 2, 999])).toEqual(
+          new Map([
+            [1, "open"],
+            [2, "merged"],
+          ]),
+        );
         observed.push({ mode, calls: world.github().calls, bun });
       } finally { spying.mockRestore(); }
       expect(existsSync(`${path}.lock`)).toBe(false);

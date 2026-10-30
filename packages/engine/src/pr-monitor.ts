@@ -15,7 +15,9 @@ export class PrMonitor extends DeliveryMonitor {
     }, {
       lookForDelivery: scope => verifier.lookForDelivery(scope), releaseRefs: scope => verifier.releaseRefs(scope),
       matchesPullRequest: (scope, pr, tested, base) => verifier.matchesPullRequest(scope, pr, tested, base),
-      pullRequests: (repo, branch) => k.github.pullRequests(repo, branch), prState: (repo, number) => k.github.prState(repo, number),
+      pullRequests: (repo, branch) => k.github.pullRequests(repo, branch),
+      prState: (repo, number) => k.github.prState(repo, number),
+      prStates: (repo, numbers) => k.github.prStates(repo, numbers),
       unreachable: error => error instanceof Unreachable,
     }, delivery);
   }

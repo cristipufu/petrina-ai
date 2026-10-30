@@ -111,7 +111,7 @@ export class TaskCommands {
     const task = this.engine.task(taskId);
     if (!task || !queueBacklogTask(task, queueOf(this.engine.s.tasks).length)) return;
     this.engine.log(task, "you", "You reviewed the request and queued it for work");
-    this.engine.commitNow();
+    this.engine.commitNow(task);
     this.engine.schedule();
   }
 
@@ -200,7 +200,7 @@ export class TaskCommands {
     syncWait(task, [], () => undefined, Date.now());
     this.engine.renumberQueue();
     this.engine.log(task, "you", "You moved it to the backlog for review");
-    this.engine.commitNow();
+    this.engine.commitNow(task);
   }
 
   updateBacklog(taskId: Id, changes: { title: string; description: string }): void {
@@ -208,7 +208,7 @@ export class TaskCommands {
     if (!task) throw new Error("Only backlog requests can be edited before work starts.");
     editBacklogRequest(task, changes);
     this.engine.log(task, "you", "You updated the backlog request");
-    this.engine.commitNow();
+    this.engine.commitNow(task);
   }
 
   async setTaskStart(taskId: Id, choice: WorkChoice): Promise<void> {
@@ -334,7 +334,7 @@ export class TaskCommands {
     if (!task) return;
     task.held = held;
     this.engine.log(task, "you", held ? "You put it on hold" : "You released the hold");
-    this.engine.commit();
+    this.engine.commit(task);
     this.engine.schedule();
   }
 
@@ -351,7 +351,7 @@ export class TaskCommands {
       "you",
       ids.length ? AFTER_WORDS.starts(ids.map((id) => this.engine.task(id)!.title)) : AFTER_WORDS.none,
     );
-    this.engine.commitNow();
+    this.engine.commitNow(task);
     this.engine.schedule();
   }
 

@@ -1,15 +1,13 @@
 import type { GitHubService } from "@petrina/orchestrator";
 import { githubService } from "@petrina/repositories/github-service";
-import { fakeGitHubRequest } from "./fake-gh.js";
+import { extractFakeGhRepo, fakeGitHubRequest } from "./fake-gh.js";
 
 export interface GitHubFixtureRepository { state: string; remote: string }
 
 /** Explicit GitHub service over private script state and real local Git remotes; no GitHub CLI child. */
 export function scriptedGitHub(products: Readonly<Record<string, GitHubFixtureRepository>>): GitHubService {
   return githubService({ async request(args, input) {
-    const repo = args[0] === "repo" && args[1] === "view" && args[2] && !args[2].startsWith("-") ? args[2]
-      : args[0] === "api" ? /^repos\/([^/]+\/[^/]+)\//.exec(args[1] ?? "")?.[1]
-      : args[args.indexOf("--repo") + 1];
+    const repo = extractFakeGhRepo(args);
     const target = products[repo ?? ""];
     if (!target) return { code: 1, stdout: "", stderr: `The scripted GitHub service has no repository ${repo ?? "(unspecified)"}` };
     try {

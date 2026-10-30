@@ -30,6 +30,7 @@ export function deliveryRecoveryFixture(products = ["a"], mode: "pull-request" |
   const state = { tasks: [task], inbox: [] as DeepMutable<InboxItem>[] };
   const lookup = observations<DeliveryLookup>();
   const prStates = observations<Awaited<ReturnType<DeliveryMonitorEffects["prState"]>>>();
+  const batchCalls: { repo: string; numbers: number[] }[] = [];
   const refs = observations<Awaited<ReturnType<DeliveryMonitorEffects["releaseRefs"]>>>();
   const listed = observations<Awaited<ReturnType<DeliveryMonitorEffects["pullRequests"]>>>();
   const matched = observations<boolean>();
@@ -73,7 +74,13 @@ export function deliveryRecoveryFixture(products = ["a"], mode: "pull-request" |
   };
   const monitorEffects: DeliveryMonitorEffects = {
     lookForDelivery: effects.lookForDelivery, releaseRefs: () => refs.read(),
-    matchesPullRequest: () => matched.read(), pullRequests: () => listed.read(), prState: () => prStates.read(), unreachable: error => error instanceof Unavailable,
+    matchesPullRequest: () => matched.read(), pullRequests: () => listed.read(), prState: () => prStates.read(),
+    prStates: async (repo, numbers) => {
+      batchCalls.push({ repo, numbers: [...numbers] });
+      const entries = await Promise.all(numbers.map(async (number) => [number, await prStates.read()] as const));
+      return new Map(entries.flatMap(([number, state]) => (state ? [[number, state]] : [])));
+    },
+    unreachable: error => error instanceof Unavailable,
   };
   const monitor = new DeliveryMonitor(monitorHost, monitorEffects, { recordDelivery: (bound, evidence, signal) => recovery.recordDelivery(bound, evidence, signal), finishMany: effects.finishMany });
   f.hooks.checkDelivery = (bound, signal) => recovery.checkDelivery(bound, signal);
@@ -89,7 +96,7 @@ export function deliveryRecoveryFixture(products = ["a"], mode: "pull-request" |
     return scope.work.shipping!;
   };
   return { ...f, task, scope, recovery, monitor, recoveryHost: host, recoveryEffects: effects, monitorHost, monitorEffects,
-    state, observations: { lookup, prStates, refs, listed, matched }, notes, recoveryEvents: events, snapshots, background, prepared,
+    state, observations: { lookup, prStates, refs, listed, matched }, batchCalls, notes, recoveryEvents: events, snapshots, background, prepared,
     restart: () => { boot = "next-boot"; }, signal: new AbortController().signal,
   };
 }

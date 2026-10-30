@@ -4,7 +4,7 @@ import { afterAll as closeOwnedCases } from "bun:test";
 import { expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import type { State } from "@petrina/core";
+import { applyWindowStateDelta, type State, type WindowStateDelta } from "@petrina/core";
 import { Engine } from "../../engine.js";
 import { serve } from "../../../src/server.js";
 import { waitFor } from "../../fixtures.js";
@@ -12,7 +12,15 @@ const cases = engineCaseFixtures();
 closeOwnedCases(() => cases.close());
 
 
-interface Message { type: string; stateId?: number; state?: State; id?: number; ok?: boolean }
+interface Message {
+  type: string;
+  stateId?: number;
+  baseStateId?: number;
+  state?: State;
+  delta?: WindowStateDelta;
+  id?: number;
+  ok?: boolean;
+}
 
 it("keeps repair proof bookkeeping out of board broadcasts while retaining task details and saved state", async () => {
   return cases.use("petrina-engine-case-", async owner => {
@@ -50,11 +58,26 @@ async function withServer(owner: EngineCaseOwner, run: (fixture: { engine: Engin
   server = serve(engine, { port: 0, token });
   const connect = async () => {
     const messages: Message[] = [];
+    let currentState: State | undefined;
     const socket = new WebSocket(`ws://127.0.0.1:${server!.port}/ws`, { protocols: ["petrina.v1", `petrina.token.${token}`], headers: { origin: "tauri://localhost" } } as unknown as string[]);
     clients.push(socket);
-    socket.onmessage = (event) => messages.push(JSON.parse(String(event.data)));
-    const states = () => messages.filter((message) => message.type === "state");
+    socket.onmessage = (event) => {
+      const parsed = JSON.parse(String(event.data)) as Message;
+      if (parsed.type === "state" && parsed.state) {
+        currentState = parsed.state;
+        messages.push(parsed);
+        return;
+      }
+      if (parsed.type === "state-delta" && parsed.delta && currentState) {
+        currentState = applyWindowStateDelta(currentState, parsed.delta);
+        messages.push({ ...parsed, state: currentState });
+        return;
+      }
+      messages.push(parsed);
+    };
+    const states = () => messages.filter((message) => message.type === "state" || message.type === "state-delta");
     await waitFor(() => states()[0], "the initial state snapshot");
+    expect(states()[0]!.type).toBe("state");
     expect(socket.protocol).toBe("petrina.v1");
     return { socket, messages, states };
   };
@@ -135,4 +158,42 @@ it("skips snapshots when no window is open and resumes when one connects", () =>
   engine.setPoolLimit(6);
   await Bun.sleep(220);
   expect(reads()).toBe(before);
+}))));
+
+it("streams incremental state-delta frames containing only changed tasks across large boards", () => cases.use("petrina-engine-case-", async owner => (withServer(owner, async ({ engine, connect }) => {
+  const ids = Array.from({ length: 40 }, (_, index) =>
+    engine.addTask({ productId: "", title: `Board task ${index}`, description: "Delta test", backlog: true }),
+  );
+  const client = await connect();
+  const initial = client.states()[0]!;
+  expect(initial.type).toBe("state");
+  expect(initial.state!.tasks).toHaveLength(40);
+  client.socket.send(JSON.stringify({ type: "state-ack", stateId: initial.stateId }));
+
+  const targetId = ids[17]!;
+  engine.updateBacklog(targetId, { title: "Updated board task 17", description: "Only one task changed" });
+  await waitFor(() => client.states()[1], "the incremental board delta");
+
+  const second = client.states()[1]!;
+  expect(second.type).toBe("state-delta");
+  expect(second.baseStateId).toBe(initial.stateId);
+  expect(second.delta!.tasks?.upserts.map((task) => task.id)).toEqual([targetId]);
+  expect(second.delta!.tasks?.order).toBeUndefined();
+  expect(second.delta!.products).toBeUndefined();
+  expect(second.delta!.roles).toBeUndefined();
+  expect(second.delta!.profiles).toBeUndefined();
+  expect(second.delta!.tools).toBeUndefined();
+  expect(second.state!.tasks).toHaveLength(40);
+  expect(second.state!.tasks.find((task) => task.id === targetId)?.title).toBe("Updated board task 17");
+
+  // Untargeted catalog/pool commits must not bump detailsRevision or resend untouched tasks.
+  client.socket.send(JSON.stringify({ type: "state-ack", stateId: second.stateId }));
+  engine.setPoolLimit(7);
+  await waitFor(() => client.states()[2], "the pool-only board delta");
+  const third = client.states()[2]!;
+  expect(third.type).toBe("state-delta");
+  expect(third.baseStateId).toBe(second.stateId);
+  expect(third.delta!.tasks).toBeUndefined();
+  expect(third.delta!.pool?.limit).toBe(7);
+  expect(third.state!.pool.limit).toBe(7);
 }))));

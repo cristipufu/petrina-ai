@@ -21,6 +21,20 @@ const ALLOWED_PRODUCTION_ANY: Readonly<Record<string, number>> = {
 const countLines = (source: string): number =>
   source === "" ? 0 : source.replace(/\r?\n$/, "").split(/\r?\n/).length;
 
+const isRustTest = (file: string): boolean =>
+  /(?:^|\/)tests\/|(?:^|\/)(?:test_[^/]+|[^/]+[._](?:test|spec)s?|tests|specs)\.rs$/.test(file);
+
+const isRustProduction = (file: string, workspace: string | undefined): boolean =>
+  !!workspace
+  && !file.includes("/target/")
+  && !file.includes("/gen/")
+  && (
+    file.startsWith(`${workspace}/src/`)
+    || file.startsWith(`${workspace}/src-tauri/src/`)
+    || file === `${workspace}/src-tauri/build.rs`
+  )
+  && !isRustTest(file);
+
 export function conventions(files: ReadonlyMap<string, string>): string[] {
   const errors: string[] = [];
   for (const [file, source] of files) {
@@ -32,6 +46,28 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
           errors.push(
             `${file}: ${lines} lines exceeds the ${MAX_PRODUCTION_LINES}-line production stylesheet ceiling; split cohesive surfaces into focused stylesheets`,
           );
+        }
+      }
+      continue;
+    }
+    if (file.endsWith(".rs")) {
+      const workspace = workspaceOf(file);
+      if (isRustProduction(file, workspace)) {
+        const lines = countLines(source);
+        const ceiling = FROZEN_PRODUCTION_LINE_CEILINGS[file] ?? MAX_PRODUCTION_LINES;
+        if (lines > ceiling) {
+          errors.push(
+            `${file}: ${lines} lines exceeds the ${ceiling}-line production Rust module ceiling; split cohesive responsibilities into focused modules`,
+          );
+        }
+        const rawLines = source.split(/\r?\n/);
+        for (let index = 0; index < rawLines.length; index += 1) {
+          const line = rawLines[index]!;
+          if (line.length > MAX_PRODUCTION_LINE_WIDTH) {
+            errors.push(
+              `${file}:${index + 1}: line width ${line.length} exceeds ${MAX_PRODUCTION_LINE_WIDTH} characters; wrap long Rust expressions or string literals`,
+            );
+          }
         }
       }
       continue;

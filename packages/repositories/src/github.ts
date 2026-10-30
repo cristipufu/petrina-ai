@@ -111,6 +111,56 @@ export async function prState(repo: string, number: number, cmd: GitHubCommand =
   return stateOf(result.stdout);
 }
 
+const PR_STATES_BATCH_SIZE = 50;
+
+/**
+ * Look up multiple pull request states for one repository in chunked GraphQL batches.
+ * A single pull request uses `prState` directly; missing or unreadable entries are omitted so
+ * callers treat unconfirmed pull requests conservatively as still open.
+ */
+export async function prStates(
+  repo: string,
+  numbers: readonly number[],
+  cmd: GitHubCommand = GH,
+): Promise<Map<number, "open" | "merged" | "closed">> {
+  const unique = [...new Set(numbers.filter((n) => Number.isInteger(n) && n > 0))];
+  if (unique.length === 0) return new Map();
+  if (unique.length === 1) {
+    const state = await prState(repo, unique[0]!, cmd);
+    return state ? new Map([[unique[0]!, state]]) : new Map();
+  }
+  if (!isRepoName(repo)) return new Map();
+  const [owner, name] = repo.split("/") as [string, string];
+  const states = new Map<number, "open" | "merged" | "closed">();
+  for (let offset = 0; offset < unique.length; offset += PR_STATES_BATCH_SIZE) {
+    const chunk = unique.slice(offset, offset + PR_STATES_BATCH_SIZE);
+    const fields = chunk.map((n, index) => `pr_${index}: pullRequest(number: ${n}) { state }`).join(" ");
+    const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields} } }`;
+    const result = inGitHubTerms(
+      await request(cmd, ["api", "graphql", "-F", `owner=${owner}`, "-F", `name=${name}`, "-f", `query=${query}`]),
+    );
+    if (result.timedOut || result.startFailure) continue;
+    const trimmed = result.stdout.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        data?: { repository?: Record<string, { state?: unknown } | null> | null };
+      };
+      const repository = parsed?.data?.repository;
+      if (!repository || typeof repository !== "object") continue;
+      for (const [index, number] of chunk.entries()) {
+        const node = repository[`pr_${index}`];
+        if (node && typeof node === "object" && typeof node.state === "string") {
+          states.set(number, stateOf(node.state));
+        }
+      }
+    } catch {
+      // Unreadable batch response leaves unconfirmed PRs omitted (treated conservatively as open).
+    }
+  }
+  return states;
+}
+
 /**
  * Every pull request from this branch, open, closed or merged. A listing that may be cut short does
  * not count, and an empty one only once the login is known to see the repository.

@@ -16,6 +16,7 @@ export interface GitHubPullRequestInfo {
 /** Repository-scoped GitHub effects. Transport, credentials and response parsing belong to the adapter. */
 export interface GitHubService {
   prState(repo: string, number: number): Promise<GitHubPullRequestInfo["state"] | undefined>;
+  prStates(repo: string, numbers: readonly number[]): Promise<Map<number, GitHubPullRequestInfo["state"]>>;
   pullRequests(repo: string, branch: string): Promise<GitHubResult<GitHubPullRequestInfo[]>>;
   openPullRequest(repo: string, pr: { head: string; base: string; title: string; body: string }): Promise<GitHubCreated>;
   latestRelease(repo: string): Promise<GitHubResult<string | undefined>>;

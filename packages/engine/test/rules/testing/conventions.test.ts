@@ -384,3 +384,16 @@ it("enforces vertical statement density and 160-character structured line wrappi
     expect(found(formatted, "packages/core/src/example.ts")).toEqual([]);
   }
 });
+
+it("enforces the 650-line and 160-character ceilings on production Rust modules while exempting Rust test fixtures", () => {
+  const oversizedRust = `${Array.from({ length: 651 }, (_, index) => `pub fn item_${index}() -> usize { ${index} }`).join("\n")}\n`;
+  expect(found(oversizedRust, "apps/desktop/src-tauri/src/lib.rs")).toEqual([
+    expect.stringContaining("651 lines exceeds the 650-line production Rust module ceiling"),
+  ]);
+  expect(found(oversizedRust, "apps/desktop/src-tauri/src/test_process.rs")).toEqual([]);
+  const wideRust = `pub const WIDE: &str = "${"x".repeat(160)}";\n`;
+  expect(found(wideRust, "apps/desktop/src-tauri/src/lib.rs")).toEqual([
+    expect.stringContaining("exceeds 160 characters"),
+  ]);
+  expect(found("pub fn clean() -> bool { true }\n", "apps/desktop/src-tauri/src/lib.rs")).toEqual([]);
+});

@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import { isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import type { LifecycleStore } from "@petrina/storage/lifecycle-store";
 import { answers, FolderLock, processAlive, readConnection } from "./instance.js";
 import { ReleaseStore, type ReleasePointer } from "./release-store.js";
@@ -23,6 +24,15 @@ const DEFAULT_PROMOTE_READINESS_TIMEOUT_MS = 15_000;
 function cliSubArgs(mode: "serve" | "app"): string[] {
   const fromArgv = process.argv.slice(2);
   return fromArgv.length > 0 ? fromArgv : [mode];
+}
+
+export function transitionFallbackCommand(
+  subArgs: readonly string[],
+  execPath: string = process.execPath,
+  argv: readonly string[] = process.argv,
+  metaDir: string = import.meta.dir,
+): string[] {
+  return isCompiledBinary(metaDir) ? [execPath, ...subArgs] : [execPath, ...argv.slice(1)];
 }
 
 function cleanTransitionEnv(
@@ -64,7 +74,7 @@ export async function executeLifecycleTransition(input: ExecuteTransitionInput):
   const { home, mode, action, reconnectPort, lock, lifecycleStore } = input;
   const releaseStore = new ReleaseStore(home);
   const subArgs = cliSubArgs(mode);
-  const fallbackCommand = [process.execPath, ...process.argv.slice(1)];
+  const fallbackCommand = transitionFallbackCommand(subArgs);
 
   let targetPointer: ReleasePointer | null = null;
   let previousPointer: ReleasePointer | null = null;

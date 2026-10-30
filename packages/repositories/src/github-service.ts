@@ -7,6 +7,7 @@ import * as source from "./source-github.js";
 export function githubService(command: github.GitHubCommand = ["gh"]): GitHubService {
   return {
     prState: (repo, number) => github.prState(repo, number, command),
+    prStates: (repo, numbers) => github.prStates(repo, numbers, command),
     pullRequests: (repo, branch) => github.pullRequests(repo, branch, command),
     openPullRequest: (repo, pr) => github.openPullRequest(repo, pr, command),
     latestRelease: repo => github.latestRelease(repo, command),

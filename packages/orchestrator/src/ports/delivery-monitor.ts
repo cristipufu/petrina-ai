@@ -27,7 +27,7 @@ export interface DeliveryMonitorHost {
   schedule(): void;
 }
 
-export interface DeliveryMonitorEffects extends Pick<GitHubService, "pullRequests" | "prState"> {
+export interface DeliveryMonitorEffects extends Pick<GitHubService, "pullRequests" | "prState" | "prStates"> {
   lookForDelivery(scope: RepositoryContext): Promise<DeliveryLookup>;
   releaseRefs(scope: RepositoryContext): Promise<{ main?: string; tag?: string }>;
   matchesPullRequest(scope: RepositoryContext, pr: GitHubPullRequestInfo, tested: string, base: string): Promise<boolean>;

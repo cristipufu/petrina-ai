@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { stopOwnedProcess } from "@petrina/platform/owned-process";
+import { isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import type { ProcessDeadline } from "@petrina/platform/process-capabilities";
 import { browserProcesses, type BrowserProcessControl } from "@petrina/platform/browser-processes";
 import { BrowserCleanupAttempt, StopUnconfirmed, reapBrowser, type BrowserCleanupClock, type BrowserCleanupReason } from "./browser-cleanup.js";
@@ -28,6 +29,27 @@ export class BrowserStartupCleanupError extends Error {
 }
 
 const cleanupClock = { now: () => Date.now(), pause: (ms: number) => Bun.sleep(ms) };
+
+export function defaultBrowserServerLaunch(
+  directory: string,
+  secret: string,
+  ownerPid: number,
+  execPath: string = process.execPath,
+  metaDir: string = import.meta.dir,
+): { command: string; args: string[]; cwd: string } {
+  if (isCompiledBinary(metaDir)) {
+    return {
+      command: execPath,
+      args: ["__internal-browser-server", directory, secret, String(ownerPid)],
+      cwd: directory,
+    };
+  }
+  return {
+    command: execPath,
+    args: [join(metaDir, "browser-server.ts"), directory, secret, String(ownerPid)],
+    cwd: metaDir,
+  };
+}
 
 export class AgentBrowser {
   private closing?: Promise<void>;
@@ -78,29 +100,15 @@ export class AgentBrowser {
     const arm: ProcessDeadline = startup.arm ? (expired, ms) => startup.arm!(expired, ms) : startupDeadline;
     const lifecycle = { used: false, closedUnused: false };
     try {
-      child = startup.launch ? startup.launch(directory, secret, process.pid, clean)
-        : spawn(
-          process.execPath,
-          [
-          join(
-          import.meta.dir,
-          "browser-server.ts"
-        ),
-          directory,
-          secret,
-          String(process.pid)
-        ],
-          {
-          cwd: import.meta.dir,
-          env: clean,
-          stdio: [
-          "pipe",
-          "pipe",
-          "pipe"
-        ],
-          windowsHide: true
-        }
-        );
+      const helperLaunch = defaultBrowserServerLaunch(directory, secret, process.pid);
+      child = startup.launch
+        ? startup.launch(directory, secret, process.pid, clean)
+        : spawn(helperLaunch.command, helperLaunch.args, {
+            cwd: helperLaunch.cwd,
+            env: clean,
+            stdio: ["pipe", "pipe", "pipe"],
+            windowsHide: true,
+          });
       const helper = child;
       closed = (helper.exitCode !== null || helper.signalCode !== null) && helper.stdout?.readableEnded && helper.stderr?.readableEnded
         ? Promise.resolve() : new Promise<void>(resolve => helper.once("close", () => resolve()));

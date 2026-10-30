@@ -6,7 +6,7 @@
 // in the engine's log and never fails a task: Petrina then goes by what Codex says when a turn fails.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { createRequire } from "node:module";
+import packageJson from "../package.json" with { type: "json" };
 import { codexReports } from "./codex-report.js";
 import type { UsageInfo } from "./failures.js";
 import { UsageReader } from "./usage-reader.js";
@@ -21,7 +21,7 @@ export const CODEX_USAGE_TIMEOUT_MS = 20_000;
 /** What Petrina runs to read it: Codex's own app-server, found on PATH like the agents' tools. */
 export const CODEX_USAGE_COMMAND: readonly string[] = ["codex", "app-server"];
 
-const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
+const { version } = packageJson;
 
 /** Who is asking, in the shape the adapter sends. */
 const CLIENT_INFO = { name: "petrina", title: "Petrina", version };

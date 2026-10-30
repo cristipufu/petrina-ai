@@ -56,9 +56,12 @@ export class StateProjection {
 
   /** A bounded live update: all completed tasks are represented by archive totals, never bodies. */
   private readonly taskRevisions = new Map<Id, number>();
+  private readonly taskCheckedAt = new Map<Id, number>();
+  private readonly taskSignatures = new Map<Id, string>();
   private readonly dirtyTasks = new Set<Id>();
   private allTasksDirty = true;
   private nextTaskRevision = 0;
+  private pendingGlobalCheck = 0;
   private dependencies: { key: string; items: HistoryDependency[] } | undefined;
 
   changed(target?: RuntimeTask | RepositoryContext): void {
@@ -67,23 +70,80 @@ export class StateProjection {
       const task = executionOf(target).task;
       this.dirtyTasks.add(task.id);
       this.taskRevisions.set(task.id, revision);
+      this.taskSignatures.delete(task.id);
       // Events are recorded on the shared change path, before a batched save or retirement can hide a transition.
       this.k.events?.observe([task]);
     } else {
       this.allTasksDirty = true;
-      for (const task of this.k.s.tasks) this.taskRevisions.set(task.id, revision);
+      this.pendingGlobalCheck = revision;
       this.k.events?.observe([...this.k.s.tasks, ...this.archiveCache.values()]);
     }
   }
 
-  private detailRevision(id: Id): string { return `${this.k.boot}:${this.taskRevisions.get(id) ?? 0}`; }
+  private summaryWithoutRevision(task: RuntimeTask): Task {
+    return {
+      ...taskView(task),
+      detailsOmitted: true,
+      detailsRevision: "",
+      session: [],
+      timeline: [],
+      journey: undefined,
+      designSessions: undefined,
+      reviewSessions: undefined,
+      handedBack: undefined,
+      hunt: task.hunt ? { ...task.hunt, findingChecks: undefined } : undefined,
+    } as Task;
+  }
+
+  private signatureOf(task: RuntimeTask, summary: Task = this.summaryWithoutRevision(task)): string {
+    const summaryHash = String(Bun.hash(JSON.stringify(summary)));
+    let sessionParts = `${task.session.length}`;
+    for (const line of task.session) {
+      sessionParts += `|${line.id}:${line.at}:${line.from}:${String(Bun.hash(line.text))}:${line.roleId ?? ""}:${line.profileId ?? ""}:${line.productId ?? ""}:${line.coordinatorMessageId ?? ""}:${line.step ?? ""}:${line.toolInvocationId ?? ""}:${line.inputIndex ?? ""}:${line.images ? JSON.stringify(line.images) : ""}`;
+    }
+    const sessionHash = String(Bun.hash(sessionParts));
+    const omittedHash = String(
+      Bun.hash(
+        JSON.stringify([
+          task.timeline,
+          task.journey,
+          task.designSessions,
+          task.reviewSessions,
+          task.handedBack,
+          task.hunt?.findingChecks,
+        ]),
+      ),
+    );
+    return `${summaryHash}:${sessionHash}:${omittedHash}`;
+  }
+
+  private resolveRevision(task: RuntimeTask, summary?: Task): string {
+    if (
+      this.k.s.tasks.includes(task)
+      && ((this.taskCheckedAt.get(task.id) ?? -1) < this.pendingGlobalCheck || !this.taskSignatures.has(task.id))
+    ) {
+      const signature = this.signatureOf(task, summary);
+      const previous = this.taskSignatures.get(task.id);
+      this.taskSignatures.set(task.id, signature);
+      this.taskCheckedAt.set(task.id, this.pendingGlobalCheck);
+      if (previous !== undefined && previous !== signature) {
+        this.taskRevisions.set(task.id, ++this.nextTaskRevision);
+      } else if (!this.taskRevisions.has(task.id)) {
+        this.taskRevisions.set(task.id, ++this.nextTaskRevision);
+      }
+    }
+    return `${this.k.boot}:${this.taskRevisions.get(task.id) ?? 0}`;
+  }
 
   windowState = (): State => {
     // A terminal result must be in the archive before the window stops seeing its live body.
     if (!this.k.stopped && this.k.store.history.needsUpdate(this.k.s.tasks.filter(finishedTask) as Task[])) this.k.save();
-    const tasks = this.k.s.tasks.filter((task) => !finishedTask(task)).map((task) => ({ ...taskView(task), detailsOmitted: true, detailsRevision: this.detailRevision(task.id), session: [], timeline: [], journey: undefined, designSessions: undefined, reviewSessions: undefined, handedBack: undefined,
-      hunt: task.hunt ? { ...task.hunt, findingChecks: undefined } : undefined,
-    })) as Task[];
+    const tasks = this.k.s.tasks
+      .filter((task) => !finishedTask(task))
+      .map((task) => {
+        const summary = this.summaryWithoutRevision(task);
+        return { ...summary, detailsRevision: this.resolveRevision(task, summary) };
+      });
     const usageReads: NonNullable<State["pool"]["usageReads"]> = this.k.usageCoordinator.snapshot();
     const dependencyIds = this.k.stopped ? [] : [...new Set([
       ...this.k.s.inbox.map((item) => item.taskId),
@@ -131,7 +191,7 @@ export class StateProjection {
     }
     const projected: Task = {
       ...taskView(task),
-      detailsRevision: this.detailRevision(id),
+      detailsRevision: this.resolveRevision(task),
     };
     if (this.k.s.tasks.includes(task)) this.rememberDetailBase(id, captureTaskDetailsBase(projected));
     return projected;
@@ -143,7 +203,7 @@ export class StateProjection {
       this.detailBases.delete(id);
       return undefined;
     }
-    const revision = this.detailRevision(id);
+    const revision = this.resolveRevision(task);
     const isLive = this.k.s.tasks.includes(task);
     const base = this.detailBases.get(id);
     if (isLive && base && base.detailsRevision === sinceRevision && revision === sinceRevision) {
@@ -231,6 +291,8 @@ export class StateProjection {
     this.k.s.tasks = this.k.s.tasks.filter((task) => !ids.has(task.id));
     for (const id of ids) {
       this.taskRevisions.delete(id);
+      this.taskCheckedAt.delete(id);
+      this.taskSignatures.delete(id);
       this.detailBases.delete(id);
     }
     return this.k.store.history.info().revision !== revision;

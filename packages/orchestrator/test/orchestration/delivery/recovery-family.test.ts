@@ -222,3 +222,44 @@ it("settles every monitored peer before propagating one publication checkpoint f
     expect(f.recoveryEvents).toContain("tidy:second");
   } finally { held.resolve("merged"); await operation; }
 });
+
+it("batches open pull request checks across single-repo and multi-repo tasks into one request per repository", async () => {
+  const f = deliveryRecoveryFixture(["a", "b"]);
+  f.task.state = "pr-open";
+  const sharedWorks = scopesFor(f.task).map((bound) => bound.work);
+  sharedWorks[0]!.pr = { ...pr, number: 1, openedAt: 1 };
+  sharedWorks[1]!.pr = { ...pr, number: 101, openedAt: 1 };
+
+  for (let index = 0; index < 11; index++) {
+    const extraA = f.add(`single-a-${index}`, ["a"], "pull-request");
+    extraA.productId = "a";
+    extraA.state = "pr-open";
+    const workA = executionFor(extraA).work;
+    workA.worktree = `scripted:copy:${extraA.id}`;
+    workA.pr = { ...pr, number: index + 2, openedAt: 1 };
+    f.state.tasks.push(extraA);
+    f.observations.prStates.add(index === 4 ? "merged" : "open");
+  }
+  for (let index = 0; index < 7; index++) {
+    const extraB = f.add(`single-b-${index}`, ["b"], "pull-request");
+    extraB.productId = "b";
+    extraB.state = "pr-open";
+    const workB = executionFor(extraB).work;
+    workB.worktree = `scripted:copy:${extraB.id}`;
+    workB.pr = { ...pr, number: index + 102, openedAt: 1 };
+    f.state.tasks.push(extraB);
+    f.observations.prStates.add(index === 2 ? "closed" : "open");
+  }
+  // Account for the 2 PRs on the shared multi-repo task as well (20 total PRs across 2 repos).
+  f.observations.prStates.add("open");
+  f.observations.prStates.add("open");
+
+  await f.monitor.pollPullRequests();
+
+  expect(f.batchCalls).toHaveLength(2);
+  const byRepo = new Map(f.batchCalls.map((entry) => [entry.repo, entry.numbers]));
+  expect([...byRepo.keys()].sort()).toEqual(["local/a", "local/b"]);
+  expect(byRepo.get("local/a")).toHaveLength(12);
+  expect(byRepo.get("local/b")).toHaveLength(8);
+  expect(f.observations.prStates.pending).toEqual([]);
+});

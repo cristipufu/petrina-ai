@@ -34,6 +34,7 @@ export async function inputs(root: string): Promise<Map<string, string>> {
       const keepText =
         isSource(file)
         || file.endsWith(".css")
+        || file.endsWith(".rs")
         || file.endsWith("package.json")
         || file === TEST_LAYER_INVENTORY
         || (file.startsWith("docs/") && file.endsWith(".md"))

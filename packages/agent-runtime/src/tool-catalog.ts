@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { compiledExecutableDir, isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import type { ToolAdapter } from "./tool-adapter.js";
 import { grokToolMetadata, grokTurnReport } from "./grok-report.js";
 import { claudeTerminalArguments, codexTerminalArguments, grokTerminalArguments } from "./terminal-arguments.js";
@@ -11,6 +12,17 @@ import { antigravityReading, antigravityTurnReport } from "./antigravity-report.
 import { antigravityCommand, antigravityInstalled, forgetAntigravityProbe } from "./antigravity-runtime.js";
 import { interjection, steering } from "./live-input.js";
 import { CLAUDE_AGENT_ENTRY, CODEX_AGENT_ENTRY, GROK_AGENT_COMMAND } from "./tool-entry.js";
+
+export function codexWrapperPath(
+  execPath: string = process.execPath,
+  metaDir: string = import.meta.dir,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (isCompiledBinary(metaDir)) {
+    return join(compiledExecutableDir(execPath), platform === "win32" ? "codex-background.cmd" : "codex-background");
+  }
+  return join(metaDir, "codex-background.ts");
+}
 
 export const ADAPTERS: Record<string, ToolAdapter> = {
   "claude-code": {
@@ -61,7 +73,7 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
       // A nested launch may inherit another working copy's wrapper. Retain its
       // real target; wrapping CODEX_PATH again would launch wrappers recursively.
       if (env.CODEX_PATH && env.CODEX_PATH !== env.PETRINA_CODEX_WRAPPER) env.PETRINA_CODEX_EXECUTABLE = env.CODEX_PATH;
-      env.CODEX_PATH = env.PETRINA_CODEX_WRAPPER = join(import.meta.dir, "codex-background.ts");
+      env.CODEX_PATH = env.PETRINA_CODEX_WRAPPER = codexWrapperPath();
     },
     terminalArgs: codexTerminalArguments,
     id: "codex",

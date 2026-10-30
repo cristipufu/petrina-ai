@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:engine": "bun ../../packages/engine/src/build-engine.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --reporter=verbose",
     "preview": "vite preview",

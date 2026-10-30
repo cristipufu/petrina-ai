@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
 import { readConnection, FolderLock } from "./instance.js";
 import { LifecycleStore } from "@petrina/storage/lifecycle-store";
+import { findBunRuntime, isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import type { Result } from "./coordination.js";
 import { operation } from "./operations.js";
 import { ReleaseStore, validateReleaseVersion } from "./release-store.js";
@@ -39,13 +40,26 @@ function savedScheduling(home: string): "paused" | "running" | undefined {
     db?.close();
   }
 }
+export function defaultManagedSpawnCommand(
+  entrypoint?: string,
+  execPath: string = process.execPath,
+  metaDir: string = import.meta.dir,
+): string[] {
+  if (entrypoint !== undefined) {
+    return [findBunRuntime(execPath, metaDir), entrypoint, "serve", "--managed"];
+  }
+  return isCompiledBinary(metaDir)
+    ? [execPath, "serve", "--managed"]
+    : [execPath, join(metaDir, "cli.ts"), "serve", "--managed"];
+}
+
 export class EngineClient {
   private readonly start: () => number | void;
   constructor(
     readonly home = defaultHome(),
     start?: () => number | void,
     /** Tests supply the fixture CLI while retaining the real launch and ownership behavior. */
-    entrypoint = join(import.meta.dir, "cli.ts"),
+    entrypoint?: string,
   ) {
     this.start = start ?? (() => {
       const prior = readConnection(home);
@@ -53,7 +67,7 @@ export class EngineClient {
       const current = releaseStore.readCurrent();
       const command = current
         ? releaseStore.commandFor(current, ["serve", "--managed"])
-        : [process.execPath, entrypoint, "serve", "--managed"];
+        : defaultManagedSpawnCommand(entrypoint);
       const env: Record<string, string | undefined> = {
         ...process.env,
         PETRINA_HOME: home,

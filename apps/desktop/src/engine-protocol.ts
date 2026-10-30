@@ -1,4 +1,4 @@
-import type { Id, NewTaskInput, State } from "@petrina/core";
+import type { Id, NewTaskInput, State, WindowStateDelta } from "@petrina/core";
 import { Late, Lost } from "./commandFailures";
 
 /** Something the coordinator said that the engine has not confirmed saving yet. Sent again after reconnecting. */
@@ -41,6 +41,7 @@ export type FirstTask = NewTaskInput & { clientId: string };
 
 export type ServerFrame =
   | { type: "state"; state: State; stateId?: number }
+  | { type: "state-delta"; stateId: number; baseStateId: number; delta: WindowStateDelta }
   | { type: "result"; id: number; ok: boolean; result?: unknown; error?: string };
 
 const SESSION_KEY = "petrina.engine";
@@ -63,6 +64,12 @@ function isStateSnapshot(value: unknown): value is State {
   );
 }
 
+function isWindowStateDelta(value: unknown): value is WindowStateDelta {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate["now"] === "number" && typeof candidate["seq"] === "number";
+}
+
 export function parseServerFrame(raw: string): ServerFrame | undefined {
   let parsed: unknown;
   try {
@@ -78,6 +85,19 @@ export function parseServerFrame(raw: string): ServerFrame | undefined {
       type: "state",
       state: frame["state"],
       ...(typeof stateId === "number" ? { stateId } : {}),
+    };
+  }
+  if (
+    frame["type"] === "state-delta" &&
+    typeof frame["stateId"] === "number" &&
+    typeof frame["baseStateId"] === "number" &&
+    isWindowStateDelta(frame["delta"])
+  ) {
+    return {
+      type: "state-delta",
+      stateId: frame["stateId"],
+      baseStateId: frame["baseStateId"],
+      delta: frame["delta"],
     };
   }
   if (frame["type"] === "result" && typeof frame["id"] === "number" && typeof frame["ok"] === "boolean") {

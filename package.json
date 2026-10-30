@@ -14,6 +14,7 @@
     "open": "bun packages/engine/src/cli.ts open --dev",
     "tauri": "bun run --cwd apps/desktop tauri",
     "build": "bun run --cwd apps/desktop build",
+    "build:engine": "bun packages/engine/src/build-engine.ts",
     "format": "bun packages/engine/test/quality/format-cli.ts --write",
     "format:check": "bun packages/engine/test/quality/format-cli.ts --check",
     "typecheck": "bun run --parallel --workspaces typecheck",

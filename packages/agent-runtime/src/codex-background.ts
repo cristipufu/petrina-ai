@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import { findJsRuntime, isCompiledBinary } from "@petrina/platform/compiled-runtime";
 import { CODEX_AGENT_ENTRY, resolveAdapterEntry } from "./tool-entry.js";
 
 export const BACKGROUND_FEATURES = ["apps", "plugins", "computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"];
@@ -38,16 +39,28 @@ export function backgroundConfig(config: Record<string, unknown>, inherited: Rec
 }
 
 export async function backgroundCommand(executable: string | undefined): Promise<string[]> {
-  if (executable && await realpath(resolve(executable)).catch(() => resolve(executable)) === await realpath(import.meta.path)) {
-    throw new Error("Codex could not start because its launcher points back to itself. Restart Petrina before trying again.");
+  if (executable) {
+    const resolvedExec = await realpath(resolve(executable)).catch(() => resolve(executable));
+    const selfPaths = [
+      ...(isCompiledBinary() ? [] : [await realpath(import.meta.path).catch(() => import.meta.path)]),
+      ...(process.env.PETRINA_CODEX_WRAPPER
+        ? [await realpath(resolve(process.env.PETRINA_CODEX_WRAPPER)).catch(() => resolve(process.env.PETRINA_CODEX_WRAPPER!))]
+        : []),
+    ];
+    if (selfPaths.includes(resolvedExec)) {
+      throw new Error(
+        "Codex could not start because its launcher points back to itself. Restart Petrina before trying again.",
+      );
+    }
+    return [executable];
   }
   const require = createRequire(resolveAdapterEntry(CODEX_AGENT_ENTRY));
-  return executable ? [executable] : [process.execPath, require.resolve("@openai/codex/bin/codex.js")];
+  return [findJsRuntime(), require.resolve("@openai/codex/bin/codex.js")];
 }
 
-async function main() {
+export async function runCodexBackground(rawArgs: readonly string[] = process.argv.slice(2)): Promise<void> {
   const command = await backgroundCommand(process.env.PETRINA_CODEX_EXECUTABLE);
-  const args = [...process.argv.slice(2), ...BACKGROUND_FEATURES.flatMap((feature) => ["-c", `features.${feature}=false`])];
+  const args = [...rawArgs, ...BACKGROUND_FEATURES.flatMap((feature) => ["-c", `features.${feature}=false`])];
   const child = spawn(command[0]!, [...command.slice(1), ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   child.stderr.pipe(process.stderr);
   const pending = new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void }>();
@@ -116,4 +129,4 @@ async function main() {
   child.on("error", () => process.exit(1));
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runCodexBackground();

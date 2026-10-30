@@ -15,6 +15,8 @@ import { deflateSync } from "node:zlib";
 
 import { addCopy, branchName, ensureWorktree, removeWorktree } from "@petrina/repositories/git";
 import { finish, git, itemOf, taskOf, tempDir, until, waitFor, waitForFile } from "../../support.js";
+import { writeGitHub } from "../../fake-gh.js";
+import { scriptedGitHub } from "../../scripted-github.js";
 import { cleanupBuildOutput } from "../../fixtures/cleanup-agents.js";
 import { cleanupFixture, texts, cleaned, listed, expectUnconfirmed, type CleanupWorld } from "../../fixtures/cleanup-world.js";
 
@@ -917,7 +919,7 @@ it("catches up older tasks across products at startup while a stalled pull reque
           rows.find((row) => row.id === id)!.pr = { ...task.pr, number: 101 };
           Object.assign(rows.find((row) => row.id === cancelled)!, { state: "cancelled", column: "done" });
           const products = state.products as unknown as Record<string, unknown>[];
-          products.push({ ...products[0], id: "second-product" });
+          products.push({ ...products[0], id: "second-product", repo: "acme/second" });
           for (const status of ["done", "running", "paused", "failed", "queued", "needs-you"]) rows.push({ ...task, id: `older-${status}`, productId: "second-product", state: status === "running" ? "paused" : status, held: true, agent: undefined, pr: undefined, worktree: join(w.data, "worktrees", "second-product", status), branch: `petrina/older-${status}` });
         });
         for (const status of ["done", "running", "paused", "failed", "queued", "needs-you"]) {
@@ -930,20 +932,43 @@ it("catches up older tasks across products at startup while a stalled pull reque
         const interrupted = join(w.data, "worktrees", "second-product", "done");
         rmSync(interrupted, { recursive: true, force: true });
         expect(await listed(w, interrupted)).toBe(true);
+        const secondGhState = join(w.dir, "github-second.json");
         w.setGitHub((github) => {
           const first = github.prs[0]!;
-          github.prs = [{ ...first, number: 101, state: "OPEN" }, { ...first, number: 102, state: "CLOSED" }];
+          writeGitHub(secondGhState, {
+            repo: "acme/second",
+            prs: [{ ...first, number: 102, state: "CLOSED" }],
+            releases: [],
+            calls: [],
+          });
+          github.prs = [{ ...first, number: 101, state: "OPEN" }];
           github.hold = { command: "pr view", file: hold, match: "101" };
         });
-        const closedPath = join(w.data, "worktrees", productId, "closed");
+        const closedPath = join(w.data, "worktrees", "second-product", "closed");
         const closedRefFile = join(w.clone, ".git", "refs", "heads", "petrina", "older-closed");
         mkdirSync(dirname(closedRefFile), { recursive: true });
         writeFileSync(closedRefFile, `${baseSha}\n`);
         await materializeCleanupWorktree(w.clone, closedPath, "petrina/older-closed");
-        w.editSaved((state) => (state.tasks as unknown as Record<string, unknown>[]).push({ ...task, id: "older-closed", worktree: closedPath, branch: "petrina/older-closed", pr: { ...task.pr, number: 102 } }));
+        w.editSaved((state) =>
+          (state.tasks as unknown as Record<string, unknown>[]).push({
+            ...task,
+            id: "older-closed",
+            productId: "second-product",
+            source: task.source
+              ? { ...task.source, product: { ...task.source.product, id: "second-product", repo: "acme/second" } }
+              : undefined,
+            worktree: closedPath,
+            branch: "petrina/older-closed",
+            pr: { ...task.pr, number: 102 },
+          }),
+        );
         writeFileSync(hold, "");
 
         return { productId, id, task, cancelled };
+      });
+      const multiRepoGitHub = scriptedGitHub({
+        "acme/demo": { state: join(w.dir, "github.json"), remote: w.remote },
+        "acme/second": { state: join(w.dir, "github-second.json"), remote: w.remote },
       });
       await w.engine(async engine => {
         try { // All of this must happen on startup, before the first minute passes.
@@ -956,7 +981,7 @@ it("catches up older tasks across products at startup while a stalled pull reque
           for (const status of ["running", "paused", "failed", "queued", "needs-you"]) expect(existsSync(join(w.data, "worktrees", "second-product", status))).toBe(true);
 
         } finally { rmSync(hold, { force: true }); await engine.shutdown(); }
-      });
+      }, { github: multiRepoGitHub });
     }, { stopPeers: () => releasePeers() });
   });
 

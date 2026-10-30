@@ -348,4 +348,64 @@ describe('the real browser connection', () => {
       client.dispose();
     }
   });
+
+  it('applies incremental state-delta frames while preserving unchanged task references and self-heals on base mismatch', async () => {
+    await mount();
+    const { EngineClient } = await import('../../../src/engine');
+    const client = new EngineClient({ desktop: false, address });
+    try {
+      const socket = current();
+      socket.connect();
+      const send = vi.spyOn(socket, 'send');
+      const base = oneTaskFixture(1000);
+      const secondTask = { ...base.tasks[0]!, id: 'task-2', title: 'Second task' };
+      const initialState = { ...base, tasks: [base.tasks[0]!, secondTask] };
+      socket.onmessage?.({ data: JSON.stringify({ type: 'state', stateId: 1, state: initialState }) });
+      await advance(0);
+      expect(send).toHaveBeenLastCalledWith(JSON.stringify({ type: 'state-ack', stateId: 1 }));
+
+      const beforeState = client.getState();
+      // Local 15s clock tick must not break subsequent delta application.
+      await advance(15_000);
+      expect(client.getState().tasks[1]).toBe(beforeState.tasks[1]);
+
+      const updatedFirst = { ...base.tasks[0]!, statusLine: 'Streaming update' };
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'state-delta',
+          stateId: 2,
+          baseStateId: 1,
+          delta: {
+            now: 2000,
+            seq: initialState.seq + 1,
+            tasks: { upserts: [updatedFirst] },
+          },
+        }),
+      });
+      await advance(0);
+      expect(send).toHaveBeenLastCalledWith(JSON.stringify({ type: 'state-ack', stateId: 2 }));
+      const afterDelta = client.getState();
+      expect(afterDelta.now).toBe(2000);
+      expect(afterDelta.tasks[0]?.statusLine).toBe('Streaming update');
+      expect(afterDelta.tasks[1]).toBe(beforeState.tasks[1]);
+      expect(afterDelta.products).toBe(beforeState.products);
+      expect(afterDelta.roles).toBe(beforeState.roles);
+      expect(afterDelta.pool).toBe(beforeState.pool);
+
+      // Out-of-sequence baseStateId closes the socket and triggers clean full-state resync.
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'state-delta',
+          stateId: 4,
+          baseStateId: 99,
+          delta: { now: 3000, seq: initialState.seq + 2 },
+        }),
+      });
+      expect(socket.readyState).toBe(3);
+      const reconnected = current();
+      expect(reconnected).not.toBe(socket);
+    } finally {
+      client.dispose();
+    }
+  });
 });

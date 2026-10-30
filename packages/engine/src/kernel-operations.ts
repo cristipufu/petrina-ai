@@ -176,7 +176,10 @@ export function takeKernelInboxItem(k: Kernel, itemId: Id): DeepMutable<InboxIte
 export function renumberKernelQueue(k: Kernel): void {
   queueOf(k.s.tasks as Task[]).forEach((task, position) => {
     const entry = k.task(task.id);
-    if (entry) entry.priority = position;
+    if (entry && entry.priority !== position) {
+      entry.priority = position;
+      k.projection.changed(entry);
+    }
   });
 }
 

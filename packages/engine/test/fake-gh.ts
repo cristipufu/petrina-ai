@@ -75,6 +75,28 @@ export interface Hold {
   match?: string;
 }
 
+export function extractFakeGhRepo(args: readonly string[]): string | undefined {
+  if (args[0] === "repo" && args[1] === "view" && args[2] && !args[2].startsWith("-")) return args[2];
+  if (args[0] === "api" && args[1] === "graphql") {
+    let owner: string | undefined;
+    let name: string | undefined;
+    for (let i = 2; i < args.length; i++) {
+      const flag = args[i];
+      const value =
+        flag === "-F" || flag === "-f" || flag === "--field" || flag === "--raw-field" ? args[++i] : undefined;
+      if (!value) continue;
+      if (value.startsWith("owner=")) owner = value.slice("owner=".length);
+      else if (value.startsWith("name=")) name = value.slice("name=".length);
+    }
+    return owner && name ? `${owner}/${name}` : undefined;
+  }
+  if (args[0] === "api") return /^repos\/([^/]+\/[^/]+)\//.exec(args[1] ?? "")?.[1];
+  const inline = args.find((arg) => arg.startsWith("--repo="));
+  if (inline) return inline.slice("--repo=".length);
+  const at = args.indexOf("--repo");
+  return at >= 0 ? args[at + 1] : undefined;
+}
+
 export function readGitHub(path: string): FakeGitHub {
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as FakeGitHub) : { repo: "acme/demo", prs: [], releases: [], calls: [] };
 }
@@ -290,7 +312,12 @@ async function dispatchGitHub(remote: string, args: readonly string[], access: G
   };
   /** Wait while a hold for this call is on. */
   const held = async (): Promise<void> => {
-    const hold = [state.hold, ...(state.holds ?? [])].find((entry) => entry?.command === command && (!entry.match || args.includes(entry.match)) && existsSync(entry.file));
+    const hold = [state.hold, ...(state.holds ?? [])].find(
+      (entry) =>
+        entry?.command === command
+        && (!entry.match || args.some((arg) => arg === entry.match || (command === "api graphql" && arg.includes(entry.match!))))
+        && existsSync(entry.file),
+    );
     if (!hold) return;
     access.release?.();
     writeFileSync(`${hold.file}.reached`, "");
@@ -336,8 +363,8 @@ async function dispatchGitHub(remote: string, args: readonly string[], access: G
     }
   }
   const positional = args[2] && !args[2].startsWith("-") ? args[2] : undefined;
-  // `gh repo view` names the repository itself; everything else is pinned with --repo.
-  const repo = noun === "api" ? (verb?.startsWith(`repos/${state.repo}/`) ? state.repo : undefined) : command === "repo view" ? positional ?? flag("--repo") : flag("--repo");
+  // `gh repo view` and `gh api` carry the repository in their arguments; everything else is pinned with --repo.
+  const repo = command === "repo view" ? positional ?? flag("--repo") : extractFakeGhRepo(args);
   if (repo !== state.repo) fail(`fake gh only knows ${state.repo}, not ${repo}`);
   if (count("fail")) fail("HTTP 502: Bad Gateway (https://api.github.com/graphql)");
   if (state.hidden) {
@@ -367,6 +394,38 @@ async function dispatchGitHub(remote: string, args: readonly string[], access: G
     });
     pr.headRefOid = sha;
   });
+  if (command === "api graphql") {
+    await held();
+    if (count("lose")) fail("error connecting to api.github.com");
+    const queryArg = args.find(
+      (arg, index) =>
+        index > 1
+        && (args[index - 1] === "-f"
+          || args[index - 1] === "-F"
+          || args[index - 1] === "--field"
+          || args[index - 1] === "--raw-field")
+        && arg.startsWith("query="),
+    );
+    const query = queryArg ? queryArg.slice("query=".length) : "";
+    const repository: Record<string, { state: string } | null> = {};
+    const errors: { type: string; message: string }[] = [];
+    for (const match of query.matchAll(/(pr_\d+)\s*:\s*pullRequest\(\s*number\s*:\s*(\d+)\s*\)/g)) {
+      const alias = match[1]!;
+      const number = Number(match[2]!);
+      const pr = state.prs.find((entry) => entry.number === number);
+      if (pr) {
+        await refreshPr(pr);
+        repository[alias] = { state: pr.state };
+      } else {
+        repository[alias] = null;
+        errors.push({ type: "NOT_FOUND", message: `Could not resolve to a PullRequest with the number of ${number}.` });
+      }
+    }
+    const payload = errors.length
+      ? JSON.stringify({ data: { repository }, errors })
+      : JSON.stringify({ data: { repository } });
+    return exit(errors.length ? 1 : 0, payload, errors.length ? `gh: ${errors[0]!.message}` : "");
+  }
   if (noun === "api") {
     const endpoint = verb!.slice(`repos/${state.repo}/`.length);
     if (!args.includes("--paginate") || !args.includes("--slurp")) fail("API lists must read every page");

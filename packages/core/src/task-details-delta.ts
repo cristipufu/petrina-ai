@@ -53,11 +53,17 @@ export interface TaskDetailsBase {
   readonly findingChecksJson: string;
 }
 
-function stableJson(value: unknown): string {
+export function stableJson(value: unknown): string {
   return value === undefined ? "undefined" : JSON.stringify(value);
 }
 
-function captureKeyed<T extends { readonly id: Id }>(items: readonly T[]): {
+export interface CapturedKeyedList {
+  readonly ids: readonly Id[];
+  readonly unique: boolean;
+  readonly json: ReadonlyMap<Id, string>;
+}
+
+export function captureKeyedList<T extends { readonly id: Id }>(items: readonly T[]): {
   ids: Id[];
   unique: boolean;
   json: Map<Id, string>;
@@ -74,8 +80,8 @@ function captureKeyed<T extends { readonly id: Id }>(items: readonly T[]): {
 }
 
 export function captureTaskDetailsBase(task: Task): TaskDetailsBase {
-  const session = captureKeyed(task.session);
-  const timeline = captureKeyed(task.timeline);
+  const session = captureKeyedList(task.session);
+  const timeline = captureKeyedList(task.timeline);
   return {
     detailsRevision: task.detailsRevision ?? "",
     sessionIds: session.ids,
@@ -92,7 +98,7 @@ export function captureTaskDetailsBase(task: Task): TaskDetailsBase {
   };
 }
 
-function diffKeyedList<T extends { readonly id: Id }>(
+export function diffKeyedList<T extends { readonly id: Id }>(
   previousIds: readonly Id[],
   previousUnique: boolean,
   previousJson: ReadonlyMap<Id, string>,
@@ -223,7 +229,7 @@ export function diffTaskDetails(
   };
 }
 
-function applyKeyedListDelta<T extends { readonly id: Id }>(
+export function applyKeyedListDelta<T extends { readonly id: Id }>(
   previous: readonly T[],
   delta: KeyedListDelta<T> | undefined,
 ): readonly T[] {
