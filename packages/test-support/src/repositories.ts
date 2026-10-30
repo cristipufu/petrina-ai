@@ -106,7 +106,11 @@ async function claimSeedPreparation(
     if (ready) return { kind: "ready", seed: ready };
     try {
       mkdirSync(claimPath);
-      try { writeFileSync(join(claimPath, "pid"), String(process.pid)); } catch {}
+      try {
+        writeFileSync(join(claimPath, "pid"), String(process.pid));
+      } catch {
+        // Best-effort owner hint: if writing pid fails, mkdirSync already established exclusive lock ownership.
+      }
       return { kind: "claimed", release: () => rmSync(claimPath, { recursive: true, force: true }) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") return { kind: "fallback" };

@@ -138,7 +138,7 @@ const gitOptionValues = new Set([
 function gitOperation(argv: unknown[]): string | undefined {
   for (let index = 1; index < argv.length; index++) {
     const value = argv[index];
-    if (typeof value !== "string") return;
+    if (typeof value !== "string") return undefined;
     if (gitOptionValues.has(value)) {
       index++;
       continue;
@@ -147,6 +147,7 @@ function gitOperation(argv: unknown[]): string | undefined {
     if (value.startsWith("-")) continue;
     return gitOperations.has(value) ? value : undefined;
   }
+  return undefined;
 }
 
 function commandOf(command: unknown): { program: string; operation?: string } {

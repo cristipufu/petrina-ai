@@ -178,10 +178,7 @@ export function Overview({ task, state, find, onAboutNumbers, onReadSession, onP
           <h3>{work.source?.product.name ?? work.productId}{work.removed ? " · removed" : ""}</h3><p className="note">{work.source?.product.repo}</p>
           <p className="prose">{work.report?.summary ?? "No changes reported yet"}</p>
           <ul>{work.report?.changes.map((change) => <li key={change}>{change}</li>)}</ul>
-          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : checkProblem({ checks: work.checks }) === "unverified" ? "Unverified" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}{work.checks?.sha ? ` · version ${work.checks.sha.slice(
-            0,
-            7
-          )}` : ""}</p>
+          <p className="note">Product checks: {!work.checks?.results.length ? "Not run" : work.checks.current === false ? "Not current" : checkProblem({ checks: work.checks }) === "unverified" ? "Unverified" : work.checks.results.some((run) => !run.ok) ? "Failed" : "Passed"}</p>
           <p className="prose">{work.nothingToPublish ? "Nothing to publish" : work.pr ? <a
             href={work.pr.url}
             target="_blank"

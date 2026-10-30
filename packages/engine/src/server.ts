@@ -19,7 +19,7 @@ import {
   TONE_CHOICES,
   COMMAND_NAMES,
   type CommandName,
-  type Commands
+  type Commands,
 } from "@petrina/core";
 import type { Engine } from "./engine.js";
 import { Coordination, serial, type LifecycleControl } from "./coordination.js";
@@ -220,7 +220,7 @@ const ARGS = {
   setTaskScreen: z.tuple([z.string(), z.boolean()]),
   answer: z.tuple([z.string(), z.string().min(1).max(4000), Said.optional()]),
   decideForMe: z.tuple([z.string()]),
-  allow: z.tuple([z.string(), z.enum(["once", "always"])]),
+  allow: z.tuple([z.string(), z.enum(["once", "always"]).optional()]),
   deny: z.tuple([z.string(), z.string().max(4000).optional(), Said.optional()]),
   approve: z.tuple([z.string()]),
   decline: z.tuple([z.string()]),
@@ -255,6 +255,19 @@ const ARGS = {
     ]),
   ]),
 } satisfies { [K in CommandName]: z.ZodType<Parameters<Commands[K]>> };
+
+type MutableInput<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends object
+    ? { -readonly [K in keyof T]: MutableInput<T[K]> }
+    : T;
+
+type CheckCommandInputs<
+  T extends { [K in CommandName]: (args: MutableInput<Parameters<Commands[K]>>) => Parameters<Commands[K]> },
+> = T;
+export type CheckedCommandInputs = CheckCommandInputs<{
+  [K in CommandName]: (args: z.input<(typeof ARGS)[K]>) => z.output<(typeof ARGS)[K]>;
+}>;
 
 const Envelope = z.object({ name: z.enum(COMMAND_NAMES), args: z.array(z.unknown()) });
 

@@ -150,6 +150,7 @@ function addedRole(raw: unknown): Role | undefined {
     result: role.result,
     column: addedColumn(role.result, canEdit),
     added: true,
+    ...(role.awayFromBuilder ? { awayFromBuilder: true } : {}),
     ...(role.removed ? { removed: true } : {}),
   };
 }

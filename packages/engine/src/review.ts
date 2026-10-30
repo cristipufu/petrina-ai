@@ -8,6 +8,7 @@ import { changesOf, versionsOf } from "./repositories.js";
 
 import {
   checkReviewEvidence,
+  findingKind,
   reviewerAt,
   type Id,
   type Stage
@@ -136,11 +137,20 @@ export class Reviews {
     ]);
     work.tamper = { at: Date.now(), sha, problems };
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(work.productId)) && !problems.includes(finding.text)) finding.status = "fixed";
+      const kind = findingKind(finding);
+      if (
+        finding.status === "open"
+        && (kind === "tamper" || kind === "delivery")
+        && (!task.repositories || finding.productIds?.includes(work.productId))
+        && !problems.includes(finding.text)
+      ) {
+        finding.status = "fixed";
+      }
     }
     for (const problem of problems) {
       if (!task.findings.some(finding => finding.text === problem && finding.status === "open" && (!task.repositories || finding.productIds?.includes(work.productId)))) {
         task.findings.push({
+          kind: "tamper",
           ...(task.repositories ? { productIds: [work.productId] } : {}),
           id: this.k.id(task.id),
           text: problem,

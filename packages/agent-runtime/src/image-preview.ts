@@ -76,20 +76,21 @@ function imageFormat(data: Buffer): { mime: string; width: number; height: numbe
       return { mime: "image/webp", width: (packed & 0x3fff) + 1, height: ((packed >>> 14) & 0x3fff) + 1 };
     }
   }
-  if (data[0] !== 0xff || data[1] !== 0xd8) return;
+  if (data[0] !== 0xff || data[1] !== 0xd8) return undefined;
   // JPEG frame headers carry dimensions before the compressed picture begins.
   for (let at = 2; at + 3 < data.length;) {
-    if (data[at++] !== 0xff) return;
+    if (data[at++] !== 0xff) return undefined;
     while (data[at] === 0xff) at++;
     const marker = data[at++];
-    if (marker === undefined || marker === 0xda || marker === 0xd9) return;
+    if (marker === undefined || marker === 0xda || marker === 0xd9) return undefined;
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    if (at + 2 > data.length) return;
+    if (at + 2 > data.length) return undefined;
     const length = data.readUInt16BE(at);
-    if (length < 2 || at + length > data.length) return;
+    if (length < 2 || at + length > data.length) return undefined;
     if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker) && length >= 7) {
       return { mime: "image/jpeg", width: data.readUInt16BE(at + 5), height: data.readUInt16BE(at + 3) };
     }
     at += length;
   }
+  return undefined;
 }

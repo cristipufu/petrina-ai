@@ -61,3 +61,25 @@ it("returns Retry failures to the command caller when approving a stuck request"
   } finally { check.mockRestore(); await engine.shutdown(); }
   });
 });
+
+it("accepts allow commands over the local API with or without an explicit scope", async () => {
+  return owners.use(async ({ engine, task, owner: lifetime }) => {
+    lifetime.check();
+    const allow = spyOn(engine, "allow");
+    lifetime.onStop(() => allow.mockRestore());
+    try {
+      const first = engine.raise(task, "permission", "Run a check", true);
+      await dispatch(engine, { name: "allow", args: [first] });
+      expect(allow).toHaveBeenLastCalledWith(first);
+      expect(engine.s.inbox.some(item => item.id === first)).toBe(false);
+
+      const second = engine.raise(task, "permission", "Run another check", true);
+      await dispatch(engine, { name: "allow", args: [second, "always"] });
+      expect(allow).toHaveBeenLastCalledWith(second, "always");
+      expect(engine.s.inbox.some(item => item.id === second)).toBe(false);
+    } finally {
+      allow.mockRestore();
+      await engine.shutdown();
+    }
+  });
+});

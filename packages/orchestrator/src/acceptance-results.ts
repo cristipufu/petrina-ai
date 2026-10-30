@@ -91,6 +91,7 @@ export class AcceptanceResults {
       const alternate = check.result === "blocked" ? `Failed acceptance check: ${check.text}` : `Could not verify acceptance check: ${check.text}`;
       const earlier = task.findings.find((finding) => proofRequestId ? finding.proofRequestId === proofRequestId : !finding.proofRequestId && (finding.text === text || finding.text === alternate));
       if (earlier) {
+        earlier.kind = check.result === "blocked" ? "acceptance-unverified" : "acceptance-failed";
         earlier.text = text;
         if (task.repositories) earlier.productIds = check.productIds;
         earlier.status = check.result === "pass" ? "fixed" : check.result === "blocked" ? "unverified" : "open";
@@ -98,6 +99,7 @@ export class AcceptanceResults {
         if (check.result === "blocked" && check.reason) earlier.evidence = check.reason;
         else if (check.result === "pass") delete earlier.evidence;
       } else if (check.result === "fail") task.findings.push({
+        kind: "acceptance-failed",
         ...(proofRequestId ? { proofRequestId } : {}),
         ...(task.repositories ? { productIds: check.productIds } : {}),
         id: this.host.id(task), text,

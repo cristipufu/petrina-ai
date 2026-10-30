@@ -9,6 +9,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "skipLibCheck": true
   }

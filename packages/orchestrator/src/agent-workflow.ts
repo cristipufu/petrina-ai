@@ -3,7 +3,6 @@ import {
   syncRuntimeWait,
   AFTER_WORDS,
   balanced,
-  lastIndexWhere,
   pickStarts,
   queueOf,
   screenReady,
@@ -18,6 +17,7 @@ import {
 import { executionFor } from "./repository-context.js";
 import { testerCheckKey } from "./tester-preparation.js";
 import { waitForAgentUsage } from "./agent-step-state.js";
+import { driveWorkflowTask, startWorkflowDriver, type WorkflowDriverContext } from "./agent-workflow-driver.js";
 import type { RuntimeTask } from "./model.js";
 import type { SelectionReadiness as ReadinessNeed } from "./profile-selection.js";
 import type { AgentWorkflowHost, AgentWorkflowDependencies, SelectedParticipant } from "./ports/agent-workflow.js";
@@ -361,218 +361,30 @@ export class AgentWorkflow {
     }
   }
 
+  private driverContext(): WorkflowDriverContext {
+    return {
+      host: this.host,
+      ownership: this.ownership,
+      catalog: this.catalog,
+      errors: this.errors,
+      phases: this.phases,
+      checks: this.checks,
+      preparedTesters: this.preparedTesters,
+      testerCheckKey: (task) => this.testerCheckKey(task),
+      testerNeedsChecks: (task) => this.testerNeedsChecks(task),
+      admitNext: (task, signal) => this.admitNext(task, signal),
+      waitForUsage: (task, words) => this.waitForUsage(task, words),
+    };
+  }
+
   /** `resume`: the agent already has its seat (a hand back), so its step carries on whatever the pool is doing. */
   startDriver(taskId: Id, resume = false): void {
-    let resolve!: () => void;
-    let reject!: (error: unknown) => void;
-    const completed = new Promise<void>((done, failed) => {
-      resolve = done;
-      reject = failed;
-    });
-    this.ownership.settling.set(taskId, completed);
-    // Observe the original result without replacing it, including if finalizer registration fails.
-    void completed.then(undefined, () => undefined);
-    const finish = (failures: unknown[]): void => {
-      // Live drivers stay task-keyed: a quiet paused check is deliberately excluded from a pool drain.
-      // Transfer ownership before releasing that reservation or running any finalization callback.
-      let tracked = false;
-      try {
-        this.host.trackWork(completed);
-        tracked = true;
-      }
-      catch (error) { failures.push(error); }
-      const release = () => { if (this.ownership.settling.get(taskId) === completed) this.ownership.settling.delete(taskId); };
-      if (tracked) release();
-      // Without background ownership, keep our own reservation until all callbacks have returned.
-      for (const effect of [() => this.host.tidy(taskId), () => this.host.schedule(), () => this.host.idleChanged()]) {
-        try { effect(); } catch (error) { failures.push(error); }
-      }
-      if (!tracked) release();
-      if (!failures.length) {
-        resolve();
-        return;
-      }
-      let failure = failures.length === 1 ? failures[0] : new AggregateError(failures, `Could not finish task ${taskId}`);
-      try { this.host.reportDriverError(taskId, failure); }
-      catch (error) { failure = new AggregateError([...failures, error], `Could not finish task ${taskId}`); }
-      reject(failure);
-    };
-    // Both reactions settle without throwing; there is no unowned rejecting finally/then derivative.
-    void this.drive(taskId, resume).then(() => finish([]), error => finish([error]));
-    this.host.idleChanged();
+    startWorkflowDriver(this.driverContext(), taskId, resume, (id, flag) => this.drive(id, flag));
   }
 
-  private async drive(taskId: Id, resume = false): Promise<void> {
-    const controller = new AbortController();
-    this.ownership.drivers.set(taskId, controller);
-    const { signal } = controller;
-    const task = () => {
-      const found = this.host.task(taskId);
-      if (!found) throw this.errors.aborted();
-      return found;
-    };
-    try {
-      // A delivery from before the update: nothing happens, not even an update from GitHub, until the coordinator chooses.
-      if (executionFor(task()).work.shipping?.carriedOver) {
-        this.phases.carriedOver(task());
-        return;
-      }
-
-      for (;;) {
-        if (signal.aborted) throw this.errors.aborted();
-        const current = task();
-        let scope = executionFor(current);
-        if (runtimeWaitHolds(current)) {
-          this.waitForUsage(current, this.host.admissionWait(current));
-          return;
-        }
-        if (current.reviewDecision?.accepted === false) {
-          this.host.gate(current, "delivery");
-          return;
-        }
-        const stage = current.stageIndex < 0 ? undefined : current.plan?.stages[current.stageIndex];
-        if (!stage || this.catalog.role(stage.roleId, current)?.result !== "checks") this.preparedTesters.delete(taskId);
-        const prepared = await this.phases.prepareWorkspace(current, stage, signal);
-        if (prepared.kind === "repeat") continue;
-        if (prepared.kind === "stop") return;
-        scope = prepared.scope;
-        // Nothing ships while changes made by hand wait for review: the last review chain looks at them first.
-        if (stage && current.handChanges && (stage.gate === "delivery" || this.catalog.role(stage.roleId, current)?.result === "delivery")) {
-          const chain = lastIndexWhere(current.plan!.stages, (entry) => entry.kind === "review-chain");
-          if (chain >= 0) {
-            current.stageIndex = chain;
-            current.sub = 0;
-            current.fixing = false;
-            delete current.hunt;
-            this.host.note(current, "milestone", "Reviewing your changes before anything ships: the review starts again from the first reviewer");
-            this.host.changed();
-            continue;
-          }
-          delete current.handChanges;
-        }
-        // Acceptance was tried on this change already. Fixes are reviewed, and the final code is tried once more
-        // right before the delivery check, so a tester pass per fix round is spared.
-        if (stage?.kind === "do" && this.catalog.role(
-          stage.roleId,
-          current
-        )?.result === "checks" && !current.retest && current.testedPatch !== undefined && (!current.repositories || current.acceptancePassed)) {
-          this.host.note(current, "milestone", "Acceptance will be tried once more on the final code, right before your delivery check");
-          current.stageIndex += 1;
-          current.sub = 0;
-          this.host.changed();
-          continue;
-        }
-        // Plan and design checkpoints need no work; delivery preparation can update files and run checks.
-        if (stage?.kind === "gate") {
-          // On the way back to the check where changes were asked, earlier design checks are not asked again.
-          if (stage.gate === "design" && current.returnToCheck !== undefined && current.stageIndex < current.returnToCheck) {
-            this.host.note(current, "milestone", "Went past the earlier design check you already approved, back to the one where you asked for changes");
-            current.stageIndex += 1;
-            current.sub = 0;
-            this.host.changed();
-            continue;
-          }
-          delete current.returnToCheck;
-          if (stage.gate === "delivery") {
-            const prepared = await this.phases.deliveryCheckpoint(scope, signal);
-            if (prepared.kind === "repeat") continue;
-            return;
-          }
-          this.host.gate(current, stage.gate ?? "delivery");
-          return;
-        }
-        // Petrina is stopping: the step waits for the restart instead of starting an agent it would cut short.
-        if (this.host.admissionsClosed(current)) {
-          current.state = "waiting";
-          current.holdsSlot = false;
-          delete current.agent;
-          current.column = this.host.column(current);
-          current.statusLine = this.host.admissionWait(current);
-          this.host.changed();
-          return;
-        }
-        // Running agents finish; every following agent must qualify again, even on the same tool.
-        if (resume) resume = false;
-        else {
-          const admission = await this.admitNext(current, signal);
-          if (admission === "refresh" || this.host.sourceRefreshDue(current)) continue;
-          if (!admission) {
-            this.host.changed();
-            return;
-          }
-        }
-        this.host.changed();
-        // The stage (or planning) is under way from here: a slot is held for it, or it needs none.
-        this.host.beginStage(scope);
-        // Give acceptance testing verified automated evidence first, so it can focus on the user cases.
-        // Read-only review reuses this same run; changing code still requires fresh evidence.
-        if (this.testerNeedsChecks(current)) {
-          const prepared = await this.phases.prepareAcceptance(scope, signal);
-          if (prepared.kind === "stop") return;
-          if (prepared.kind === "repeat") continue;
-          this.preparedTesters.set(taskId, this.testerCheckKey(current));
-          this.checks.release(taskId);
-          continue;
-        }
-        if (current.stageIndex < 0) {
-          // Pausing while the copy is made already has a plan. Planning again would start a second one.
-          if (!current.plan) await this.phases.planner(current, signal);
-          scope = executionFor(current);
-          if (current.confirmWork || current.workError || !scope.work.source?.confirmed) {
-            this.host.gate(current, "plan");
-            return;
-          }
-          // Show me the plan first stays editable until it is approved. Skipping that check prepares on the next pass.
-          if (current.approvePlan) {
-            this.host.gate(current, "plan");
-            return;
-          }
-          current.stageIndex = 0;
-          current.sub = 0;
-          this.host.changed();
-          continue;
-        }
-        if (!stage) throw new Error("The plan ended without a delivery");
-        const next =
-          stage.kind === "do"
-            ? this.catalog.role(stage.roleId, current)?.result === "delivery"
-              ? await this.phases.delivery(current, stage, signal)
-              : await this.phases.doStage(scope, stage, signal)
-            : stage.kind === "converge"
-              ? await this.phases.converge(scope, stage, signal)
-              : await this.phases.review(current, stage, signal);
-        if (next === "stop") return;
-      }
-    } catch (error) {
-      const problem = this.errors.classify(error);
-      if (signal.aborted || problem.kind === "abort" || problem.kind === "screen") return;
-      if (problem.kind === "source-refresh") {
-        this.waitForUsage(task(), "Waiting to bring the work onto the required source");
-        return;
-      }
-      if (this.host.task(taskId)?.maintenance?.settingsDecision && !this.host.task(taskId)?.maintenance?.settingsDecision?.choice) return;
-      if (problem.kind === "usage") {
-        // Admission may close during an awaited preparation step. Every such exit must
-        // release its reservation and remain schedulable, even if the callee only threw.
-        const current = this.host.task(taskId);
-        if (current && ["running", "waiting"].includes(current.state)) this.waitForUsage(current, this.host.draining() ? this.host.drainLine() : problem.words);
-        return;
-      }
-      const current = task();
-      let failure = error;
-      try { await this.phases.clearUnpublishedOnFailure(current); }
-      catch (cleanup) {
-        if (!Object.is(error, cleanup)) failure = new AggregateError([error, cleanup], "The task failed and its working copy could not be restored");
-      }
-      this.host.failed(taskId, failure);
-    } finally {
-      this.checks.release(taskId);
-      if (this.host.task(taskId)?.state !== "waiting") this.preparedTesters.delete(taskId);
-      if (this.ownership.drivers.get(taskId) === controller) this.ownership.drivers.delete(taskId);
-      await this.phases.finish(taskId, signal);
-    }
+  private drive(taskId: Id, resume = false): Promise<void> {
+    return driveWorkflowTask(this.driverContext(), taskId, resume);
   }
-
 
   waitForUsage(task: RuntimeTask, words: string): void {
     waitForAgentUsage(task, words, this.host.now(), () => this.host.column(task));

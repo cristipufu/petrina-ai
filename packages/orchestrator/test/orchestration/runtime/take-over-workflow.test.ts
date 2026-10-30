@@ -65,6 +65,7 @@ describe("take-over workflow rules", () => {
     });
     expect(task.findings).toEqual([
       {
+        kind: "tamper",
         id: "finding-1",
         productIds: ["a"],
         text: "Removed test case in auth.test.ts",

@@ -158,6 +158,7 @@ You may run a command to confirm it works, but keep it quick, and do not change 
     sees: "The change, the design brief and the code around it.",
     handsBack: "Security findings, each tagged Important, Nit or Pre-existing, with evidence.",
     column: "reviewing",
+    awayFromBuilder: true,
     internal: true,
     result: "findings",
     instructions: `Review the change for security problems only: who can reach what (access checks, sign-in, permissions), secrets and credentials, input from outside (injection, paths, URLs), data that could be exposed or lost, and unsafe defaults. Other reviewers cover everything else.

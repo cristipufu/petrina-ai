@@ -12,6 +12,7 @@ export function outputFixture(options: { stops?: boolean; cancellation?: "pendin
     cancellations++;
     if (options.cancellation === "rejected") throw new Error("Output cancellation failed");
     if (options.cancellation === "pending") return new Promise<void>(() => {});
+    return undefined;
   } });
   const child: OutputProcess = {
     stdout: stream, exited: completion.promise,

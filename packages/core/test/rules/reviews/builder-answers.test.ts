@@ -1,5 +1,13 @@
 import { expect, it } from "vitest";
-import { beginAgentStep, BUILT_IN_ROLES, createTaskState, recordBuilderFindingAnswers, type DeepMutable, type Finding } from "../../../src/index.js";
+import {
+  beginAgentStep,
+  BUILT_IN_ROLES,
+  createTaskState,
+  findingKind,
+  recordBuilderFindingAnswers,
+  type DeepMutable,
+  type Finding,
+} from "../../../src/index.js";
 
 function world(shared = false) {
   const task = createTaskState({ productId: "a", title: "Answer the actual findings", backlog: true },
@@ -56,4 +64,15 @@ it("does not let a single-product Builder settle a failed native check", () => {
   f.apply([check, other], [check, other].map(finding => ({ id: finding.id, fixed: true, text: "The Builder claims a repair." })));
   expect(check).toMatchObject({ status: "open", answer: { fixed: true } });
   expect(other.status).toBe("fixed");
+});
+
+it("prefers Finding.kind over prose prefixes while preserving legacy stored-record inference", () => {
+  expect(findingKind({ kind: "product-check", text: "Tests failed in workspace" })).toBe("product-check");
+  expect(findingKind({ kind: "review", text: "Check failed in the user message", raisedBy: "opus-high" })).toBe("review");
+  expect(findingKind({ text: "Failed acceptance check: Greeting appears" })).toBe("acceptance-failed");
+  expect(findingKind({ text: "Could not verify acceptance check: Greeting appears" })).toBe("acceptance-unverified");
+  expect(findingKind({ text: "Check failed: Tests (bun test)", raisedBy: "petrina" })).toBe("product-check");
+  expect(findingKind({ text: "Getting the delivery ready failed, so nothing was published: bad tag", raisedBy: "petrina" })).toBe("delivery");
+  expect(findingKind({ text: "Removed test case in auth.test.ts", raisedBy: "petrina" })).toBe("tamper");
+  expect(findingKind({ text: "Greeting loses its punctuation", raisedBy: "opus-high" })).toBe("review");
 });

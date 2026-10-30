@@ -1,6 +1,6 @@
 # Test ownership and layers
 
-These layers define behavior ownership, enforced across all workspaces under `test/<layer>/<area>/`. Reviewing owners and assertions and qualifying resource cost remain separate disciplines; folder placement alone does not establish either one. The [implementation tracker](../plans/test-foundation.md) records the migration audit and resource ledger history. [Testing Petrina](../testing.md) owns commands, provisioning and platform instructions.
+These layers define behavior ownership, enforced across all workspaces under `test/<layer>/<area>/`. Reviewing owners and assertions and qualifying resource cost remain separate disciplines; folder placement alone does not establish either one. The [historical implementation tracker](../archive/test-foundation.md) records the migration audit and resource ledger history. [Testing Petrina](../testing.md) owns commands, provisioning and platform instructions.
 
 ## Choose the behavior before the fixture
 

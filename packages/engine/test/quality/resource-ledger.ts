@@ -1,15 +1,29 @@
 // Offline analysis of retained resource events. This command never starts a test or a product.
 
-import { createReadStream, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { ResourceSummary } from "@petrina/test-support/resources/summary";
 import { MAX_NATIVE_LAUNCHES, verifyResourceReconciliation } from "./resource-limits.js";
 
+const RESULTS_ROOT = resolve(import.meta.dir, "../../../../.test-results/resources");
+
+const latestCaptureFolder = (): string | undefined => {
+  if (!existsSync(RESULTS_ROOT)) return undefined;
+  const entries = readdirSync(RESULTS_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(RESULTS_ROOT, entry.name, "expected-files.json")))
+    .map((entry) => {
+      const fullPath = join(RESULTS_ROOT, entry.name);
+      return { fullPath, mtimeMs: statSync(fullPath).mtimeMs, name: entry.name };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+  return entries[0]?.fullPath;
+};
+
 const usage = () => {
   console.log(
-    "bun packages/engine/test/quality/resource-ledger.ts [--check] [--max-launches N] CAPTURE [OUTPUT]\n"
-      + `Rebuild complete per-test, file, directory and caller rankings without running tests (--check enforces the ${MAX_NATIVE_LAUNCHES} native launch ceiling).`,
+    "bun packages/engine/test/quality/resource-ledger.ts [--check] [--max-launches N] [CAPTURE] [OUTPUT]\n"
+      + `Rebuild complete per-test, file, directory and caller rankings without running tests (--check enforces the ${MAX_NATIVE_LAUNCHES} native launch ceiling; defaults CAPTURE to the newest .test-results/resources/* run).`,
   );
 };
 
@@ -43,12 +57,19 @@ for (let index = 0; index < rawArgs.length; index++) {
   }
 }
 
-if (!positional.length || positional.length > 2) {
+if (positional.length > 2) {
   usage();
   process.exit(1);
 }
 
-const capture = resolve(positional[0]!);
+const resolvedCapture = positional[0] ? resolve(positional[0]) : latestCaptureFolder();
+if (!resolvedCapture) {
+  console.error("No resource capture folder supplied and none found under .test-results/resources.");
+  usage();
+  process.exit(1);
+}
+
+const capture = resolvedCapture;
 const output = positional[1] ? resolve(positional[1]) : join(capture, "ledger");
 const summary = new ResourceSummary();
 const seen = new Set<string>();

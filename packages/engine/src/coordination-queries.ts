@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CoordinationResult as Result, ExtraValidation, Product, State, Task } from "@petrina/core";
 import { finishedTask, involvesProduct, journeyView, offeredLessons, resultSeatOf } from "@petrina/core";
-import { fingerprint } from "@petrina/storage/receipt-identity";
 import { readAnalytics } from "./analytics-read.js";
 import { readCheckLog } from "./check-log-read.js";
 import { checkpointView } from "./checkpoint-read.js";
@@ -15,14 +14,13 @@ import {
   taskHealthView,
   taskSummary,
   taskTimeline,
-  type CoordinationArgs,
-  type LifecycleControl,
+  type HistoryFilterArgs,
 } from "./coordination-views.js";
 import type { Engine } from "./engine.js";
 import { paginate, readText } from "./evidence-read.js";
 import { readExactInput } from "./exact-input.js";
 import { ImmutableEvidenceChangedError } from "./immutable-file.js";
-import type { QueryOperationName } from "./operations.js";
+import type { OperationInput, QueryOperationName } from "./operations.js";
 import { readReviewInput } from "./review-context.js";
 
 export type DirectQueryName = "engine.status" | "watch.events" | "watch.wait";
@@ -30,29 +28,51 @@ export type DelegatedQueryName = Exclude<QueryOperationName, DirectQueryName>;
 type PreCheckQueryName = "validation.inspect" | "validation.log" | "watch.event" | "analytics.inspect";
 type StandardQueryName = Exclude<DelegatedQueryName, PreCheckQueryName>;
 
-type PreCheckQueryHandler = (engine: Engine, args: CoordinationArgs) => Result | Promise<Result>;
+type TaskScopedQueryName = {
+  [K in StandardQueryName]: OperationInput<K> extends { taskId: string } ? K : never;
+}[StandardQueryName];
 
-interface CoordinationQueryContext {
+type GeneralQueryName = Exclude<StandardQueryName, TaskScopedQueryName>;
+
+type PreCheckQueryHandler<K extends PreCheckQueryName> = (
+  engine: Engine,
+  args: OperationInput<K>,
+) => Result | Promise<Result>;
+
+interface TaskQueryContext<K extends TaskScopedQueryName> {
   readonly engine: Engine;
-  readonly name: string;
+  readonly name: K;
   readonly state: State;
-  readonly task: Task | undefined;
-  readonly product: Product | undefined;
-  readonly args: CoordinationArgs;
+  readonly task: Task;
+  readonly args: OperationInput<K>;
 }
 
-type CoordinationQueryHandler = (context: CoordinationQueryContext) => Result | Promise<Result>;
+type TaskQueryHandler<K extends TaskScopedQueryName> = (
+  context: TaskQueryContext<K>,
+) => Result | Promise<Result>;
 
-const PRE_CHECK_QUERY_HANDLERS: Readonly<Record<PreCheckQueryName, PreCheckQueryHandler>> = {
+interface GeneralQueryContext<K extends GeneralQueryName> {
+  readonly engine: Engine;
+  readonly name: K;
+  readonly state: State;
+  readonly product: Product | undefined;
+  readonly args: OperationInput<K>;
+}
+
+type GeneralQueryHandler<K extends GeneralQueryName> = (
+  context: GeneralQueryContext<K>,
+) => Result | Promise<Result>;
+
+const PRE_CHECK_QUERY_HANDLERS: { readonly [K in PreCheckQueryName]: PreCheckQueryHandler<K> } = {
   "validation.inspect": (engine, args) => {
-    const result = args.requestId ? engine.extraValidations.get(args.requestId) : undefined;
+    const result = engine.extraValidations.get(args.requestId);
     if (!result) {
       return { outcome: "missing", message: "That extra validation reference does not exist." };
     }
     return result;
   },
   "validation.log": async (engine, args) => {
-    const result = args.requestId ? engine.extraValidations.get(args.requestId) : undefined;
+    const result = engine.extraValidations.get(args.requestId);
     if (!result) {
       return { outcome: "missing", message: "That extra validation reference does not exist." };
     }
@@ -79,7 +99,7 @@ const PRE_CHECK_QUERY_HANDLERS: Readonly<Record<PreCheckQueryName, PreCheckQuery
     };
     const log = await readCheckLog(engine.dataDir, task, {
       index: 0,
-      section: args.section === "result" ? "result" : "diagnostics",
+      section: args.section,
       cursor: args.cursor,
       limit: args.limit,
     });
@@ -90,12 +110,12 @@ const PRE_CHECK_QUERY_HANDLERS: Readonly<Record<PreCheckQueryName, PreCheckQuery
       ...(record.run.exitSignal ? { commandOutcome: "unfinished" } : {}),
     };
   },
-  "watch.event": (engine, args) => engine.events.log.read(args.eventId ?? "", args),
+  "watch.event": (engine, args) => engine.events.log.read(args.eventId, args),
   // Before the shared checks: a continuation reports its read's time even when the task or product is gone.
-  "analytics.inspect": (engine, args) => readAnalytics(engine, args as Parameters<typeof readAnalytics>[1]),
+  "analytics.inspect": (engine, args) => readAnalytics(engine, args),
 };
 
-const queryHistoryOrFinishedTasks = (engine: Engine, args: CoordinationArgs): Result => {
+const queryHistoryOrFinishedTasks = (engine: Engine, args: HistoryFilterArgs): Result => {
   if (args.states?.some((state) => state !== "done" && state !== "cancelled")) {
     return {
       outcome: "invalid",
@@ -105,7 +125,19 @@ const queryHistoryOrFinishedTasks = (engine: Engine, args: CoordinationArgs): Re
   return readHistoryPage(engine, args);
 };
 
-const inspectInboxItem: CoordinationQueryHandler = async ({ engine, name, state, args }) => {
+type InboxInspectName = "inbox.inspect" | "learning.inspect" | "review-guide.inspect";
+
+const inspectInboxItem = async ({
+  engine,
+  name,
+  state,
+  args,
+}: {
+  readonly engine: Engine;
+  readonly name: InboxInspectName;
+  readonly state: State;
+  readonly args: OperationInput<"inbox.inspect">;
+}): Promise<Result> => {
   const item = state.inbox.find((candidate) => candidate.id === args.itemId);
   if (!item) {
     return { outcome: "missing", message: "That request is no longer in the inbox." };
@@ -139,37 +171,12 @@ const inspectInboxItem: CoordinationQueryHandler = async ({ engine, name, state,
   );
 };
 
-export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQueryHandler>> = {
-  "task.history": ({ engine, args }) => queryHistoryOrFinishedTasks(engine, args),
-  "task.list": ({ engine, name, state, args }) => {
-    if (args.states?.some((taskState) => taskState === "done" || taskState === "cancelled")) {
-      return queryHistoryOrFinishedTasks(engine, args);
-    }
-    return paginate(
-      state.tasks
-        .filter(
-          (candidate) =>
-            !finishedTask(candidate)
-            && (!args.productId || involvesProduct(candidate, args.productId))
-            && (!args.taskId || candidate.id === args.taskId)
-            && (!args.states || args.states.includes(candidate.state))
-            && (args.held === undefined || candidate.held === args.held)
-            && (!args.search || candidate.title.toLowerCase().includes(args.search.toLowerCase())),
-        )
-        .sort(
-          (left, right) =>
-            left.priority - right.priority || left.createdAt - right.createdAt || left.id.localeCompare(right.id),
-        )
-        .map((candidate) => taskSummary(engine, candidate)),
-      args,
-      name,
-    );
-  },
-  "task.inspect": ({ engine, task }) => ({ outcome: "completed", task: taskSummary(engine, task!) }),
+export const TASK_QUERY_HANDLERS: { readonly [K in TaskScopedQueryName]: TaskQueryHandler<K> } = {
+  "task.inspect": ({ engine, task }) => ({ outcome: "completed", task: taskSummary(engine, task) }),
   "task.activity": ({ name, task, args }) => {
     const node = args.nodeId
-      ? task!.journey?.find((candidate) => candidate.id === args.nodeId)
-      : [...(task!.journey ?? [])].reverse().find((candidate) => candidate.kind === "agent");
+      ? task.journey?.find((candidate) => candidate.id === args.nodeId)
+      : [...(task.journey ?? [])].reverse().find((candidate) => candidate.kind === "agent");
     if (!node) {
       return { outcome: "unavailable", message: "No tool activity was recorded for this step." };
     }
@@ -185,60 +192,60 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
       evidence: node.toolActivity ? "recorded" : "unavailable",
     };
   },
-  "task.conversation": ({ task, args }) => readConversation(task!, args),
+  "task.conversation": ({ task, args }) => readConversation(task, args),
   "task.read": ({ name, task, args }) => {
     if (args.findingId && args.section !== "findings") {
       return { outcome: "invalid", message: "A finding ID selects the findings section only." };
     }
-    if (args.findingId && !task!.findings.some((finding) => finding.id === args.findingId)) {
+    if (args.findingId && !task.findings.some((finding) => finding.id === args.findingId)) {
       return { outcome: "missing", message: "That current finding does not exist." };
     }
-    const sections: Record<string, unknown> = {
-      request: { title: task!.title, description: task!.description },
-      conversation: task!.session,
-      timeline: taskTimeline(task!),
-      findings: args.findingId ? task!.findings.find((finding) => finding.id === args.findingId) : task!.findings,
+    const sections = {
+      request: { title: task.title, description: task.description },
+      conversation: task.session,
+      timeline: taskTimeline(task),
+      findings: args.findingId ? task.findings.find((finding) => finding.id === args.findingId) : task.findings,
       design:
-        task!.brief || task!.objections.length || task!.call
-          ? { brief: task!.brief ?? null, objections: task!.objections, call: task!.call ?? null }
+        task.brief || task.objections.length || task.call
+          ? { brief: task.brief ?? null, objections: task.objections, call: task.call ?? null }
           : undefined,
-      messages: task!.queued,
+      messages: task.queued,
       "check-setup": {
         authority: "Recorded observations only; this read never verifies local setup",
-        products: (task!.repositories ?? [task!]).map((work) => ({
+        products: (task.repositories ?? [task]).map((work) => ({
           productId: work.productId,
           attempt: work.checkSetup ?? null,
           invalidation: work.checkSetupInvalidated ?? null,
         })),
         history:
-          task!.journey?.flatMap((step) =>
+          task.journey?.flatMap((step) =>
             (step.checkSetups ?? []).map((attempt) => ({ nodeId: step.id, attempt })),
           ) ?? [],
       },
       source: {
-        source: task!.source,
-        choice: task!.workChoice,
-        proposed: task!.proposedSource,
-        selectedProducts: task!.selectedProducts,
-        rows: task!.workRows,
+        source: task.source,
+        choice: task.workChoice,
+        proposed: task.proposedSource,
+        selectedProducts: task.selectedProducts,
+        rows: task.workRows,
       },
-      error: task!.error,
-    };
-    return readText(sections[args.section ?? ""], args, [name, args.taskId, args.section, args.findingId]);
+      error: task.error,
+    } as const;
+    return readText(sections[args.section], args, [name, args.taskId, args.section, args.findingId]);
   },
   "plan.inspect": ({ name, task, args }) =>
-    readText(task!.plan, args, [name, args.taskId], { evidence: task!.plan ? "planned" : "unavailable" }),
+    readText(task.plan, args, [name, args.taskId], { evidence: task.plan ? "planned" : "unavailable" }),
   "journey.list": ({ name, state, task, args }) => {
-    const view = journeyView(task!, state);
+    const view = journeyView(task, state);
     return paginate(
       view.nodes.map((node) => ({
         id: node.id,
         name: node.name,
         kind: node.kind,
         state: node.state,
-        evidence: task!.journey?.find((step) => step.id === node.id)?.legacy
+        evidence: task.journey?.find((step) => step.id === node.id)?.legacy
           ? "reconstructed"
-          : task!.journey?.some((step) => step.id === node.id)
+          : task.journey?.some((step) => step.id === node.id)
             ? "recorded"
             : "planned",
       })),
@@ -247,8 +254,8 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
     );
   },
   "journey.node": ({ name, state, task, args }) => {
-    const view = journeyView(task!, state);
-    const node = task!.journey?.find((candidate) => candidate.id === args.nodeId);
+    const view = journeyView(task, state);
+    const node = task.journey?.find((candidate) => candidate.id === args.nodeId);
     const planned = view.nodes.find((candidate) => candidate.id === args.nodeId);
     if (!node && !planned) {
       return { outcome: "missing", message: "That journey node does not exist." };
@@ -260,35 +267,36 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
       trigger: node?.trigger ?? null,
       triggerEvidence: node?.trigger ? "recorded" : "unavailable",
       reviewInput: node?.reviewInput
-        ? { digest: node.reviewInput.digest, read: { taskId: task!.id, nodeId: node.id } }
+        ? { digest: node.reviewInput.digest, read: { taskId: task.id, nodeId: node.id } }
         : null,
     });
   },
   "journey.check": ({ engine, task, args }) =>
-    readCheckLog(engine.dataDir, task!, {
+    readCheckLog(engine.dataDir, task, {
       nodeId: args.nodeId,
       productId: args.productId,
       setupAttemptId: args.setupAttemptId,
-      index: args.index ?? 0,
-      section: args.section === "result" ? "result" : "diagnostics",
+      index: args.index,
+      section: args.section,
       cursor: args.cursor,
       limit: args.limit,
       ifRevision: args.ifRevision,
     }),
   "journey.review-input": ({ name, task, args }) => {
-    const node = task!.journey?.find((step) => step.id === args.nodeId);
+    const node = task.journey?.find((step) => step.id === args.nodeId);
     if (!node) {
       return { outcome: "missing", message: "That journey node does not exist." };
     }
     if (args.section === "history") {
+      const reviewInput = node.reviewInput;
       const saved =
         node.reviewHistory
-        ?? (node.reviewInput
-          && task!.journey?.find(
+        ?? (reviewInput
+          && task.journey?.find(
             (step) =>
               step.stageId === node.stageId
               && step.round === node.round
-              && step.reviewInput?.digest === node.reviewInput!.digest
+              && step.reviewInput?.digest === reviewInput.digest
               && step.reviewHistory,
           )?.reviewHistory);
       if (!saved) {
@@ -300,7 +308,7 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
           message: "The retained frozen review history changed. No newer evidence is substituted.",
         };
       }
-      return readText(saved.body, args, [name, task!.id, node.id, saved.digest, args.section], {
+      return readText(saved.body, args, [name, task.id, node.id, saved.digest, args.section], {
         evidence: "recorded",
         digest: saved.digest,
       });
@@ -314,7 +322,7 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
         readText(
           args.section === "findings" ? input.findings : args.section === "versions" ? ref.heads : input,
           args,
-          [name, task!.id, node.id, ref.digest, args.section],
+          [name, task.id, node.id, ref.digest, args.section],
           { evidence: "recorded", digest: ref.digest },
         ),
       (error) => ({
@@ -323,17 +331,16 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
       }),
     );
   },
-  "journey.input": ({ state, task, args }) =>
-    readExactInput(task!, state.roles, args as Parameters<typeof readExactInput>[2]),
+  "journey.input": ({ state, task, args }) => readExactInput(task, state.roles, args),
   "journey.result": ({ name, state, task, args }) => {
-    const node = task!.journey?.find((candidate) => candidate.id === args.nodeId);
+    const node = task.journey?.find((candidate) => candidate.id === args.nodeId);
     if (!node) {
       return { outcome: "missing", message: "That journey node does not exist." };
     }
     const results = (node.agentResults ?? []).map((result, index) => ({
       result,
       index,
-      seat: resultSeatOf(node, result, state.roles, task!),
+      seat: resultSeatOf(node, result, state.roles, task),
     }));
     const chosen =
       args.index !== undefined
@@ -359,19 +366,20 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
     });
   },
   "journey.finding": ({ name, state, task, args }) => {
-    const node = task!.journey?.find((candidate) => candidate.id === args.nodeId);
+    const node = task.journey?.find((candidate) => candidate.id === args.nodeId);
     if (!node) {
       return { outcome: "missing", message: "That journey node does not exist." };
     }
     const results = (node.agentResults ?? []).map((result, index) => ({
       result,
       index,
-      seat: resultSeatOf(node, result, state.roles, task!),
+      seat: resultSeatOf(node, result, state.roles, task),
     }));
-    const copy = args.result !== undefined ? results[args.result]?.result.findings : node.result?.findings;
-    if (args.result !== undefined && !results[args.result]) {
+    const selectedResult = args.result !== undefined ? results[args.result] : undefined;
+    if (args.result !== undefined && !selectedResult) {
       return { outcome: "missing", message: "That result does not exist on this node." };
     }
+    const copy = selectedResult ? selectedResult.result.findings : node.result?.findings;
     if (!copy) {
       return {
         outcome: "unavailable",
@@ -394,8 +402,8 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
     return readText(finding, args, [name, args.taskId, args.nodeId, args.result, args.findingId], {
       findingId: args.findingId,
       copy: {
-        ...(args.result !== undefined
-          ? { kind: "seat-result", result: args.result, seat: results[args.result]!.seat }
+        ...(selectedResult
+          ? { kind: "seat-result", result: selectedResult.index, seat: selectedResult.seat }
           : { kind: "node" }),
         basis: settled ? "settled" : "hand-back",
         label,
@@ -403,7 +411,35 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
       evidence: "recorded",
     });
   },
-  "task.health": ({ engine, task }) => taskHealthView(engine, task!),
+  "task.health": ({ engine, task }) => taskHealthView(engine, task),
+};
+
+export const GENERAL_QUERY_HANDLERS: { readonly [K in GeneralQueryName]: GeneralQueryHandler<K> } = {
+  "task.history": ({ engine, args }) => queryHistoryOrFinishedTasks(engine, args),
+  "task.list": ({ engine, name, state, args }) => {
+    if (args.states?.some((taskState) => taskState === "done" || taskState === "cancelled")) {
+      return queryHistoryOrFinishedTasks(engine, args);
+    }
+    return paginate(
+      state.tasks
+        .filter(
+          (candidate) =>
+            !finishedTask(candidate)
+            && (!args.productId || involvesProduct(candidate, args.productId))
+            && (!args.taskId || candidate.id === args.taskId)
+            && (!args.states || args.states.includes(candidate.state))
+            && (args.held === undefined || candidate.held === args.held)
+            && (!args.search || candidate.title.toLowerCase().includes(args.search.toLowerCase())),
+        )
+        .sort(
+          (left, right) =>
+            left.priority - right.priority || left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+        )
+        .map((candidate) => taskSummary(engine, candidate)),
+      args,
+      name,
+    );
+  },
   "inbox.list": ({ engine, name, args }) =>
     paginate(
       filteredInbox(engine, args).map(({ id, taskId, kind, title, blocking, at }) => ({
@@ -462,147 +498,73 @@ export const QUERY_HANDLERS: Readonly<Record<StandardQueryName, CoordinationQuer
   }),
 };
 
+const isPreCheckQuery = (name: QueryOperationName): name is PreCheckQueryName =>
+  Object.hasOwn(PRE_CHECK_QUERY_HANDLERS, name);
+const isTaskScopedQuery = (name: QueryOperationName): name is TaskScopedQueryName =>
+  Object.hasOwn(TASK_QUERY_HANDLERS, name);
+const isGeneralQuery = (name: QueryOperationName): name is GeneralQueryName =>
+  Object.hasOwn(GENERAL_QUERY_HANDLERS, name);
+
 export async function executeCoordinationQuery(
   engine: Engine,
-  name: string,
-  args: CoordinationArgs,
+  name: QueryOperationName,
+  args: OperationInput<QueryOperationName>,
 ): Promise<Result> {
-  const preCheck = (PRE_CHECK_QUERY_HANDLERS as Readonly<Record<string, PreCheckQueryHandler | undefined>>)[name];
-  if (preCheck) {
-    return preCheck(engine, args);
+  if (isPreCheckQuery(name)) {
+    const handler = PRE_CHECK_QUERY_HANDLERS[name] as (
+      engine: Engine,
+      args: OperationInput<PreCheckQueryName>,
+    ) => Result | Promise<Result>;
+    return handler(engine, args as OperationInput<PreCheckQueryName>);
   }
   const state = engine.activeState();
-  const needsTask = Boolean(args.taskId) && name !== "task.list" && name !== "task.history" && name !== "inbox.list";
-  const task = needsTask && args.taskId ? engine.taskDetails(args.taskId) : undefined;
-  if (needsTask && !task) {
-    return { outcome: "missing", message: "That task does not exist." };
-  }
-  if (
-    name === "inbox.list"
-    && args.taskId
-    && !state.tasks.some((candidate) => candidate.id === args.taskId)
-    && !engine.store.history.item(args.taskId)
-  ) {
-    return { outcome: "missing", message: "That task does not exist." };
-  }
-  const product = state.products.find((candidate) => candidate.id === args.productId);
-  if (args.productId && !product && name !== "journey.check") {
+  const payload = args as Record<string, unknown>;
+  const productId = typeof payload["productId"] === "string" ? payload["productId"] : undefined;
+  const product = productId ? state.products.find((candidate) => candidate.id === productId) : undefined;
+  if (productId && !product && name !== "journey.check") {
     return { outcome: "missing", message: "That product does not exist." };
   }
-  const handler = (QUERY_HANDLERS as Readonly<Record<string, CoordinationQueryHandler | undefined>>)[name];
-  if (!handler) {
-    return { outcome: "invalid", message: "This read is not available." };
-  }
-  return handler({ engine, name, state, task, product, args });
-}
 
-export async function watchCoordination(
-  engine: Engine,
-  lifecycle: LifecycleControl | undefined,
-  args: CoordinationArgs,
-  signal: AbortSignal | undefined,
-  engineStatus: () => Promise<Result> | Result,
-): Promise<Result> {
-  const deadline = Date.now() + (args.timeoutMs ?? 30_000);
-  let selected: ReturnType<typeof taskSummary>[] | undefined;
-  const snapshot = async (): Promise<Result> => {
-    if (args.target === "engine") {
-      return lifecycle?.status() ?? engineStatus();
+  if (isTaskScopedQuery(name)) {
+    const taskArgs = args as OperationInput<TaskScopedQueryName>;
+    const task = engine.taskDetails(taskArgs.taskId);
+    if (!task) {
+      return { outcome: "missing", message: "That task does not exist." };
     }
-    if (args.target === "pool") {
-      return { outcome: "completed", pool: engine.s.pool, ...drainStatus(engine) };
-    }
-    if (args.target === "inbox") {
-      return executeCoordinationQuery(engine, "inbox.list", args);
-    }
-    const ids: string[] = args.taskIds ?? (args.taskId ? [args.taskId] : []);
-    if (!ids.length) {
-      return { outcome: "invalid", message: "Choose taskId or taskIds for a focused task wait." };
-    }
-    const tasks = ids.flatMap((id) => {
-      const task = engine.taskDetails(id);
-      return task ? [task] : [];
+    const handler = TASK_QUERY_HANDLERS[name] as (
+      context: TaskQueryContext<TaskScopedQueryName>,
+    ) => Result | Promise<Result>;
+    return handler({
+      engine,
+      name,
+      state,
+      task,
+      args: taskArgs,
     });
-    if (tasks.length !== ids.length) {
-      return { outcome: "missing", message: "A selected task does not exist." };
-    }
-    selected = tasks.map((task) => taskSummary(engine, task));
-    return paginate(
-      args.condition === "decision" ? selected.filter((task) => task.inbox.length > 0) : selected,
-      args,
-      ["watch", ids],
-    );
-  };
-  // Subscribe before the first read. No change between setup and snapshot can be lost.
-  let wake: (() => void) | undefined;
-  let dirty = false;
-  const off = engine.subscribe(() => {
-    dirty = true;
-    wake?.();
-  });
-  try {
-    let baseline = args.marker;
-    for (;;) {
-      dirty = false;
-      const current = await snapshot();
-      if (current.outcome !== "completed") {
-        return current;
-      }
-      const marker = `${engine.boot}.${fingerprint([current, selected])}`;
-      if (baseline && !baseline.startsWith(`${engine.boot}.`)) {
-        return {
-          outcome: "continuity-lost",
-          marker,
-          result: current,
-          message: "The engine restarted. Inspect this focused result and begin a new watch.",
-        };
-      }
-      baseline ??= marker;
-      // Pagination bounds the reply, never the set whose condition the caller selected.
-      const items = selected ?? (current.items as ReturnType<typeof taskSummary>[] | undefined);
-      const matches =
-        args.condition === "change"
-          ? marker !== baseline
-          : args.condition === "drained"
-            ? current.drained === true
-            : args.condition === "decision"
-              ? args.target === "inbox"
-                ? Boolean(items?.length)
-                : Boolean(items?.some((task) => task.inbox.length > 0))
-              : args.condition === "state"
-                ? Boolean(items?.length && items.every((task) => args.states?.includes(task.state)))
-                : args.condition === "landed"
-                  ? Boolean(items?.length && items.every((task) => task.landing === "landed"))
-                  : Boolean(items?.length && items.every((task) => task.deliveryConfirmed));
-      if (matches) {
-        return { outcome: "completed", marker, result: current };
-      }
-      if (engine.stopped) {
-        return { outcome: "disconnected", marker, result: current };
-      }
-      if (signal?.aborted) {
-        return { outcome: "disconnected", marker, result: current, message: "The wait was cancelled." };
-      }
-      if (Date.now() >= deadline) {
-        return { outcome: "timed-out", marker, result: current, message: "The deadline ended this wait. Work continues." };
-      }
-      if (dirty) {
-        continue;
-      }
-      await new Promise<void>((resolve) => {
-        let timer: ReturnType<typeof setTimeout>;
-        const done = () => {
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", done);
-          wake = undefined;
-          resolve();
-        };
-        wake = done;
-        signal?.addEventListener("abort", done, { once: true });
-        timer = setTimeout(done, Math.min(1_000, Math.max(0, deadline - Date.now())));
-      });
-    }
-  } finally {
-    off();
   }
+
+  if (isGeneralQuery(name)) {
+    const generalArgs = args as OperationInput<GeneralQueryName>;
+    const taskId = typeof payload["taskId"] === "string" ? payload["taskId"] : undefined;
+    if (
+      name === "inbox.list"
+      && taskId
+      && !state.tasks.some((candidate) => candidate.id === taskId)
+      && !engine.store.history.item(taskId)
+    ) {
+      return { outcome: "missing", message: "That task does not exist." };
+    }
+    const handler = GENERAL_QUERY_HANDLERS[name] as (
+      context: GeneralQueryContext<GeneralQueryName>,
+    ) => Result | Promise<Result>;
+    return handler({
+      engine,
+      name,
+      state,
+      product,
+      args: generalArgs,
+    });
+  }
+
+  return { outcome: "invalid", message: "This read is not available." };
 }

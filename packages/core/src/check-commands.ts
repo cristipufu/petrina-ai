@@ -4,7 +4,6 @@ const OUTPUT_KEPT = 6000;
 
 /** Plain text for the window: no colour codes, only the end of long output. */
 export function tidyOutput(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping terminal colour codes
   const plain = text.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r\n?/g, "\n");
   return plain.length > OUTPUT_KEPT ? `…\n${plain.slice(-OUTPUT_KEPT)}` : plain;
 }

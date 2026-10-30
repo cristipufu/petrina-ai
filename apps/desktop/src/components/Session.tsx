@@ -219,7 +219,7 @@ function Log({ task, state, find, scroller, onTab, step, onStepDone, active = tr
     }
     el.scrollTop = el.scrollHeight;
     pinned.current = true;
-  }, [scroller, task.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scroller, task.id]);
 
   // Follow new lines only while at the bottom, but always bring what you just sent into view.
   const sent = useRef({ queued: task.queued.length, lines: task.session.length, unsent: unsent.length });

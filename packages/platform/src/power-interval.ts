@@ -2,7 +2,7 @@ export interface MachineInterruption { source: "macOS power log"; at: number; ev
 
 /** Match recorded sleep intervals, never a timeout, idle gap or a Builder explanation. */
 export function powerInterruption(startedAt: number | undefined, endedAt: number | undefined, records: string): MachineInterruption | undefined {
-  if (startedAt === undefined || endedAt === undefined || endedAt < startedAt) return;
+  if (startedAt === undefined || endedAt === undefined || endedAt < startedAt) return undefined;
   const events = records.split(/\r?\n/).flatMap((line) => {
     const match = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4})\s+(Sleep|Wake|DarkWake)\s+(.+)$/);
     if (!match) return [];
@@ -23,4 +23,5 @@ export function powerInterruption(startedAt: number | undefined, endedAt: number
     )
     };
   }
+  return undefined;
 }

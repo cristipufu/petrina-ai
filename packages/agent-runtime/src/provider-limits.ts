@@ -46,9 +46,11 @@ export function claudeLimit(data: Record<string, unknown>, message: string): Lim
       ...(data.errorKind === "billing_error" || data.errorKind === "account_on_hold" ? { independent: true } : {}),
     };
   }
+  return undefined;
 }
 export function codexLimit(data: Record<string, unknown>): LimitFailure | undefined {
   if (typeof data.codexErrorInfo === "string" && CODEX_OUT.has(data.codexErrorInfo)) return { kind: data.codexErrorInfo === "rateLimitExceeded" ? "rate" : "usage" };
+  return undefined;
 }
 /** null means a known busy service, which must not fall through to a quota category. */
 export function grokLimit(data: Record<string, unknown>, message: string): LimitFailure | null | undefined {
@@ -59,7 +61,9 @@ export function grokLimit(data: Record<string, unknown>, message: string): Limit
   };
   if (data.http_status === 503 || data.http_status === 529 || GROK_BUSY.some(line => message.includes(line))) return null;
   if (data.error === GROK_RATE || message.includes(GROK_RATE_MESSAGE)) return { kind: "rate" };
+  return undefined;
 }
 export function commonLimit(data: Record<string, unknown>): LimitFailure | undefined {
   if (typeof data.category === "string" && LIMIT_KIND.has(data.category) || typeof data.kind === "string" && LIMIT_KIND.has(data.kind)) return { kind: "usage" };
+  return undefined;
 }

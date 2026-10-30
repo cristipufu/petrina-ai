@@ -11,7 +11,13 @@ it("keeps added reviewers on their planned tool near its usage limit, just like 
   // Capability observations from the role contracts; selector policy remains in the real controller.
   const independent = new Set(["security-reviewer"]);
   f.host.awayFromBuilder = role => independent.has(role.id);
-  const recording = new UsageRecording({ pool: () => f.state.pool, record() {}, wake() {}, toolName: id => id });
+  const recording = new UsageRecording({
+    pool: () => f.state.pool,
+    record() {},
+    wake() {},
+    toolName: id => id,
+    reconcilesAllowanceWindows: id => id === "claude-code",
+  });
   const selection = f.selection, state = f.state;
   const recordUsage = (info: Parameters<UsageRecording["record"]>[0]) => recording.record(info, f.now());
       // A provider warning at low measured usage moves no role off its planned profile.

@@ -1,3 +1,4 @@
+import { findingKind } from "./findings.js";
 import type { DeepMutable } from "./flow.js";
 import type { Finding, Id, Task } from "./model.js";
 import { recordStepResult } from "./journey.js";
@@ -19,7 +20,7 @@ export function recordBuilderFindingAnswers(
       // Shared work stays open until every owner has answered, then combined review verifies it.
       if (answer.fixed && finding.raisedBy !== "petrina" && finding.productIds?.length === 1) finding.status = "fixed";
       // A failed check stays open whatever the builder says: only a passing run on the new code settles it.
-    } else if (answer.fixed && !(finding.raisedBy === "petrina" && finding.text.startsWith("Check failed"))) finding.status = "fixed";
+    } else if (answer.fixed && findingKind(finding) !== "product-check") finding.status = "fixed";
     if (answer.fixed) fixed += 1;
   }
   task.fixing = false;

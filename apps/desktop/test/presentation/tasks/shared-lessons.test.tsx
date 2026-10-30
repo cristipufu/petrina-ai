@@ -7,6 +7,7 @@ vi.mock("../../../src/notify/channels", () => {
     shell: { show: unexpected, test: unexpected, badge: unexpected, onClick: unexpected, onRelaunch: unexpected } };
 });
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false, invoke: () => { throw new Error("This presentation test did not request a native desktop operation."); } }));
+import { completeCheckExecution } from "@petrina/test-support/check-execution-facts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { Overview } from "../../../src/components/sheet/Overview";
@@ -20,4 +21,19 @@ it.each([false, true])("Overview shows Together only when shared lessons exist, 
   const html = renderToStaticMarkup(<Overview task={task} state={state} find={lookup(state)} onAboutNumbers={() => {}} onReadSession={() => {}} onPlan={() => {}} separateFlow />);
   expect(html.includes("<h3>Together</h3>")).toBe(lessons);
   if (lessons) expect(html).toContain("Keep shared behavior consistent");
+});
+
+it("Overview summarizes multi-product checks in plain language without raw commit hashes", () => {
+  const { state, task } = acceptanceFixture();
+  const run = { name: "Tests", command: "bun test", ms: 100, ok: false, output: "", execution: completeCheckExecution(1) };
+  task.repositories = [{
+    productId: task.productId,
+    delivery: "local",
+    completedStages: [],
+    checks: { at: state.now, current: true, sha: "deadbeef1234567", results: [run] },
+  }];
+  const html = renderToStaticMarkup(<Overview task={task} state={state} find={lookup(state)} onAboutNumbers={() => {}} onReadSession={() => {}} onPlan={() => {}} separateFlow />);
+  expect(html).toContain('<p class="note">Product checks: Failed</p>');
+  expect(html).not.toContain("deadbee");
+  expect(html).not.toContain("· version ");
 });

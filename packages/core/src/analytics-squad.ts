@@ -321,13 +321,13 @@ const STAGE_KIND_LABEL: Record<string, string> = {
   "release-manager": "Delivery",
 };
 
-function stageKindOf(moment: WorkMoment, n: Names): { key: string; label: string } {
+function stageKindOf(moment: WorkMoment, lookup: Names): { key: string; label: string } {
   if (moment.stageKind === "plan") return { key: "plan", label: "Planning" };
   if (moment.stageKind === "converge") return { key: "design", label: "Design" };
   if (moment.stageKind === "review-chain") return { key: "review", label: "Review" };
-  if (moment.roleId && n.roleResult(moment.roleId) === "build" && (moment.round ?? 1) > 1) return { key: "fixes", label: "Fixes after review" };
+  if (moment.roleId && lookup.roleResult(moment.roleId) === "build" && (moment.round ?? 1) > 1) return { key: "fixes", label: "Fixes after review" };
   const role = moment.roleId ?? "other";
-  return { key: role, label: STAGE_KIND_LABEL[role] ?? n.role(role) };
+  return { key: role, label: STAGE_KIND_LABEL[role] ?? lookup.role(role) };
 }
 
 const median = (values: readonly number[]): number => {
@@ -345,7 +345,7 @@ export function squadView(
   turns: readonly WorkTurn[],
   moments: readonly WorkMoment[],
   buckets: readonly { start: number; end: number; label: string }[],
-  n: Names,
+  lookup: Names,
   history: (taskId: Id) => readonly WorkTurn[],
 ): SquadUsage {
   const of = (kind: WorkMoment["kind"]) => moments.filter((moment) => moment.kind === kind);
@@ -365,7 +365,7 @@ export function squadView(
     stageEnds.filter((moment) => moment.outcome !== "cancelled" && moment.durationMs !== undefined),
     (moment) => stageKindOf(
     moment,
-    n
+    lookup
   ).key
   ).entries()].map(([key, list]) => {
     const total = list.reduce((sum, moment) => sum + (moment.durationMs ?? 0), 0);
@@ -374,7 +374,7 @@ export function squadView(
       key,
       label: stageKindOf(
       list[0]!,
-      n
+      lookup
     ).label,
       runs: list.length,
       typicalMs: median(list.map((moment) => moment.durationMs ?? 0)),
@@ -461,9 +461,9 @@ export function squadView(
     if (!first) who = undefined;
     else if (list.some((turn) => !confirmed(turn))) who = { label: "Settings not confirmed", credited: false, off: false, unconfirmed: true };
     else if (list.every(ranAsAsked)) {
-      const profile = n.profile(first.profileId);
+      const profile = lookup.profile(first.profileId);
       who = {
-        label: profile ? `${n.tool(profile.toolId)} · ${profile.model} · ${profile.effort}` : first.profileId,
+        label: profile ? `${lookup.tool(profile.toolId)} · ${profile.model} · ${profile.effort}` : first.profileId,
         credited: true,
         off: false,
         unconfirmed: false
@@ -472,7 +472,7 @@ export function squadView(
       const off = list.find((turn) => !ranAsAsked(turn))!;
       const model = off.modelChangedTo ? modelLabel(off.modelChangedTo) : sessionModelLabel(off) || ranName(off);
       who = {
-        label: `${n.tool(first.toolId)} · ${model} · ${finalEffort(off) ?? "effort not confirmed"} (ran instead)`,
+        label: `${lookup.tool(first.toolId)} · ${model} · ${finalEffort(off) ?? "effort not confirmed"} (ran instead)`,
         credited: false,
         off: true,
         unconfirmed: false
@@ -501,7 +501,7 @@ export function squadView(
     return entry;
   };
   const bucketOfRole = (roleId: Id) => {
-    const result = n.roleResult(roleId);
+    const result = lookup.roleResult(roleId);
     return result === "findings" ? "reviewer" : result === "brief" ? "architect" : result === "objections" ? "design-reviewer" : undefined;
   };
   for (const [key, list] of agentStages) {

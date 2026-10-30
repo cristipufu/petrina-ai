@@ -7,5 +7,6 @@ export const { browserTarget, kindOf, fileOf, describeTool, isPlumbing, commandO
     const metadata = adapter.toolMetadata?.(meta);
     if (metadata) return metadata;
   }
+  return undefined;
 });
 export type { ToolActivity } from "./tool-activity.js";

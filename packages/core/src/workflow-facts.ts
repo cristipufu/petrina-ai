@@ -2,12 +2,13 @@
 // Routine tool actions, streamed text, progress wording and clocks stay out, so an unchanged save produces nothing.
 
 import { exhaustedAcceptanceFailure } from "./acceptance.js";
+import { findingKind } from "./findings.js";
 import { checkSetupOutcome } from "./check-environment.js";
 import { checkCounts, checkEntryResult } from "./check-evidence.js";
 import { checkOutcome } from "./check-outcome.js";
 import { historyItem, historyStatus } from "./history.js";
 import { landingOf, stepName, type Landing } from "./journey-words.js";
-import type { Id, JourneyAgentInput, JourneyStep, Role, Task, TaskState } from "./model.js";
+import type { Finding, Id, JourneyAgentInput, JourneyStep, Role, Task, TaskState } from "./model.js";
 import { publishingResult } from "./publishing-result.js";
 import { assignedProducts, displayTask, landingState, taskProductIds } from "./repositories.js";
 import { roleForTask } from "./roles.js";
@@ -360,7 +361,8 @@ export function reviewRoundSteps(task: Pick<Task, "journey" | "maintenance">, no
 }
 
 /** A Builder's claim about an acceptance failure is tested by the next acceptance run, never by a review after it. */
-const testedByAcceptance = (finding: { text: string }, at: number, tested: number) => finding.text.startsWith("Failed acceptance check:") && at <= tested;
+const testedByAcceptance = (finding: Pick<Finding, "text"> & { kind?: Finding["kind"]; raisedBy?: string }, at: number, tested: number) =>
+  findingKind(finding) === "acceptance-failed" && at <= tested;
 
 /**
  * Claims not yet examined by an earlier completed review, using the same completion rule as its event. A claim about an

@@ -33,9 +33,11 @@ export async function inputs(root: string): Promise<Map<string, string>> {
       const body = readFileSync(join(root, file));
       const keepText =
         isSource(file)
+        || file.endsWith(".css")
         || file.endsWith("package.json")
         || file === TEST_LAYER_INVENTORY
-        || (file.startsWith("docs/") && file.endsWith(".md"));
+        || (file.startsWith("docs/") && file.endsWith(".md"))
+        || (!file.includes("/") && file.endsWith(".md"));
       result.set(file, keepText ? body.toString("utf8") : createHash("sha256").update(body).digest("hex"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

@@ -1,6 +1,6 @@
 # Historical test-migration checkpoint
 
-Historical implementation evidence, retained before the final cost audit on 25 October 2026. This is not current development guidance. The active plan is [test foundation](../plans/test-foundation.md). File/owner audit completion did not establish that native subprocess cost was resolved.
+Historical implementation evidence, retained before the final cost audit on 25 October 2026. This is not current development guidance. See the archived [test foundation plan](test-foundation.md) and current [test layers](../testing/layers.md). File/owner audit completion did not establish that native subprocess cost was resolved.
 
 ## Resume checkpoint
 

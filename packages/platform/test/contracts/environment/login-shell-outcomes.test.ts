@@ -16,6 +16,7 @@ function fixture({ missingExit = false, brokenOutput = false, cancellation }: { 
   }, cancel() {
     if (cancellation === "rejected") throw new Error("underlying output cancellation failed");
     if (cancellation === "pending") return new Promise<void>(() => {});
+    return undefined;
   } });
   const child: LoginShellProcess = { stdout: stream, exited: completion.promise, exitCode: undefined, signalCode: undefined,
     kill(signal) { signals.push(signal); if (!missingExit) completion.resolve(0); },

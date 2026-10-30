@@ -21,7 +21,7 @@ import { SCREEN_HOUR_MS, SCREEN_WORDS } from "./screen.js";
 import { SETUP_STEPS, type SetupStep } from "./setup.js";
 import {
   simAddLessons, simAddTask, simApproveItem, simCancelTask, simFinalizeCombineBacklog, simMoveInQueue,
-  simPauseTask, simRemoveProduct, simRerunChecks, simRequestChanges, simSendMessage, simSetProductChecks,
+  simPauseTask, simRemoveProduct, simRerunChecks, simRequestChanges, simRetryItem, simSendMessage, simSetProductChecks,
   simSetProductCheckSetup, simSetTaskProducts, simSetTaskStartSingle,
 } from "./sim-actions.js";
 import { simAgePullRequest } from "./sim-delivery.js";
@@ -192,6 +192,16 @@ export class Simulator {
   /** Approve a gate (plan, design, delivery) or settle a disagreement with the architect's position. */
   approve(itemId: Id): void {
     this.resolve(itemId, (d, task, item) => simApproveItem(this.rt, d, task, item), "approved");
+  }
+
+  /** Retry a stuck failed task without touching non-stuck inbox gates. */
+  retry(itemId: Id): void {
+    this.update((d) => {
+      const item = d.inbox.find((entry) => entry.id === itemId);
+      const task = item && d.tasks.find((entry) => entry.id === item.taskId);
+      if (!item || !task || item.kind !== "stuck") return;
+      simRetryItem(this.rt, d, task, item);
+    });
   }
 
   rerunChecks(itemId: Id): void {

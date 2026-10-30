@@ -68,7 +68,6 @@ const NOT_IN_DEMO = "Take over works with real agents, not in the demo";
 
 /** Commands the demo answers its own way: the simulator has no engine, terminal or GitHub behind it. */
 const DEMO_OWN = {
-  retry: (simulator: Simulator) => (itemId: Id) => simulator.approve(itemId),
   checkShipping: () => () => undefined,
   shipAgain: () => () => undefined,
   markDone: () => () => undefined,

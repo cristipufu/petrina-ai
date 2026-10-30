@@ -337,12 +337,22 @@ export interface DesignCall {
   at: number;
 }
 
+export type FindingKind =
+  | "review"
+  | "product-check"
+  | "acceptance-failed"
+  | "acceptance-unverified"
+  | "tamper"
+  | "delivery";
+
 /**
  * What a review found. `blocking` is shown as Important (must be fixed before it ships), `suggestion`
  * as Nit, and `pre-existing` is a confirmed older bug unrelated to the approved task: a follow-up,
  * never blocking. An older defect can still be Important when the task requires its repair.
  */
 export interface Finding {
+  /** Origin of this finding; older saved records omit it and fall back to `findingKind()`. */
+  kind?: FindingKind;
   /** Reproduced failure of one explicit proof request; text is not its identity. */
   proofRequestId?: Id;
   id: Id;

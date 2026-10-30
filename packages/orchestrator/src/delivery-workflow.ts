@@ -161,6 +161,7 @@ export class DeliveryWorkflow {
       return "stop";
     }
     task.findings.push({
+      kind: "delivery",
       id: this.host.findingId(task),
       text: `Getting the delivery ready failed, so nothing was published: ${reason}`,
       severity: "blocking",

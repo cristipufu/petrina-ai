@@ -1,18 +1,16 @@
-import type {
-  CoordinationResult as Result,
-  WorkflowEventKind,
-} from "@petrina/core";
+import type { CoordinationResult as Result } from "@petrina/core";
 import { fingerprint } from "@petrina/storage/receipt-identity";
 import { executeCoordinationMutation } from "./coordination-mutations.js";
-import { executeCoordinationQuery, watchCoordination } from "./coordination-queries.js";
-import {
-  drainStatus,
-  type CoordinationArgs,
-  type LifecycleControl,
-} from "./coordination-views.js";
+import { executeCoordinationQuery } from "./coordination-queries.js";
+import { drainStatus, type LifecycleControl } from "./coordination-views.js";
+import { watchCoordination } from "./coordination-watch.js";
 import type { Engine } from "./engine.js";
-import type { ExtraRequest } from "./extra-validations.js";
-import { operation } from "./operations.js";
+import {
+  operation,
+  type MutationOperationName,
+  type OperationInput,
+  type QueryOperationName,
+} from "./operations.js";
 
 export type { CoordinationOutcome as Outcome, CoordinationResult as Result } from "@petrina/core";
 export { drainStatus, requestRevision, taskSummary, type LifecycleControl } from "./coordination-views.js";
@@ -49,11 +47,17 @@ export class Coordination {
         message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
       };
     }
-    const args = parsed.data as CoordinationArgs;
-    if (name === "watch.wait") {
-      return watchCoordination(this.engine, this.lifecycle, args, signal, () => this.call("engine.status", {}));
+    if (spec.name === "watch.wait") {
+      return watchCoordination(
+        this.engine,
+        this.lifecycle,
+        parsed.data as OperationInput<"watch.wait">,
+        signal,
+        () => this.call("engine.status", {}),
+      );
     }
-    if (name === "watch.events") {
+    if (spec.name === "watch.events") {
+      const args = parsed.data as OperationInput<"watch.events">;
       if (args.taskIds && args.productId) {
         return { outcome: "invalid", message: "Choose selected tasks or a product, not both." };
       }
@@ -70,20 +74,22 @@ export class Coordination {
         {
           taskIds: args.taskIds,
           productId: args.productId,
-          kinds: args.kinds as WorkflowEventKind[] | undefined,
+          kinds: args.kinds,
           cursor: args.cursor,
-          from: args.from ?? "now",
-          limit: args.limit ?? 25,
-          timeoutMs: args.timeoutMs ?? 30_000,
+          from: args.from,
+          limit: args.limit,
+          timeoutMs: args.timeoutMs,
         },
         signal,
       );
     }
-    if (name.startsWith("engine.")) {
+    if (spec.name.startsWith("engine.")) {
       if (this.lifecycle) {
-        return name === "engine.status" ? this.lifecycle.status() : this.lifecycle.request(name.slice(7), args);
+        return spec.name === "engine.status"
+          ? this.lifecycle.status()
+          : this.lifecycle.request(spec.name.slice(7), parsed.data as Record<string, unknown>);
       }
-      if (name === "engine.status") {
+      if (spec.name === "engine.status") {
         return {
           outcome: "completed",
           status: this.engine.draining ? "draining" : this.engine.s.pool.paused ? "paused" : "running",
@@ -93,21 +99,35 @@ export class Coordination {
         };
       }
     }
+
     const applied: Result = await serial<Result>(this.engine, async () => {
       if (!spec.changes) {
-        return executeCoordinationQuery(this.engine, name, args);
+        return executeCoordinationQuery(
+          this.engine,
+          spec.name as QueryOperationName,
+          parsed.data as OperationInput<QueryOperationName>,
+        );
       }
-      const requestId = args.requestId!;
+      const mutationName = spec.name as MutationOperationName;
+      const mutationArgs = parsed.data as OperationInput<MutationOperationName>;
+      const { requestId } = mutationArgs;
       if (this.lifecycle?.receipt?.(requestId)) {
         return { outcome: "conflict", requestId, message: "That reference belongs to a lifecycle request." };
       }
       const store = this.engine.store;
-      const { wait: _wait, timeoutMs: _timeout, ...details } = args;
-      const hash = fingerprint([name, name === "validation.run" ? details : args]);
+      const hashInput =
+        mutationName === "validation.run"
+          ? (() => {
+              const { wait: _wait, timeoutMs: _timeout, ...details } =
+                mutationArgs as OperationInput<"validation.run">;
+              return details;
+            })()
+          : mutationArgs;
+      const hash = fingerprint([mutationName, hashInput]);
       const old = store.readReceipt(requestId);
       if (old) {
         return old.fingerprint === hash
-          ? name === "validation.run"
+          ? mutationName === "validation.run"
             ? (this.engine.extraValidations.get(requestId) ?? (JSON.parse(old.result) as Result))
             : (JSON.parse(old.result) as Result)
           : { outcome: "conflict", requestId, message: "That request reference was used with different arguments." };
@@ -115,13 +135,15 @@ export class Coordination {
       // Sync decisions and their receipts commit with the state in one database transaction. Async
       // validations are serialized too; the existing commands keep their own saved request identities.
       let result: Result;
+      const itemId =
+        "itemId" in mutationArgs && typeof mutationArgs.itemId === "string" ? mutationArgs.itemId : undefined;
       const save = (savedResult: Result) => {
         if (
-          args.itemId
+          itemId
           && ["completed", "pending"].includes(savedResult.outcome)
-          && !this.engine.s.inbox.some((item) => item.id === args.itemId)
+          && !this.engine.s.inbox.some((item) => item.id === itemId)
         ) {
-          store.noteHandled([args.itemId]);
+          store.noteHandled([itemId]);
         }
         this.engine.save();
         store.saveReceipt(requestId, hash, JSON.stringify(savedResult));
@@ -131,20 +153,27 @@ export class Coordination {
         requestId,
         message: error instanceof Error ? error.message : "The operation could not be applied.",
       });
-      if (name === "validation.run") {
+      if (mutationName === "validation.run") {
+        const validationArgs = mutationArgs as OperationInput<"validation.run">;
         try {
-          result = await this.engine.extraValidations.submit(args as unknown as ExtraRequest, save);
+          result = await this.engine.extraValidations.submit(validationArgs, save);
         } catch (error) {
           result = errorResult(error);
           store.inTransaction(() => save(result));
         }
-      } else if (name === "task.track-finding") {
+      } else if (mutationName === "task.track-finding") {
+        const trackArgs = mutationArgs as OperationInput<"task.track-finding">;
         try {
-          result = await this.engine.trackFinding(args.taskId!, args.findingId!, args.targetTaskId!, (link) => {
-            const savedResult: Result = { outcome: "completed", ...link, requestId };
-            save(savedResult);
-            return savedResult;
-          });
+          result = await this.engine.trackFinding(
+            trackArgs.taskId,
+            trackArgs.findingId,
+            trackArgs.targetTaskId,
+            (link) => {
+              const savedResult: Result = { outcome: "completed", ...link, requestId };
+              save(savedResult);
+              return savedResult;
+            },
+          );
         } catch (error) {
           result = errorResult(error);
           store.inTransaction(() => save(result));
@@ -158,7 +187,7 @@ export class Coordination {
             "Submitted. Inspect the task before making a new request if the engine stops before its outcome is recorded.",
         });
         try {
-          result = { ...(await executeCoordinationMutation(this.engine, spec.name, args)), requestId };
+          result = { ...(await executeCoordinationMutation(this.engine, mutationName, mutationArgs)), requestId };
         } catch (error) {
           result = errorResult(error);
         }
@@ -167,7 +196,10 @@ export class Coordination {
         result = store.inTransaction(() => {
           let savedResult: Result;
           try {
-            savedResult = { ...(executeCoordinationMutation(this.engine, spec.name, args) as Result), requestId };
+            savedResult = {
+              ...(executeCoordinationMutation(this.engine, mutationName, mutationArgs) as Result),
+              requestId,
+            };
           } catch (error) {
             savedResult = errorResult(error);
           }
@@ -181,10 +213,15 @@ export class Coordination {
       }
       return clone(result);
     });
-    if (name !== "validation.run" || !args.wait || applied.outcome !== "pending" || args.timeoutMs === 0) {
+
+    if (spec.name !== "validation.run") {
       return applied;
     }
-    const requestId = args.requestId!;
+    const validationArgs = parsed.data as OperationInput<"validation.run">;
+    if (!validationArgs.wait || applied.outcome !== "pending" || validationArgs.timeoutMs === 0) {
+      return applied;
+    }
+    const { requestId } = validationArgs;
     // Waiting is outside the decision queue and belongs only to this caller.
     return new Promise<Result>((resolve) => {
       let unsubscribe = () => {};
@@ -207,7 +244,7 @@ export class Coordination {
           outcome: "pending",
           message: "Still pending. Retry the same request reference; caller cancellation does not stop the run.",
         });
-      const timer = setTimeout(abort, args.timeoutMs ?? 30_000);
+      const timer = setTimeout(abort, validationArgs.timeoutMs);
       unsubscribe = this.engine.subscribe(check);
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) {

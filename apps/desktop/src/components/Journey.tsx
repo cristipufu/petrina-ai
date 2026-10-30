@@ -63,7 +63,7 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
     () => journeyView(task, { roles: state.roles, profiles, tasks: state.tasks, inbox: state.inbox, ...(state.planner ? { planner: state.planner } : {}) }),
     // A WebSocket update replaces every task object, including the long conversation history. Only
     // rebuild the diagram when one of the small set of fields that affects it actually changes.
-    [viewKey], // eslint-disable-line react-hooks/exhaustive-deps
+    [viewKey],
   );
   const [localSelection, setSelected] = useState<string>();
   const [localAttempt, setAttempt] = useState<string>();
@@ -156,7 +156,7 @@ function JourneyBody({ task, state, find, onPlan, onOpenTask, workspace = false,
       return measured;
     } : undefined;
     return layoutJourney(view, space.width || 760, space.rem, start, measure);
-  }, [shape, space.width, space.rem, fontEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shape, space.width, space.rem, fontEpoch]);
   const target = targetOf(view);
   useEffect(() => { if (selected && selected !== target) setFollowing(false); }, [selected, target]);
   // The live step handing off while someone reads it (its details open, or the keyboard on it): the diagram stays with it.

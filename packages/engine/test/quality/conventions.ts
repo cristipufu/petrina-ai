@@ -24,6 +24,18 @@ const countLines = (source: string): number =>
 export function conventions(files: ReadonlyMap<string, string>): string[] {
   const errors: string[] = [];
   for (const [file, source] of files) {
+    if (file.endsWith(".css")) {
+      const workspace = workspaceOf(file);
+      if (workspace && file.startsWith(`${workspace}/src/`)) {
+        const lines = countLines(source);
+        if (lines > MAX_PRODUCTION_LINES) {
+          errors.push(
+            `${file}: ${lines} lines exceeds the ${MAX_PRODUCTION_LINES}-line production stylesheet ceiling; split cohesive surfaces into focused stylesheets`,
+          );
+        }
+      }
+      continue;
+    }
     if (!isSource(file)) continue;
     const workspace = workspaceOf(file);
     const production = !!workspace && file.startsWith(`${workspace}/src/`) && !isTest(file);
@@ -141,23 +153,21 @@ export function conventions(files: ReadonlyMap<string, string>): string[] {
       );
     }
 
-    if (native) {
-      for (const { line, name } of facts.unfinished) {
+    for (const { line, name } of facts.unfinished) {
+      errors.push(
+        `${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`,
+      );
+    }
+    for (const line of facts.asyncCallbacks) {
+      errors.push(
+        `${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`,
+      );
+    }
+    if (facts.concurrentTests.length) {
+      for (const line of facts.environmentMutations) {
         errors.push(
-          `${file}:${line}: await ${name}(…), return it or collect it before going on; its result and its failure are otherwise lost`,
+          `${file}:${line}: concurrent tests cannot change process.env in their worker; pass an environment to the boundary or use an owned child process`,
         );
-      }
-      for (const line of facts.asyncCallbacks) {
-        errors.push(
-          `${file}:${line}: keep this callback synchronous, it is called without waiting; read what it needs before, or hold the workflow while reading it`,
-        );
-      }
-      if (facts.concurrentTests.length) {
-        for (const line of facts.environmentMutations) {
-          errors.push(
-            `${file}:${line}: concurrent tests cannot change process.env in their worker; pass an environment to the boundary or use an owned child process`,
-          );
-        }
       }
     }
 

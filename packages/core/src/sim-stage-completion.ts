@@ -1,6 +1,6 @@
 import { answerByCall, CALL_WORDS, dueAnswers } from "./call.js";
 import { builderReturnWords } from "./check-evidence.js";
-import { findingCount } from "./findings.js";
+import { findingCount, findingKind } from "./findings.js";
 import {
   coveredByDecision,
   designRoundEnd,
@@ -164,7 +164,7 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
             : "Kept as is: the current message matches the rest of the product.",
           at: d.now,
         };
-        if (fixed && !(finding.raisedBy === "petrina" && finding.text.startsWith("Check failed"))) {
+        if (fixed && findingKind(finding) !== "product-check") {
           finding.status = "fixed";
         }
         if (fixed) count += 1;
@@ -326,6 +326,7 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
     if (added) {
       if (round === 1) {
         task.findings.push({
+          kind: "review",
           id: simId(d, task.id),
           text: `Check ${task.area} with real data before the next release.`,
           severity: "suggestion",
@@ -338,6 +339,7 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
       simLog(d, task, "done", "Nothing blocking", agent.roleId, agent.profileId);
     } else if (round === 1 && task.sub === 0) {
       task.findings.push({
+        kind: "review",
         id: simId(d, task.id),
         text: `${capitalize(task.area)} fails when the email address contains a plus sign, and no test covers it.`,
         where: `${capitalize(task.area)} form`,
@@ -358,6 +360,7 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
     } else if (round === 1) {
       for (const finding of task.findings) if (finding.status === "open") finding.confirmedBy.push(agent.profileId);
       task.findings.push({
+        kind: "review",
         id: simId(d, task.id),
         text: "Show a clearer message when the email is not valid.",
         severity: "suggestion",
@@ -366,6 +369,7 @@ export function simFinishStage(rt: SimRuntime, d: Draft, task: DraftTask, hooks:
         status: "open",
       });
       task.findings.push({
+        kind: "review",
         id: simId(d, task.id),
         text: "The sign-in page has no limit on attempts. It was like this before the change.",
         severity: "pre-existing",

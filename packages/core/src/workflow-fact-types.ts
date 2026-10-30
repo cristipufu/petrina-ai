@@ -294,7 +294,7 @@ export function previousParticipant(
     || prior.reason !== JOURNEY_WORDS.agentChanged
     || prior.endedAt === undefined
   ) {
-    return;
+    return undefined;
   }
   if (
     prior.roleId !== node.roleId
@@ -306,10 +306,11 @@ export function previousParticipant(
     || !!prior.port !== !!node.port
     || !!prior.call !== !!node.call
   ) {
-    return;
+    return undefined;
   }
   const previous = prior.inputs.findLast((entry) => entry.seat === input.seat);
   if (previous && previous.productId === input.productId) return { nodeId: prior.id, input: previous };
+  return undefined;
 }
 
 export interface WorkflowFacts {

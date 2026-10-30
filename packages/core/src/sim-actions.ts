@@ -1,6 +1,7 @@
 // Coordinator action handlers (inbox decisions, product settings, task lifecycle, messages) for Simulator.
 
 import { CALL_WORDS } from "./call.js";
+import { findingKind } from "./findings.js";
 import { afterChangesAsked, type DeepMutable } from "./flow.js";
 import { AFTER_WORDS, endYouStep, JOURNEY_WORDS, syncWait, withdrawAsks } from "./journey.js";
 import type { CheckPrerequisite, Id, InboxItem, Task } from "./model.js";
@@ -8,7 +9,7 @@ import { configureProductChecks, configureProductCheckSetup } from "./products.j
 import { involvesProduct, taskProductIds, withoutProduct } from "./repositories.js";
 import { queueOf } from "./scheduler.js";
 import { SCREEN_WORDS } from "./screen.js";
-import { simContinueAfterGate } from "./sim-delivery.js";
+import { simContinueAfterGate, simPetrinaDelivers, simShip } from "./sim-delivery.js";
 import { simAdvance, simDeliver, simSchedule } from "./sim-engine.js";
 import {
   simColumnFor, simEndStage, simEndTurn, simId, simLog, simMoment, simReleaseScreen, simRemoveCopy,
@@ -102,12 +103,41 @@ export function simApproveItem(rt: SimRuntime, d: Draft, task: DraftTask, item: 
   }
 }
 
+export function simRetryItem(rt: SimRuntime, d: Draft, task: DraftTask, item: DeepMutable<InboxItem>): void {
+  if (item.kind !== "stuck") return;
+  d.inbox = d.inbox.filter((entry) => entry.id !== item.id);
+  if (task.state === "failed" && task.maintenance) delete task.maintenance.readOnlyWrites;
+  delete task.error;
+  for (const work of task.repositories ?? [task]) {
+    work.checkSetupInvalidated = { id: simId(d, task.id), kind: "explicit-rerun", at: d.now };
+    if (work.checks) {
+      work.checks.current = false;
+      delete work.checks.sha;
+      delete work.checks.tree;
+    }
+  }
+  simMoment(rt, d, task, { kind: "retry" });
+  delete task.agent;
+  delete task.helpers;
+  task.holdsSlot = false;
+  simLog(d, task, "you", "You asked to try again");
+  endYouStep(task, { outcome: JOURNEY_WORDS.triedAgain, reason: JOURNEY_WORDS.tryAgain }, d.now);
+  if (simPetrinaDelivers(d, task)) {
+    simShip(rt, d, task);
+    return;
+  }
+  task.state = "waiting";
+  task.statusLine = "Waiting for a free slot";
+  task.column = simColumnFor(d, task);
+  simSchedule(rt, d);
+}
+
 export function simRerunChecks(d: Draft, task: DraftTask, item: DeepMutable<InboxItem>): void {
   if (item.kind !== "delivery") return;
   endYouStep(task, { outcome: "Run checks again", reason: JOURNEY_WORDS.checkAgain }, d.now);
   simLog(d, task, "you", "You asked to run checks again; delivery is not approved");
   simRunChecks(d, task);
-  for (const finding of task.findings) if (finding.raisedBy === "petrina" && finding.text.startsWith("Check failed")) finding.status = "fixed";
+  for (const finding of task.findings) if (findingKind(finding) === "product-check") finding.status = "fixed";
   delete task.checkReturns;
   simUnblock(d, task);
 }

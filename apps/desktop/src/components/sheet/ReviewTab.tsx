@@ -10,6 +10,7 @@ import {
   checkProblemWords,
   checkResult,
   findingCount,
+  findingKind,
   independentVotes,
   trackingWords,
   VERDICT_WORDS,
@@ -30,9 +31,10 @@ function voteAttribution(vote: Vote, find: Lookup): string {
 }
 
 function answerAttribution(finding: Finding, fixed: boolean): string | undefined {
-  if (finding.raisedBy !== "petrina" || !finding.text.startsWith("Check failed")) return;
+  if (findingKind(finding) !== "product-check") return undefined;
   if (!fixed) return "Builder’s explanation — not independently confirmed.";
   if (finding.status !== "fixed") return "Builder’s fix claim — awaiting automated verification.";
+  return undefined;
 }
 
 /** A link to the task a follow-up came from, or to the Backlog card that now tracks it. */
@@ -58,7 +60,7 @@ export function FindingItem({ finding, find, onOpen }: { finding: Finding; find:
       <div className="issue-status">
         <span className={`label ${finding.status === "fixed" ? "ok" : finding.status === "open" && !followUp ? (finding.severity === "blocking" ? "bad" : "warn") : ""}`}>{status}</span>
         <span aria-hidden="true">·</span>
-        <span>{finding.status === "unverified" ? finding.text.startsWith("Could not verify acceptance check:") ? "Acceptance check" : "Unverified check" : FINDING_TAG[finding.severity]}</span>
+        <span>{finding.status === "unverified" ? findingKind(finding) === "acceptance-unverified" ? "Acceptance check" : "Unverified check" : FINDING_TAG[finding.severity]}</span>
       </div>
       <p className="issue-text">{finding.text}</p>
       {finding.evidence && <p className="issue-evidence">{finding.evidence}</p>}
@@ -189,8 +191,8 @@ export function ReviewView({ task, now, find, onOpen }: { task: Task; now: numbe
     history={setupHistory.filter(attempt => attempt.productId === task.productId)}
   /><div className="empty-state">{emptyReview}</div></>;
 
-  // Petrina's own findings that aren't failing checks come from the tamper check.
-  const tampered = task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && !finding.text.startsWith("Check failed"));
+  // Petrina's own findings that aren't failing checks or delivery preparation errors come from the tamper check.
+  const tampered = task.findings.some((finding) => finding.status === "open" && findingKind(finding) === "tamper");
 
   return (
     <>

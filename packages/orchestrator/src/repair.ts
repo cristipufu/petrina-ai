@@ -1,4 +1,4 @@
-import { exhaustedAcceptanceFailure, repairOrder, repositoryPublished, type Task } from "@petrina/core";
+import { exhaustedAcceptanceFailure, findingKind, repairOrder, repositoryPublished, type Task } from "@petrina/core";
 import { executionFor } from "./repository-context.js";
 import type { RuntimeTask } from "./model.js";
 import type { RepairHost } from "./ports/repair.js";
@@ -21,10 +21,13 @@ export function beginRepair(k: RepairHost, task: RuntimeTask, kind: "checks" | "
   // Acceptance failures whose returns are used up wait for the coordinator: they send no product back.
   const affected = repairOrder(
     task as Task,
-    open.filter((finding) => kind === "checks" ? finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") : kind === "acceptance" ? finding.text.startsWith("Failed acceptance check:") : !exhaustedAcceptanceFailure(
-    task as Task,
-    finding
-  ))
+    open.filter((finding) =>
+      kind === "checks"
+        ? findingKind(finding) === "product-check"
+        : kind === "acceptance"
+          ? findingKind(finding) === "acceptance-failed"
+          : !exhaustedAcceptanceFailure(task as Task, finding),
+    ),
   );
   const field = kind === "checks" ? "checkReturns" : kind === "acceptance" ? "acceptanceReturns" : undefined;
   // An unavailable owner keeps its findings for the coordinator, without consuming another owner's tries.

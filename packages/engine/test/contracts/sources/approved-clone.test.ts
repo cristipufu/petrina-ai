@@ -180,6 +180,7 @@ for (const recovery of ["new", "retry", "restart", "foreign-origin", "missing-ap
       };
       if (recovery === "restart") { engine.save(); await engine.shutdown(); return complete; }
       await complete(engine);
+      return undefined;
     }, engineOptions());
     if (next) await ownedEngine(next, engineOptions());
     });

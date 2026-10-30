@@ -1,4 +1,4 @@
-import { checkOutcome, checkOwnershipConfirmed, lastIndexWhere, repositoryPublished, type CheckRun, type Id } from "@petrina/core";
+import { checkOutcome, checkOwnershipConfirmed, findingKind, lastIndexWhere, repositoryPublished, type CheckRun, type Id } from "@petrina/core";
 import { beginRepair } from "./repair.js";
 import { scopesFor, type RepositoryContext } from "./repository-context.js";
 import type { CheckRepairHost } from "./ports/check-repairs.js";
@@ -11,7 +11,7 @@ export class CheckRepairs {
     const failed = results.filter((run) => checkOutcome(run).kind === "failed");
     // An earlier failure settles on this run, whatever anyone answered about it.
     for (const finding of task.findings) {
-      if (finding.raisedBy === "petrina" && (finding.status === "open" || finding.status === "unverified") && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(repository.productId))) {
+      if ((finding.status === "open" || finding.status === "unverified") && findingKind(finding) === "product-check" && (!task.repositories || finding.productIds?.includes(repository.productId))) {
         const matching = results.find((run) => finding.text === `Check failed: ${run.name} (${run.command})`);
         if (!declared.has(finding.text) || (matching && checkOutcome(matching).kind === "passed")) finding.status = "fixed";
         else if (matching && checkOutcome(matching).kind !== "failed") finding.status = "unverified";
@@ -25,12 +25,14 @@ export class CheckRepairs {
     const { task, work: repository } = scope;
     for (const run of failed) {
       const text = `Check failed: ${run.name} (${run.command})`;
-      const finding = task.findings.findLast((finding) => finding.raisedBy === "petrina" && finding.text === text && (!task.repositories || finding.productIds?.includes(repository.productId)));
+      const finding = task.findings.findLast((finding) => findingKind(finding) === "product-check" && finding.text === text && (!task.repositories || finding.productIds?.includes(repository.productId)));
       if (finding) {
+        finding.kind = "product-check";
         finding.status = "open";
         finding.severity = "blocking";
         finding.evidence = run.output.slice(-1500);
       } else task.findings.push({
+        kind: "product-check",
         ...(task.repositories ? { productIds: [repository.productId] } : {}),
         id: this.host.id(task),
         text,
@@ -46,7 +48,7 @@ export class CheckRepairs {
   async closeEpisode(scope: RepositoryContext, state: { sha?: string; definition: string }, valid: () => boolean): Promise<void> {
     const { task, work } = scope;
     if (work.checkReturns === undefined || !work.worktree) return;
-    if (task.findings.some((finding) => finding.raisedBy === "petrina" && finding.status === "open" && finding.text.startsWith("Check failed") && (!task.repositories || finding.productIds?.includes(work.productId)))) return;
+    if (task.findings.some((finding) => finding.status === "open" && findingKind(finding) === "product-check" && (!task.repositories || finding.productIds?.includes(work.productId)))) return;
     const definition = await this.host.definition(scope, state.sha);
     if (valid() && definition === state.definition) delete work.checkReturns;
   }

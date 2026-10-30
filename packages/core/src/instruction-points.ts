@@ -14,7 +14,6 @@ const KEPT = 8000;
 
 /** One point on one line: no line breaks or control characters, whatever the agent wrote. */
 export function cleanPoint(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: removing control characters
   return text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
 }
 

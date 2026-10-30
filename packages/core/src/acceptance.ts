@@ -1,4 +1,5 @@
-import type { AcceptanceGap, AcceptanceRestoration, Finding, Id, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
+import { findingKind } from "./findings.js";
+import type { AcceptanceGap, AcceptanceRestoration, Finding, FindingKind, Id, JourneyAcceptanceCheck, JourneyStep, Role, Task } from "./model.js";
 
 /** Why every item and proof answer from a run whose changes Petrina undid is unverified. */
 export const ACCEPTANCE_RESTORED = "Petrina undid changes during acceptance testing. This run cannot verify the restored product.";
@@ -16,8 +17,11 @@ export function restorationReason(restored: AcceptanceRestoration): string {
  * toward review rounds, votes or decisions, and only a passing acceptance run closes it. Asking for changes at the
  * delivery check reopens it for another bounded attempt.
  */
-export function exhaustedAcceptanceFailure(task: Pick<Task, "repositories" | "acceptanceBlocked">, finding: Pick<Finding, "status" | "text">): boolean {
-  return !!task.repositories && task.acceptanceBlocked === true && finding.status === "open" && finding.text.startsWith("Failed acceptance check:");
+export function exhaustedAcceptanceFailure(
+  task: Pick<Task, "repositories" | "acceptanceBlocked">,
+  finding: Pick<Finding, "status" | "text"> & { kind?: FindingKind; raisedBy?: string },
+): boolean {
+  return !!task.repositories && task.acceptanceBlocked === true && finding.status === "open" && findingKind(finding) === "acceptance-failed";
 }
 
 /**

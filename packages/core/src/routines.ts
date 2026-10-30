@@ -77,11 +77,11 @@ function calendar(schedule: RoutineSchedule): Calendar {
     anyWeekday: parts[4] === "*"
   };
 }
-function dayMatches(c: Calendar, day: Date): boolean {
-  if (!c.months.includes(day.getUTCMonth() + 1)) return false;
-  const date = c.dates.includes(day.getUTCDate());
-  const weekday = c.weekdays.includes(day.getUTCDay());
-  return c.anyDate ? weekday : c.anyWeekday ? date : date || weekday;
+function dayMatches(cron: Calendar, day: Date): boolean {
+  if (!cron.months.includes(day.getUTCMonth() + 1)) return false;
+  const date = cron.dates.includes(day.getUTCDate());
+  const weekday = cron.weekdays.includes(day.getUTCDay());
+  return cron.anyDate ? weekday : cron.anyWeekday ? date : date || weekday;
 }
 function formatter(zone: string): Intl.DateTimeFormat {
   try { return new Intl.DateTimeFormat(
@@ -98,29 +98,29 @@ function formatter(zone: string): Intl.DateTimeFormat {
   ); }
   catch { throw new Error("Choose a recognized time zone, such as Europe/Bucharest."); }
 }
-function localStamp(f: Intl.DateTimeFormat, at: number): number {
-  const p = Object.fromEntries(f.formatToParts(at).map(part => [part.type, part.value]));
-  return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute));
+function localStamp(format: Intl.DateTimeFormat, at: number): number {
+  const parts = Object.fromEntries(format.formatToParts(at).map(part => [part.type, part.value]));
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute));
 }
 const DAY = 86_400_000;
 /** Calendar iteration avoids scanning millions of minutes for infrequent valid schedules. */
 function occurrence(schedule: RoutineSchedule, zone: string, at: number, direction: 1 | -1): number {
-  const c = calendar(schedule);
-  const f = formatter(zone);
-  const today = Math.floor(localStamp(f, at) / DAY) * DAY;
+  const cron = calendar(schedule);
+  const format = formatter(zone);
+  const today = Math.floor(localStamp(format, at) / DAY) * DAY;
   for (let n = 0; n <= 146_097; n++) { // One full Gregorian cycle, including leap-century rules.
     const day = new Date(today + n * direction * DAY);
-    if (!dayMatches(c, day)) continue;
+    if (!dayMatches(cron, day)) continue;
     const offsets = new Set([-2, -1, 0, 1, 2].map(delta => {
       const sample = day.getTime() + delta * DAY + 12 * 3_600_000;
-      return localStamp(f, sample) - sample;
+      return localStamp(format, sample) - sample;
     }));
-    const hours = direction === 1 ? c.hours : [...c.hours].reverse();
-    const minutes = direction === 1 ? c.minutes : [...c.minutes].reverse();
+    const hours = direction === 1 ? cron.hours : [...cron.hours].reverse();
+    const minutes = direction === 1 ? cron.minutes : [...cron.minutes].reverse();
     for (const hour of hours) for (const minute of minutes) {
       const wall = day.getTime() + hour * 3_600_000 + minute * 60_000;
       // No match in a DST gap. Always use the first instant in a repeated local minute.
-      const instants = [...offsets].map(offset => wall - offset).filter(candidate => localStamp(f, candidate) === wall);
+      const instants = [...offsets].map(offset => wall - offset).filter(candidate => localStamp(format, candidate) === wall);
       if (!instants.length) continue;
       const first = Math.min(...instants);
       if (direction === 1 ? first > at : first <= at) return first;

@@ -75,7 +75,11 @@ export function docContracts(
 
   const allPaths = [...files.keys()];
   for (const [file, source] of files) {
-    if (!file.startsWith("docs/") || !file.endsWith(".md") || file.startsWith("docs/archive/")) continue;
+    const activeDoc =
+      file.endsWith(".md")
+      && !file.startsWith("docs/archive/")
+      && (file.startsWith("docs/") || !file.includes("/"));
+    if (!activeDoc) continue;
     const baseDir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
     const lines = stripCodeFromMarkdown(source);
     for (let index = 0; index < lines.length; index += 1) {

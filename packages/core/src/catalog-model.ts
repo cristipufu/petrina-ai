@@ -98,6 +98,8 @@ export interface Role {
   result: RoleResult;
   /** The board column a task sits in while this role works on it. */
   column: Column;
+  /** Prefer a coding tool other than the builder's when another ready tool can run this role. */
+  awayFromBuilder?: boolean;
   /** Petrina runs this role itself: the planner is never told it exists, and a plan cannot use it. */
   internal?: boolean;
   /** The coordinator added it. */

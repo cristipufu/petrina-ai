@@ -75,6 +75,7 @@ async function report(folder: string): Promise<void> {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    return undefined;
   };
 
   const expected = optional("expected-files.json") as string[] | undefined;

@@ -1,6 +1,6 @@
 # Test foundation and protected delivery
 
-Active implementation plan, agreed with the coordinator on 24 October 2026. This is a work tracker, not a description of guarantees already implemented. Current testing instructions belong in [testing.md](../testing.md); product contracts belong in [design.md](../design.md). When complete, move this tracker to `docs/archive/` and retain the durable rules in their owning documents.
+> Historical plan: Archived after completion of the test-layer migration, portable fixture ownership, affected-test feedback, and native launch budget ledger. Current testing instructions belong in [testing.md](../testing.md); layer contracts belong in [layers.md](../testing/layers.md); resource measurement belongs in [resources.md](../testing/resources.md); product contracts belong in [design.md](../design.md). This archived tracker is preserved as historical task evidence, not current coding-agent instructions.
 
 ## Resume checkpoint
 
@@ -40,7 +40,7 @@ Raw review, failure and qualification artifacts are under `~/.petrina/coordinato
 4. After local reliability and cost work, finish generic optional feedback and product-defined exact-candidate CI delivery validation, concurrent-destination recovery, stable engine promotion and rollback. Petrina's own repository then needs its required native macOS/Linux/Windows evidence. Do not impose those platform choices on other products or merge pull requests.
 5. Audit the complete implementation, prompts, conventions and documentation; fix findings and satisfy every exit condition below before advancing main.
 
-The [migration inventory](test-layer-audit.json) records the original assertion/owner audit. It is not a claim that every test has completed cost or platform qualification. Prior partial checkpoints are preserved as [historical progress](../archive/test-foundation-progress-20261026.md), with the earlier [25 October record](../archive/test-foundation-progress-20261025.md) kept separately.
+The [migration inventory](../plans/test-layer-audit.json) records the original assertion/owner audit. It is not a claim that every test has completed cost or platform qualification. Prior partial checkpoints are preserved as [historical progress](test-foundation-progress-20261026.md), with the earlier [25 October record](test-foundation-progress-20261025.md) kept separately.
 
 ## North star
 
@@ -154,7 +154,7 @@ Exit evidence: a cause and regression for each confirmed defect, followed by the
 
 ### 4. Reduce full-suite cost — in progress
 
-- [x] Audit every original test by its assertions and behavior owner, with layers grouped by subsystem; migrate mixed files and fixtures, preserving parameterized cases and meaningful native integration coverage. The [migration inventory](test-layer-audit.json) tracks all 290 baseline TypeScript files and 18 Rust test functions; generated discovery is not a semantic audit.
+- [x] Audit every original test by its assertions and behavior owner, with layers grouped by subsystem; migrate mixed files and fixtures, preserving parameterized cases and meaningful native integration coverage. The [migration inventory](../plans/test-layer-audit.json) tracks all 290 baseline TypeScript files and 18 Rust test functions; generated discovery is not a semantic audit.
 - [ ] Define and implement production package contracts so ordinary rule/controller tests cannot import concrete native adapters. Each package has its own test layers and the complete required runner includes all of them.
 - [ ] Complete the cost audit of the measured slowest/highest-launch20 cases, including setup, execution and teardown; trace actual callers and distinguish parallel contention from isolated cost. Owner audit completion does not close this item.
 - [ ] Remove redundant expensive setup, reuse immutable seeds with private writable copies, and test isolated decision permutations directly.
@@ -168,7 +168,7 @@ Initial targets: focused feedback around 30 seconds and a full Mac suite approac
 
 The shared runner now verifies each native package command, records every required file and executes all six native workspaces in one normal worker pool after the three Vitest prerequisites. The portable coordinator owns ordering and complete evidence; native adapters own processes, signals, reports and source inspection. Shared duration/exit is recorded once. Missing, contradictory, interrupted or skipped-only required execution cannot become a pass. Current contracts and commands live in [testing.md](../testing.md).
 
-Timing hints reorder measured slow files without removing files or changing workers/assertions/deadlines. Failed or unstable runs do not publish hints. The latest complete qualification is named in the resume checkpoint. Earlier seven-workspace/serial-runner observations are [historical](../archive/test-foundation-progress-20261025.md).
+Timing hints reorder measured slow files without removing files or changing workers/assertions/deadlines. Failed or unstable runs do not publish hints. The latest complete qualification is named in the resume checkpoint. Earlier seven-workspace/serial-runner observations are [historical](test-foundation-progress-20261025.md).
 
 ### 5. Execute affected tests for early feedback — in progress
 
@@ -219,7 +219,7 @@ Completion requires both a reliable test foundation and a delivery gate that pro
 
 ## Current qualification and gaps
 
-The resume checkpoint names the latest independently reconciled complete Mac run and separate Rust crate run. Those results qualify their named source; passing tests does not complete the remaining semantic audit or provide native Linux/Windows evidence. Older partial progress is retained in [the historical record](../archive/test-foundation-progress-20261025.md).
+The resume checkpoint names the latest independently reconciled complete Mac run and separate Rust crate run. Those results qualify their named source; passing tests does not complete the remaining semantic audit or provide native Linux/Windows evidence. Older partial progress is retained in [the historical record](test-foundation-progress-20261025.md).
 
 | Area | Implemented at the qualified source | Still required |
 | --- | --- | --- |

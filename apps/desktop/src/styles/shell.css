@@ -1,0 +1,248 @@
+/* ── Shell ─────────────────────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  /* 64px rail, 56px top bar and a 360px inbox at normal text size; they grow with enlarged text. */
+  grid-template-columns: var(--rail) minmax(0, 1fr) auto;
+  grid-template-rows: minmax(56px, auto) minmax(0, 1fr);
+  height: 100vh;
+}
+.app.with-engine-hint { grid-template-rows: minmax(56px, auto) auto minmax(0, 1fr); }
+.engine-recovery { grid-column: 1 / -1; grid-row: 2; padding: 8px 20px; background: var(--amber-soft); color: var(--amber-text); font-size: var(--fs-control); line-height: var(--lh-control); border-bottom: 1px solid var(--amber-line); }
+.app.with-engine-hint > .rail, .app.with-engine-hint > .main, .app.with-engine-hint > .inbox { grid-row: 3; }
+.engine-recovery code { font-family: var(--mono); white-space: nowrap; user-select: all; }
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px 8px 20px;
+  -webkit-app-region: drag;
+  user-select: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.topbar > * { -webkit-app-region: no-drag; flex: none; }
+.topbar .spacer { flex: 1; min-width: 8px; -webkit-app-region: drag; align-self: stretch; }
+/* Let controls take another row when the window or enlarged text leaves too little room. */
+@media (max-width: 30rem) {
+  .topbar { flex-wrap: wrap; }
+  .topbar .switcher { width: 100%; }
+}
+
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-reading); line-height: var(--lh-reading); letter-spacing: -0.01em; margin-right: 8px; }
+.brand svg { width: 24px; height: 24px; }
+
+.engine-status { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text-3); padding: 0 4px; white-space: nowrap; }
+/* In the desktop demo it is the way back to the real products. */
+button.engine-status { border: 0; background: none; min-height: 32px; padding: 0 8px; border-radius: 6px; }
+button.engine-status:hover { background: var(--hover); color: var(--text-2); }
+
+.blocking-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--amber-soft);
+  color: var(--amber-text);
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
+  font-weight: 600;
+}
+.blocking-pill:hover { box-shadow: inset 0 0 0 1px var(--amber-line); }
+
+/* ── Buttons and fields ────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--text);
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.btn:hover { background: var(--hover); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn:disabled:hover { background: var(--sunken); }
+.btn[aria-pressed="true"], .btn[aria-expanded="true"] { background: var(--selected); }
+/* The one solid violet button in the workspace: New task. */
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); }
+/* The lead decision in an inbox item, the session's Send and a dialog's main action. */
+.btn.lead { background: var(--lead); color: var(--on-lead); }
+.btn.lead:hover { background: var(--lead-hover); }
+.btn.lead:disabled:hover { background: var(--lead); }
+.btn.quiet, .btn.ghost { background: transparent; color: var(--text-2); }
+.btn.quiet:hover, .btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn.outline { background: var(--surface); border-color: var(--line-strong); }
+.btn.outline:hover { background: var(--hover); }
+.btn.danger { color: var(--red-text); }
+.btn.danger:hover { color: var(--red-text); background: var(--red-soft); }
+.btn.icon { padding: 8px; min-width: 36px; }
+.btn.small { min-height: 32px; padding: 6px 12px; }
+.btn.small.icon { min-width: 32px; padding: 6px; }
+.btn.wrap { white-space: normal; text-align: left; justify-content: flex-start; }
+.btn .count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--badge);
+  color: var(--on-badge);
+  font-size: var(--fs-meta);
+  line-height: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+kbd {
+  font-family: var(--font);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  color: var(--text-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.field, .search-field, .reply input, .composer textarea, .select {
+  border: 1px solid var(--field);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+.field, .reply input, .select {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
+}
+.field::placeholder, .reply input::placeholder, .composer textarea::placeholder, .search-field input::placeholder { color: var(--text-3); opacity: 1; }
+.field:focus, .reply input:focus, .composer textarea:focus, .select:focus, .search-field:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+.select { cursor: pointer; }
+input.select { cursor: text; }
+.select-control { display: grid; position: relative; min-width: 0; max-width: 100%; width: 100%; }
+.select-control > select { appearance: none; -webkit-appearance: none; min-width: 0; width: 100%; min-height: 38px; padding: 8px 36px 8px 12px; text-overflow: ellipsis; box-shadow: 0 1px 2px rgb(0 0 0 / 3%); transition: border-color .14s, background-color .14s, box-shadow .14s; }
+.select-chevron { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); width: 1rem; height: 1rem; color: var(--text-2); pointer-events: none; }
+.select-control > select:hover:not(:disabled) { border-color: var(--text-2); background: var(--hover); }
+.select-control > select:focus { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 1px; }
+.select-control > select:focus + .select-chevron { color: var(--accent-text); }
+.select-control > select:disabled { color: var(--text-3); background: var(--sunken); border-color: var(--line-strong); cursor: default; box-shadow: none; }
+.select-control:has(select:disabled) > .select-chevron { color: var(--text-3); }
+.select-control option { color: var(--text); background: var(--surface); }
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 17.5rem;
+  min-height: 36px;
+  padding: 0 8px 0 12px;
+  color: var(--text-3);
+  background: var(--surface);
+}
+/* The outline is a field boundary, so it keeps 3:1 against the top bar and the field (see --field). */
+.search-field:hover { border-color: var(--text-3); }
+.search-field input { border: 0; outline: 0; background: transparent; flex: 1; min-width: 0; color: var(--text); font-size: var(--fs-control); line-height: var(--lh-control); padding: 8px 0; }
+.search-field .btn { min-height: 24px; min-width: 24px; padding: 2px; }
+.search-pop { width: min(20rem, calc(100vw - 32px)); padding: 12px; }
+.search-pop .search-field { width: 100%; }
+.dot-on { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+.linkish { border: 0; background: none; padding: 0; text-align: left; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+.linkish:hover { color: var(--text); text-decoration-color: currentColor; }
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.segmented button {
+  border: 0;
+  background: transparent;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-control);
+  line-height: var(--lh-control);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.segmented button:hover:not(:disabled) { color: var(--text); }
+.segmented button:disabled { opacity: 0.6; cursor: default; }
+.segmented button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card), 0 0 0 1px var(--line); }
+
+/* ── Rail ──────────────────────────────────────────────────────────── */
+
+.rail {
+  grid-row: 2;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0 16px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+.rail a {
+  text-decoration: none;
+  width: calc(100% - 8px);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: 500;
+  position: relative;
+}
+.rail a:hover { color: var(--text); background: var(--hover); }
+.rail a.on { color: var(--text); background: var(--selected); }
+.rail a.on svg { color: var(--accent-text); }
+.rail .badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--badge);
+  color: var(--on-badge);
+  font-size: var(--fs-meta);
+  line-height: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+

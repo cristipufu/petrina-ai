@@ -24,6 +24,7 @@ export const ADAPTERS: Record<string, ToolAdapter> = {
     ),
       ...(typeof meta["_claude/model"] === "string" ? { model: meta["_claude/model"] } : {})
     }),
+    reconcilesAllowanceWindows: true,
     prepareSessionMeta: async (meta, { cwd, browser }) => {
       if (!browser) return meta;
       const claude = meta.claudeCode as { options?: Record<string, unknown> } | undefined;

@@ -38,6 +38,7 @@ import {
 } from "./kernel.js";
 import { lastWords, proseOf, type WhereYouWere } from "./prompts.js";
 import { supplyReviewHistory } from "./review-history.js";
+import { contractFor } from "./roles.js";
 import type { Sources } from "./sources.js";
 import type { ToolChecks } from "./tool-checks.js";
 import type { TurnAgent } from "./tracking.js";
@@ -146,19 +147,18 @@ export class Turns implements TurnAttemptCollaborators {
           discardUnavailableTurnParticipant(k, scope, roleId, error, reviewerKey),
         beforeMainAttempt: (scope, roleId, profile) => {
           const { task, work: repository } = scope;
+          const role = this.k.role(roleId, task);
+          if (!role || !contractFor(role).awayFromBuilder) return;
           const builder = this.k.profile(
             task.plan?.stages.find((stage) => this.k.role(stage.roleId, task)?.result === "build")?.profileIds[0] ?? "",
           );
           const builderTool = repository.builderSession?.toolId ?? builder?.toolId;
-          if (
-            roleId === "security-reviewer"
-            && builderTool === profile.toolId
-            && !task.timeline.some((entry) => entry.text.startsWith("Security review on the builder's tool"))
-          ) {
+          const prefix = `${role.name.replace(/\s+reviewer$/i, " review")} on the builder's tool`;
+          if (builderTool === profile.toolId && !task.timeline.some((entry) => entry.text.startsWith(prefix))) {
             this.k.log(
               scope,
               "warn",
-              `Security review on the builder's tool (${this.k.named(profile.id)}): no other tool is available for this review`,
+              `${prefix} (${this.k.named(profile.id)}): no other tool is available for this review`,
             );
           }
         },

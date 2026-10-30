@@ -477,6 +477,7 @@ for (const { github, marked } of [{ github: false, marked: false }, { github: fa
               await gone(w, taskOf(engine.getState(), id));
             };
           }
+          return undefined;
         } finally { await engine.shutdown(); }
       }, { checkEveryMs: 100 });
       if (next) await w.engine(next, { checkEveryMs: 100 });

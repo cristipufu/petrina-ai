@@ -1,0 +1,317 @@
+/* ── Journey ───────────────────────────────────────────────────────── */
+
+.journey { position: relative; }
+.journey-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.journey-head h2 { font-size: var(--fs-reading); line-height: var(--lh-reading); font-weight: 600; letter-spacing: -0.005em; }
+.journey-controls { display: flex; align-items: center; gap: 4px; }
+.journey-now { background: var(--accent-soft); color: var(--accent-text); }
+.journey-now:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--suggest-line); }
+/* The steps as a list, for screen readers and the keyboard: the box it is on shows the focus ring. */
+.journey-list { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; list-style: none; }
+
+/* Edge to edge across the sheet. The ground is quieter than the steps, and its dots are fainter than their outlines. */
+.journey-canvas { position: relative; margin: 0 calc(-1 * var(--pad)); border-block: 1px solid var(--line); background-color: var(--canvas); background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px); background-size: var(--canvas-dot-size) var(--canvas-dot-size); }
+.journey-diagram { position: relative; width: 100%; }
+/* Watched for text size changes: it is always 1rem square. */
+.journey-rem { position: absolute; top: 0; left: 0; width: 1rem; height: 1rem; visibility: hidden; pointer-events: none; }
+.journey-flow, .journey-flow > .react-flow { position: absolute; inset: 0; }
+.journey-flow .react-flow { background: transparent; }
+.journey-flow .react-flow__pane { cursor: grab; }
+.journey-flow .react-flow__pane.dragging { cursor: grabbing; }
+.journey-flow .react-flow__node { cursor: pointer; }
+.journey-flow .react-flow__attribution { background: transparent; padding: 2px 8px; margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.journey-flow .react-flow__attribution a { color: var(--text-3); text-decoration: none; }
+.journey-flow .react-flow__attribution a:hover { color: var(--text-2); text-decoration: underline; }
+.jn-handle { opacity: 0; pointer-events: none; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; background: none; }
+
+.jn-item { position: relative; display: flex; flex-direction: column; align-items: center; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--text); }
+.jn { width: 100%; flex: none; min-width: 0; }
+.jn-name { min-width: 0; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.jn-step-marks { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); }
+.jn-round-marks { display: inline-flex; gap: 2px; }
+.jn-round-marks i { width: 5px; height: 5px; border: 1px solid currentColor; border-radius: 1px; }
+.jn-round-marks i.current { background: currentColor; }
+.jn-fix-mark { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
+.jn-tool { color: var(--text-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.jn-foot { color: var(--text-2); display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.jn-foot-text { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.jn-foot-divider { color: var(--line-strong); }
+.jn-foot .dot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.jn-mark { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; }
+.jn-mark.done { background: var(--green-soft); color: var(--green-text); }
+.jn-mark.failed { background: var(--red-soft); color: var(--red-text); }
+.jn-mark.cancelled { background: var(--hover); color: var(--text-2); }
+
+/* An agent's step: role, tool and model, time and outcome. Outlines on the journey use --field, a boundary that must be seen (3:1 on the canvas in every theme). */
+.jn.k-box { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: var(--node-radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); overflow: hidden; }
+.jn.k-box .jn-foot { margin-top: auto; min-height: var(--lh-meta); }
+.jn-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.jn-head .jn-name { flex: 1; }
+.jn.k-box.s-now { border: 2px solid var(--blue); box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow-lift); }
+.jn.k-box.s-now.r-paused, .jn.k-box.s-now.r-waiting { border: 2px solid var(--field); box-shadow: var(--shadow-card); }
+.jn.k-box.s-now .jn-foot { color: var(--text); }
+.jn.k-box.s-you { background: var(--you-fill); border: 2px solid var(--amber); }
+.jn.k-box.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
+.jn.k-box.s-failed { background: var(--red-soft); border: 2px solid var(--red); }
+.jn.k-box.s-failed .jn-foot { color: var(--red-text); font-weight: 600; }
+.jn.k-box.s-cancelled { background: var(--surface); }
+
+/* Coordinator checkpoints use the same card shape, spacing and footer as agent steps. */
+.jn.k-you { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; border-radius: var(--node-radius); background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); overflow: hidden; }
+.jn.k-you.s-you { background: var(--you-fill); border: 2px solid var(--amber); }
+.jn.k-you.s-you .jn-foot { color: var(--amber-text); font-weight: 600; }
+.jn.k-you .jn-foot { margin-top: auto; min-height: var(--lh-meta); }
+.jn-you-icon { width: 20px; height: 20px; flex: none; }
+.jn-you-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.jn-you-head .jn-name { flex: 1; }
+
+/* Where it started and where it ended. */
+.jn.k-start, .jn.k-end, .jn.k-rest { display: flex; align-items: center; gap: 8px; padding: 4px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); color: var(--text-2); font-weight: 500; }
+.jn-start-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--text-3); }
+.jn-point-text { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.jn.k-end { color: var(--text); font-weight: 600; }
+.jn.k-end.e-done { border: 2px solid var(--green); color: var(--green-text); }
+.jn.k-end.e-pending { border: 2px solid var(--field); }
+.jn.k-end.e-cancelled, .jn.k-end.e-unconfirmed { color: var(--text-2); }
+.jn.k-rest { background: transparent; border: 1.5px dashed var(--field); box-shadow: none; }
+.jn.k-start .jn-point-text { white-space: nowrap; }
+
+/* Steps still ahead: dashed outlines and no fill, with text as readable as the rest. */
+.jn.s-next, .jn.s-ahead { background: transparent; border: 1.5px dashed var(--field); box-shadow: none; }
+.jn.s-next .jn-foot { color: var(--text); font-weight: 600; }
+/* The chosen step has a soft halo; the step the keyboard is on has the usual focus ring. */
+.jn.selected { box-shadow: 0 0 0 4px var(--suggest-line); }
+.jn.s-now.r-working { animation: active-node-pulse 2.8s ease-in-out infinite; }
+@keyframes active-node-pulse { 0%, 100% { border-color: var(--blue); } 50% { border-color: color-mix(in srgb, var(--blue) 25%, var(--field)); } }
+@media (prefers-reduced-motion: reduce) { .jn.s-now.r-working { animation: none; } }
+.jn.focused { outline: 2px solid var(--focus); outline-offset: 5px; }
+
+/* Questions and permission requests hang under the step that asked. */
+.jn-asks { position: relative; list-style: none; margin: 0.75rem 0 0; padding: 0; width: 11rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.jn-asks::before { content: ""; position: absolute; left: 50%; top: -0.75rem; height: 0.75rem; border-left: 1.5px solid var(--field); }
+.jn-ask { height: 4rem; display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--field); box-shadow: var(--node-shadow); }
+.jn-ask.open { background: var(--you-fill); border: 2px solid var(--amber); }
+.jn-ask .jn-you-icon { width: 20px; height: 20px; }
+.jn-ask-text { min-width: 0; display: flex; flex-direction: column; }
+.jn-ask-label { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.jn-ask-title, .jn-ask-outcome { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jn-ask-title { font-weight: 600; }
+.jn-ask-outcome { color: var(--text-2); }
+.jn-ask.open .jn-ask-outcome { color: var(--amber-text); font-weight: 600; }
+
+/* Arrows: why the work moved, in a few words. Amber when it went back or waits for you, red when stuck. */
+.je-line { stroke: var(--field); stroke-width: 1.5; }
+.je-tip { fill: var(--field); }
+.je-line.back, .je-line.you { stroke: var(--amber); stroke-width: 2; }
+.je-tip.back, .je-tip.you { fill: var(--amber); }
+.je-line.stuck { stroke: var(--red); stroke-width: 2; }
+.je-tip.stuck { fill: var(--red); }
+/* The arrow into the live step moves; with reduced motion it is solid and stronger instead. */
+.je-line.live { stroke: var(--blue); stroke-width: 2.5; }
+.je-tip.live { fill: var(--blue); }
+.je-line.moving { stroke-width: 2; stroke-dasharray: 6 5; animation: je-flow 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .je-line.is-live { stroke-width: 3; stroke-dasharray: none; }
+}
+@keyframes je-flow { to { stroke-dashoffset: -11; } }
+.je-line.paused { stroke-width: 2; }
+.je-line.ahead { stroke-dasharray: 4 4; }
+.je-label, .journey-label-measure { position: absolute; pointer-events: none; text-align: center; padding: 0 4px; border-radius: 4px; font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 500; color: var(--text-2); overflow-wrap: anywhere; }
+.je-label { background: color-mix(in srgb, var(--canvas) 86%, transparent); }
+/* Same text layout as the labels, outside React Flow's zoom, so long messages get enough space. */
+.journey-label-measure { visibility: hidden; width: max-content; top: 0; left: 0; }
+.je-label.back, .je-label.you { color: var(--amber-text); }
+.je-label.stuck { color: var(--red-text); }
+
+/* A step's details, under the diagram. */
+.journey-hint { margin-top: -4px; }
+.journey-details { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); }
+.journey-details-head { display: flex; align-items: center; gap: 8px; }
+.journey-details-head h3 { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--fs-reading); line-height: var(--lh-reading); font-weight: 600; }
+.journey-details-head .label { font-size: var(--fs-control); line-height: var(--lh-control); }
+.journey-detail-tabs { display: flex; flex-wrap: wrap; min-width: 0; gap: 4px; border-bottom: 1px solid var(--line); }
+.journey-detail-tabs button { min-height: 36px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-control); cursor: pointer; }
+.journey-detail-tabs button:hover { color: var(--text); background: var(--hover); }
+.journey-detail-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.journey-detail-tabs button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.journey-tab-panel { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.journey-facts { display: grid; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr); gap: 8px 16px; margin: 0; }
+.journey-facts dt { color: var(--text-3); }
+.journey-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.journey-waits { display: block; }
+.journey-asked h4, .journey-part h4 { font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+/* Step usage fits the details column and follows the shared number wording. */
+.step-usage { min-width: 0; }
+.step-usage h4 { margin: 0 0 8px; font-size: var(--fs-control); line-height: var(--lh-control); }
+.step-usage p { margin: 0; overflow-wrap: anywhere; }
+.step-usage .note { margin-top: 6px; }
+.step-usage-total, .step-usage-run-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.step-usage-parts { display: grid; gap: 4px; margin: 8px 0 0; }
+.step-usage-parts > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.step-usage-parts dt { color: var(--text-2); }
+.step-usage-parts dd { margin: 0; }
+.step-usage-runs { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.step-usage-run-head { font-weight: 500; }
+
+.journey-context { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 8px; }
+.journey-context h4 { margin-top: 4px; font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 600; }
+.journey-context p { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.journey-review-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.journey-review-counts > div { display: grid; align-content: start; gap: 4px; padding: 10px 12px; background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); min-width: 0; }
+.journey-review-counts dt { color: var(--text-2); font-size: var(--fs-meta); overflow-wrap: anywhere; }
+.journey-review-counts dd { margin: 0; color: var(--text); font-size: var(--fs-reading); font-weight: 600; overflow-wrap: anywhere; }
+.journey-review-group { border-top: 1px solid var(--line); min-width: 0; }
+.journey-review-group > summary { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 0; color: var(--text); cursor: pointer; font-size: var(--fs-control); font-weight: 600; list-style: none; }
+.journey-review-group > summary::-webkit-details-marker { display: none; }
+.journey-review-group > summary > .num { margin-left: auto; color: var(--text-2); }
+.journey-review-group[open] > summary > svg { transform: rotate(90deg); }
+.journey-review-group > summary:hover { color: var(--accent); }
+.journey-review-group > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.journey-review-group > .note { margin-bottom: 8px; font-size: var(--fs-meta); }
+.journey-input-record { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.journey-agent-start { display: grid; gap: 8px; min-width: 0; }
+:is(.journey-input-record, .agent-selection) summary { color: var(--text); font-size: var(--fs-control); font-weight: 600; cursor: pointer; }
+:is(.journey-input-record, .agent-selection) summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.journey-input-record[open] summary { margin-bottom: 2px; }
+.journey-input-record h4 { margin: 0; color: var(--text-2); }
+.journey-context .agent-selection p { margin: 8px 0 0; }
+.journey-input-record > :is(div, .note) { margin-top: 12px; }
+.journey-input-record > div:not(.journey-input-updates), .journey-input-updates > div { display: grid; gap: 4px; }
+.journey-input-record .quiet-text { font-size: var(--fs-meta); }
+.journey-input-record p:not(.quiet-text):not(.note) { white-space: pre-wrap; }
+.journey-input-updates { display: grid; gap: 12px; }
+.journey-check-list { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0; }
+.journey-check-list li { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
+.journey-check-list li > span:not(.label) { color: var(--text-2); }
+.journey-check-list .journey-check-detail { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.check-attempt-history { border-top: 1px solid var(--line); padding-top: 8px; min-width: 0; }
+.check-attempt-history > summary { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); cursor: pointer; overflow-wrap: anywhere; }
+.check-attempt-history > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.check-attempt-history[open] > summary { margin-bottom: 12px; }
+.journey-asked { display: grid; gap: 8px; }
+.journey-asked ul { list-style: none; display: grid; gap: 8px; }
+.journey-asked li { display: grid; gap: 2px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--sunken); overflow-wrap: anywhere; }
+.journey-asked li.open { background: var(--amber-soft); }
+.journey-ask-title { font-weight: 600; }
+.journey-part { display: grid; gap: 8px; justify-items: start; }
+.journey-part .timeline { width: 100%; }
+.warn-text { color: var(--amber-text); }
+.bad-text { color: var(--red-text); }
+
+/* Reading one step in the Session: its lines are marked. */
+.step-marked { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 16px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text); }
+.chat .in-step:not(ul) { position: relative; }
+.chat .in-step:not(ul)::before { content: ""; position: absolute; left: -12px; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--accent); }
+.chat .activity { position: relative; }
+
+/* ── Role panel: a narrower sheet holding a form, with its actions always in view ── */
+
+.sheet.panel { --pad: 24px; width: min(37.5rem, calc(100vw - 32px)); }
+.sheet.panel.compact { --pad: 16px; width: min(37.5rem, calc(100vw - 16px)); }
+.panel-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.panel-name .avatar { width: 40px; height: 40px; border-radius: 12px; }
+.panel-title { min-width: 0; font-size: var(--fs-panel); line-height: var(--lh-panel); font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.sheet-body.role-form { gap: 24px; padding-top: 8px; }
+.form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.form-field > label, .form-field > legend, .field-label, .fact-label { padding: 0; color: var(--text); font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; }
+.form-field > legend { margin-bottom: 8px; }
+.hint { color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+/* A field inside a group (the description under what a role hands back) is quieter than the group's own label. */
+.form-field .form-field { margin-top: 8px; }
+.form-field .form-field > label { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); font-weight: 500; }
+.form-field .field { width: 100%; }
+.field.area { resize: vertical; font-size: var(--fs-body); line-height: var(--lh-body); }
+.field[aria-invalid="true"] { border-color: var(--red); }
+.fact { color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pickers { display: grid; gap: 16px; }
+.picks { display: flex; flex-wrap: wrap; gap: 4px; }
+.pick { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); }
+.pick:hover { background: var(--hover); color: var(--text); }
+.pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.pick.swatch i { width: 20px; height: 20px; border-radius: 50%; background: var(--tone); }
+.options-list { display: grid; gap: 8px; }
+.option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.option:hover { border-color: var(--field); }
+.option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.option input { grid-row: 1 / span 2; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); }
+.option .t { color: var(--text); font-weight: 600; }
+.option .d { color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
+.option.locked { cursor: default; }
+.option.locked:hover { border-color: var(--line-strong); }
+.option.locked:has(input:checked) { border-color: var(--line-strong); background: var(--sunken); }
+.lock-note { display: flex; align-items: flex-start; gap: 8px; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
+.lock-note svg { flex: none; margin-top: 2px; color: var(--text-3); }
+.role-form .kind { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; border-radius: var(--radius-sm); background: var(--sunken); }
+.role-form .kind svg { flex: none; margin-top: 2px; color: var(--text-3); }
+.role-form .kind .t { display: block; color: var(--text); font-weight: 600; }
+.role-form .kind .d { display: block; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
+.panel-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 16px var(--pad); border-top: 1px solid var(--line); }
+.panel-foot .spacer { flex: 1; }
+.panel-error { flex-basis: 100%; }
+
+/* Starting choices follow the dialog and sheet at enlarged text sizes. */
+.start-fields { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
+.start-fields label, .task-start label { display: flex; flex: 1 1 180px; min-width: 0; flex-direction: column; gap: 6px; font-size: 0.8125rem; }
+.start-fields .select, .task-start .select { width: 100%; min-width: 0; box-sizing: border-box; }
+.task-start .stack { display: flex; flex-direction: column; gap: 12px; }
+.source-label { color: var(--muted); overflow-wrap: anywhere; }
+.card-meta .where { flex-wrap: wrap; }
+
+/* History is a bounded page of completed work, separate from the live board. */
+.history-page { display: flex; flex-direction: column; gap: 24px; }
+.history-header { display: grid; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.history-toolbar { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.history-search { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 40px; padding: 3px 4px 3px 12px; border: 1px solid var(--field); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-3); }
+.history-search:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--focus); }
+.history-search > svg { flex: none; }
+.history-search input { flex: 1; min-width: 0; width: 100%; padding: 4px 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: var(--fs-control); line-height: var(--lh-control); }
+.history-search input:focus-visible { outline: 0; }
+.history-search input::-webkit-search-cancel-button { display: none; }
+.editor-panel .btn.small, .history-search .btn { font-size: var(--fs-control); line-height: var(--lh-control); }
+.history-search .btn { min-height: 30px; padding-block: 4px; }
+.history-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 24px; color: var(--text-3); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.history-order { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.history-status { display: flex; flex: 0 1 18rem; align-items: center; gap: 10px; min-width: 0; color: var(--text-2); font-size: var(--fs-control); line-height: var(--lh-control); }
+.history-status > .select-control { flex: 1; min-width: 0; }
+.history-status .select { min-height: 40px; }
+@media (max-width: 760px) { .history-toolbar { flex-wrap: wrap; gap: 12px; } .history-search { flex-basis: 100%; } .history-status { flex-basis: 100%; } }
+.history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 16px; }
+.history-card { display: flex; min-width: 0; flex-direction: column; gap: 16px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); text-decoration: none; color: var(--text); }
+.history-card:hover { border-color: var(--line-strong); background: var(--hover); }
+.history-card.selected, .history-card:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
+.history-card-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; color: var(--text-3); font-size: var(--fs-meta); }
+.history-card h2 { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.history-outcome { display: flex; gap: 7px; align-items: flex-start; margin-top: auto; color: var(--green-text); font-size: var(--fs-control); }
+.history-outcome svg { flex: 0 0 auto; margin-top: 2px; }
+.history-outcome.unconfirmed { color: var(--text-3); }
+.history-usage { display: flex; flex-wrap: wrap; gap: 4px 0; margin-top: -8px; color: var(--text-3); font-size: var(--fs-meta); }
+.history-usage > span { min-width: 0; max-width: 100%; }
+.history-usage-figure, .history-usage-label { display: inline-block; white-space: nowrap; }
+.history-usage-separator { margin: 0 5px; }
+.history-card .draft-note { display: flex; align-items: center; gap: 6px; color: var(--accent-text); font-size: var(--fs-control); }
+.history-empty { display: grid; justify-items: center; align-content: center; min-height: 240px; padding: 32px 16px; color: var(--text-3); text-align: center; gap: 16px; }
+.history-empty p { margin: 0; }
+.history-pagination { display: flex; align-items: center; justify-content: center; gap: 20px; padding: 16px 0 8px; border-top: 1px solid var(--line); }
+.task-detail-loading { position: fixed; z-index: 51; inset: 56px 0 0 var(--rail); display: grid; place-content: center; justify-items: center; gap: 16px; padding: 32px; background: var(--surface); }
+@media (max-width: 600px) { .history-page { gap: 20px; } .history-search { width: 100%; } .history-pagination { gap: 14px; } .history-card { padding: 16px; } }
+
+/* Agent screenshots stay in their task's working copy and load only while visible. */
+.message-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 12px; margin: 10px 0 4px; white-space: normal; }
+.message-image { display: block; min-width: 0; width: 100%; white-space: normal; }
+.message-image-open { display: grid; width: 100%; padding: 0; overflow: hidden; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; text-align: left; cursor: zoom-in; }
+.message-image-open:not([aria-disabled="true"]):hover { border-color: var(--field); box-shadow: var(--shadow-card); }
+.message-image-open[aria-disabled="true"] { cursor: default; }
+.message-image-open > img { display: block; width: 100%; height: 10rem; object-fit: cover; object-position: top; background: var(--sunken); }
+.message-image-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.message-image-caption strong { font-weight: 500; }
+.message-image-loading { display: flex; align-items: center; justify-content: center; gap: 10px; height: 10rem; color: var(--text-2); font-size: var(--fs-meta); }
+.message-image-unavailable { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text-2); font-size: var(--fs-meta); line-height: var(--lh-meta); }
+.message-image-unavailable strong { font-weight: 500; color: var(--text); }
+.message-image-unavailable > span { flex-basis: 100%; }
+.message-image-scrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--scrim); }
+.message-image-dialog { display: flex; flex-direction: column; min-width: 0; max-width: 100%; max-height: 100%; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-pop); }
+.message-image-dialog-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 24px; min-height: 52px; padding: 8px 12px 8px 20px; border-bottom: 1px solid var(--line); font-size: var(--fs-control); line-height: var(--lh-control); }
+.message-image-full { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.message-image-full img { display: block; max-width: 100%; height: auto; }
+@media (max-width: 640px) { .message-image-scrim { padding: 12px; } }
+

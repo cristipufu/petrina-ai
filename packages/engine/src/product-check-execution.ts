@@ -201,7 +201,7 @@ export interface CheckBatchHooks {
 }
 
 export async function executePreparedChecks(
-  hooksObj: CheckBatchHooks,
+  batch: CheckBatchHooks,
   scope: RepositoryContext,
   checks: readonly ProductCheck[],
   signal: AbortSignal,
@@ -210,7 +210,7 @@ export async function executePreparedChecks(
   prepare?: CheckPreparation,
   purpose: JourneyCheckReuse["purpose"] = "acceptance",
 ): Promise<CheckVerification> {
-  const { k } = hooksObj;
+  const { k } = batch;
   const { task, work: repository } = scope;
   if (!repository.worktree) return {
     kind: "blocked",
@@ -219,7 +219,7 @@ export async function executePreparedChecks(
     reason: "inputs-changed",
     setup: { kind: "unobserved" }
   };
-  let state = prepared ?? (await hooksObj.captureState(scope, checks));
+  let state = prepared ?? (await batch.captureState(scope, checks));
   let nothing = nothingToRun(checks, state.hooks) && !k.productOf(scope)?.checkSetup?.requirements.length;
   const queueWhilePaused = () => !nothing && k.s.pool.paused && !k.draining && !k.stopped && !runtimeWaitHolds(task);
   if (k.taskAdmissionsClosed(task) && !queueWhilePaused()) throw new WaitingForUsage(k.taskAdmissionWait(task));
@@ -265,7 +265,7 @@ export async function executePreparedChecks(
   let complete = false;
   let recapture = false;
   let discoveries = 0;
-  const order = nothing ? undefined : (hooksObj.deliveryOrders.get(task.id) ?? k.checkQueue.reserveOrder());
+  const order = nothing ? undefined : (batch.deliveryOrders.get(task.id) ?? k.checkQueue.reserveOrder());
   const reopenChecks = () => {
     if (step?.endedAt === undefined) return;
     step = beginPetrinaStep(task, "checks", Date.now(), repository);
@@ -282,10 +282,10 @@ export async function executePreparedChecks(
   try {
     for (;;) {
       const reacquired = prepare?.beforeQueue?.();
-      if (!hooksObj.preparations.has(task.id) && !hooksObj.claimPreparation(task.id)) {
+      if (!batch.preparations.has(task.id) && !batch.claimPreparation(task.id)) {
         throw new WaitingForUsage(k.taskAdmissionsClosed(task) ? k.taskAdmissionWait(task) : "Waiting for room to prepare the product checks");
       }
-      finished = nothing ? undefined : await hooksObj.turnToRun(scope, signal, hooksObj.deliveryOrders.get(task.id) ?? order);
+      finished = nothing ? undefined : await batch.turnToRun(scope, signal, batch.deliveryOrders.get(task.id) ?? order);
       if (finished?.waited || recapture || reacquired) {
         if ((finished?.waited || reacquired) && prepare) {
           let yieldedForDecision = false;
@@ -293,13 +293,13 @@ export async function executePreparedChecks(
             const released = finished !== undefined;
             finished?.();
             finished = undefined;
-            hooksObj.releasePreparation(task.id);
+            batch.releasePreparation(task.id);
             yieldedForDecision = true;
             return released;
           };
-          hooksObj.decisionReleases.set(task.id, release);
+          batch.decisionReleases.set(task.id, release);
           try { if ((await prepare()) === false) throw new CheckPreparationChanged(); }
-          finally { if (hooksObj.decisionReleases.get(task.id) === release) hooksObj.decisionReleases.delete(task.id); }
+          finally { if (batch.decisionReleases.get(task.id) === release) batch.decisionReleases.delete(task.id); }
           if (yieldedForDecision) {
             recapture = true;
             reopenChecks();
@@ -310,12 +310,12 @@ export async function executePreparedChecks(
         if (k.taskAdmissionsClosed(task) && !queueWhilePaused()) throw new WaitingForUsage(k.taskAdmissionWait(task));
         if (k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
         if (prepare) {
-          const current = hooksObj.cachedChecks(scope);
+          const current = batch.cachedChecks(scope);
           if (!current) {
             if (discoveries++ >= 3) throw new Error("The files defining this product's checks kept changing before they could start. Your work is preserved; try again once they are stable.");
             finished?.();
             finished = undefined;
-            checks = await hooksObj.ensureChecks(scope, signal);
+            checks = await batch.ensureChecks(scope, signal);
             recapture = true;
             reopenChecks();
             task.holdsSlot = false;
@@ -325,7 +325,7 @@ export async function executePreparedChecks(
           }
           checks = current;
         }
-        state = await hooksObj.captureState(scope, checks);
+        state = await batch.captureState(scope, checks);
         nothing = nothingToRun(checks, state.hooks) && !k.productOf(scope)?.checkSetup?.requirements.length;
         recapture = false;
         kept = undefined;
@@ -338,7 +338,7 @@ export async function executePreparedChecks(
       finished = undefined;
     }
     if (k.taskSourceRefreshDue(task)) throw new SourceRefreshRequired();
-    const failures = await hooksObj.runAll({
+    const failures = await batch.runAll({
       scope,
       checks,
       state,
@@ -377,7 +377,7 @@ export async function executePreparedChecks(
 }
 
 export async function executeAllChecks(
-  hooksObj: CheckBatchHooks,
+  batch: CheckBatchHooks,
   request: ExecuteAllChecksRequest,
 ): Promise<CheckVerification> {
   const {
@@ -391,7 +391,7 @@ export async function executeAllChecks(
     ownsPlace = () => false,
   } = request;
   let { kept } = request;
-  const { k, evidence } = hooksObj;
+  const { k, evidence } = batch;
   const { task, work: repository } = scope;
   if (signal.aborted || k.stopped) throw new Aborted();
   if (!repository.worktree) return {
@@ -438,7 +438,7 @@ export async function executeAllChecks(
   let checksRestored = nothing;
   let hooksStarted = false;
   const restore = (report = false) => restoreCheckWorktree(k, scope, repository.worktree!, before, report);
-  const live = await hooksObj.observeSetup({
+  const live = await batch.observeSetup({
     scope,
     checks,
     state,
@@ -451,7 +451,7 @@ export async function executeAllChecks(
   if (signal.aborted || k.stopped) throw new Aborted();
   if (live.outcome.kind !== "verified") return evidence.blocked(scope, live, "setup");
   if (!live.valid()) return evidence.blocked(scope, live, "inputs-changed");
-  if (kept === undefined && (await hooksObj.ranOn(scope, checks, state)) && evidence.matchesEnvironment(scope, live, scope.work.checks?.results)) {
+  if (kept === undefined && (await batch.ranOn(scope, checks, state)) && evidence.matchesEnvironment(scope, live, scope.work.checks?.results)) {
     const reused = await evidence.reuse(scope, state, purpose, live, signal);
     for (const check of entries.values()) if (check.result === "pending") {
       check.result = "skipped";
@@ -467,7 +467,7 @@ export async function executeAllChecks(
     );
     return reused;
   }
-  if (!live.forceFresh && kept === undefined && (await hooksObj.ranOn(
+  if (!live.forceFresh && kept === undefined && (await batch.ranOn(
     scope,
     checks,
     state
@@ -477,7 +477,7 @@ export async function executeAllChecks(
   ].includes(checkOutcome(r).kind))) {
     return evidence.retainIncomplete(scope, state, purpose, live);
   }
-  if (!kept || !evidence.matchesEnvironment(scope, live, kept)) kept = await hooksObj.savedProductResults(scope, checks, state, live);
+  if (!kept || !evidence.matchesEnvironment(scope, live, kept)) kept = await batch.savedProductResults(scope, checks, state, live);
   const beforeStart = () => live.valid();
   try {
     const ran = kept ?? (await runCheckBatch({
@@ -532,7 +532,7 @@ export async function executeAllChecks(
   k.commit();
   const ranAnything = (!nothing && !kept) || hooksStarted || Boolean(state.setup?.requirements.length);
   const finalState = await captureFinalCheckDefinition(k, scope, required ? checksFor(required, repository.worktree) : checks, state, ranAnything);
-  const after = await hooksObj.observeSetup({
+  const after = await batch.observeSetup({
     scope,
     checks,
     state: finalState,

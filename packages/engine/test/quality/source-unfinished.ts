@@ -1,4 +1,5 @@
 import { CALLS, FUNCTIONS, lineOf, name, node, text, WRAPPERS, type Node } from "./source-ast.js";
+import { TEST_WORKSPACES } from "./workspaces.js";
 
 /** What the fixtures export as asynchronous work: their callers must wait for it. */
 const ASYNC_HELPERS = new Set([
@@ -51,7 +52,7 @@ export interface UnfinishedWorkFacts {
  * locked stand-in updates) are reported too. This follows names, not types: work returned through properties and
  * methods, or callbacks handed to other APIs, is not followed, so controlled regressions and review still matter.
  */
-export function unfinishedWork(program: Node, facts: UnfinishedWorkFacts): void {
+export function unfinishedWork(program: Node, facts: UnfinishedWorkFacts, filename = ""): void {
   const tracked = new Set<string>();
   const namespaces = new Set<string>();
   const collectors = new Set<string>();
@@ -91,10 +92,15 @@ export function unfinishedWork(program: Node, facts: UnfinishedWorkFacts): void 
         }
       }
     }
+    const importPath = text(statement.source) ?? "";
+    const inVitestOwnSrc =
+      /(?:^|\/)src\//.test(importPath)
+      && TEST_WORKSPACES.some((entry) => entry.runner === "vitest" && filename.startsWith(`${entry.path}/`));
     if (
       statement.type !== "ImportDeclaration" ||
       statement.importKind === "type" ||
-      !FIXTURE_MODULE.test(text(statement.source) ?? "")
+      inVitestOwnSrc ||
+      !FIXTURE_MODULE.test(importPath)
     ) {
       continue;
     }

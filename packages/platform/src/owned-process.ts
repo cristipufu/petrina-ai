@@ -24,6 +24,7 @@ export async function stopOwnedProcess(child: OwnedProcess, budgets: { graceMs: 
   const exited = child.exited.then(code => {
     if (Number.isInteger(code)) reported = true;
     else if (!nativeEnded()) return unavailable();
+    return undefined;
   }, () => nativeEnded() ? undefined : unavailable());
   const ended = () => reported || nativeEnded();
   const wait = async (ms: number): Promise<boolean> => {

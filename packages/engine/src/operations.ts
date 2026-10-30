@@ -22,29 +22,27 @@ export interface OperationFlags {
   readonly schedulesOn?: "completed" | "pending";
 }
 
-function op<const N extends string, const C extends boolean = false>(
+const RequestIdField = {
+  requestId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .describe("Save this reference before sending. Retry identical arguments with it after a lost reply; different arguments conflict."),
+};
+
+function op<const N extends string, F extends z.ZodRawShape, const C extends boolean = false>(
   name: N,
   description: string,
-  fields: z.ZodRawShape,
+  fields: F,
   changes: C = false as C,
   flags: OperationFlags = {},
 ) {
+  const shape = (changes ? { ...fields, ...RequestIdField } : fields) as C extends true
+    ? F & typeof RequestIdField
+    : F;
   return {
     name,
     description,
-    schema: z
-      .object({
-        ...fields,
-        ...(changes
-          ? {
-              requestId: z
-                .string()
-                .regex(/^[A-Za-z0-9_-]{1,64}$/)
-                .describe("Save this reference before sending. Retry identical arguments with it after a lost reply; different arguments conflict."),
-            }
-          : {}),
-      })
-      .strict(),
+    schema: z.object(shape).strict(),
     changes,
     ...flags,
   };
@@ -457,6 +455,14 @@ export const OPERATIONS = [
 export const operation = (name: string) => OPERATIONS.find((entry) => entry.name === name);
 export type Operation = (typeof OPERATIONS)[number];
 export type OperationName = Operation["name"];
+export type OperationSpec<K extends OperationName = OperationName> = Operation extends infer O
+  ? O extends { readonly name: string; readonly schema: z.ZodType }
+    ? K extends O["name"]
+      ? O
+      : never
+    : never
+  : never;
+export type OperationInput<K extends OperationName = OperationName> = z.output<OperationSpec<K>["schema"]>;
 export type MutationOperationName = Extract<Operation, { changes: true }>["name"];
 export type QueryOperationName = Extract<Operation, { changes: false }>["name"];
 

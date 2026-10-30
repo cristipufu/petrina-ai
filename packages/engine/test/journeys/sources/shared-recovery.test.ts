@@ -45,9 +45,10 @@ describe.concurrent("one task across products", () => {
 
         if (recovery === "restart") return resume;
         await resume(engine);
-        return;
+        return undefined;
       }
       await finishStep(engine);
+      return undefined;
       async function resume(engine: Engine) { engine.retry(itemOf(engine.getState(), id, "stuck")!.id); await finishStep(engine); }
       async function finishStep(engine: Engine) {
       const task = taskOf(await finish(engine, id), id);

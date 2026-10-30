@@ -31,6 +31,7 @@ import {
   type UsageViewFor,
   type WorkChoice,
 } from "@petrina/core";
+import type { AgentAdmissionDependencies, ParticipantAdmission } from "@petrina/orchestrator";
 import { AcceptedPoints } from "./accepted-points.js";
 import { CatalogCommands } from "./catalog-commands.js";
 import { Checkpoints } from "./checkpoints.js";
@@ -65,6 +66,8 @@ export type { NewTaskInput, SaidContext } from "@petrina/core";
 
 /** The engine: every command the window can send (Commands) is a method here. */
 export class Engine extends Kernel implements Commands {
+  override readonly agentAdmission: AgentAdmissionDependencies & { participant: ParticipantAdmission };
+  override readonly readiness: Readiness;
   private readonly profileReader: ProfileChoiceReader;
   private readonly tools: ToolChecks;
   private readonly sources: Sources;
@@ -142,6 +145,7 @@ export class Engine extends Kernel implements Commands {
       this.connections,
       this.sources,
     );
+    this.agentAdmission = this.driver.agentAdmission;
     this.cleanup = new Cleanup(this);
     this.followUps = new FollowUps(this);
     this.taskCommands = new TaskCommands(this, this.sources, this.cleanup);
@@ -204,7 +208,7 @@ export class Engine extends Kernel implements Commands {
     this.catalogCommands.pollRoutines(now);
   }
 
-  schedule(): void {
+  override schedule(): void {
     if (this.stopped) return;
     if (!this.startupComplete) {
       this.driver.syncRuntimeWaits();
@@ -228,11 +232,11 @@ export class Engine extends Kernel implements Commands {
     );
   }
 
-  startDriver(taskId: Id, resume = false): void {
+  override startDriver(taskId: Id, resume = false): void {
     this.driver.startDriver(taskId, resume);
   }
 
-  tidy(taskId: Id): void {
+  override tidy(taskId: Id): void {
     void this.trackWork(this.cleanup.removeCopy(taskId));
   }
 

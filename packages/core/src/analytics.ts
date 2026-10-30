@@ -125,7 +125,7 @@ function productsView(log: WorkLogReader, ctx: UsageContext): ProductsUsage {
 function todayView(log: WorkLogReader, ctx: UsageContext): TodayUsage {
   const { from, to } = periodRange("today", ctx.now);
   const turns = ended(log.turns({ from, to }));
-  const n = names(ctx.state, log, ctx.task, ctx.taskName);
+  const lookup = names(ctx.state, log, ctx.task, ctx.taskName);
   const before = from < log.since();
   const tally = turns.reduce(addTurn, emptyTally());
   const toolIds = [...new Set([
@@ -134,7 +134,7 @@ function todayView(log: WorkLogReader, ctx: UsageContext): TodayUsage {
   ])];
   const byTool = toolIds.map((toolId) => {
     const toolTally = turns.filter((turn) => turn.toolId === toolId).reduce(addTurn, emptyTally());
-    return { toolId, label: n.tool(toolId), turns: toolTally.turns, ...figures(toolTally, before && toolTally.turns > 0) };
+    return { toolId, label: lookup.tool(toolId), turns: toolTally.turns, ...figures(toolTally, before && toolTally.turns > 0) };
   });
   return { view: "today", turns: tally.turns, ...figures(tally, before), atLeast: reasonsOf(tally, before), byTool };
 }
@@ -234,9 +234,9 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
   const turns = ended(log.turns(filter));
   const lines = log.lines(filter);
   const moments = log.moments(filter);
-  const n = names(ctx.state, log, ctx.task, ctx.taskName);
+  const lookup = names(ctx.state, log, ctx.task, ctx.taskName);
   const since = log.since();
-  const addedLater = (productId: Id) => (n.record(productId)?.addedAt ?? -Infinity) > since;
+  const addedLater = (productId: Id) => (lookup.record(productId)?.addedAt ?? -Infinity) > since;
   const before = range.from < since && !(request.productId && addedLater(request.productId));
   const untracked = log.untracked();
   const tally = turns.reduce(addTurn, emptyTally());
@@ -260,7 +260,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     (turn) => turn.toolId
   ).entries()].map(([toolId, list]) => lineOf(
     `tool:${toolId}`,
-    n.tool(toolId),
+    lookup.tool(toolId),
     list,
     { toolId },
     before
@@ -270,7 +270,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     (turn) => turn.roleId
   ).entries()].map(([roleId, list]) => lineOf(
     `role:${roleId}`,
-    n.role(roleId),
+    lookup.role(roleId),
     list,
     { roleId },
     before
@@ -279,7 +279,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     ? undefined
     : [...group(turns, (turn) => turn.productId).entries()]
         .map(([productId, list]) => {
-          const product = n.product(productId);
+          const product = lookup.product(productId);
           return lineOf(
             `product:${productId}`,
             product.label,
@@ -294,10 +294,10 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
         .sort(byTokens);
   const byTask = [...group(turns, (turn) => turn.taskId).entries()]
     .map(([taskId, list]) => {
-      const product = n.product(list[0]!.productId);
+      const product = lookup.product(list[0]!.productId);
       return lineOf(
         `task:${taskId}`,
-        n.taskName(taskId) ?? "A task no longer on the board",
+        lookup.taskName(taskId) ?? "A task no longer on the board",
         list,
         {
         taskId,
@@ -321,8 +321,8 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     to: range.to,
     headline: { ...figures(tally, before), turns: tally.turns, tasks: new Set(turns.map((turn) => turn.taskId)).size },
     atLeast: reasonsOf(tally, before),
-    chart: { hourly: range.hourly, tools: toolIds.map((toolId) => ({ toolId, label: n.tool(toolId) })), buckets },
-    overTime: tokensOverTime(turns, lines, range.buckets, range.hourly, n.tool),
+    chart: { hourly: range.hourly, tools: toolIds.map((toolId) => ({ toolId, label: lookup.tool(toolId) })), buckets },
+    overTime: tokensOverTime(turns, lines, range.buckets, range.hourly, lookup.tool),
     limits: limitsOverTime(
       log.usageHistory({
       from: ctx.now - 30 * 86_400_000,
@@ -335,7 +335,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     ),
       request.period === "today",
       ctx.now,
-      n.tool,
+      lookup.tool,
       ctx.state.tools.map((tool) => tool.id)
     ),
     byTool,
@@ -343,7 +343,7 @@ function analyticsView(log: WorkLogReader, request: { period: UsagePeriod; produ
     byRole,
     ...(byProduct ? { byProduct } : {}),
     byTask,
-    squad: squadView(turns, moments, dayBuckets(request.period, ctx.now), n, (taskId) => log.turns({ taskId })),
+    squad: squadView(turns, moments, dayBuckets(request.period, ctx.now), lookup, (taskId) => log.turns({ taskId })),
     about: { turns: tally.turns, codexHelperTurns, claudeMainOnly, tools: toolIds },
   };
 }

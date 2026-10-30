@@ -47,7 +47,9 @@ describe("documentation contracts", () => {
     expect(docContracts(files, [])).toEqual([]);
 
     files.set("docs/architecture/broken.md", "Broken [target](../missing-doc.md#section).\n");
+    files.set("README.md", "Root [broken](docs/does-not-exist.md).\n");
     expect(docContracts(files, [])).toEqual([
+      "README.md:1: broken documentation link 'docs/does-not-exist.md' (expected 'docs/does-not-exist.md' in repository)",
       "docs/architecture/broken.md:1: broken documentation link '../missing-doc.md#section' (expected 'docs/missing-doc.md' in repository)",
     ]);
   });

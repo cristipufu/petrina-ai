@@ -36,6 +36,7 @@ export function privateContainerCall(root: string, args: readonly string[]): str
     rmSync(join(root, "containers", args.at(-1)!), { force: true });
     return "";
   }
+  return undefined;
 }
 
 /** Same state, filtering and control effects as the private CLI, without a process just to return that data. */

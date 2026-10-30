@@ -5,8 +5,6 @@ vi.mock("../../../../src/notify/channels", () => {
     shell: { show: unexpected, test: unexpected, badge: unexpected, onClick: unexpected, onRelaunch: unexpected } };
 });
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false, invoke: () => { throw new Error("This presentation test did not request a native desktop operation."); } }));
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +12,7 @@ import { Simulator, createDemoState, type State } from "@petrina/core";
 import { useSyncExternalStore } from 'react';
 import { App } from '../../../../src/App';
 import { setSingleKeys } from '../../../../src/keyboard';
+import { readAppStyles } from '../../../fixtures/styles';
 
 let simulator: Simulator;
 
@@ -53,7 +52,7 @@ async function widen(width: number) { await act(async () => (window as unknown a
 describe('the app keyboard', () => {
   it('keeps in-app messages under dialogs and the palette, and lets clicks through the gaps between them', async () => {
     const style = document.createElement('style');
-    style.textContent = readFileSync(resolve(__dirname, '../../../../src/styles.css'), 'utf8');
+    style.textContent = readAppStyles();
     document.head.append(style);
     try {
       await key('j'); await key('p'); await key('j'); await key('p');

@@ -17,7 +17,7 @@ import {
   User,
   X
 } from "lucide-react";
-import { decisionEvidence, dependencyLanding, type JourneyNode, type State, type Task } from "@petrina/core";
+import { decisionEvidence, dependencyLanding, findingKind, type JourneyNode, type State, type Task } from "@petrina/core";
 import { duration, EFFORT_LABEL, profileText, type Lookup } from "../../lib";
 import { reviewOutcome, reviewRoundGroups } from "../../reviewRound";
 import { RoleAvatar } from "../bits";
@@ -355,7 +355,7 @@ export function StepDetails({ node, task, state, find, now, onPlan, onClose, onO
               </> : !trigger || (trigger.kind === "agent" && find.role(trigger.roleId)?.result === "checks" && !trigger.acceptanceChecks) ? <p className="note">Acceptance trigger details unavailable.</p> : null}
               <h4 className="journey-section-heading"><ClipboardCheck size={16} aria-hidden="true" />Findings assigned to this fix</h4>
               {findings.length ? <ul className="journey-check-list">{findings.map((finding) => (
-                <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>{!finding.answer.fixed && finding.raisedBy === "petrina" && finding.text.startsWith("Check failed") ? "Builder’s explanation — not independently confirmed. " : ""}Builder answered: {finding.answer.fixed ? "fix claimed" : "not fixed"}. {finding.answer.text}</span> : null}</li>
+                <li key={finding.id}><strong>{finding.text}</strong>{finding.answer ? <span>{!finding.answer.fixed && findingKind(finding) === "product-check" ? "Builder’s explanation — not independently confirmed. " : ""}Builder answered: {finding.answer.fixed ? "fix claimed" : "not fixed"}. {finding.answer.text}</span> : null}</li>
               ))}</ul> : <p className="note">{node.findingIds || node.result?.findings ? "No findings were assigned to this fix." : "This fix round’s assigned findings were not recorded."}</p>}
             </>;
           })()}

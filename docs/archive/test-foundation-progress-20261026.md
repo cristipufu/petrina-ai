@@ -1,6 +1,6 @@
 # Historical test-foundation progress — 26 October 2026
 
-Historical observations copied from the repair tracker at `4702fe07`. These checkpoints describe their named sources and include superseded results; they are not current instructions or evidence for a later checkout. The [active repair plan](../plans/test-foundation.md) owns the current status and remaining work.
+Historical observations copied from the repair tracker at `4702fe07`. These checkpoints describe their named sources and include superseded results; they are not current instructions or evidence for a later checkout. See the [archived repair plan](test-foundation.md) and current [testing guide](../testing.md).
 
 ## Resume checkpoint
 

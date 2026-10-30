@@ -73,4 +73,5 @@ export function routeAcceptance(host: AcceptanceRoutingHost, scope: RepositoryCo
     host.commit(task);
     return "continue";
   }
+  return undefined;
 }

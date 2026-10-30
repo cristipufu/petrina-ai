@@ -20,7 +20,8 @@ import {
   followingCall,
   VERIFIER_RULES,
   type Role,
-  type Task
+  type RoleResult,
+  type Task,
 } from "@petrina/core";
 import type { PromptContext } from "./prompts.js";
 import {
@@ -430,22 +431,25 @@ Do not change any files, and do not commit, tag, push or publish anything: Petri
 
 const COMPLETE_CHECKS_RULE = "Where the repository defines a full local check, select that authoritative command. Focused, affected-only and early-feedback commands may complement it, but cannot replace it. If a required validation cannot run here, state that limitation instead of presenting a subset as complete validation.";
 
+const RESULT_CONTRACTS: Readonly<Record<RoleResult, string>> = {
+  plan: "planner",
+  notes: "researcher",
+  brief: "architect",
+  objections: "design-reviewer",
+  build: "builder",
+  checks: "tester",
+  findings: "code-reviewer",
+  delivery: "release-manager",
+  "check-discovery": "check-finder",
+  guide: "guide-keeper",
+  votes: "verifier",
+};
+
 /** The contract follows the result, so a coordinator's added reviewer works like a built-in reviewer. */
 export function contractFor(role: Role): RoleContract {
   const builtIn = BUILT_IN_ROLES.find((entry) => entry.id === role.id);
-  const contract = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[
-    role.result === "build" ? "builder"
-      : role.result === "checks" ? "tester"
-      : role.result === "findings" ? "code-reviewer"
-      : role.result === "votes" ? "verifier"
-      : role.result === "brief" ? "architect"
-      : role.result === "objections" ? "design-reviewer"
-      : role.result === "plan" ? "planner"
-      : role.result === "delivery" ? "release-manager"
-      : role.result === "check-discovery" ? "check-finder"
-      : role.result === "guide" ? "guide-keeper"
-      : "researcher"
-  ]!;
+  const base = ROLE_CONTRACTS[role.id] ?? ROLE_CONTRACTS[RESULT_CONTRACTS[role.result]]!;
+  const contract = role.awayFromBuilder !== undefined ? { ...base, awayFromBuilder: role.awayFromBuilder } : base;
   if (role.result === "delivery") return contract;
   const instructions = (ctx: PromptContext): string => {
     const original = contract.instructions(ctx);

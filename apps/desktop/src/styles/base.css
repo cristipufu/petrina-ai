@@ -1,0 +1,239 @@
+/* Petrina: calm by default, loud when it needs you. */
+
+/* Typefaces ship with the app (see public/fonts): the window's security policy only loads
+   fonts from the app itself. Inter is the fallback. A theme picks among the faces below. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+}
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/InstrumentSans.woff2") format("woff2"); }
+@font-face { font-family: "Fraunces"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Fraunces.woff2") format("woff2"); }
+@font-face { font-family: "Source Sans 3"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/SourceSans3.woff2") format("woff2"); }
+@font-face { font-family: "Outfit"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Outfit.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/IBMPlexSans.woff2") format("woff2"); }
+@font-face { font-family: "Figtree"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Figtree.woff2") format("woff2"); }
+@font-face { font-family: "Newsreader"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Newsreader.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/Manrope.woff2") format("woff2"); }
+
+:root {
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  /* Type scale, in rem so enlarged text grows with it: size / line height. */
+  --fs-meta: 0.75rem;     --lh-meta: 1rem;        /* 12 / 16: metadata */
+  --fs-control: 0.8125rem; --lh-control: 1.25rem; /* 13 / 20: controls */
+  --fs-body: 0.875rem;    --lh-body: 1.25rem;     /* 14 / 20: card titles, short body text */
+  --fs-reading: 1rem;     --lh-reading: 1.5rem;   /* 16 / 24: questions, longer reading */
+  --fs-panel: 1.25rem;    --lh-panel: 1.75rem;    /* 20 / 28: panel headings */
+  --fs-title: 1.75rem;    --lh-title: 2.25rem;    /* 28 / 36: page and task titles */
+
+  /* Shared cool-neutral surfaces and one indigo accent across light-mode views. */
+  --bg: #fafbfc;
+  --surface: #ffffff;
+  --sunken: #f5f6f8;
+  --hover: #f0f2f6;
+  --held: #f5f6f8;
+  --selected: #e8edf6;
+  --line: #e5e8ee;
+  --line-strong: #d1d7e0;
+  /* Field outlines and other boundaries that must be seen (3:1). */
+  --field: #858f9f;
+  --focus: #5145cd;
+
+  --text: #17202e;
+  --text-2: #434f61;
+  --text-3: #596577;
+
+  --accent: #5145cd;
+  --accent-hover: #4538bd;
+  --accent-soft: #eef0ff;
+  --accent-text: #4538bd;
+  --on-accent: #ffffff;
+  --suggest: #f5f5ff;
+  --suggest-line: #d1d0f3;
+
+  --lead: #17202e;
+  --lead-hover: #2b3747;
+  --on-lead: #ffffff;
+
+  --amber: #b87503;
+  --amber-text: #8f5600;
+  --amber-soft: #fdf4e1;
+  --amber-line: #ecc77a;
+  --green: #23874f;
+  --green-text: #1a6e3f;
+  --green-soft: #e4f4ea;
+  --red: #cc3a3a;
+  --red-text: #b02c2c;
+  --red-soft: #fdeaea;
+  --blue: #2f6fe4;
+  --blue-text: #2257c0;
+  --blue-soft: #e8f0ff;
+  --slate: #7b8492;
+  --badge: #8f5600;
+  --on-badge: #ffffff;
+
+  --t-indigo: #4652cc;   --t-indigo-soft: #ebedfd;
+  --t-orange: #b85a10;   --t-orange-soft: #fdefe2;
+  --t-violet: #6c40d8;   --t-violet-soft: #f1ebfd;
+  --t-purple: #9035b8;   --t-purple-soft: #f7eafb;
+  --t-pink: #bf2f78;     --t-pink-soft: #fce8f2;
+  --t-blue: #2a63d4;     --t-blue-soft: #e8f0fe;
+  --t-green: #1d7f48;    --t-green-soft: #e3f5ea;
+  --t-teal: #0d7a76;     --t-teal-soft: #dff4f2;
+  --t-slate: #646870;    --t-slate-soft: #f0f2f6;
+  --t-amber: #9c6100;    --t-amber-soft: #fdf2d8;
+
+  --shadow-card: 0 1px 2px rgba(23, 32, 46, 0.04);
+  --shadow-lift: 0 4px 14px rgba(23, 32, 46, 0.07), 0 1px 2px rgba(23, 32, 46, 0.05);
+  --shadow-pop: 0 16px 44px rgba(23, 32, 46, 0.16), 0 2px 8px rgba(23, 32, 46, 0.07);
+  --radius: 12px;
+  --radius-sm: 8px;
+  /* A chosen theme (src/themes) writes over these on the page. These are the fallback before it loads. */
+  --font-display: var(--font);
+  --display-weight: 600;
+  --display-track: -0.02em;
+  --body-track: 0em;
+  --sheet-radius: 16px;
+  --card-pad: 16px;
+  --card-gap: 12px;
+  --board-pad: 20px 20px 32px;
+  --section-gap: 32px;
+  --canvas: var(--bg);
+  --canvas-dot: var(--line-strong);
+  --canvas-dot-size: 20px;
+  --you-fill: var(--amber-soft);
+  --node-radius: var(--radius);
+  --node-shadow: var(--shadow-card);
+  --scrim: rgba(23, 32, 46, 0.2);
+  --logo-from: #8f7dff;
+  --logo-to: #5338e6;
+
+  --rail: max(64px, 4rem);
+  --inbox: max(360px, 22.5rem);
+  --card-min: min(17rem, 100%);
+
+  /* Tool colours in charts: the app's tool colours, with their own steps for dark mode. */
+  --tool-claude-code: #d97757;
+  --tool-codex: #10a37f;
+  --tool-grok: #5b6cff;
+  --tool-antigravity: var(--t-teal);
+  --tool-gemini: #4285f4;
+  --tool-opencode: #6b7079;
+  /* Provider colours in charts: the tool's colour where one tool stands for the provider. */
+  --provider-anthropic: #d97757;
+  --provider-openai: #10a37f;
+  --provider-xai: #3f434b;
+  --provider-google: #4285f4;
+  --provider-other: #7a766e;
+
+  color-scheme: light;
+}
+
+/* Graphite surroundings, visibly raised charcoal surfaces. */
+[data-theme="dark"] {
+  --bg: #151619;
+  --surface: #222327;
+  --sunken: #1b1c1f;
+  --hover: #2b2c31;
+  --held: #1d1e22;
+  --selected: rgba(255, 255, 255, 0.09);
+  --line: #2c2e33;
+  --line-strong: #393b42;
+  --field: #7c7f88;
+  --focus: #a99cff;
+
+  --text: #efede9;
+  --text-2: #c9c5bd;
+  --text-3: #a39f97;
+
+  --accent: #6a52f4;
+  --accent-hover: #5a40ea;
+  --accent-soft: rgba(139, 123, 255, 0.16);
+  --accent-text: #b8adff;
+  --on-accent: #ffffff;
+  --suggest: rgba(139, 123, 255, 0.1);
+  --suggest-line: rgba(169, 156, 255, 0.45);
+
+  /* The lead decision button: pale neutral with dark text in dark mode. */
+  --lead: #e9e6e0;
+  --lead-hover: #ffffff;
+  --on-lead: #18181a;
+
+  --amber: #e2a23a;
+  --amber-text: #f1b956;
+  --amber-soft: rgba(240, 176, 60, 0.12);
+  --amber-line: rgba(240, 176, 60, 0.42);
+  --green: #4cc683;
+  --green-text: #66d398;
+  --green-soft: rgba(76, 198, 131, 0.14);
+  --red: #f07171;
+  --red-text: #ff8f8f;
+  --red-soft: rgba(240, 113, 113, 0.14);
+  --blue: #6b9dff;
+  --blue-text: #92b6ff;
+  --blue-soft: rgba(107, 157, 255, 0.14);
+  --slate: #9a9ea6;
+  --badge: #f0b03c;
+  --on-badge: #1b1404;
+
+  --t-indigo: #949cff;   --t-indigo-soft: rgba(143, 152, 255, 0.16);
+  --t-orange: #f3a15b;   --t-orange-soft: rgba(243, 161, 91, 0.16);
+  --t-violet: #b49aff;   --t-violet-soft: rgba(178, 148, 255, 0.16);
+  --t-purple: #d690f0;   --t-purple-soft: rgba(212, 139, 240, 0.16);
+  --t-pink: #f589be;     --t-pink-soft: rgba(243, 131, 187, 0.16);
+  --t-blue: #76a5ff;     --t-blue-soft: rgba(107, 157, 255, 0.16);
+  --t-green: #56cb8a;    --t-green-soft: rgba(76, 198, 131, 0.16);
+  --t-teal: #4ccac3;     --t-teal-soft: rgba(63, 198, 191, 0.16);
+  --t-slate: #a4a8b0;    --t-slate-soft: rgba(154, 158, 166, 0.16);
+  --t-amber: #f0b03c;    --t-amber-soft: rgba(240, 176, 60, 0.16);
+
+  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 6px 20px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 20px 56px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
+  --you-fill: #2a2416;
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  --tool-claude-code: #d4704f;
+  --tool-codex: #10a37f;
+  --provider-anthropic: #d4704f;
+  --provider-openai: #10a37f;
+  --provider-xai: #c9ccd2;
+  --provider-google: #6ea1ff;
+  --provider-other: #9a9ea6;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: 400;
+  letter-spacing: var(--body-track);
+  /* Equal-width digits everywhere, so no count, duration, time or pool figure shifts as it changes. */
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+button, input, textarea, select { font: inherit; color: inherit; letter-spacing: inherit; }
+button { cursor: pointer; }
+h1, h2, h3, h4, p, ol, ul { margin: 0; }
+ol, ul { padding: 0; }
+::selection { background: var(--accent-soft); }
+/* Marks a changing number; the body already uses equal-width digits, this keeps them if a parent ever changes that. */
+.num { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+:focus:not(:focus-visible) { outline: none; }
+

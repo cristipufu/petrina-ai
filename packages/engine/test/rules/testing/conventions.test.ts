@@ -291,6 +291,36 @@ it("enforces the 650-line production module ceiling and frozen native boundary r
   expect(found(lines(708), "packages/repositories/src/git/worktrees.ts")).toEqual([
     expect.stringContaining("708 lines exceeds the 707-line production module ceiling"),
   ]);
+  const cssLines = (count: number) => Array.from({ length: count }, (_, index) => `.r${index} { gap: 4px; }`).join("\n") + "\n";
+  expect(found(cssLines(650), "apps/desktop/src/styles/base.css")).toEqual([]);
+  expect(found(cssLines(651), "apps/desktop/src/styles/base.css")).toEqual([
+    expect.stringContaining("651 lines exceeds the 650-line production stylesheet ceiling"),
+  ]);
+});
+
+it("enforces runtime-agnostic async, callback and concurrent environment guards across Vitest suites and memoizes sourceFacts", () => {
+  const sample = "export const value = 42;\n";
+  expect(sourceFacts(sample, "packages/core/src/memo-probe.ts")).toBe(
+    sourceFacts(sample, "packages/core/src/memo-probe.ts"),
+  );
+  expect(
+    found(
+      'import { waitFor } from "@petrina/test-support/fixtures";\nwaitFor(() => true);\n',
+      "apps/desktop/test/a.test.tsx",
+    ),
+  ).toEqual([expect.stringContaining("await waitFor")]);
+  expect(
+    found(
+      'import { waitFor } from "@petrina/test-support/fixtures";\n[1].forEach(async () => { await waitFor(() => true); });\n',
+      "packages/orchestrator/test/a.test.ts",
+    ),
+  ).toEqual([expect.stringContaining("keep this callback synchronous")]);
+  expect(
+    found(
+      'import { it } from "vitest";\nit.concurrent("mutates env", () => { process.env.TEST_FLAG = "1"; });\n',
+      "packages/core/test/a.test.ts",
+    ),
+  ).toEqual([expect.stringContaining("concurrent tests cannot change process.env")]);
 });
 
 it("rejects TypeScript any keywords in production source while ignoring comments, strings and identifiers", () => {

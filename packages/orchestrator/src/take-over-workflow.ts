@@ -66,6 +66,7 @@ export function applyTakeOverHandChanges(
       );
       if (!alreadyOpen) {
         task.findings.push({
+          kind: "tamper",
           ...(task.repositories ? { productIds: [productId] } : {}),
           id: options.nextFindingId(),
           text: problem,

@@ -165,13 +165,14 @@ export function DependencyPicker({ state, ids, onChange, task, disabled = false,
     box.current?.querySelector("button")?.focus();
   };
   const reason = (entry: Choice): string | undefined => {
-    if (ids.includes(entry.id)) return;
+    if (ids.includes(entry.id)) return undefined;
     if (task && entry.id === task.id) return "A task cannot wait for itself";
     if (task && state.tasks.some((other) => other.id === entry.id)) {
       try { validateTaskDependencies(task.id, [entry.id], (id) => state.tasks.find((other) => other.id === id)); }
       catch { return "Already waiting on this task"; }
     }
     if (ids.length >= 20) return "Choose up to 20 prerequisites";
+    return undefined;
   };
   return <div className="dependency-picker">
     <span className="sr-only" role="status">{ids.length} prerequisites selected</span>

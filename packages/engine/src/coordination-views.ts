@@ -6,8 +6,6 @@ import type {
   Landing,
   ScreenMode,
   Task,
-  WorkChoice,
-  WorkflowEventKind,
 } from "@petrina/core";
 import {
   deliveryDecisionProblem,
@@ -29,64 +27,22 @@ import { checkLogRevision } from "./check-log-read.js";
 import type { Engine } from "./engine.js";
 import { cursor } from "./evidence-read.js";
 
-/** Validated operation payload fields across the schema catalogue in `operations.ts`. */
-export interface CoordinationArgs {
-  [key: string]: unknown;
-  requestId?: string;
-  taskId?: string;
-  taskIds?: string[];
-  targetTaskId?: string;
-  productId?: string;
-  itemId?: string;
-  revision?: string;
-  ifRevision?: string;
-  nodeId?: string;
-  stageId?: string;
-  profileId?: string;
-  findingId?: string;
-  messageId?: string;
-  eventId?: string;
-  setupAttemptId?: string;
-  anchorId?: string;
-  toolId?: string;
-  seat?: string;
-  marker?: string;
-  cursor?: string;
-  search?: string;
-  title?: string;
-  description?: string;
-  answer?: string;
-  note?: string;
-  reason?: string;
-  text?: string;
-  section?: string;
-  target?: "engine" | "pool" | "task" | "inbox";
-  condition?: "change" | "drained" | "decision" | "delivered" | "landed" | "state";
-  decision?: "check" | "ship-again" | "mark-done";
-  side?: "before" | "after";
-  mode?: string;
-  list?: "profileIds" | "reviewerProfileIds";
-  from?: "now" | "oldest";
-  period?: "today" | "7d" | "30d";
-  limit?: number;
-  cap?: number;
-  index?: number;
-  position?: number;
-  result?: number;
-  update?: number;
-  timeoutMs?: number;
-  wait?: boolean;
-  held?: boolean;
-  blocking?: boolean;
-  allowed?: boolean;
-  includeActivity?: boolean;
-  after?: string[];
-  positions?: number[];
-  states?: Task["state"][];
-  kinds?: (InboxKind | WorkflowEventKind)[];
-  choice?: WorkChoice;
-  checks?: Parameters<Engine["setProductChecks"]>[1];
-  requirements?: Parameters<Engine["setProductCheckSetup"]>[1];
+export interface InboxFilterArgs {
+  readonly productId?: string;
+  readonly taskId?: string;
+  readonly kinds?: readonly InboxKind[];
+  readonly blocking?: boolean;
+  readonly search?: string;
+}
+
+export interface HistoryFilterArgs {
+  readonly productId?: string;
+  readonly taskId?: string;
+  readonly states?: readonly Task["state"][];
+  readonly held?: boolean;
+  readonly search?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
 }
 
 export interface LifecycleControl {
@@ -180,8 +136,7 @@ export function taskSummary(engine: Engine, task: Task) {
  * A ballot's required places and who still owes answers. A bounded panel names each place with its tool, assigned
  * finding ids, answers still owed and why it was chosen, plus the tools usable when it was saved and any third-answer decisions.
  */
-function voterPlaces(engine: Engine, task: Task) {
-  const hunt = task.hunt!;
+function voterPlaces(engine: Engine, task: Task, hunt: NonNullable<Task["hunt"]>) {
   const panel = hunt.panel;
   if (!panel) {
     return {
@@ -255,9 +210,12 @@ export function drainStatus(engine: Engine) {
       startedAt: run.startedAt,
     })),
     screenWaiting: state.tasks
-      .filter((task) => task.screen && !active.some((entry) => entry.id === task.id))
-      .slice(0, 100)
-      .map((task) => ({ taskId: task.id, reason: task.screen!.reason })),
+      .flatMap((task) =>
+        task.screen && !active.some((entry) => entry.id === task.id)
+          ? [{ taskId: task.id, reason: task.screen.reason }]
+          : [],
+      )
+      .slice(0, 100),
     queued: state.tasks.filter((task) => task.state === "queued").length,
     waiting: state.tasks.filter((task) => task.state === "waiting").length,
     checkpoints: state.inbox.filter(
@@ -266,17 +224,18 @@ export function drainStatus(engine: Engine) {
     pendingParticipants: state.tasks
       .flatMap((task) => {
         const stage = task.plan?.stages[task.stageIndex];
-        return stage?.kind === "review-chain" && task.hunt
+        const hunt = task.hunt;
+        return stage?.kind === "review-chain" && hunt
           ? [
               {
                 taskId: task.id,
                 stageId: stage.id,
-                finishedReviewers: Object.keys(task.hunt.reported),
+                finishedReviewers: Object.keys(hunt.reported),
                 waitingReviewers: stage.profileIds.flatMap((profileId, index) =>
-                  task.hunt!.reported[String(index)] ? [] : [{ index, profileId }],
+                  hunt.reported[String(index)] ? [] : [{ index, profileId }],
                 ),
-                finishedVoters: Object.keys(task.hunt.voted ?? {}),
-                ...voterPlaces(engine, task),
+                finishedVoters: Object.keys(hunt.voted ?? {}),
+                ...voterPlaces(engine, task, hunt),
               },
             ]
           : [];
@@ -525,7 +484,7 @@ export function taskHealthView(engine: Engine, task: Task): Result {
   };
 }
 
-export function filteredInbox(engine: Engine, args: CoordinationArgs): InboxItem[] {
+export function filteredInbox(engine: Engine, args: InboxFilterArgs): InboxItem[] {
   const state = engine.activeState();
   return state.inbox
     .filter((item) => {
@@ -537,7 +496,7 @@ export function filteredInbox(engine: Engine, args: CoordinationArgs): InboxItem
       }
       return (
         (!args.taskId || item.taskId === args.taskId)
-        && (!args.kinds || (args.kinds as string[]).includes(item.kind))
+        && (!args.kinds || args.kinds.includes(item.kind))
         && (args.blocking === undefined || item.blocking === args.blocking)
         && (!args.search || item.title.toLowerCase().includes(args.search.toLowerCase()))
       );
@@ -545,7 +504,7 @@ export function filteredInbox(engine: Engine, args: CoordinationArgs): InboxItem
     .sort((left, right) => left.at - right.at || left.id.localeCompare(right.id));
 }
 
-export function readHistoryPage(engine: Engine, args: CoordinationArgs): Result {
+export function readHistoryPage(engine: Engine, args: HistoryFilterArgs): Result {
   const states = args.states?.filter((state): state is "done" | "cancelled" => state === "done" || state === "cancelled");
   const request: HistoryQuery = {
     productId: args.productId,

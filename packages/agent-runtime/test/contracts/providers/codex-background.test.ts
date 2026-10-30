@@ -44,6 +44,7 @@ process.stdin.on('end',()=>process.exit(0));
         const found = lines.find((line) => line.id === id);
         if (found) return found;
         if (exited !== undefined) throw new Error(`The helper stopped before responding (${exited}).`);
+        return undefined;
       }, "the helper to forward the next response");
       responses.push(response);
       expect(response.result.method).toBe(method);

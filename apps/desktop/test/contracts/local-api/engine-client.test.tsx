@@ -319,4 +319,33 @@ describe('the real browser connection', () => {
     expect(latest.link).toBe('live');
     expect(latest.restarted).toBeUndefined();
   });
+
+  it('ignores malformed socket frames and corrupted saved outbox records without losing valid entries', async () => {
+    await mount();
+    const { EngineClient } = await import('../../../src/engine');
+    localStorage.setItem(
+      'petrina.unsent',
+      JSON.stringify([
+        null,
+        { entry: { clientId: '', taskId: 'task-1', kind: 'message', text: 'bad' }, send: { name: 'sendMessage', args: [] } },
+        { entry: { clientId: 'ok-1', taskId: 'task-1', kind: 'unknown', text: 'bad' }, send: { name: 'sendMessage', args: [] } },
+        { entry: { clientId: 'ok-2', taskId: 'task-1', kind: 'message', text: 'Keep going' }, send: { name: 'sendMessage', args: ['task-1', 'Keep going', 'now', 'ok-2'] } },
+      ]),
+    );
+    const client = new EngineClient({ desktop: false, address });
+    try {
+      expect(client.unsent()).toEqual([{ clientId: 'ok-2', taskId: 'task-1', kind: 'message', text: 'Keep going' }]);
+      const socket = current();
+      socket.connect();
+      socket.onmessage?.({ data: 'not-json' });
+      socket.onmessage?.({ data: JSON.stringify(null) });
+      socket.onmessage?.({ data: JSON.stringify({ type: 'state', state: { broken: true } }) });
+      socket.onmessage?.({ data: JSON.stringify({ type: 'result', id: 'bad', ok: true }) });
+      expect(client.synced()).toBe(false);
+      socket.onmessage?.({ data: JSON.stringify({ type: 'state', state: oneTaskFixture(1000) }) });
+      expect(client.synced()).toBe(true);
+    } finally {
+      client.dispose();
+    }
+  });
 });

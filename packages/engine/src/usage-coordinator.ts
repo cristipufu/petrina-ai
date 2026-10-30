@@ -84,6 +84,7 @@ export class UsageCoordinator {
       pool: () => host.state().pool,
       record: (report) => host.recordUsageReport(report),
       toolName: (toolId) => this.toolName(toolId),
+      reconcilesAllowanceWindows: (toolId) => ADAPTERS[toolId]?.reconcilesAllowanceWindows === true,
       wake: () => host.schedule(),
     });
   }

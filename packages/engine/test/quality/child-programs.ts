@@ -116,6 +116,7 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
         ["packages/agent-runtime/src/acp-run.ts", "packages/agent-runtime/src/index.ts"].includes(target),
       );
     if (isAgentRuntime) return { kind: "api", value: "AgentRun" };
+    return undefined;
   };
   const blockScopes = new Set([
     "BlockStatement",
@@ -176,7 +177,7 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
   scan(program, root);
   const globalAccess = (input: unknown, seen = new Set<Binding>()): string | undefined => {
     const value = unwrap(input);
-    if (!node(value)) return;
+    if (!node(value)) return undefined;
     const id = name(value);
     if (id) {
       const binding = lookup(scopes.get(value)!, id);
@@ -196,6 +197,7 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
       const key = member(value);
       if (owner && key) return owner === "globalThis" ? key : `${owner}.${key}`;
     }
+    return undefined;
   };
   const altered = (path: string) =>
     (alteredGlobals.has("globalThis") && ["Bun", "process", "URL"].includes(path.split(".")[0]!)) ||
@@ -211,10 +213,10 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
   };
   const access = (object: Value | undefined, key: string, active: Set<Binding>): Value | undefined => {
     remember(object, active);
-    if (!initial && object && invalid.has(object)) return;
+    if (!initial && object && invalid.has(object)) return undefined;
     if (object?.kind === "object") return object.entries.get(key);
     if (object?.kind === "api") {
-      if (!initial && (altered(`${object.value}.${key}`) || (object.value === "globalThis" && altered(key)))) return;
+      if (!initial && (altered(`${object.value}.${key}`) || (object.value === "globalThis" && altered(key)))) return undefined;
       if (object.value === "globalThis" && ["Bun", "process", "URL"].includes(key)) return { kind: "api", value: key };
       if (object.value === "AgentRun" && key === "start") return { kind: "call", value: "agent" };
       if (object.value === "fixture" && ["runCommand", "runProcess"].includes(key)) return { kind: "call", value: "argv" };
@@ -223,15 +225,16 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
       }
     }
     if (object?.kind === "url" && ["href", "pathname"].includes(key)) return object;
+    return undefined;
   };
   const resolve = (input: unknown, active = new Set<Binding>()): Value | undefined => {
-    if (!node(input)) return;
+    if (!node(input)) return undefined;
     if (wrappers.has(input.type)) return resolve(input.expression ?? input.argument, active);
     if (text(input) !== undefined) return { kind: "text", value: text(input)! };
     if (name(input)) {
       const binding = lookup(scopes.get(input)!, name(input)!);
       if (binding) {
-        if (binding.changed || active.has(binding)) return;
+        if (binding.changed || active.has(binding)) return undefined;
         const next = new Set(active);
         next.add(binding);
         if (!values.has(binding)) {
@@ -246,21 +249,21 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
           !initial &&
           ((value && (invalid.has(value) || (value.kind === "api" && altered(value.value)))) || hasInvalidDependency)
         ) {
-          return;
+          return undefined;
         }
         return value;
       }
       if (["Bun", "process", "globalThis", "URL"].includes(name(input)!) && (initial || !altered(name(input)!))) {
         return { kind: "api", value: name(input)! };
       }
-      return;
+      return undefined;
     }
     if (input.type === "ArrayExpression") {
       const entries: (Value | undefined)[] = [];
       for (const entry of input.elements as unknown[]) {
         if (node(entry) && entry.type === "SpreadElement") {
           const spread = resolve(entry.argument, active);
-          if (spread?.kind !== "array") return;
+          if (spread?.kind !== "array") return undefined;
           remember(spread, active);
           entries.push(...spread.entries);
         } else {
@@ -317,7 +320,7 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
       if (api?.kind === "call" && api.value === "module" && args[0]?.kind === "text" && args.length === 1) {
         return { kind: "module", value: args[0].value };
       }
-      if (api?.kind !== "api") return;
+      if (api?.kind !== "api") return undefined;
       if (["url.fileURLToPath", "url.pathToFileURL"].includes(api.value) && args.length === 1) {
         const value = args[0];
         if (value?.kind === "module" && api.value === "url.fileURLToPath") return value;
@@ -346,6 +349,7 @@ export function childPrograms(program: Node, filename: string): ChildProgram[] {
         }
       }
     }
+    return undefined;
   };
   // Const/member aliases share the same structured value. Mutations/escapes invalidate that identity,
   // not just one variable spelling; path strings remain immutable. Calls are never executed.

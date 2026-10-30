@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyTheme } from "../../../../src/theme";
 import { themes } from "../../../../src/themes";
+import { readAppStyles } from "../../../fixtures/styles";
 
 const KEY = "petrina.theme";
 
@@ -49,7 +48,7 @@ afterEach(() => {
 
 describe("themes", () => {
   it("paints Next and the action line as quiet small text, readable in every look including hover", () => {
-    const css = readFileSync(resolve(__dirname, "../../../../src/styles.css"), "utf8");
+    const css = readAppStyles();
     const style = document.createElement("style");
     style.textContent = css;
     document.head.append(style);

@@ -33,9 +33,13 @@ export interface SourceFacts {
 }
 
 const BLOCKING = new Set(["spawnSync", "execFileSync", "execSync"]);
+const FACTS_CACHE_LIMIT = 4_000;
+const factsCache = new Map<string, { source: string; facts: SourceFacts }>();
 
 /** Parse syntax rather than searching prose, comments or template strings for code. Never executes a module. */
 export function sourceFacts(source: string, filename: string): SourceFacts {
+  const cached = factsCache.get(filename);
+  if (cached && cached.source === source) return cached.facts;
   const facts: SourceFacts = {
     imports: [],
     fullModuleMocks: [],
@@ -241,7 +245,12 @@ export function sourceFacts(source: string, filename: string): SourceFacts {
     }
   }
   visit(ast);
-  unfinishedWork(ast.program as unknown as Node, facts);
+  unfinishedWork(ast.program as unknown as Node, facts, filename);
+  if (factsCache.size >= FACTS_CACHE_LIMIT) {
+    const oldest = factsCache.keys().next().value;
+    if (oldest !== undefined) factsCache.delete(oldest);
+  }
+  factsCache.set(filename, { source, facts });
   return facts;
 }
 
@@ -372,7 +381,7 @@ function environmentConcurrency(program: Node): { concurrent: number[]; mutation
   type TestApi = { namespace?: true; concurrent?: boolean };
   const api = (input: unknown): TestApi | undefined => {
     const value = unwrap(input);
-    if (!node(value)) return;
+    if (!node(value)) return undefined;
     const id = name(value);
     if (id) {
       const binding = lookup(scopes.get(value)!, id);
@@ -400,6 +409,7 @@ function environmentConcurrency(program: Node): { concurrent: number[]; mutation
         ? api(callee)
         : undefined;
     }
+    return undefined;
   };
   const concurrent: number[] = [];
   const mutations: number[] = [];

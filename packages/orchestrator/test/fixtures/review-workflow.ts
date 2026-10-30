@@ -77,6 +77,7 @@ export function reviewWorkflowFixture() {
       step.agentResults = [...(step.agentResults ?? []), { roleId, profileId, at: f.now(), value }];
       reports.apply(task, stage, value, profileId, roleId, key);
       task.hunt!.reported[key] = true;
+      return undefined;
     },
     assertConsumed() { if (observations.length) throw new Error(`Unconsumed review observations: ${JSON.stringify(observations)}`); },
   };

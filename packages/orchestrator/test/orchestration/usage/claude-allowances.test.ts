@@ -13,7 +13,13 @@ function fixture() {
   const recorded: UsageReport[] = [], wake = vi.fn();
   const clock = { value: NOW, set(value: number) { this.value = value; } };
   const now = () => clock.value;
-  const recording = new UsageRecording({ pool: () => pool, record: report => recorded.push(structuredClone(report)), toolName: id => id === "claude-code" ? "Claude Code" : id, wake });
+  const recording = new UsageRecording({
+    pool: () => pool,
+    record: report => recorded.push(structuredClone(report)),
+    toolName: id => id === "claude-code" ? "Claude Code" : id,
+    reconcilesAllowanceWindows: id => id === "claude-code",
+    wake,
+  });
   const state = () => ({ pool, profiles: DEFAULT_PROFILES, tools: KNOWN_TOOLS.map(tool => ({ ...tool, status: "ready" as const })) });
   return { pool, recorded, now, clock, wake, record: (info: UsageInfo) => recording.record(info, now()),
     account: (tool: string, reports: readonly UsageInfo[]) => recording.account(tool, reports, now()),

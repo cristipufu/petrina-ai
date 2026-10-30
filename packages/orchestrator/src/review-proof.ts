@@ -4,7 +4,7 @@ import type { RuntimeTask } from "./model.js";
 import type { ReviewProofHost, ReviewProofProposal } from "./ports/review-proof.js";
 
 export function checkProofRequests(k: Pick<ReviewProofHost, "role">, task: RuntimeTask, requests: readonly ReviewProofProposal[]): string | undefined {
-  if (!requests.length) return;
+  if (!requests.length) return undefined;
   const owner = proofOwner(task as Task, task.plan!.stages.flatMap(stage => {
     const role = k.role(stage.roleId, task);
     return role ? [role] : [];
@@ -16,6 +16,7 @@ export function checkProofRequests(k: Pick<ReviewProofHost, "role">, task: Runti
     if (!request.productIds.length || request.productIds.some(id => !ids.includes(id)) || new Set(request.productIds).size !== request.productIds.length) return `Assign every proof request to valid, distinct product ids: ${ids.join(", ")}.`;
     if (request.checklistText !== undefined && !task.brief?.acceptance.some(item => item.text === request.checklistText)) return "A proof request's checklistText must exactly match a saved acceptance item, or omit that optional link.";
   }
+  return undefined;
 }
 
 /** Called with the accepted seat result; identity is its position in this execution, never similar wording. */

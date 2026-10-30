@@ -48,7 +48,7 @@ export * from "./engine-options.js";
 
 export abstract class Kernel {
   /** One actual scheduler/participant/group boundary, composed by the Engine before agents can run. */
-  agentAdmission!: AgentAdmissionDependencies & { participant: ParticipantAdmission };
+  abstract readonly agentAdmission: AgentAdmissionDependencies & { participant: ParticipantAdmission };
   readonly projection = new StateProjection(this, (task) => renameRoles({ ...this.s, tasks: [task], inbox: [] }));
   private readonly acceptanceRestorations = new AcceptanceRestorations(this);
   private readonly commits = new KernelCommits(this);
@@ -82,7 +82,7 @@ export abstract class Kernel {
     checkpoint: () => this.commitNow(),
   });
   /** Bounded readiness rechecks for saved participants; the engine supplies them with its tool checks. */
-  readiness!: Readiness;
+  abstract readonly readiness: Readiness;
   abstract schedule(): void;
   abstract startDriver(taskId: Id, resume?: boolean): void;
   abstract tidy(taskId: Id): void;

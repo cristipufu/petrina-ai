@@ -34,6 +34,8 @@ export interface ToolAdapter {
   verifySessionSettings?: (profile: AgentProfile, settings: { model?: string; effort?: string }) => void;
   parseTurnReport?: (response: unknown) => TurnReport | undefined;
   parseUsageUpdate?: (meta: Record<string, unknown>) => { reports: UsageInfo[]; model?: string };
+  /** Reconcile overlapping plan and overage allowance windows across live notices and account snapshots. */
+  reconcilesAllowanceWindows?: boolean;
   toolMetadata?: (meta: Readonly<Record<string, unknown>>) => Record<string, unknown> | undefined;
   parseLimitError?: (data: Record<string, unknown>, message: string) => LimitFailure | null | undefined;
   /**

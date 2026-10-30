@@ -8,14 +8,13 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false, invoke: () => { t
 import { vi } from "vitest";
 vi.mock("../../../../src/engine", () => ({ mode: "demo", desktop: false, sim: {} }));
 import { act } from "react";
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { Window as HappyWindow } from 'happy-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type JourneyView } from "@petrina/core";
 import { JourneyEdge } from "../../../../src/components/Journey";
 import { layoutJourney } from '../../../../src/journeyLayout';
+import { readAppStyles } from "../../../fixtures/styles";
 
 const NOW = 1_000_000_000_000;
 
@@ -34,7 +33,7 @@ describe('the live arrow with reduced motion', () => {
     const device = (window as unknown as HappyWindow).happyDOM.settings.device;
     const previous = device.prefersReducedMotion;
     const style = document.createElement('style');
-    style.textContent = readFileSync(resolve(__dirname, '../../../../src/styles.css'), 'utf8');
+    style.textContent = readAppStyles();
     device.prefersReducedMotion = 'reduce';
     document.head.append(style);
     try {

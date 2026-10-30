@@ -3,6 +3,7 @@ import {
   assignedProducts,
   closedFinding,
   findingCount,
+  findingKind,
   noteReproduction,
   noteReviewTag,
   openStep,
@@ -95,7 +96,7 @@ export class ReviewReports {
     );
     if (task.repositories && task.hunt) for (const finding of task.findings) {
       const owners = assignedProducts(task, finding.productIds);
-      if (owners.length < 2 || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:") || !owners.every((id) => finding.answers?.[id]?.fixed)) continue;
+      if (owners.length < 2 || findingKind(finding) !== "review" || !owners.every((id) => finding.answers?.[id]?.fixed)) continue;
       const passed = result.verdict === "pass" && !result.confirms.includes(finding.id);
       task.hunt.fixReviews = { ...task.hunt.fixReviews, [finding.id]: { ...task.hunt.fixReviews?.[finding.id], [reviewerKey]: passed } };
     }
@@ -112,6 +113,7 @@ export class ReviewReports {
       const tagged = noteReviewTag(undefined, SEVERITY[finding.severity], profileId, this.host.now());
       const relevant = tagged.judgments.some((entry) => entry.severity === "pre-existing");
       const created: DeepMutable<Finding> = {
+        kind: "review",
         id: this.host.id(task), text: finding.text,
         ...(task.repositories ? { productIds: assignedProducts(task, finding.productIds) } : {}),
         ...(finding.where ? { where: finding.where } : {}),
@@ -176,7 +178,7 @@ export class ReviewReports {
     const reviewers = Object.keys(task.hunt.reported);
     const before = new Map(task.findings.map(finding => [finding.id, finding.status]));
     for (const finding of task.findings) {
-      if (finding.status !== "open" || finding.severity !== "pre-existing" || finding.raisedBy === "petrina") continue;
+      if (finding.status !== "open" || finding.severity !== "pre-existing" || findingKind(finding) !== "review") continue;
       const checks = Object.values(task.hunt.findingChecks?.[finding.id] ?? {});
       const repaired = checks.find(check => check.resolved && check.evidence);
       const versions = task.hunt.input?.heads;
@@ -188,7 +190,7 @@ export class ReviewReports {
       addEvidence(finding, `Verified repaired: ${repaired.evidence}`);
     }
     for (const finding of task.findings) {
-      if (finding.status !== "open" || finding.raisedBy === "petrina" || finding.text.startsWith("Failed acceptance check:")) continue;
+      if (finding.status !== "open" || findingKind(finding) !== "review") continue;
       if (task.repositories && !assignedProducts(task, finding.productIds).length) continue;
       if (finding.disputes?.length && !finding.confirmedBy.length) finding.status = "dismissed";
       if (!task.repositories) continue;

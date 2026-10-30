@@ -4,9 +4,11 @@ import {
   AcceptancePreflight,
   AgentWorkflow,
   recoverStartupWork,
+  type AgentAdmissionDependencies,
   type AgentAdmissionCatalog,
   type AgentAdmissionReadiness,
   type AgentAdmissionErrors,
+  type ParticipantAdmission,
   type WorkspacePreparation,
   type AcceptancePreparation,
   type DeliveryCheckpointPreparation
@@ -37,6 +39,7 @@ import { destination, needsReleaseManager, type Shipping } from "./shipping.js";
 
 export class Driver {
   readonly workflow: AgentWorkflow;
+  readonly agentAdmission: AgentAdmissionDependencies & { participant: ParticipantAdmission };
   private readonly checkpoint: DeliveryCheckpoint;
   private readonly acceptancePreflight: AcceptancePreflight;
   private readonly waitRefresh: WaitSourceRefresh;
@@ -236,7 +239,7 @@ export class Driver {
         clearUnpublishedOnFailure: task => this.clearUnpublishedOnFailure(task), finish: (id, signal) => this.finish(id, signal),
       },
     });
-    k.agentAdmission = { ...shared, participant: this.workflow };
+    this.agentAdmission = { ...shared, participant: this.workflow };
   }
 
   syncRuntimeWaits(): void { this.workflow.syncRuntimeWaits(); }

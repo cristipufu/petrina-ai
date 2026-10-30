@@ -1,6 +1,6 @@
 # Historical test-foundation progress
 
-Archived on 25 October 2026. These checkpoints describe older revisions and partial work; they are historical evidence, not current specifications or coding-agent instructions. Read the [active repair plan](../plans/test-foundation.md) for current status and the remaining requirements. Raw attempts remain under `~/.petrina/coordinator-diagnostics/test-revamp`.
+Archived on 25 October 2026. These checkpoints describe older revisions and partial work; they are historical evidence, not current specifications or coding-agent instructions. See the [archived repair plan](test-foundation.md) and current [testing guide](../testing.md). Raw attempts remain under `~/.petrina/coordinator-diagnostics/test-revamp`.
 
 ### Native suite execution design — next local slice
 

@@ -1,6 +1,6 @@
 # Test-foundation investigation record — 24 October 2026
 
-Historical snapshots from the ongoing repair, not current implementation instructions. Statements such as “next”, “unfinished” and “current” below describe the recorded point in time and may be superseded. Use [the active plan](../plans/test-foundation.md) for the complete objective, current checkpoint and next actions. Results apply only to their named revisions and environments; a later pass does not erase a recorded failure.
+Historical snapshots from the ongoing repair, not current implementation instructions. Statements such as “next”, “unfinished” and “current” below describe the recorded point in time and may be superseded. Use [the archived plan](test-foundation.md) and [testing](../testing.md) for context and current contracts. Results apply only to their named revisions and environments; a later pass does not erase a recorded failure.
 
 ## Chronological investigation notes
 

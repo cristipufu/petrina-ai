@@ -26,6 +26,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run format:check
       - run: bun run test:conventions
@@ -53,7 +60,22 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
+      - name: Playwright Chromium binary cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/Library/Caches/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       # Required engine tests open a real headless Chromium: install the build the locked browser
       # dependency expects, with its Linux libraries, before the tests and never inside them.
       - name: Chromium for the browser tests
@@ -68,6 +90,48 @@ jobs:
         with:
           name: test-evidence-${{ matrix.os }}-${{ github.sha }}
           path: .test-results/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+
+  resources:
+    name: Native launch budget
+    if: github.event_name != 'pull_request'
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - name: Playwright Chromium binary cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - name: Chromium for the browser tests
+        run: bun run test:install-browser --with-deps
+      - name: Measure and enforce native launch budget
+        run: |
+          bun run test:resources
+          bun run test:resources:check
+      - name: Resource ledger evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: resource-evidence-${{ github.sha }}
+          path: .test-results/resources/
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
@@ -88,6 +152,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - name: Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -100,8 +171,4 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - name: Check and test the Rust host
-        working-directory: apps/desktop/src-tauri
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
+        run: bun run rust:check

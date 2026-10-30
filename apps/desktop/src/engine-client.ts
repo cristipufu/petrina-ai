@@ -1,92 +1,40 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommandName, Commands, Id, NewTaskInput, State } from "@petrina/core";
+import type { CommandName, Commands, Id, State } from "@petrina/core";
 import { Late, Lost } from "./commandFailures";
+import {
+  browserAddress,
+  failureText,
+  isSavedUnsentRecord,
+  newClientId,
+  NOTHING_UNSENT,
+  parseServerFrame,
+  plainReason,
+  validAddress,
+  type Address,
+  type EngineStatus,
+  type FirstTask,
+  type Unsent,
+} from "./engine-protocol";
 
-/** Something the coordinator said that the engine has not confirmed saving yet. Sent again after reconnecting. */
-export interface Unsent {
-  clientId: string;
-  taskId: Id;
-  kind: "message" | "answer" | "no" | "changes";
-  text: string;
-  /** The inbox item it answers. */
-  itemId?: Id;
-  /** The engine refused it, in plain words. Kept and shown until the coordinator sends it again or discards it. */
-  refused?: string;
-}
+export {
+  browserAddress,
+  failureText,
+  newClientId,
+  NOTHING_UNSENT,
+  plainReason,
+  validAddress,
+  type Address,
+  type EngineStatus,
+  type FirstTask,
+  type Unsent,
+};
 
-/** How the window is connected to its engine. */
-export interface EngineStatus {
-  link: "starting" | "live" | "reconnecting" | "failed";
-  /** The engine's real state has arrived at least once: until then the window knows nothing about products or tasks. */
-  synced: boolean;
-  /** Inside the desktop app. */
-  desktop: boolean;
-  /** Desktop: the app started this engine (quitting stops it), or found one already running. */
-  owned?: boolean;
-  /** Why the engine could not start or be reached. */
-  problem?: string;
-  /** Browser: the address answers but refuses this window's old key. */
-  restarted?: boolean;
-  recovery?: boolean;
-  /** The last action the engine refused. */
-  error?: string;
-}
-
-export interface Address {
-  url: string;
-  token: string;
-}
-
-const SESSION_KEY = "petrina.engine";
 /** What was not sent yet when the coordinator opened the demo: sent once the window is back on the engine. */
 const UNSENT_KEY = "petrina.unsent";
 /** How long first run's Start waits for the engine to confirm the task is saved. */
 const START_TIMEOUT_MS = 10_000;
 /** The desktop app gives up starting an engine after this many failures in a row, and asks. */
 const MAX_FAILURES = 3;
-
-export function validAddress(raw: unknown): Address | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const { url, token } = raw as { url?: unknown; token?: unknown };
-  if (typeof url !== "string" || typeof token !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(token)) return undefined;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "ws:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== "/ws" || parsed.search) return undefined;
-  } catch {
-    return undefined;
-  }
-  return { url, token };
-}
-
-/**
- * `petrina open` passes the engine's address in the URL fragment (never sent to a server).
- * It is kept for this tab only and removed from the address bar right away.
- */
-export function browserAddress(): Address | undefined {
-  const hash = new URLSearchParams(window.location.hash.slice(1)).get("engine");
-  if (hash) {
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-    try {
-      const decoded = validAddress(JSON.parse(atob(hash.replace(/-/g, "+").replace(/_/g, "/"))));
-      if (decoded) {
-        try {
-          sessionStorage.setItem(SESSION_KEY, JSON.stringify(decoded));
-        } catch {
-          // Without storage the tab still works; a reload just needs `petrina open` again.
-        }
-        return decoded;
-      }
-    } catch {
-      return undefined;
-    }
-  }
-  try {
-    const saved = sessionStorage.getItem(SESSION_KEY);
-    return saved ? validAddress(JSON.parse(saved)) : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 const EMPTY: State = {
   now: Date.now(),
@@ -98,33 +46,11 @@ const EMPTY: State = {
   tasks: [],
   inbox: [],
   pool: {
-  limit: 3,
-  paused: false,
-  toolCaps: {}
-}
+    limit: 3,
+    paused: false,
+    toolCaps: {},
+  },
 };
-export const NOTHING_UNSENT: readonly Unsent[] = [];
-
-/** The engine's reason when it is plain words; its checks of what was sent are not, so they get a plain line. */
-export function plainReason(error: string): string {
-  return error.length <= 160 && !/[{}[\]<>"`]/.test(error) ? error : "Petrina's engine could not take it.";
-}
-
-/** Why something sent to the engine failed, in one plain sentence. */
-export function failureText(failure: unknown): string {
-  if (failure instanceof Lost) return "Petrina isn't connected to its engine right now, so try again once it's back.";
-  if (failure instanceof Late) return "Petrina's engine didn't answer in time, so try again.";
-  return plainReason(failure instanceof Error ? failure.message : String(failure));
-}
-
-/** First run's Start, as the window sends it: its id makes a resend after a lost reply find the same task. */
-export type FirstTask = NewTaskInput & { clientId: string };
-
-/** An id for something the window sends, so a resend after a lost reply counts once. */
-export function newClientId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
 
 /** The connection to the real engine, and the outbox for what the coordinator says until the engine saves it. */
 export class EngineClient {
@@ -255,29 +181,23 @@ export class EngineClient {
     };
     socket.onmessage = (event) => {
       if (this.disposed || this.socket !== socket) return;
-      const message = JSON.parse(String(event.data)) as {
-        type: string;
-        state?: State;
-        stateId?: number;
-        id?: number;
-        ok?: boolean;
-        result?: unknown;
-        error?: string
-      };
-      if (message.type === "state" && message.state) {
+      const message = parseServerFrame(String(event.data));
+      if (!message) return;
+      if (message.type === "state") {
         this.state = message.state;
         if (!this.status.synced) this.status = { ...this.status, synced: true };
         this.emit();
         if (typeof message.stateId === "number" && Number.isSafeInteger(message.stateId) && message.stateId > 0) {
           this.acknowledgeState(socket, message.stateId);
         }
-      } else if (message.type === "result" && typeof message.id === "number") {
+      } else {
         const call = this.calls.get(message.id);
         this.calls.delete(message.id);
         if (message.ok) call?.resolve(message.result);
         else {
-          this.setStatus({ ...this.status, error: message.error ?? "The engine refused that" });
-          call?.reject(new Error(message.error ?? "The engine refused that"));
+          const reason = message.error ?? "The engine refused that";
+          this.setStatus({ ...this.status, error: reason });
+          call?.reject(new Error(reason));
         }
       }
     };
@@ -376,10 +296,13 @@ export class EngineClient {
     try {
       const saved = localStorage.getItem(UNSENT_KEY);
       localStorage.removeItem(UNSENT_KEY);
-      for (const { entry, send } of saved ? (JSON.parse(saved) as { entry: Unsent; send?: { name: string; args: unknown[] } }[]) : []) {
-        if (!send || this.sends.has(entry.clientId)) continue;
-        this.sends.set(entry.clientId, send);
-        this.outbox = [...this.outbox, entry];
+      if (!saved) return;
+      const parsed: unknown = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return;
+      for (const record of parsed) {
+        if (!isSavedUnsentRecord(record) || this.sends.has(record.entry.clientId)) continue;
+        this.sends.set(record.entry.clientId, record.send);
+        this.outbox = [...this.outbox, record.entry];
       }
     } catch {
       // Nothing kept, or nothing readable.

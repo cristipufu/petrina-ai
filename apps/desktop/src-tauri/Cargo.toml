@@ -27,3 +27,10 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"
 
 [dev-dependencies]
 serde_json = "1"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
